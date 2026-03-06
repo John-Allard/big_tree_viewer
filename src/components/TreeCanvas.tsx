@@ -439,7 +439,7 @@ export default function TreeCanvas({
 
   useEffect(() => {
     fitCamera();
-  }, [fitCamera, fitRequest]);
+  }, [fitRequest, tree, viewMode]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -556,11 +556,11 @@ export default function TreeCanvas({
       }
 
       if (camera.scaleY > 6) {
-        const fontSize = Math.max(10, Math.min(14, camera.scaleY * 0.45));
+        const fontSize = Math.max(10, Math.min(22, camera.scaleY * 0.68));
         ctx.font = `${fontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
-        let lastLabelY = Number.NEGATIVE_INFINITY;
+        const visibleLabels: Array<{ node: number; x: number; y: number }> = [];
         for (let index = 0; index < tree.leafNodes.length; index += 1) {
           const node = tree.leafNodes[index];
           const y = layout.center[node];
@@ -568,11 +568,14 @@ export default function TreeCanvas({
             continue;
           }
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
-          if (screen.y - lastLabelY < fontSize * 0.92) {
-            continue;
+          visibleLabels.push({ node, x: screen.x + 8, y: screen.y });
+        }
+        const maxVisibleLabels = 4500;
+        if (visibleLabels.length <= maxVisibleLabels) {
+          for (let index = 0; index < visibleLabels.length; index += 1) {
+            const label = visibleLabels[index];
+            ctx.fillText(tree.names[label.node] || `tip-${label.node}`, label.x, label.y);
           }
-          ctx.fillText(tree.names[node] || `tip-${node}`, screen.x + 8, screen.y);
-          lastLabelY = screen.y;
         }
       }
 
@@ -696,7 +699,7 @@ export default function TreeCanvas({
 
       const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree.leafCount));
       if (angularSpacingPx > 7) {
-        const fontSize = Math.max(9, Math.min(13, angularSpacingPx * 0.6));
+        const fontSize = Math.max(9, Math.min(20, angularSpacingPx * 0.85));
         ctx.font = `${fontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
