@@ -37,6 +37,27 @@ interface RenderCache {
   circularIndices: Record<LayoutOrder, UniformGridIndex>;
 }
 
+interface StripeLevel {
+  step: number;
+  alpha: number;
+}
+
+interface StripeBoundary {
+  value: number;
+  alpha: number;
+}
+
+interface CircularScaleTick {
+  boundary: StripeBoundary;
+  position: number;
+}
+
+interface CircularScaleBar {
+  kind: "bottom" | "left";
+  axisPosition: number;
+  ticks: CircularScaleTick[];
+}
+
 const LABEL_FONT = `"IBM Plex Sans", "Segoe UI", sans-serif`;
 const BRANCH_COLOR = "#0f172a";
 const HOVER_COLOR = "#c2410c";
@@ -70,66 +91,6 @@ function niceTickStep(range: number): number {
   return best * exponent;
 }
 
-function roundToNice(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-  const exponent = 10 ** Math.floor(Math.log10(value));
-  const fraction = value / exponent;
-  const bases = [1, 2, 2.5, 5, 10];
-  let best = bases[0];
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let index = 0; index < bases.length; index += 1) {
-    const distance = Math.abs(fraction - bases[index]);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = bases[index];
-    }
-  }
-  return best * exponent;
-}
-
-function chooseTimeTicks(rootAge: number, minMarkers = 4, maxMarkers = 6): number[] {
-  if (!Number.isFinite(rootAge) || rootAge <= 0) {
-    return [];
-  }
-  const candidates = new Set<number>();
-  for (let n = minMarkers - 1; n <= maxMarkers + 1; n += 1) {
-    if (n <= 0) {
-      continue;
-    }
-    const base = roundToNice(rootAge / n);
-    if (base > 0) {
-      candidates.add(base);
-      candidates.add(base * 0.5);
-      candidates.add(base * 2);
-    }
-  }
-  const target = (minMarkers + maxMarkers) / 2;
-  let bestTicks: number[] = [];
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (const step of [...candidates].sort((left, right) => left - right)) {
-    if (step <= 0) {
-      continue;
-    }
-    const ticks: number[] = [];
-    for (let tick = step; tick < rootAge; tick += step) {
-      ticks.push(tick);
-    }
-    if (ticks.length === 0) {
-      continue;
-    }
-    const countPenalty = ticks.length >= minMarkers && ticks.length <= maxMarkers ? 0 : 10 * Math.abs(ticks.length - target);
-    const stepPenalty = Math.abs(step - (rootAge / target)) / Math.max(1e-9, rootAge / target);
-    const score = countPenalty + Math.abs(ticks.length - target) + stepPenalty;
-    if (score < bestScore) {
-      bestScore = score;
-      bestTicks = ticks;
-    }
-  }
-  return bestTicks;
-}
-
 function formatAgeNumber(value: number): string {
   if (!Number.isFinite(value)) {
     return "";
@@ -146,8 +107,127 @@ function formatAgeNumber(value: number): string {
   return value.toFixed(1);
 }
 
+function buildStripeLevels(visibleSpan: number, pixelsPerUnit: number): StripeLevel[] {
+  const levels: StripeLevel[] = [];
+  const coarseStep = niceTickStep(visibleSpan);
+  if (!Number.isFinite(coarseStep) || coarseStep <= 0) {
+    return levels;
+  }
+  levels.push({ step: coarseStep, alpha: 1 });
+  let parentStep = coarseStep;
+  let parentPx = coarseStep * pixelsPerUnit;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const alpha = clamp01((parentPx - 155) / 125);
+    const nextStep = parentStep * 0.5;
+    const nextPx = nextStep * pixelsPerUnit;
+    if (alpha <= 0 || nextPx < 20) {
+      break;
+    }
+    levels.push({ step: nextStep, alpha });
+    parentStep = nextStep;
+    parentPx = nextPx;
+  }
+  return levels;
+}
+
+function buildStripeBoundaries(extent: number, levels: StripeLevel[]): StripeBoundary[] {
+  if (!Number.isFinite(extent) || extent <= 0 || levels.length === 0) {
+    return [];
+  }
+  const byValue = new Map<string, StripeBoundary>();
+  for (let levelIndex = 0; levelIndex < levels.length; levelIndex += 1) {
+    const level = levels[levelIndex];
+    if (!Number.isFinite(level.step) || level.step <= 0) {
+      continue;
+    }
+    const alpha = levelIndex === 0 ? 1 : level.alpha * 0.82;
+    if (alpha <= 0) {
+      continue;
+    }
+    const count = Math.floor(extent / level.step);
+    for (let index = 1; index < count; index += 1) {
+      const value = Number((index * level.step).toPrecision(12));
+      if (!(value > 0) || !(value < extent)) {
+        continue;
+      }
+      const key = value.toPrecision(12);
+      const existing = byValue.get(key);
+      if (!existing || alpha > existing.alpha) {
+        byValue.set(key, { value, alpha });
+      }
+    }
+  }
+  return [...byValue.values()].sort((left, right) => left.value - right.value);
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function chooseClosestToMidpoint(candidates: number[], midpoint: number): number | null {
+  let best: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const distance = Math.abs(candidates[index] - midpoint);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidates[index];
+    }
+  }
+  return best;
+}
+
+function buildCircularScaleBar(
+  centerX: number,
+  centerY: number,
+  width: number,
+  height: number,
+  boundaries: StripeBoundary[],
+  rootAge: number,
+  scale: number,
+): CircularScaleBar | null {
+  const margin = 28;
+  const bottomY = height - margin;
+  const leftX = margin;
+  const bottomTicks: CircularScaleTick[] = [];
+  const leftTicks: CircularScaleTick[] = [];
+
+  for (let index = 0; index < boundaries.length; index += 1) {
+    const boundary = boundaries[index];
+    const radiusPx = Math.max(0, rootAge - boundary.value) * scale;
+
+    const bottomDy = Math.abs(bottomY - centerY);
+    if (radiusPx > bottomDy) {
+      const delta = Math.sqrt(Math.max(0, (radiusPx * radiusPx) - (bottomDy * bottomDy)));
+      const candidates = [centerX - delta, centerX + delta].filter(
+        (candidate) => candidate >= margin && candidate <= width - margin,
+      );
+      const x = chooseClosestToMidpoint(candidates, width * 0.5);
+      if (x !== null) {
+        bottomTicks.push({ boundary, position: x });
+      }
+    }
+
+    const leftDx = Math.abs(leftX - centerX);
+    if (radiusPx > leftDx) {
+      const delta = Math.sqrt(Math.max(0, (radiusPx * radiusPx) - (leftDx * leftDx)));
+      const candidates = [centerY - delta, centerY + delta].filter(
+        (candidate) => candidate >= margin && candidate <= height - margin,
+      );
+      const y = chooseClosestToMidpoint(candidates, height * 0.5);
+      if (y !== null) {
+        leftTicks.push({ boundary, position: y });
+      }
+    }
+  }
+
+  if (bottomTicks.length === 0 && leftTicks.length === 0) {
+    return null;
+  }
+  if (bottomTicks.length >= leftTicks.length) {
+    return { kind: "bottom", axisPosition: bottomY, ticks: bottomTicks };
+  }
+  return { kind: "left", axisPosition: leftX, ticks: leftTicks };
 }
 
 function displayNodeName(tree: TreeModel, node: number): string {
@@ -499,29 +579,32 @@ export default function TreeCanvas({
       const maxY = Math.max(worldMin.y, worldMax.y);
       const axisBarHeight = tree.isUltrametric ? 44 : 0;
       const treeDrawBottom = size.height - axisBarHeight;
+      const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
+      const stripeLevels = buildStripeLevels(Math.max(1e-9, maxX - minX), camera.scaleX);
+      const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
 
       if (showTimeStripes) {
-        const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
-        const visibleSpan = Math.max(1e-9, maxX - minX);
-        const coarseStep = niceTickStep(visibleSpan);
-        const fineStep = coarseStep * 0.5;
-        const fineAlpha = clamp01(((coarseStep * camera.scaleX) - 110) / 90);
         const drawBands = (step: number, alpha: number) => {
           if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
             return;
           }
           for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
             const next = Math.min(stripeExtent, start + step);
-            const left = worldToScreenRect(camera, start, 0).x;
-            const right = worldToScreenRect(camera, next, 0).x;
+            const left = tree.isUltrametric
+              ? worldToScreenRect(camera, tree.rootAge - next, 0).x
+              : worldToScreenRect(camera, start, 0).x;
+            const right = tree.isUltrametric
+              ? worldToScreenRect(camera, tree.rootAge - start, 0).x
+              : worldToScreenRect(camera, next, 0).x;
             ctx.fillStyle = index % 2 === 0
               ? `rgba(243,244,246,${0.95 * alpha})`
               : `rgba(255,255,255,${0.95 * alpha})`;
             ctx.fillRect(left, 0, right - left, treeDrawBottom);
           }
         };
-        drawBands(coarseStep, 1);
-        drawBands(fineStep, fineAlpha * 0.82);
+        for (let index = 0; index < stripeLevels.length; index += 1) {
+          drawBands(stripeLevels[index].step, index === 0 ? 1 : stripeLevels[index].alpha * 0.82);
+        }
       }
 
       ctx.strokeStyle = BRANCH_COLOR;
@@ -604,7 +687,6 @@ export default function TreeCanvas({
       if (tree.isUltrametric) {
         ctx.fillStyle = "rgba(251,252,254,0.96)";
         ctx.fillRect(0, size.height - axisBarHeight, size.width, axisBarHeight);
-        const ticks = chooseTimeTicks(tree.rootAge);
         const axisY = size.height - 28;
         ctx.strokeStyle = "#6b7280";
         ctx.fillStyle = "#6b7280";
@@ -617,18 +699,26 @@ export default function TreeCanvas({
         const axisEnd = worldToScreenRect(camera, tree.rootAge, 0).x;
         ctx.moveTo(axisStart, axisY);
         ctx.lineTo(axisEnd, axisY);
-        for (let index = 0; index < ticks.length; index += 1) {
-          const age = ticks[index];
-          const x = worldToScreenRect(camera, tree.rootAge - age, 0).x;
-          ctx.moveTo(x, axisY);
-          ctx.lineTo(x, axisY + 6);
+        if (stripeBoundaries.length > 0) {
+          for (let index = 0; index < stripeBoundaries.length; index += 1) {
+            const boundary = stripeBoundaries[index];
+            const x = worldToScreenRect(camera, tree.rootAge - boundary.value, 0).x;
+            ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
+            ctx.moveTo(x, axisY);
+            ctx.lineTo(x, axisY + (4 + (3 * boundary.alpha)));
+          }
+          ctx.globalAlpha = 1;
+          ctx.stroke();
+          for (let index = 0; index < stripeBoundaries.length; index += 1) {
+            const boundary = stripeBoundaries[index];
+            const x = worldToScreenRect(camera, tree.rootAge - boundary.value, 0).x;
+            ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
+            ctx.fillText(`${formatAgeNumber(boundary.value)} mya`, x, axisY + 8);
+          }
+          ctx.globalAlpha = 1;
         }
+      } else {
         ctx.stroke();
-        for (let index = 0; index < ticks.length; index += 1) {
-          const age = ticks[index];
-          const x = worldToScreenRect(camera, tree.rootAge - age, 0).x;
-          ctx.fillText(`${formatAgeNumber(age)} mya`, x, axisY + 8);
-        }
       }
     }
 
@@ -636,52 +726,121 @@ export default function TreeCanvas({
       const layout = tree.layouts[order];
       const children = cache.orderedChildren[order];
       const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+      const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
+      const visibleRadius = Math.max(1e-9, Math.min(size.width, size.height) / (2 * camera.scale));
+      const stripeLevels = buildStripeLevels(visibleRadius, camera.scale);
+      const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
 
       if (showTimeStripes) {
-        const stripeStep = niceTickStep(tree.maxDepth);
         const center = { x: camera.translateX, y: camera.translateY };
-        for (let start = 0, index = 0; start <= maxRadius + stripeStep; start += stripeStep, index += 1) {
-          const radiusStart = start * camera.scale;
-          const radiusEnd = (start + stripeStep) * camera.scale;
-          ctx.beginPath();
-          ctx.arc(center.x, center.y, radiusEnd, 0, Math.PI * 2);
-          ctx.arc(center.x, center.y, radiusStart, 0, Math.PI * 2, true);
-          ctx.closePath();
-          ctx.fillStyle = index % 2 === 0 ? "#f3f4f6" : "#ffffff";
-          ctx.fill();
+        const drawBands = (step: number, alpha: number) => {
+          if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
+            return;
+          }
+          for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
+            const next = Math.min(stripeExtent, start + step);
+            const outer = (tree.isUltrametric ? tree.rootAge - start : next) * camera.scale;
+            const inner = (tree.isUltrametric ? tree.rootAge - next : start) * camera.scale;
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, outer, 0, Math.PI * 2);
+            ctx.arc(center.x, center.y, inner, 0, Math.PI * 2, true);
+            ctx.closePath();
+            ctx.fillStyle = index % 2 === 0
+              ? `rgba(243,244,246,${0.95 * alpha})`
+              : `rgba(255,255,255,${0.95 * alpha})`;
+            ctx.fill();
+          }
+        };
+        for (let index = 0; index < stripeLevels.length; index += 1) {
+          drawBands(stripeLevels[index].step, index === 0 ? 1 : stripeLevels[index].alpha * 0.82);
         }
       }
 
       if (tree.isUltrametric) {
-        const ticks = chooseTimeTicks(tree.rootAge);
-        const center = { x: camera.translateX, y: camera.translateY };
-        const labelTheta = (order === "desc" ? Math.PI : 0) + (Math.PI / 36);
-        ctx.save();
-        ctx.setLineDash([3, 3]);
-        ctx.strokeStyle = "rgba(107,114,128,0.7)";
-        ctx.lineWidth = 1;
-        for (let index = 0; index < ticks.length; index += 1) {
-          const age = ticks[index];
-          const radius = Math.max(0, tree.rootAge - age) * camera.scale;
-          if (radius < 2) {
-            continue;
-          }
-          ctx.beginPath();
-          ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        ctx.restore();
-
+        const centerPoint = worldToScreenCircular(camera, 0, 0);
+        const fullyVisibleRadiusPx = Math.min(
+          centerPoint.x,
+          size.width - centerPoint.x,
+          centerPoint.y,
+          size.height - centerPoint.y,
+        );
+        const fullCircleVisible = fullyVisibleRadiusPx >= (tree.rootAge * camera.scale * 0.88);
         ctx.fillStyle = "#6b7280";
         ctx.font = `11px ${LABEL_FONT}`;
         ctx.textBaseline = "middle";
-        ctx.textAlign = Math.cos(labelTheta) >= 0 ? "left" : "right";
-        for (let index = 0; index < ticks.length; index += 1) {
-          const age = ticks[index];
-          const radius = Math.max(0, tree.rootAge - age) + (10 / camera.scale);
-          const point = polarToCartesian(radius, labelTheta);
-          const screen = worldToScreenCircular(camera, point.x, point.y);
-          ctx.fillText(`${formatAgeNumber(age)} mya`, screen.x, screen.y);
+        if (fullCircleVisible) {
+          const labelTheta = (order === "desc" ? Math.PI : 0) + (Math.PI / 36);
+          ctx.textAlign = Math.cos(labelTheta) >= 0 ? "left" : "right";
+          for (let index = 0; index < stripeBoundaries.length; index += 1) {
+            const boundary = stripeBoundaries[index];
+            const radius = Math.max(0, tree.rootAge - boundary.value) + (10 / camera.scale);
+            const point = polarToCartesian(radius, labelTheta);
+            const screen = worldToScreenCircular(camera, point.x, point.y);
+            ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
+            ctx.fillText(`${formatAgeNumber(boundary.value)} mya`, screen.x, screen.y);
+          }
+          ctx.globalAlpha = 1;
+        } else {
+          const scaleBar = buildCircularScaleBar(
+            centerPoint.x,
+            centerPoint.y,
+            size.width,
+            size.height,
+            stripeBoundaries,
+            tree.rootAge,
+            camera.scale,
+          );
+          if (scaleBar) {
+            ctx.strokeStyle = "#6b7280";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            if (scaleBar.kind === "bottom") {
+              ctx.moveTo(24, scaleBar.axisPosition);
+              ctx.lineTo(size.width - 24, scaleBar.axisPosition);
+              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
+                const tick = scaleBar.ticks[index];
+                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+                ctx.moveTo(tick.position, scaleBar.axisPosition);
+                ctx.lineTo(tick.position, scaleBar.axisPosition + (4 + (3 * tick.boundary.alpha)));
+              }
+              ctx.globalAlpha = 1;
+              ctx.stroke();
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
+                const tick = scaleBar.ticks[index];
+                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+                ctx.fillText(
+                  `${formatAgeNumber(tick.boundary.value)} mya`,
+                  tick.position,
+                  scaleBar.axisPosition + 8,
+                );
+              }
+              ctx.globalAlpha = 1;
+            } else {
+              ctx.moveTo(scaleBar.axisPosition, 24);
+              ctx.lineTo(scaleBar.axisPosition, size.height - 24);
+              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
+                const tick = scaleBar.ticks[index];
+                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+                ctx.moveTo(scaleBar.axisPosition, tick.position);
+                ctx.lineTo(scaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position);
+              }
+              ctx.globalAlpha = 1;
+              ctx.stroke();
+              ctx.textAlign = "center";
+              ctx.textBaseline = "bottom";
+              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
+                const tick = scaleBar.ticks[index];
+                ctx.save();
+                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+                ctx.translate(scaleBar.axisPosition - 8, tick.position);
+                ctx.rotate(-Math.PI / 2);
+                ctx.fillText(`${formatAgeNumber(tick.boundary.value)} mya`, 0, 0);
+                ctx.restore();
+              }
+            }
+          }
         }
       }
 
