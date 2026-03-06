@@ -146,6 +146,25 @@ function formatAgeNumber(value: number): string {
   return value.toFixed(1);
 }
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function displayNodeName(tree: TreeModel, node: number): string {
+  const raw = (tree.names[node] || "").trim();
+  const isLeaf = tree.buffers.firstChild[node] < 0;
+  if (isLeaf) {
+    return raw || `tip-${node}`;
+  }
+  if (!raw) {
+    return "Internal node";
+  }
+  if (/^[+-]?\d+(?:\.\d+)?$/.test(raw)) {
+    return "Internal node";
+  }
+  return raw;
+}
+
 function computeOrderedChildren(tree: TreeModel, order: LayoutOrder): number[][] {
   const childrenByNode = new Array<number[]>(tree.nodeCount);
   for (let node = 0; node < tree.nodeCount; node += 1) {
@@ -478,28 +497,31 @@ export default function TreeCanvas({
       const maxX = Math.max(worldMin.x, worldMax.x);
       const minY = Math.min(worldMin.y, worldMax.y);
       const maxY = Math.max(worldMin.y, worldMax.y);
+      const axisBarHeight = tree.isUltrametric ? 44 : 0;
+      const treeDrawBottom = size.height - axisBarHeight;
 
       if (showTimeStripes) {
-        if (tree.isUltrametric) {
-          const ages = [tree.rootAge, ...chooseTimeTicks(tree.rootAge).sort((left, right) => right - left), 0];
-          for (let index = 0; index < ages.length - 1; index += 1) {
-            const ageStart = ages[index];
-            const ageEnd = ages[index + 1];
-            const left = worldToScreenRect(camera, tree.rootAge - ageStart, 0).x;
-            const right = worldToScreenRect(camera, tree.rootAge - ageEnd, 0).x;
-            ctx.fillStyle = index % 2 === 0 ? "#f3f4f6" : "#ffffff";
-            ctx.fillRect(left, 0, right - left, size.height);
+        const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
+        const visibleSpan = Math.max(1e-9, maxX - minX);
+        const coarseStep = niceTickStep(visibleSpan);
+        const fineStep = coarseStep * 0.5;
+        const fineAlpha = clamp01(((coarseStep * camera.scaleX) - 110) / 90);
+        const drawBands = (step: number, alpha: number) => {
+          if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
+            return;
           }
-        } else {
-          const stripeStep = niceTickStep(tree.maxDepth);
-          for (let start = 0, index = 0; start <= tree.maxDepth; start += stripeStep, index += 1) {
-            const next = Math.min(tree.maxDepth, start + stripeStep);
+          for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
+            const next = Math.min(stripeExtent, start + step);
             const left = worldToScreenRect(camera, start, 0).x;
             const right = worldToScreenRect(camera, next, 0).x;
-            ctx.fillStyle = index % 2 === 0 ? "#f3f4f6" : "#ffffff";
-            ctx.fillRect(left, 0, right - left, size.height);
+            ctx.fillStyle = index % 2 === 0
+              ? `rgba(243,244,246,${0.95 * alpha})`
+              : `rgba(255,255,255,${0.95 * alpha})`;
+            ctx.fillRect(left, 0, right - left, treeDrawBottom);
           }
-        }
+        };
+        drawBands(coarseStep, 1);
+        drawBands(fineStep, fineAlpha * 0.82);
       }
 
       ctx.strokeStyle = BRANCH_COLOR;
@@ -580,6 +602,8 @@ export default function TreeCanvas({
       }
 
       if (tree.isUltrametric) {
+        ctx.fillStyle = "rgba(251,252,254,0.96)";
+        ctx.fillRect(0, size.height - axisBarHeight, size.width, axisBarHeight);
         const ticks = chooseTimeTicks(tree.rootAge);
         const axisY = size.height - 28;
         ctx.strokeStyle = "#6b7280";
@@ -625,6 +649,39 @@ export default function TreeCanvas({
           ctx.closePath();
           ctx.fillStyle = index % 2 === 0 ? "#f3f4f6" : "#ffffff";
           ctx.fill();
+        }
+      }
+
+      if (tree.isUltrametric) {
+        const ticks = chooseTimeTicks(tree.rootAge);
+        const center = { x: camera.translateX, y: camera.translateY };
+        const labelTheta = (order === "desc" ? Math.PI : 0) + (Math.PI / 36);
+        ctx.save();
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = "rgba(107,114,128,0.7)";
+        ctx.lineWidth = 1;
+        for (let index = 0; index < ticks.length; index += 1) {
+          const age = ticks[index];
+          const radius = Math.max(0, tree.rootAge - age) * camera.scale;
+          if (radius < 2) {
+            continue;
+          }
+          ctx.beginPath();
+          ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.fillStyle = "#6b7280";
+        ctx.font = `11px ${LABEL_FONT}`;
+        ctx.textBaseline = "middle";
+        ctx.textAlign = Math.cos(labelTheta) >= 0 ? "left" : "right";
+        for (let index = 0; index < ticks.length; index += 1) {
+          const age = ticks[index];
+          const radius = Math.max(0, tree.rootAge - age) + (10 / camera.scale);
+          const point = polarToCartesian(radius, labelTheta);
+          const screen = worldToScreenCircular(camera, point.x, point.y);
+          ctx.fillText(`${formatAgeNumber(age)} mya`, screen.x, screen.y);
         }
       }
 
@@ -784,7 +841,7 @@ export default function TreeCanvas({
                 branchLength: tree.buffers.branchLength[node],
                 parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
                 parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
-                name: tree.names[node] || (tree.buffers.firstChild[node] < 0 ? `tip-${node}` : "Internal node"),
+                name: displayNodeName(tree, node),
                 screenX: localX,
                 screenY: localY,
               };
@@ -808,10 +865,10 @@ export default function TreeCanvas({
                 branchLength: tree.buffers.branchLength[node],
                 parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
                 parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
-                name: tree.names[node] || (tree.buffers.firstChild[node] < 0 ? `tip-${node}` : "Internal node"),
+                name: displayNodeName(tree, node),
                 screenX: localX,
                 screenY: localY,
-            };
+              };
           }
         }
       }
