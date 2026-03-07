@@ -95,7 +95,8 @@ interface CircularScaleBar {
 }
 
 type HoverTargetKind = "stem" | "connector" | "label";
-type CanvasHoverInfo = HoverInfo & { targetKind: HoverTargetKind };
+type HoverSegment = Pick<IndexedSegment, "kind" | "x1" | "y1" | "x2" | "y2">;
+type CanvasHoverInfo = HoverInfo & { targetKind: HoverTargetKind; hoveredSegment?: HoverSegment };
 
 const LABEL_FONT = `"IBM Plex Sans", "Segoe UI", sans-serif`;
 const BRANCH_COLOR = "#0f172a";
@@ -1268,21 +1269,11 @@ export default function TreeCanvas({
           ctx.lineWidth = 2;
           ctx.beginPath();
           const childTheta = thetaFor(layout.center, hover.node, tree.leafCount);
-          if (hover.targetKind === "connector" && children[hover.node].length >= 2) {
-            const startTheta = thetaFor(layout.center, children[hover.node][0], tree.leafCount);
-            const endTheta = thetaFor(layout.center, children[hover.node][children[hover.node].length - 1], tree.leafCount);
-            const arcStart = thetaFor(layout.min, hover.node, tree.leafCount);
-            const arcEnd = thetaFor(layout.max, hover.node, tree.leafCount);
-            const arcLength = Math.max(0, arcEnd - arcStart);
-            const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-            const radiusPx = tree.buffers.depth[hover.node] * camera.scale;
-            if (radiusPx >= 0.25) {
-              ctx.moveTo(
-                centerPoint.x + Math.cos(arcAngles.start) * radiusPx,
-                centerPoint.y + Math.sin(arcAngles.start) * radiusPx,
-              );
-              ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start, arcAngles.end, false);
-            }
+          if (hover.targetKind === "connector" && hover.hoveredSegment) {
+            const connectorStart = worldToScreenCircular(camera, hover.hoveredSegment.x1, hover.hoveredSegment.y1);
+            const connectorEnd = worldToScreenCircular(camera, hover.hoveredSegment.x2, hover.hoveredSegment.y2);
+            ctx.moveTo(connectorStart.x, connectorStart.y);
+            ctx.lineTo(connectorEnd.x, connectorEnd.y);
           } else {
             const parentTheta = thetaFor(layout.center, parent, tree.leafCount);
             if (Math.abs(childTheta - parentTheta) > 1e-6) {
@@ -1677,6 +1668,7 @@ export default function TreeCanvas({
           screenX: localX,
           screenY: localY,
           targetKind: "label",
+          hoveredSegment: undefined,
         };
         break;
       }
@@ -1722,6 +1714,7 @@ export default function TreeCanvas({
                 screenX: localX,
                 screenY: localY,
                 targetKind: segment.kind,
+                hoveredSegment: segment.kind === "connector" ? segment : undefined,
               };
             }
           }
@@ -1750,6 +1743,7 @@ export default function TreeCanvas({
               screenX: localX,
               screenY: localY,
               targetKind: segment.kind,
+              hoveredSegment: segment.kind === "connector" ? segment : undefined,
             };
           }
         }
