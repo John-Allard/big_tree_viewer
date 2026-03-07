@@ -843,7 +843,8 @@ export default function TreeCanvas({
       }
 
       if (showGenusLabels) {
-        const blocks = cache.genusBlocksPriority[order];
+        const priorityBlocks = cache.genusBlocksPriority[order];
+        const positionalBlocks = cache.genusBlocks[order];
         const baseFontSize = Math.max(10, Math.min(16, camera.scaleY * 0.38));
         const outboardMinX = Number.isFinite(tipLabelRightEdge) ? tipLabelRightEdge + 22 : Number.NEGATIVE_INFINITY;
         const offsetPx = 10;
@@ -856,22 +857,22 @@ export default function TreeCanvas({
         const maxGenusLabels = Math.max(10, Math.ceil(size.height / Math.max(24, baseFontSize * 1.85)) + 6);
         const placedLabels: ScreenLabel[] = [];
         const connectorBlocks: Array<{ x: number; y1: number; y2: number }> = [];
-        for (let index = 0; index < blocks.length; index += 1) {
-          if (placedLabels.length >= maxGenusLabels) {
-            break;
+        const placedCenters = new Set<number>();
+        const tryPlaceBlock = (block: GenusBlock): void => {
+          if (placedLabels.length >= maxGenusLabels || placedCenters.has(block.centerNode)) {
+            return;
           }
-          const block = blocks[index];
           const y1 = layout.center[block.firstNode];
           const y2 = layout.center[block.lastNode];
           if (y2 < minY - 2 || y1 > maxY + 2) {
-            continue;
+            return;
           }
           const spanPx = Math.abs(y2 - y1) * camera.scaleY;
           const localX = worldToScreenRect(camera, block.maxDepth, 0).x + offsetPx;
           const outboardX = Number.isFinite(outboardMinX) ? Math.max(localX, outboardMinX) : localX;
           const x = localX + ((outboardX - localX) * pullAway);
           if (x < -80 || x > size.width + 160) {
-            continue;
+            return;
           }
           const screenStart = worldToScreenRect(camera, block.maxDepth, y1);
           const screenEnd = worldToScreenRect(camera, block.maxDepth, y2);
@@ -884,8 +885,9 @@ export default function TreeCanvas({
             fontSize * 0.9,
             Math.max(24, fontSize * 1.75),
           )) {
-            continue;
+            return;
           }
+          placedCenters.add(block.centerNode);
           placedLabels.push({
             x: x + 7,
             y: labelY,
@@ -898,6 +900,20 @@ export default function TreeCanvas({
             y1: screenStart.y,
             y2: screenEnd.y,
           });
+        };
+        for (let index = 0; index < priorityBlocks.length; index += 1) {
+          tryPlaceBlock(priorityBlocks[index]);
+          if (placedLabels.length >= maxGenusLabels) {
+            break;
+          }
+        }
+        if (placedLabels.length < maxGenusLabels) {
+          for (let index = 0; index < positionalBlocks.length; index += 1) {
+            tryPlaceBlock(positionalBlocks[index]);
+            if (placedLabels.length >= maxGenusLabels) {
+              break;
+            }
+          }
         }
         if (connectorBlocks.length > 0) {
           ctx.beginPath();
@@ -1137,19 +1153,45 @@ export default function TreeCanvas({
       const tipLabelsVisible = angularSpacingPx > 7;
       const tipFontSize = Math.max(9, Math.min(20, angularSpacingPx * 0.85));
       const tipLabelRadius = maxRadius + (20 / camera.scale);
+      const circularTipVisibilityMargin = 140;
+      let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
+      let maxVisibleTipLabelWidth = 0;
+      if (tipLabelsVisible) {
+        ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
+        ctx.fillStyle = "#111827";
+        ctx.textBaseline = "middle";
+        for (let index = 0; index < tree.leafNodes.length; index += 1) {
+          const node = tree.leafNodes[index];
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const point = polarToCartesian(tipLabelRadius, theta);
+          const screen = worldToScreenCircular(camera, point.x, point.y);
+          if (
+            screen.x < -circularTipVisibilityMargin ||
+            screen.x > size.width + circularTipVisibilityMargin ||
+            screen.y < -circularTipVisibilityMargin ||
+            screen.y > size.height + circularTipVisibilityMargin
+          ) {
+            continue;
+          }
+          const text = tree.names[node] || `tip-${node}`;
+          const width = ctx.measureText(text).width;
+          circularVisibleTipLabels.push({ node, theta, x: screen.x, y: screen.y, text, width });
+          maxVisibleTipLabelWidth = Math.max(maxVisibleTipLabelWidth, width);
+        }
+      }
       let circularGenusLabels: ScreenLabel[] = [];
       let circularGenusArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number }> = [];
       let circularGenusBaseFontSize = 0;
       if (showGenusLabels) {
-        const blocks = cache.genusBlocksPriority[order];
+        const priorityBlocks = cache.genusBlocksPriority[order];
+        const positionalBlocks = cache.genusBlocks[order];
         const baseFontSize = Math.max(9, Math.min(16, Math.max(angularSpacingPx * 0.85, 9)));
         const arcOffsetWorld = 12 / camera.scale;
         const pullAway = tipLabelsVisible ? 1 : clamp01((angularSpacingPx - 2.8) / 4.4);
         const localLineRadius = arcOffsetWorld;
-        const tipOuterRadius = tipLabelRadius + ((tipFontSize * 1.15 + 10) / camera.scale);
-        const outboardLineRadius = tipOuterRadius + ((baseFontSize * 1.4 + 28) / camera.scale);
+        const tipOuterRadius = tipLabelRadius + ((maxVisibleTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
+        const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
         const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
-        const outboardLabelRadius = outboardLineRadius + ((baseFontSize * 1.6 + 20) / camera.scale);
         ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
@@ -1161,11 +1203,11 @@ export default function TreeCanvas({
         );
         const placedLabels: ScreenLabel[] = [];
         const connectorArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number }> = [];
-        for (let index = 0; index < blocks.length; index += 1) {
-          if (placedLabels.length >= maxGenusLabels) {
-            break;
+        const placedCenters = new Set<number>();
+        const tryPlaceBlock = (block: GenusBlock): void => {
+          if (placedLabels.length >= maxGenusLabels || placedCenters.has(block.centerNode)) {
+            return;
           }
-          const block = blocks[index];
           const startTheta = thetaFor(layout.center, block.firstNode, tree.leafCount);
           const endTheta = thetaFor(layout.center, block.lastNode, tree.leafCount);
           const midTheta = thetaFor(layout.center, block.centerNode, tree.leafCount);
@@ -1175,11 +1217,16 @@ export default function TreeCanvas({
           }
           const localAbsLineRadius = block.maxDepth + localLineRadius;
           const localAbsLabelRadius = block.maxDepth + localLabelRadius;
-          const lineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
-          const labelRadius = (localAbsLabelRadius * (1 - pullAway)) + (outboardLabelRadius * pullAway);
+          const preliminaryLineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
+          const preliminaryArcLengthPx = preliminaryLineRadius * camera.scale * angularSpan;
+          const fontSize = tipLabelsVisible
+            ? baseFontSize
+            : Math.max(baseFontSize, Math.min(22, baseFontSize + (preliminaryArcLengthPx * 0.018)));
+          const adjustedOutboardLineRadius = tipOuterRadius + ((tipFontSize + fontSize * 1.8 + 34) / camera.scale);
+          const adjustedOutboardLabelRadius = adjustedOutboardLineRadius + ((fontSize * 2.2 + 24) / camera.scale);
+          const lineRadius = (localAbsLineRadius * (1 - pullAway)) + (adjustedOutboardLineRadius * pullAway);
+          const labelRadius = (localAbsLabelRadius * (1 - pullAway)) + (adjustedOutboardLabelRadius * pullAway);
           const lineRadiusPx = lineRadius * camera.scale;
-          const arcLengthPx = lineRadiusPx * angularSpan;
-          const fontSize = Math.max(baseFontSize, Math.min(22, baseFontSize + (arcLengthPx * 0.018)));
           const labelPoint = worldToScreenCircular(
             camera,
             Math.cos(midTheta) * labelRadius,
@@ -1189,7 +1236,7 @@ export default function TreeCanvas({
             labelPoint.x < -160 || labelPoint.x > size.width + 160 ||
             labelPoint.y < -160 || labelPoint.y > size.height + 160
           ) {
-            continue;
+            return;
           }
           const deg = midTheta * 180 / Math.PI;
           const onRightSide = Math.cos(midTheta) >= 0;
@@ -1201,8 +1248,9 @@ export default function TreeCanvas({
             fontSize * 0.9,
             fontSize * 3.5,
           )) {
-            continue;
+            return;
           }
+          placedCenters.add(block.centerNode);
           placedLabels.push({
             x: labelPoint.x,
             y: labelPoint.y,
@@ -1217,41 +1265,50 @@ export default function TreeCanvas({
             startTheta,
             endTheta,
           });
+        };
+        for (let index = 0; index < priorityBlocks.length; index += 1) {
+          tryPlaceBlock(priorityBlocks[index]);
+          if (placedLabels.length >= maxGenusLabels) {
+            break;
+          }
+        }
+        if (placedLabels.length < maxGenusLabels) {
+          for (let index = 0; index < positionalBlocks.length; index += 1) {
+            tryPlaceBlock(positionalBlocks[index]);
+            if (placedLabels.length >= maxGenusLabels) {
+              break;
+            }
+          }
         }
         circularGenusLabels = placedLabels;
         circularGenusArcs = connectorArcs;
         circularGenusBaseFontSize = baseFontSize;
+      }
+      if (circularGenusArcs.length > 0) {
+        ctx.strokeStyle = GENUS_COLOR;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        for (let index = 0; index < circularGenusArcs.length; index += 1) {
+          const arc = circularGenusArcs[index];
+          ctx.moveTo(
+            centerPoint.x + Math.cos(arc.startTheta) * arc.lineRadiusPx,
+            centerPoint.y + Math.sin(arc.startTheta) * arc.lineRadiusPx,
+          );
+          ctx.arc(centerPoint.x, centerPoint.y, arc.lineRadiusPx, arc.startTheta, arc.endTheta, false);
+        }
+        ctx.globalAlpha = 0.76;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
       }
       if (tipLabelsVisible) {
         const fontSize = tipFontSize;
         ctx.font = `${fontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
-        const labelRadius = maxRadius + (20 / camera.scale);
-        const visibilityMargin = 140;
-        const visibleLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
-        for (let index = 0; index < tree.leafNodes.length; index += 1) {
-          const node = tree.leafNodes[index];
-          const theta = thetaFor(layout.center, node, tree.leafCount);
-          const point = polarToCartesian(labelRadius, theta);
-          const screen = worldToScreenCircular(camera, point.x, point.y);
-          if (
-            screen.x < -visibilityMargin ||
-            screen.x > size.width + visibilityMargin ||
-            screen.y < -visibilityMargin ||
-            screen.y > size.height + visibilityMargin
-          ) {
-            continue;
-          }
-          const text = tree.names[node] || `tip-${node}`;
-          const width = ctx.measureText(text).width;
-          visibleLabels.push({ node, theta, x: screen.x, y: screen.y, text, width });
-        }
-
         const maxVisibleLabels = 3200;
-        if (visibleLabels.length <= maxVisibleLabels) {
-          for (let index = 0; index < visibleLabels.length; index += 1) {
-            const label = visibleLabels[index];
+        if (circularVisibleTipLabels.length <= maxVisibleLabels) {
+          for (let index = 0; index < circularVisibleTipLabels.length; index += 1) {
+            const label = circularVisibleTipLabels[index];
             const { node, theta, x, y } = label;
             const deg = theta * 180 / Math.PI;
             const onRightSide = Math.cos(theta) >= 0;
@@ -1274,22 +1331,6 @@ export default function TreeCanvas({
             });
           }
         }
-      }
-      if (circularGenusArcs.length > 0) {
-        ctx.strokeStyle = GENUS_COLOR;
-        ctx.lineWidth = 1.1;
-        ctx.beginPath();
-        for (let index = 0; index < circularGenusArcs.length; index += 1) {
-          const arc = circularGenusArcs[index];
-          ctx.moveTo(
-            centerPoint.x + Math.cos(arc.startTheta) * arc.lineRadiusPx,
-            centerPoint.y + Math.sin(arc.startTheta) * arc.lineRadiusPx,
-          );
-          ctx.arc(centerPoint.x, centerPoint.y, arc.lineRadiusPx, arc.startTheta, arc.endTheta, false);
-        }
-        ctx.globalAlpha = 0.82;
-        ctx.stroke();
-        ctx.globalAlpha = 1;
       }
       for (let index = 0; index < circularGenusLabels.length; index += 1) {
         const label = circularGenusLabels[index];
