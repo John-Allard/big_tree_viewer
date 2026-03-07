@@ -1,5 +1,6 @@
 export interface IndexedSegment {
   node: number;
+  kind: "stem" | "connector";
   x1: number;
   y1: number;
   x2: number;
