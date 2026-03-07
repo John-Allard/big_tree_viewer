@@ -117,11 +117,12 @@ button.secondary {
   color: #f8fafc;
 }
 
-.checkbox-row {
-  margin-top: 0.9rem;
+.option-list {
+  display: grid;
+  gap: 0.7rem;
 }
 
-.checkbox-row label {
+.option-list label {
   display: flex;
   align-items: center;
   gap: 0.55rem;

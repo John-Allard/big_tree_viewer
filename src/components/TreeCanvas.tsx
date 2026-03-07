@@ -8,6 +8,9 @@ interface TreeCanvasProps {
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;
   showTimeStripes: boolean;
+  showScaleBars: boolean;
+  showGenusLabels: boolean;
+  showNodeHeightLabels: boolean;
   fitRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
 }
@@ -31,10 +34,43 @@ type CameraState = RectCamera | CircularCamera;
 
 interface RenderCache {
   orderedChildren: Record<LayoutOrder, number[][]>;
+  orderedLeaves: Record<LayoutOrder, number[]>;
+  genusBlocks: Record<LayoutOrder, GenusBlock[]>;
+  genusBlocksPriority: Record<LayoutOrder, GenusBlock[]>;
   rectSegments: Record<LayoutOrder, IndexedSegment[]>;
   rectIndices: Record<LayoutOrder, UniformGridIndex>;
   circularSegments: Record<LayoutOrder, IndexedSegment[]>;
   circularIndices: Record<LayoutOrder, UniformGridIndex>;
+}
+
+interface GenusBlock {
+  label: string;
+  firstNode: number;
+  lastNode: number;
+  centerNode: number;
+  maxDepth: number;
+  memberCount: number;
+}
+
+interface ScreenLabel {
+  x: number;
+  y: number;
+  text: string;
+  alpha: number;
+  fontSize?: number;
+  rotation?: number;
+  align?: CanvasTextAlign;
+}
+
+interface LabelHitbox {
+  node: number;
+  kind: "rect" | "rotated";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  align?: CanvasTextAlign;
 }
 
 interface StripeLevel {
@@ -61,6 +97,7 @@ interface CircularScaleBar {
 const LABEL_FONT = `"IBM Plex Sans", "Segoe UI", sans-serif`;
 const BRANCH_COLOR = "#0f172a";
 const HOVER_COLOR = "#c2410c";
+const GENUS_COLOR = "#475569";
 
 function normalizeRotation(degrees: number): number {
   let value = ((degrees + 180) % 360) - 180;
@@ -105,6 +142,42 @@ function formatAgeNumber(value: number): string {
     return value.toFixed(0);
   }
   return value.toFixed(1);
+}
+
+function nodeHeightValue(tree: TreeModel, node: number): number {
+  if (tree.isUltrametric) {
+    return Math.max(0, tree.rootAge - tree.buffers.depth[node]);
+  }
+  return tree.buffers.depth[node];
+}
+
+function canPlaceLinearLabel(
+  labels: ScreenLabel[],
+  x: number,
+  y: number,
+  minGapY: number,
+  minGapX: number,
+): boolean {
+  for (let index = 0; index < labels.length; index += 1) {
+    const placed = labels[index];
+    if (Math.abs(placed.y - y) < minGapY && Math.abs(placed.x - x) < minGapX) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function pointInLabelHitbox(x: number, y: number, hitbox: LabelHitbox): boolean {
+  if (hitbox.kind === "rect") {
+    return x >= hitbox.x && x <= hitbox.x + hitbox.width && y >= hitbox.y && y <= hitbox.y + hitbox.height;
+  }
+  const rotation = hitbox.rotation ?? 0;
+  const dx = x - hitbox.x;
+  const dy = y - hitbox.y;
+  const localX = (dx * Math.cos(-rotation)) - (dy * Math.sin(-rotation));
+  const localY = (dx * Math.sin(-rotation)) + (dy * Math.cos(-rotation));
+  const left = hitbox.align === "right" ? -hitbox.width : 0;
+  return localX >= left && localX <= left + hitbox.width && localY >= (-hitbox.height * 0.5) && localY <= (hitbox.height * 0.5);
 }
 
 function buildStripeLevels(visibleSpan: number, pixelsPerUnit: number): StripeLevel[] {
@@ -245,6 +318,63 @@ function displayNodeName(tree: TreeModel, node: number): string {
   return raw;
 }
 
+function extractGenusToken(name: string): string | null {
+  const match = name.trim().match(/^([^_ ]+)[_ ]+/);
+  if (!match) {
+    return null;
+  }
+  const token = match[1].trim();
+  return token.length >= 2 ? token : null;
+}
+
+function computeOrderedLeaves(tree: TreeModel, order: LayoutOrder): number[] {
+  return [...tree.leafNodes].sort((left, right) => tree.layouts[order].center[left] - tree.layouts[order].center[right]);
+}
+
+function computeGenusBlocks(tree: TreeModel, orderedLeaves: number[]): GenusBlock[] {
+  const blocks: GenusBlock[] = [];
+  let index = 0;
+  while (index < orderedLeaves.length) {
+    const node = orderedLeaves[index];
+    const token = extractGenusToken(tree.names[node] || "");
+    if (!token) {
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    let maxDepth = tree.buffers.depth[node];
+    while (end < orderedLeaves.length) {
+      const nextNode = orderedLeaves[end];
+      const nextToken = extractGenusToken(tree.names[nextNode] || "");
+      if (nextToken !== token) {
+        break;
+      }
+      maxDepth = Math.max(maxDepth, tree.buffers.depth[nextNode]);
+      end += 1;
+    }
+    if ((end - index) >= 2) {
+      const centerIndex = Math.floor((index + end - 1) * 0.5);
+      blocks.push({
+        label: token,
+        firstNode: orderedLeaves[index],
+        lastNode: orderedLeaves[end - 1],
+        centerNode: orderedLeaves[centerIndex],
+        maxDepth,
+        memberCount: end - index,
+      });
+    }
+    index = end;
+  }
+  return blocks;
+}
+
+function prioritizeGenusBlocks(tree: TreeModel, order: LayoutOrder, blocks: GenusBlock[]): GenusBlock[] {
+  return [...blocks].sort((left, right) => (
+    right.memberCount - left.memberCount
+    || tree.layouts[order].center[left.centerNode] - tree.layouts[order].center[right.centerNode]
+  ));
+}
+
 function computeOrderedChildren(tree: TreeModel, order: LayoutOrder): number[][] {
   const childrenByNode = new Array<number[]>(tree.nodeCount);
   for (let node = 0; node < tree.nodeCount; node += 1) {
@@ -321,6 +451,21 @@ function buildCache(tree: TreeModel): RenderCache {
     desc: computeOrderedChildren(tree, "desc"),
     asc: computeOrderedChildren(tree, "asc"),
   } satisfies Record<LayoutOrder, number[][]>;
+  const orderedLeaves = {
+    input: computeOrderedLeaves(tree, "input"),
+    desc: computeOrderedLeaves(tree, "desc"),
+    asc: computeOrderedLeaves(tree, "asc"),
+  } satisfies Record<LayoutOrder, number[]>;
+  const genusBlocks = {
+    input: computeGenusBlocks(tree, orderedLeaves.input),
+    desc: computeGenusBlocks(tree, orderedLeaves.desc),
+    asc: computeGenusBlocks(tree, orderedLeaves.asc),
+  } satisfies Record<LayoutOrder, GenusBlock[]>;
+  const genusBlocksPriority = {
+    input: prioritizeGenusBlocks(tree, "input", genusBlocks.input),
+    desc: prioritizeGenusBlocks(tree, "desc", genusBlocks.desc),
+    asc: prioritizeGenusBlocks(tree, "asc", genusBlocks.asc),
+  } satisfies Record<LayoutOrder, GenusBlock[]>;
 
   const rectSegments = {
     input: [] as IndexedSegment[],
@@ -380,6 +525,9 @@ function buildCache(tree: TreeModel): RenderCache {
 
   return {
     orderedChildren,
+    orderedLeaves,
+    genusBlocks,
+    genusBlocksPriority,
     rectSegments,
     rectIndices: {
       input: new UniformGridIndex(rectSegments.input, boundsRect),
@@ -496,6 +644,9 @@ export default function TreeCanvas({
   viewMode,
   zoomAxisMode,
   showTimeStripes,
+  showScaleBars,
+  showGenusLabels,
+  showNodeHeightLabels,
   fitRequest,
   onHoverChange,
 }: TreeCanvasProps) {
@@ -503,6 +654,7 @@ export default function TreeCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraRef = useRef<CameraState | null>(null);
   const hoverRef = useRef<HoverInfo | null>(null);
+  const labelHitsRef = useRef<LabelHitbox[]>([]);
   const pointerDownRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState({ width: 1200, height: 800 });
@@ -567,6 +719,7 @@ export default function TreeCanvas({
     ctx.clearRect(0, 0, size.width, size.height);
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(0, 0, size.width, size.height);
+    labelHitsRef.current = [];
 
     if (viewMode === "rectangular" && camera.kind === "rect") {
       const layout = tree.layouts[order];
@@ -577,11 +730,12 @@ export default function TreeCanvas({
       const maxX = Math.max(worldMin.x, worldMax.x);
       const minY = Math.min(worldMin.y, worldMax.y);
       const maxY = Math.max(worldMin.y, worldMax.y);
-      const axisBarHeight = tree.isUltrametric ? 44 : 0;
+      const axisBarHeight = tree.isUltrametric && showScaleBars ? 44 : 0;
       const treeDrawBottom = size.height - axisBarHeight;
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const stripeLevels = buildStripeLevels(Math.max(1e-9, maxX - minX), camera.scaleX);
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
+      const tipLabelsVisible = camera.scaleY > 6;
 
       if (showTimeStripes) {
         const drawBands = (step: number, alpha: number) => {
@@ -660,31 +814,163 @@ export default function TreeCanvas({
         }
       }
 
-      if (camera.scaleY > 6) {
-        const fontSize = Math.max(10, Math.min(22, camera.scaleY * 0.68));
-        ctx.font = `${fontSize}px ${LABEL_FONT}`;
+      let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number }> = [];
+      let tipLabelRightEdge = Number.NEGATIVE_INFINITY;
+      const tipFontSize = Math.max(10, Math.min(22, camera.scaleY * 0.68));
+      const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
+      const needTipEnvelope = tipLabelsVisible || camera.scaleY > 3.1;
+      if (needTipEnvelope) {
+        ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
-        const visibleLabels: Array<{ node: number; x: number; y: number }> = [];
         for (let index = 0; index < tree.leafNodes.length; index += 1) {
           const node = tree.leafNodes[index];
           const y = layout.center[node];
           if (y < minY - 2 || y > maxY + 2) {
             continue;
           }
+          const text = tree.names[node] || `tip-${node}`;
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
-          visibleLabels.push({ node, x: screen.x + 8, y: screen.y });
+          const x = screen.x + 8;
+          const width = ctx.measureText(text).width;
+          measuredLabels.push({ node, text, x, y: screen.y, width });
+          tipLabelRightEdge = Math.max(tipLabelRightEdge, x + width);
         }
-        const maxVisibleLabels = 4500;
-        if (visibleLabels.length <= maxVisibleLabels) {
-          for (let index = 0; index < visibleLabels.length; index += 1) {
-            const label = visibleLabels[index];
-            ctx.fillText(tree.names[label.node] || `tip-${label.node}`, label.x, label.y);
+      }
+      const maxVisibleLabels = 4500;
+      if (tipLabelsVisible && measuredLabels.length <= maxVisibleLabels) {
+        visibleTipLabels = measuredLabels.map(({ node, text, x, y }) => ({ node, text, x, y }));
+      }
+
+      if (showGenusLabels) {
+        const blocks = cache.genusBlocksPriority[order];
+        const baseFontSize = Math.max(10, Math.min(16, camera.scaleY * 0.38));
+        const outboardMinX = Number.isFinite(tipLabelRightEdge) ? tipLabelRightEdge + 22 : Number.NEGATIVE_INFINITY;
+        const offsetPx = 10;
+        const pullAway = clamp01((camera.scaleY - 2.4) / 4.6);
+        ctx.fillStyle = GENUS_COLOR;
+        ctx.strokeStyle = GENUS_COLOR;
+        ctx.lineWidth = 1;
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        const maxGenusLabels = Math.max(10, Math.ceil(size.height / Math.max(24, baseFontSize * 1.85)) + 6);
+        const placedLabels: ScreenLabel[] = [];
+        const connectorBlocks: Array<{ x: number; y1: number; y2: number }> = [];
+        for (let index = 0; index < blocks.length; index += 1) {
+          if (placedLabels.length >= maxGenusLabels) {
+            break;
           }
+          const block = blocks[index];
+          const y1 = layout.center[block.firstNode];
+          const y2 = layout.center[block.lastNode];
+          if (y2 < minY - 2 || y1 > maxY + 2) {
+            continue;
+          }
+          const spanPx = Math.abs(y2 - y1) * camera.scaleY;
+          const localX = worldToScreenRect(camera, block.maxDepth, 0).x + offsetPx;
+          const outboardX = Number.isFinite(outboardMinX) ? Math.max(localX, outboardMinX) : localX;
+          const x = localX + ((outboardX - localX) * pullAway);
+          if (x < -80 || x > size.width + 160) {
+            continue;
+          }
+          const screenStart = worldToScreenRect(camera, block.maxDepth, y1);
+          const screenEnd = worldToScreenRect(camera, block.maxDepth, y2);
+          const labelY = (screenStart.y + screenEnd.y) * 0.5;
+          const fontSize = Math.max(baseFontSize, Math.min(22, baseFontSize + (spanPx * 0.08)));
+          if (!canPlaceLinearLabel(
+            placedLabels,
+            x + 7,
+            labelY,
+            fontSize * 0.9,
+            Math.max(24, fontSize * 1.75),
+          )) {
+            continue;
+          }
+          placedLabels.push({
+            x: x + 7,
+            y: labelY,
+            text: block.label,
+            alpha: 1,
+            fontSize,
+          });
+          connectorBlocks.push({
+            x,
+            y1: screenStart.y,
+            y2: screenEnd.y,
+          });
+        }
+        if (connectorBlocks.length > 0) {
+          ctx.beginPath();
+          for (let index = 0; index < connectorBlocks.length; index += 1) {
+            const block = connectorBlocks[index];
+            ctx.moveTo(block.x, block.y1);
+            ctx.lineTo(block.x, block.y2);
+          }
+          ctx.globalAlpha = 0.82;
+          ctx.globalAlpha = 1;
+          ctx.stroke();
+        }
+        for (let index = 0; index < placedLabels.length; index += 1) {
+          const label = placedLabels[index];
+          ctx.font = `${label.fontSize ?? baseFontSize}px ${LABEL_FONT}`;
+          ctx.fillText(label.text, label.x, label.y);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      if (visibleTipLabels.length > 0) {
+        for (let index = 0; index < visibleTipLabels.length; index += 1) {
+          const label = visibleTipLabels[index];
+          ctx.fillText(label.text, label.x, label.y);
+          const width = ctx.measureText(label.text).width;
+          labelHitsRef.current.push({
+            node: label.node,
+            kind: "rect",
+            x: label.x,
+            y: label.y - (tipFontSize * 0.55),
+            width,
+            height: tipFontSize * 1.1,
+          });
         }
       }
 
-      if (tree.isUltrametric) {
+      if (showNodeHeightLabels && camera.scaleY > 3.2 && camera.scaleX > 4) {
+        const fontSize = Math.max(9, Math.min(13, Math.min(camera.scaleY * 0.34, camera.scaleX * 0.25)));
+        const labels: ScreenLabel[] = [];
+        ctx.font = `${fontSize}px ${LABEL_FONT}`;
+        ctx.fillStyle = "#64748b";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (tree.buffers.firstChild[node] < 0) {
+            continue;
+          }
+          const x = tree.buffers.depth[node];
+          const y = layout.center[node];
+          if (x < minX || x > maxX || y < minY || y > maxY) {
+            continue;
+          }
+          const screen = worldToScreenRect(camera, x, y);
+          const labelY = screen.y - 5;
+          if (!canPlaceLinearLabel(labels, screen.x, labelY, fontSize * 1.7, fontSize * 4.8)) {
+            continue;
+          }
+          labels.push({
+            x: screen.x,
+            y: labelY,
+            text: formatAgeNumber(nodeHeightValue(tree, node)),
+            alpha: 0.78,
+          });
+        }
+        for (let index = 0; index < labels.length; index += 1) {
+          const label = labels[index];
+          ctx.globalAlpha = label.alpha;
+          ctx.fillText(label.text, label.x, label.y);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      if (tree.isUltrametric && showScaleBars) {
         ctx.fillStyle = "rgba(251,252,254,0.96)";
         ctx.fillRect(0, size.height - axisBarHeight, size.width, axisBarHeight);
         const axisY = size.height - 28;
@@ -730,6 +1016,28 @@ export default function TreeCanvas({
       const visibleRadius = Math.max(1e-9, Math.min(size.width, size.height) / (2 * camera.scale));
       const stripeLevels = buildStripeLevels(visibleRadius, camera.scale);
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
+      const centerPoint = worldToScreenCircular(camera, 0, 0);
+      const fullyVisibleRadiusPx = Math.min(
+        centerPoint.x,
+        size.width - centerPoint.x,
+        centerPoint.y,
+        size.height - centerPoint.y,
+      );
+      const visibleCircleFraction = tree.isUltrametric
+        ? fullyVisibleRadiusPx / Math.max(1e-9, tree.rootAge * camera.scale)
+        : 0;
+      const showCentralTimeLabels = tree.isUltrametric && showScaleBars && visibleCircleFraction >= 0.72;
+      const circularScaleBar = tree.isUltrametric && showScaleBars && !showCentralTimeLabels
+        ? buildCircularScaleBar(
+          centerPoint.x,
+          centerPoint.y,
+          size.width,
+          size.height,
+          stripeBoundaries,
+          tree.rootAge,
+          camera.scale,
+        )
+        : null;
 
       if (showTimeStripes) {
         const center = { x: camera.translateX, y: camera.translateY };
@@ -753,94 +1061,6 @@ export default function TreeCanvas({
         };
         for (let index = 0; index < stripeLevels.length; index += 1) {
           drawBands(stripeLevels[index].step, index === 0 ? 1 : stripeLevels[index].alpha * 0.82);
-        }
-      }
-
-      if (tree.isUltrametric) {
-        const centerPoint = worldToScreenCircular(camera, 0, 0);
-        const fullyVisibleRadiusPx = Math.min(
-          centerPoint.x,
-          size.width - centerPoint.x,
-          centerPoint.y,
-          size.height - centerPoint.y,
-        );
-        const fullCircleVisible = fullyVisibleRadiusPx >= (tree.rootAge * camera.scale * 0.88);
-        ctx.fillStyle = "#6b7280";
-        ctx.font = `11px ${LABEL_FONT}`;
-        ctx.textBaseline = "middle";
-        if (fullCircleVisible) {
-          const labelTheta = (order === "desc" ? Math.PI : 0) + (Math.PI / 36);
-          ctx.textAlign = Math.cos(labelTheta) >= 0 ? "left" : "right";
-          for (let index = 0; index < stripeBoundaries.length; index += 1) {
-            const boundary = stripeBoundaries[index];
-            const radius = Math.max(0, tree.rootAge - boundary.value) + (10 / camera.scale);
-            const point = polarToCartesian(radius, labelTheta);
-            const screen = worldToScreenCircular(camera, point.x, point.y);
-            ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
-            ctx.fillText(`${formatAgeNumber(boundary.value)} mya`, screen.x, screen.y);
-          }
-          ctx.globalAlpha = 1;
-        } else {
-          const scaleBar = buildCircularScaleBar(
-            centerPoint.x,
-            centerPoint.y,
-            size.width,
-            size.height,
-            stripeBoundaries,
-            tree.rootAge,
-            camera.scale,
-          );
-          if (scaleBar) {
-            ctx.strokeStyle = "#6b7280";
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            if (scaleBar.kind === "bottom") {
-              ctx.moveTo(24, scaleBar.axisPosition);
-              ctx.lineTo(size.width - 24, scaleBar.axisPosition);
-              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
-                const tick = scaleBar.ticks[index];
-                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
-                ctx.moveTo(tick.position, scaleBar.axisPosition);
-                ctx.lineTo(tick.position, scaleBar.axisPosition + (4 + (3 * tick.boundary.alpha)));
-              }
-              ctx.globalAlpha = 1;
-              ctx.stroke();
-              ctx.textAlign = "center";
-              ctx.textBaseline = "top";
-              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
-                const tick = scaleBar.ticks[index];
-                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
-                ctx.fillText(
-                  `${formatAgeNumber(tick.boundary.value)} mya`,
-                  tick.position,
-                  scaleBar.axisPosition + 8,
-                );
-              }
-              ctx.globalAlpha = 1;
-            } else {
-              ctx.moveTo(scaleBar.axisPosition, 24);
-              ctx.lineTo(scaleBar.axisPosition, size.height - 24);
-              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
-                const tick = scaleBar.ticks[index];
-                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
-                ctx.moveTo(scaleBar.axisPosition, tick.position);
-                ctx.lineTo(scaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position);
-              }
-              ctx.globalAlpha = 1;
-              ctx.stroke();
-              ctx.textAlign = "center";
-              ctx.textBaseline = "bottom";
-              for (let index = 0; index < scaleBar.ticks.length; index += 1) {
-                const tick = scaleBar.ticks[index];
-                ctx.save();
-                ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
-                ctx.translate(scaleBar.axisPosition - 8, tick.position);
-                ctx.rotate(-Math.PI / 2);
-                ctx.fillText(`${formatAgeNumber(tick.boundary.value)} mya`, 0, 0);
-                ctx.restore();
-              }
-            }
-          }
         }
       }
 
@@ -914,14 +1134,102 @@ export default function TreeCanvas({
       }
 
       const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree.leafCount));
-      if (angularSpacingPx > 7) {
-        const fontSize = Math.max(9, Math.min(20, angularSpacingPx * 0.85));
+      const tipLabelsVisible = angularSpacingPx > 7;
+      const tipFontSize = Math.max(9, Math.min(20, angularSpacingPx * 0.85));
+      const tipLabelRadius = maxRadius + (20 / camera.scale);
+      let circularGenusLabels: ScreenLabel[] = [];
+      let circularGenusArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number }> = [];
+      let circularGenusBaseFontSize = 0;
+      if (showGenusLabels) {
+        const blocks = cache.genusBlocksPriority[order];
+        const baseFontSize = Math.max(9, Math.min(16, Math.max(angularSpacingPx * 0.85, 9)));
+        const arcOffsetWorld = 12 / camera.scale;
+        const pullAway = tipLabelsVisible ? 1 : clamp01((angularSpacingPx - 2.8) / 4.4);
+        const localLineRadius = arcOffsetWorld;
+        const tipOuterRadius = tipLabelRadius + ((tipFontSize * 1.15 + 10) / camera.scale);
+        const outboardLineRadius = tipOuterRadius + ((baseFontSize * 1.4 + 28) / camera.scale);
+        const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
+        const outboardLabelRadius = outboardLineRadius + ((baseFontSize * 1.6 + 20) / camera.scale);
+        ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
+        ctx.fillStyle = GENUS_COLOR;
+        ctx.strokeStyle = GENUS_COLOR;
+        ctx.lineWidth = 1.1;
+        ctx.textBaseline = "middle";
+        const maxGenusLabels = Math.max(
+          10,
+          Math.ceil((Math.PI * Math.min(size.width, size.height)) / Math.max(40, baseFontSize * 3.2)),
+        );
+        const placedLabels: ScreenLabel[] = [];
+        const connectorArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number }> = [];
+        for (let index = 0; index < blocks.length; index += 1) {
+          if (placedLabels.length >= maxGenusLabels) {
+            break;
+          }
+          const block = blocks[index];
+          const startTheta = thetaFor(layout.center, block.firstNode, tree.leafCount);
+          const endTheta = thetaFor(layout.center, block.lastNode, tree.leafCount);
+          const midTheta = thetaFor(layout.center, block.centerNode, tree.leafCount);
+          let angularSpan = endTheta - startTheta;
+          if (angularSpan < 0) {
+            angularSpan += Math.PI * 2;
+          }
+          const localAbsLineRadius = block.maxDepth + localLineRadius;
+          const localAbsLabelRadius = block.maxDepth + localLabelRadius;
+          const lineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
+          const labelRadius = (localAbsLabelRadius * (1 - pullAway)) + (outboardLabelRadius * pullAway);
+          const lineRadiusPx = lineRadius * camera.scale;
+          const arcLengthPx = lineRadiusPx * angularSpan;
+          const fontSize = Math.max(baseFontSize, Math.min(22, baseFontSize + (arcLengthPx * 0.018)));
+          const labelPoint = worldToScreenCircular(
+            camera,
+            Math.cos(midTheta) * labelRadius,
+            Math.sin(midTheta) * labelRadius,
+          );
+          if (
+            labelPoint.x < -160 || labelPoint.x > size.width + 160 ||
+            labelPoint.y < -160 || labelPoint.y > size.height + 160
+          ) {
+            continue;
+          }
+          const deg = midTheta * 180 / Math.PI;
+          const onRightSide = Math.cos(midTheta) >= 0;
+          const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
+          if (!canPlaceLinearLabel(
+            placedLabels,
+            labelPoint.x,
+            labelPoint.y,
+            fontSize * 0.9,
+            fontSize * 3.5,
+          )) {
+            continue;
+          }
+          placedLabels.push({
+            x: labelPoint.x,
+            y: labelPoint.y,
+            text: block.label,
+            alpha: 1,
+            fontSize,
+            rotation: rotation * Math.PI / 180,
+            align: onRightSide ? "left" : "right",
+          });
+          connectorArcs.push({
+            lineRadiusPx,
+            startTheta,
+            endTheta,
+          });
+        }
+        circularGenusLabels = placedLabels;
+        circularGenusArcs = connectorArcs;
+        circularGenusBaseFontSize = baseFontSize;
+      }
+      if (tipLabelsVisible) {
+        const fontSize = tipFontSize;
         ctx.font = `${fontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
         const labelRadius = maxRadius + (20 / camera.scale);
         const visibilityMargin = 140;
-        const visibleLabels: Array<{ node: number; theta: number; x: number; y: number }> = [];
+        const visibleLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
         for (let index = 0; index < tree.leafNodes.length; index += 1) {
           const node = tree.leafNodes[index];
           const theta = thetaFor(layout.center, node, tree.leafCount);
@@ -935,30 +1243,191 @@ export default function TreeCanvas({
           ) {
             continue;
           }
-          visibleLabels.push({ node, theta, x: screen.x, y: screen.y });
+          const text = tree.names[node] || `tip-${node}`;
+          const width = ctx.measureText(text).width;
+          visibleLabels.push({ node, theta, x: screen.x, y: screen.y, text, width });
         }
 
         const maxVisibleLabels = 3200;
-        if (visibleLabels.length > maxVisibleLabels) {
-          return;
+        if (visibleLabels.length <= maxVisibleLabels) {
+          for (let index = 0; index < visibleLabels.length; index += 1) {
+            const label = visibleLabels[index];
+            const { node, theta, x, y } = label;
+            const deg = theta * 180 / Math.PI;
+            const onRightSide = Math.cos(theta) >= 0;
+            const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation * Math.PI / 180);
+            ctx.textAlign = onRightSide ? "left" : "right";
+            ctx.fillText(label.text, 0, 0);
+            ctx.restore();
+            labelHitsRef.current.push({
+              node,
+              kind: "rotated",
+              x,
+              y,
+              width: label.width,
+              height: fontSize * 1.15,
+              rotation: rotation * Math.PI / 180,
+              align: onRightSide ? "left" : "right",
+            });
+          }
         }
+      }
+      if (circularGenusArcs.length > 0) {
+        ctx.strokeStyle = GENUS_COLOR;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        for (let index = 0; index < circularGenusArcs.length; index += 1) {
+          const arc = circularGenusArcs[index];
+          ctx.moveTo(
+            centerPoint.x + Math.cos(arc.startTheta) * arc.lineRadiusPx,
+            centerPoint.y + Math.sin(arc.startTheta) * arc.lineRadiusPx,
+          );
+          ctx.arc(centerPoint.x, centerPoint.y, arc.lineRadiusPx, arc.startTheta, arc.endTheta, false);
+        }
+        ctx.globalAlpha = 0.82;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      for (let index = 0; index < circularGenusLabels.length; index += 1) {
+        const label = circularGenusLabels[index];
+        ctx.font = `${label.fontSize ?? circularGenusBaseFontSize}px ${LABEL_FONT}`;
+        ctx.fillStyle = GENUS_COLOR;
+        ctx.save();
+        ctx.translate(label.x, label.y);
+        ctx.rotate(label.rotation ?? 0);
+        ctx.textAlign = label.align ?? "left";
+        ctx.fillText(label.text, 0, 0);
+        ctx.restore();
+      }
 
-        for (let index = 0; index < visibleLabels.length; index += 1) {
-          const label = visibleLabels[index];
-          const { node, theta, x, y } = label;
+      if (showNodeHeightLabels && camera.scale > 12) {
+        const fontSize = Math.max(8, Math.min(12, camera.scale * 0.045));
+        const labels: ScreenLabel[] = [];
+        ctx.font = `${fontSize}px ${LABEL_FONT}`;
+        ctx.fillStyle = "#64748b";
+        ctx.textBaseline = "middle";
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (tree.buffers.firstChild[node] < 0) {
+            continue;
+          }
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const radius = tree.buffers.depth[node] + (10 / camera.scale);
+          const point = polarToCartesian(radius, theta);
+          const screen = worldToScreenCircular(camera, point.x, point.y);
+          if (
+            screen.x < -40 || screen.x > size.width + 40 ||
+            screen.y < -40 || screen.y > size.height + 40
+          ) {
+            continue;
+          }
+          if (!canPlaceLinearLabel(labels, screen.x, screen.y, fontSize * 2.1, fontSize * 5.5)) {
+            continue;
+          }
           const deg = theta * 180 / Math.PI;
           const onRightSide = Math.cos(theta) >= 0;
-          const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
+          labels.push({
+            x: screen.x,
+            y: screen.y,
+            text: formatAgeNumber(nodeHeightValue(tree, node)),
+            alpha: 0.76,
+            rotation: normalizeRotation(onRightSide ? deg : deg + 180) * Math.PI / 180,
+            align: onRightSide ? "left" : "right",
+          });
+        }
+        for (let index = 0; index < labels.length; index += 1) {
+          const label = labels[index];
+          ctx.globalAlpha = label.alpha;
           ctx.save();
-          ctx.translate(x, y);
-          ctx.rotate(rotation * Math.PI / 180);
-          ctx.textAlign = onRightSide ? "left" : "right";
-          ctx.fillText(tree.names[node] || `tip-${node}`, 0, 0);
+          ctx.translate(label.x, label.y);
+          ctx.rotate(label.rotation ?? 0);
+          ctx.textAlign = label.align ?? "left";
+          ctx.fillText(label.text, 0, 0);
           ctx.restore();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      if (tree.isUltrametric && showScaleBars) {
+        ctx.fillStyle = "#6b7280";
+        ctx.font = `11px ${LABEL_FONT}`;
+        ctx.textBaseline = "middle";
+        if (showCentralTimeLabels) {
+          const labelTheta = (order === "desc" ? Math.PI : 0) + (Math.PI / 36);
+          ctx.textAlign = Math.cos(labelTheta) >= 0 ? "left" : "right";
+          for (let index = 0; index < stripeBoundaries.length; index += 1) {
+            const boundary = stripeBoundaries[index];
+            const radius = Math.max(0, tree.rootAge - boundary.value) + (10 / camera.scale);
+            const point = polarToCartesian(radius, labelTheta);
+            const screen = worldToScreenCircular(camera, point.x, point.y);
+            ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
+            ctx.fillText(`${formatAgeNumber(boundary.value)} mya`, screen.x, screen.y);
+          }
+          ctx.globalAlpha = 1;
+        } else if (circularScaleBar) {
+          ctx.fillStyle = "rgba(251,252,254,0.97)";
+          if (circularScaleBar.kind === "bottom") {
+            ctx.fillRect(0, Math.max(0, circularScaleBar.axisPosition - 12), size.width, size.height);
+          } else {
+            ctx.fillRect(0, 0, circularScaleBar.axisPosition + 16, size.height);
+          }
+
+          ctx.strokeStyle = "#6b7280";
+          ctx.fillStyle = "#6b7280";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          if (circularScaleBar.kind === "bottom") {
+            ctx.moveTo(24, circularScaleBar.axisPosition);
+            ctx.lineTo(size.width - 24, circularScaleBar.axisPosition);
+            for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
+              const tick = circularScaleBar.ticks[index];
+              ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+              ctx.moveTo(tick.position, circularScaleBar.axisPosition);
+              ctx.lineTo(tick.position, circularScaleBar.axisPosition + (4 + (3 * tick.boundary.alpha)));
+            }
+            ctx.globalAlpha = 1;
+            ctx.stroke();
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
+              const tick = circularScaleBar.ticks[index];
+              ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+              ctx.fillText(
+                `${formatAgeNumber(tick.boundary.value)} mya`,
+                tick.position,
+                circularScaleBar.axisPosition + 8,
+              );
+            }
+            ctx.globalAlpha = 1;
+          } else {
+            ctx.moveTo(circularScaleBar.axisPosition, 24);
+            ctx.lineTo(circularScaleBar.axisPosition, size.height - 24);
+            for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
+              const tick = circularScaleBar.ticks[index];
+              ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+              ctx.moveTo(circularScaleBar.axisPosition, tick.position);
+              ctx.lineTo(circularScaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position);
+            }
+            ctx.globalAlpha = 1;
+            ctx.stroke();
+            ctx.textAlign = "center";
+            ctx.textBaseline = "bottom";
+            for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
+              const tick = circularScaleBar.ticks[index];
+              ctx.save();
+              ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
+              ctx.translate(circularScaleBar.axisPosition - 8, tick.position);
+              ctx.rotate(-Math.PI / 2);
+              ctx.fillText(`${formatAgeNumber(tick.boundary.value)} mya`, 0, 0);
+              ctx.restore();
+            }
+          }
         }
       }
     }
-  }, [cache, fitCamera, order, showTimeStripes, size.height, size.width, tree, viewMode]);
+  }, [cache, fitCamera, order, showGenusLabels, showNodeHeightLabels, showScaleBars, showTimeStripes, size.height, size.width, tree, viewMode]);
 
   useEffect(() => {
     draw();
@@ -980,6 +1449,40 @@ export default function TreeCanvas({
       const localY = event.clientY - rect.top;
       let hover: HoverInfo | null = null;
 
+      for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
+        const hitbox = labelHitsRef.current[index];
+        if (!pointInLabelHitbox(localX, localY, hitbox)) {
+          continue;
+        }
+        const node = hitbox.node;
+        const parent = tree.buffers.parent[node];
+        hover = {
+          node,
+          branchLength: tree.buffers.branchLength[node],
+          parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
+          parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+          childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
+          name: displayNodeName(tree, node),
+          screenX: localX,
+          screenY: localY,
+        };
+        break;
+      }
+
+      if (hover) {
+        const prev = hoverRef.current;
+        if (!prev || prev.node !== hover.node || prev.name !== hover.name) {
+          hoverRef.current = hover;
+          setOverlayHover(hover);
+          onHoverChange(hover);
+          draw();
+        } else if (prev.screenX !== hover.screenX || prev.screenY !== hover.screenY) {
+          hoverRef.current = hover;
+          setOverlayHover(hover);
+        }
+        return;
+      }
+
       if (camera.kind === "rect") {
         const world = screenToWorldRect(camera, localX, localY);
         const radiusX = 6 / camera.scaleX;
@@ -988,10 +1491,12 @@ export default function TreeCanvas({
         let bestDistance = Number.POSITIVE_INFINITY;
         for (let index = 0; index < candidates.length; index += 1) {
           const segment = candidates[index];
-          const distance = distanceToSegmentSquared(world.x, world.y, segment.x1, segment.y1, segment.x2, segment.y2);
+          const start = worldToScreenRect(camera, segment.x1, segment.y1);
+          const end = worldToScreenRect(camera, segment.x2, segment.y2);
+          const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
           if (distance < bestDistance) {
             bestDistance = distance;
-            const threshold = radiusX * radiusX + radiusY * radiusY;
+            const threshold = 16;
             if (distance <= threshold) {
               const node = segment.node;
               const parent = tree.buffers.parent[node];
@@ -1000,6 +1505,7 @@ export default function TreeCanvas({
                 branchLength: tree.buffers.branchLength[node],
                 parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
                 parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+                childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
                 name: displayNodeName(tree, node),
                 screenX: localX,
                 screenY: localY,
@@ -1014,20 +1520,23 @@ export default function TreeCanvas({
         let bestDistance = Number.POSITIVE_INFINITY;
         for (let index = 0; index < candidates.length; index += 1) {
           const segment = candidates[index];
-          const distance = distanceToSegmentSquared(world.x, world.y, segment.x1, segment.y1, segment.x2, segment.y2);
-          if (distance < bestDistance && distance <= radius * radius) {
+          const start = worldToScreenCircular(camera, segment.x1, segment.y1);
+          const end = worldToScreenCircular(camera, segment.x2, segment.y2);
+          const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
+          if (distance < bestDistance && distance <= 16) {
             bestDistance = distance;
             const node = segment.node;
             const parent = tree.buffers.parent[node];
-              hover = {
-                node,
-                branchLength: tree.buffers.branchLength[node],
-                parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-                parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
-                name: displayNodeName(tree, node),
-                screenX: localX,
-                screenY: localY,
-              };
+            hover = {
+              node,
+              branchLength: tree.buffers.branchLength[node],
+              parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
+              parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+              childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
+              name: displayNodeName(tree, node),
+              screenX: localX,
+              screenY: localY,
+            };
           }
         }
       }
@@ -1157,6 +1666,9 @@ export default function TreeCanvas({
           <div>Branch: {overlayHover.branchLength.toPrecision(5)}</div>
           <div>
             Parent age: {overlayHover.parentAge === null ? "n/a" : overlayHover.parentAge.toPrecision(5)}
+          </div>
+          <div>
+            Child age: {overlayHover.childAge === null ? "n/a" : overlayHover.childAge.toPrecision(5)}
           </div>
         </div>
       ) : null}

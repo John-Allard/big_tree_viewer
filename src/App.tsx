@@ -42,6 +42,9 @@ export default function App() {
   const [order, setOrder] = useState<LayoutOrder>("input");
   const [zoomAxisMode, setZoomAxisMode] = useState<ZoomAxisMode>("both");
   const [showTimeStripes, setShowTimeStripes] = useState(true);
+  const [showScaleBars, setShowScaleBars] = useState(true);
+  const [showGenusLabels, setShowGenusLabels] = useState(true);
+  const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
   const [fitRequest, setFitRequest] = useState(0);
   const handleHoverChange = useCallback(() => {}, []);
 
@@ -262,7 +265,40 @@ export default function App() {
               Pin X
             </button>
           </div>
-          <div className="checkbox-row">
+          <div className="button-row">
+            <button type="button" className="secondary" onClick={() => setFitRequest((value) => value + 1)}>
+              Fit View
+            </button>
+          </div>
+        </section>
+
+        <section className="panel-section">
+          <h2>Visual Options</h2>
+          <div className="option-list">
+            <label>
+              <input
+                type="checkbox"
+                checked={showGenusLabels}
+                onChange={(event) => setShowGenusLabels(event.target.checked)}
+              />
+              Show genus labels
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showNodeHeightLabels}
+                onChange={(event) => setShowNodeHeightLabels(event.target.checked)}
+              />
+              Show node height labels
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showScaleBars}
+                onChange={(event) => setShowScaleBars(event.target.checked)}
+              />
+              Show scale bars
+            </label>
             <label>
               <input
                 type="checkbox"
@@ -271,11 +307,6 @@ export default function App() {
               />
               Show time stripes
             </label>
-          </div>
-          <div className="button-row">
-            <button type="button" className="secondary" onClick={() => setFitRequest((value) => value + 1)}>
-              Fit View
-            </button>
           </div>
         </section>
 
@@ -309,6 +340,9 @@ export default function App() {
           viewMode={viewMode}
           zoomAxisMode={viewMode === "circular" ? "both" : zoomAxisMode}
           showTimeStripes={showTimeStripes}
+          showScaleBars={showScaleBars}
+          showGenusLabels={showGenusLabels}
+          showNodeHeightLabels={showNodeHeightLabels}
           fitRequest={fitRequest}
           onHoverChange={handleHoverChange}
         />

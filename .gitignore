@@ -3,6 +3,8 @@ dist/
 .DS_Store
 *.log
 *.nwk
+!backbone_hang_supertree.nwk
+!public/example-tree.nwk
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
