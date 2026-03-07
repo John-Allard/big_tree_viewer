@@ -110,6 +110,8 @@ button.secondary {
 .segmented button {
   background: #ffffff;
   color: #0f172a;
+  padding-top: 0.78rem;
+  padding-bottom: 0.78rem;
 }
 
 .segmented button.active {

@@ -952,7 +952,7 @@ export default function TreeCanvas({
         ctx.lineWidth = 1;
         ctx.textBaseline = "middle";
         ctx.textAlign = "left";
-        const maxGenusLabels = Math.max(10, Math.ceil(size.height / Math.max(24, baseFontSize * 1.85)) + 6);
+        const maxGenusLabels = Math.max(18, Math.ceil(size.height / 18));
         const placedLabels: ScreenLabel[] = [];
         const connectorBlocks: Array<{ x: number; y1: number; y2: number }> = [];
         const placedCenters = new Set<number>();
@@ -1325,8 +1325,8 @@ export default function TreeCanvas({
         ctx.lineWidth = 1.1;
         ctx.textBaseline = "middle";
         const maxGenusLabels = Math.max(
-          10,
-          Math.ceil((Math.PI * Math.min(size.width, size.height)) / Math.max(40, baseFontSize * 3.2)),
+          18,
+          Math.ceil((Math.PI * Math.min(size.width, size.height)) / 34),
         );
         const placedLabels: ScreenLabel[] = [];
         const connectorArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number }> = [];
