@@ -1054,6 +1054,8 @@ export default function TreeCanvas({
 
       if (showNodeHeightLabels && camera.scaleX > 1.2) {
         const labels: ScreenLabel[] = [];
+        const fontSize = Math.max(9, Math.min(13, Math.min(camera.scaleY * 0.34, camera.scaleX * 0.25)));
+        ctx.font = `${fontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#64748b";
         ctx.textAlign = "center";
         ctx.textBaseline = "bottom";
@@ -1074,14 +1076,9 @@ export default function TreeCanvas({
           if (camera.scaleY <= 3.2 && subtreeSpanPx < 10 && branchSpanPx < 14) {
             continue;
           }
-          const fontSize = Math.max(
-            8,
-            Math.min(13, Math.max(camera.scaleX * 0.18, 8 + (subtreeSpanPx * 0.025), 8 + (branchSpanPx * 0.04))),
-          );
-          ctx.font = `${fontSize}px ${LABEL_FONT}`;
           const screen = worldToScreenRect(camera, x, y);
           const labelY = screen.y - 5;
-          if (!canPlaceLinearLabel(labels, screen.x, labelY, fontSize * 1.45, fontSize * 3.9)) {
+          if (!canPlaceLinearLabel(labels, screen.x, labelY, fontSize * 1.7, fontSize * 4.8)) {
             continue;
           }
           labels.push({
