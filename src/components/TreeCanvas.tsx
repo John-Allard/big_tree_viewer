@@ -454,6 +454,123 @@ function arcAnglesWithinSpan(
   };
 }
 
+function angleOffsetWithinSpan(angle: number, arcStart: number, arcLength: number): number | null {
+  const offset = wrapPositive(angle - arcStart);
+  const tolerance = 1e-6;
+  if (offset <= arcLength + tolerance) {
+    return Math.min(offset, arcLength);
+  }
+  return null;
+}
+
+function arcSubspanWithinSpan(
+  angleA: number,
+  angleB: number,
+  arcStart: number,
+  arcLength: number,
+): { start: number; end: number; length: number } | null {
+  const offsetA = angleOffsetWithinSpan(angleA, arcStart, arcLength);
+  const offsetB = angleOffsetWithinSpan(angleB, arcStart, arcLength);
+  if (offsetA === null || offsetB === null) {
+    return null;
+  }
+  const start = Math.min(offsetA, offsetB);
+  const end = Math.max(offsetA, offsetB);
+  return {
+    start: arcStart + start,
+    end: arcStart + end,
+    length: end - start,
+  };
+}
+
+function pickRectConnectorChild(
+  children: number[],
+  center: Float64Array,
+  parentCenterY: number,
+  hoverY: number,
+): number | null {
+  let bestChild: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const hoverDirection = Math.sign(hoverY - parentCenterY);
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    const childCenterY = center[child];
+    const childDirection = Math.sign(childCenterY - parentCenterY);
+    if (hoverDirection !== 0 && childDirection !== 0 && childDirection !== hoverDirection) {
+      continue;
+    }
+    const distance = Math.abs(childCenterY - hoverY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestChild = child;
+    }
+  }
+  if (bestChild !== null) {
+    return bestChild;
+  }
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    const distance = Math.abs(center[child] - hoverY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestChild = child;
+    }
+  }
+  return bestChild;
+}
+
+function pickCircularConnectorChild(
+  children: number[],
+  center: Float64Array,
+  hoverTheta: number,
+  ownerTheta: number,
+  leafCount: number,
+  arcStart: number,
+  arcLength: number,
+): number | null {
+  const ownerOffset = angleOffsetWithinSpan(ownerTheta, arcStart, arcLength);
+  const hoverOffset = angleOffsetWithinSpan(hoverTheta, arcStart, arcLength);
+  if (ownerOffset === null || hoverOffset === null) {
+    return null;
+  }
+  let bestChild: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    const childTheta = thetaFor(center, child, leafCount);
+    const childOffset = angleOffsetWithinSpan(childTheta, arcStart, arcLength);
+    if (childOffset === null) {
+      continue;
+    }
+    const childDirection = Math.sign(childOffset - ownerOffset);
+    const hoverDirection = Math.sign(hoverOffset - ownerOffset);
+    if (hoverDirection !== 0 && childDirection !== 0 && childDirection !== hoverDirection) {
+      continue;
+    }
+    const distance = Math.abs(childOffset - hoverOffset);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestChild = child;
+    }
+  }
+  if (bestChild !== null) {
+    return bestChild;
+  }
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    const childOffset = angleOffsetWithinSpan(thetaFor(center, child, leafCount), arcStart, arcLength);
+    if (childOffset === null) {
+      continue;
+    }
+    const distance = Math.abs(childOffset - hoverOffset);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestChild = child;
+    }
+  }
+  return bestChild;
+}
+
 function appendCircularArcSegments(
   segments: IndexedSegment[],
   node: number,
@@ -897,14 +1014,31 @@ export default function TreeCanvas({
           ctx.lineWidth = 2;
           ctx.beginPath();
           if (hover.targetKind === "connector" && children[hover.node].length >= 2) {
-            const connectorStart = worldToScreenRect(camera, tree.buffers.depth[hover.node], layout.center[children[hover.node][0]]);
-            const connectorEnd = worldToScreenRect(
-              camera,
-              tree.buffers.depth[hover.node],
-              layout.center[children[hover.node][children[hover.node].length - 1]],
-            );
-            ctx.moveTo(connectorStart.x, connectorStart.y);
-            ctx.lineTo(connectorEnd.x, connectorEnd.y);
+            const hoverWorld = screenToWorldRect(camera, hover.screenX, hover.screenY);
+            const ownerY = layout.center[hover.node];
+            const child = pickRectConnectorChild(children[hover.node], layout.center, ownerY, hoverWorld.y);
+            if (child !== null) {
+              const childY = layout.center[child];
+              const connectorSpanPx = Math.abs(childY - ownerY) * camera.scaleY;
+              if (connectorSpanPx >= 1) {
+                const connectorStart = worldToScreenRect(
+                  camera,
+                  tree.buffers.depth[hover.node],
+                  Math.min(ownerY, childY),
+                );
+                const connectorEnd = worldToScreenRect(
+                  camera,
+                  tree.buffers.depth[hover.node],
+                  Math.max(ownerY, childY),
+                );
+                ctx.moveTo(connectorStart.x, connectorStart.y);
+                ctx.lineTo(connectorEnd.x, connectorEnd.y);
+              }
+              const start = worldToScreenRect(camera, tree.buffers.depth[hover.node], childY);
+              const end = worldToScreenRect(camera, tree.buffers.depth[child], childY);
+              ctx.moveTo(start.x, start.y);
+              ctx.lineTo(end.x, end.y);
+            }
           } else {
             const parentY = layout.center[parent];
             const childY = layout.center[hover.node];
@@ -914,12 +1048,11 @@ export default function TreeCanvas({
               ctx.moveTo(connectorStart.x, connectorStart.y);
               ctx.lineTo(connectorEnd.x, connectorEnd.y);
             }
+            const start = worldToScreenRect(camera, tree.buffers.depth[parent], childY);
+            const end = worldToScreenRect(camera, tree.buffers.depth[hover.node], childY);
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
           }
-          const childY = layout.center[hover.node];
-          const start = worldToScreenRect(camera, tree.buffers.depth[parent], childY);
-          const end = worldToScreenRect(camera, tree.buffers.depth[hover.node], childY);
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
           ctx.stroke();
         }
       }
@@ -1269,34 +1402,65 @@ export default function TreeCanvas({
           ctx.lineWidth = 2;
           ctx.beginPath();
           const childTheta = thetaFor(layout.center, hover.node, tree.leafCount);
-          if (hover.targetKind === "connector" && hover.hoveredSegment) {
-            const connectorStart = worldToScreenCircular(camera, hover.hoveredSegment.x1, hover.hoveredSegment.y1);
-            const connectorEnd = worldToScreenCircular(camera, hover.hoveredSegment.x2, hover.hoveredSegment.y2);
-            ctx.moveTo(connectorStart.x, connectorStart.y);
-            ctx.lineTo(connectorEnd.x, connectorEnd.y);
+          if (hover.targetKind === "connector" && children[hover.node].length >= 2) {
+            const hoverWorld = screenToWorldCircular(camera, hover.screenX, hover.screenY);
+            const hoverTheta = wrapPositive(Math.atan2(hoverWorld.y, hoverWorld.x));
+            const ownerTheta = thetaFor(layout.center, hover.node, tree.leafCount);
+            const ownerArcStart = thetaFor(layout.min, hover.node, tree.leafCount);
+            const ownerArcEnd = thetaFor(layout.max, hover.node, tree.leafCount);
+            const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
+            const child = pickCircularConnectorChild(
+              children[hover.node],
+              layout.center,
+              hoverTheta,
+              ownerTheta,
+              tree.leafCount,
+              ownerArcStart,
+              ownerArcLength,
+            );
+            if (child !== null) {
+              const branchTheta = thetaFor(layout.center, child, tree.leafCount);
+              const arcSpan = arcSubspanWithinSpan(ownerTheta, branchTheta, ownerArcStart, ownerArcLength);
+              const radiusPx = tree.buffers.depth[hover.node] * camera.scale;
+              const connectorSpanPx = (arcSpan?.length ?? 0) * radiusPx;
+              if (arcSpan && radiusPx >= 0.25 && connectorSpanPx >= 1) {
+                ctx.moveTo(
+                  centerPoint.x + Math.cos(arcSpan.start) * radiusPx,
+                  centerPoint.y + Math.sin(arcSpan.start) * radiusPx,
+                );
+                ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcSpan.start, arcSpan.end, false);
+              }
+              const startWorld = polarToCartesian(tree.buffers.depth[hover.node], branchTheta);
+              const endWorld = polarToCartesian(tree.buffers.depth[child], branchTheta);
+              const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+              const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+              ctx.moveTo(start.x, start.y);
+              ctx.lineTo(end.x, end.y);
+            }
           } else {
             const parentTheta = thetaFor(layout.center, parent, tree.leafCount);
             if (Math.abs(childTheta - parentTheta) > 1e-6) {
               const arcStart = thetaFor(layout.min, parent, tree.leafCount);
               const arcEnd = thetaFor(layout.max, parent, tree.leafCount);
               const arcLength = Math.max(0, arcEnd - arcStart);
-              const arcAngles = arcAnglesWithinSpan(parentTheta, childTheta, arcStart, arcLength);
+              const arcSpan = arcSubspanWithinSpan(parentTheta, childTheta, arcStart, arcLength);
               const radiusPx = tree.buffers.depth[parent] * camera.scale;
-              if (radiusPx >= 0.25) {
+              const connectorSpanPx = (arcSpan?.length ?? 0) * radiusPx;
+              if (arcSpan && radiusPx >= 0.25 && connectorSpanPx >= 1) {
                 ctx.moveTo(
-                  centerPoint.x + Math.cos(arcAngles.start) * radiusPx,
-                  centerPoint.y + Math.sin(arcAngles.start) * radiusPx,
+                  centerPoint.x + Math.cos(arcSpan.start) * radiusPx,
+                  centerPoint.y + Math.sin(arcSpan.start) * radiusPx,
                 );
-                ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start, arcAngles.end, false);
+                ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcSpan.start, arcSpan.end, false);
               }
             }
+            const startWorld = polarToCartesian(tree.buffers.depth[parent], childTheta);
+            const endWorld = polarToCartesian(tree.buffers.depth[hover.node], childTheta);
+            const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+            const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
           }
-          const startWorld = polarToCartesian(tree.buffers.depth[parent], childTheta);
-          const endWorld = polarToCartesian(tree.buffers.depth[hover.node], childTheta);
-          const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
-          const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
           ctx.stroke();
         }
       }
