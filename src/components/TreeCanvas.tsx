@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { UniformGridIndex, distanceToSegmentSquared, type IndexedSegment } from "../lib/spatialIndex";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
 
@@ -303,11 +303,16 @@ function buildCircularScaleBar(
   return { kind: "left", axisPosition: leftX, ticks: leftTicks };
 }
 
+function displayLabelText(raw: string, fallback: string): string {
+  const trimmed = raw.trim().replaceAll("_", " ");
+  return trimmed || fallback;
+}
+
 function displayNodeName(tree: TreeModel, node: number): string {
   const raw = (tree.names[node] || "").trim();
   const isLeaf = tree.buffers.firstChild[node] < 0;
   if (isLeaf) {
-    return raw || `tip-${node}`;
+    return displayLabelText(raw, `tip-${node}`);
   }
   if (!raw) {
     return "Internal node";
@@ -315,7 +320,7 @@ function displayNodeName(tree: TreeModel, node: number): string {
   if (/^[+-]?\d+(?:\.\d+)?$/.test(raw)) {
     return "Internal node";
   }
-  return raw;
+  return displayLabelText(raw, "Internal node");
 }
 
 function extractGenusToken(name: string): string | null {
@@ -445,6 +450,33 @@ function arcAnglesWithinSpan(
   };
 }
 
+function appendCircularArcSegments(
+  segments: IndexedSegment[],
+  node: number,
+  radius: number,
+  startTheta: number,
+  endTheta: number,
+): void {
+  if (!(radius > 0)) {
+    return;
+  }
+  const span = Math.abs(endTheta - startTheta);
+  const segmentCount = Math.max(1, Math.min(48, Math.ceil(span / (Math.PI / 32))));
+  let previous = polarToCartesian(radius, startTheta);
+  for (let index = 1; index <= segmentCount; index += 1) {
+    const theta = startTheta + (((endTheta - startTheta) * index) / segmentCount);
+    const next = polarToCartesian(radius, theta);
+    segments.push({
+      node,
+      x1: previous.x,
+      y1: previous.y,
+      x2: next.x,
+      y2: next.y,
+    });
+    previous = next;
+  }
+}
+
 function buildCache(tree: TreeModel): RenderCache {
   const orderedChildren = {
     input: computeOrderedChildren(tree, "input"),
@@ -494,11 +526,22 @@ function buildCache(tree: TreeModel): RenderCache {
 
   for (const order of ["input", "desc", "asc"] as const) {
     const center = tree.layouts[order].center;
+    const layout = tree.layouts[order];
+    const children = orderedChildren[order];
     const rect = rectSegments[order];
     const radial = circularSegments[order];
     for (let node = 0; node < tree.nodeCount; node += 1) {
       const parent = tree.buffers.parent[node];
       if (parent < 0) {
+        if (children[node].length >= 2) {
+          const startTheta = thetaFor(center, children[node][0], tree.leafCount);
+          const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount);
+          const arcStart = thetaFor(layout.min, node, tree.leafCount);
+          const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+          const arcLength = Math.max(0, arcEnd - arcStart);
+          const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+          appendCircularArcSegments(radial, node, tree.buffers.depth[node], arcAngles.start, arcAngles.end);
+        }
         continue;
       }
       const y = center[node];
@@ -509,6 +552,15 @@ function buildCache(tree: TreeModel): RenderCache {
         x2: tree.buffers.depth[node],
         y2: y,
       });
+      if (children[node].length >= 2) {
+        rect.push({
+          node,
+          x1: tree.buffers.depth[node],
+          y1: center[children[node][0]],
+          x2: tree.buffers.depth[node],
+          y2: center[children[node][children[node].length - 1]],
+        });
+      }
 
       const theta = thetaFor(center, node, tree.leafCount);
       const start = polarToCartesian(tree.buffers.depth[parent], theta);
@@ -520,6 +572,15 @@ function buildCache(tree: TreeModel): RenderCache {
         x2: end.x,
         y2: end.y,
       });
+      if (children[node].length >= 2) {
+        const startTheta = thetaFor(center, children[node][0], tree.leafCount);
+        const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount);
+        const arcStart = thetaFor(layout.min, node, tree.leafCount);
+        const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+        const arcLength = Math.max(0, arcEnd - arcStart);
+        const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+        appendCircularArcSegments(radial, node, tree.buffers.depth[node], arcAngles.start, arcAngles.end);
+      }
     }
   }
 
@@ -645,6 +706,11 @@ function estimateLabelWidth(fontSize: number, maxCharacters: number): number {
   return Math.max(fontSize * 1.6, maxCharacters * fontSize * 0.61);
 }
 
+function circularTimeLabelTheta(order: LayoutOrder): number {
+  const offset = Math.PI / 36;
+  return order === "desc" ? -offset : offset;
+}
+
 export default function TreeCanvas({
   tree,
   order,
@@ -708,10 +774,6 @@ export default function TreeCanvas({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    fitCamera();
-  }, [fitRequest, tree, viewMode]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -826,9 +888,16 @@ export default function TreeCanvas({
           ctx.strokeStyle = HOVER_COLOR;
           ctx.lineWidth = 2;
           ctx.beginPath();
-          const y = layout.center[hover.node];
-          const start = worldToScreenRect(camera, tree.buffers.depth[parent], y);
-          const end = worldToScreenRect(camera, tree.buffers.depth[hover.node], y);
+          const parentY = layout.center[parent];
+          const childY = layout.center[hover.node];
+          if (Math.abs(childY - parentY) > 1e-6) {
+            const connectorStart = worldToScreenRect(camera, tree.buffers.depth[parent], Math.min(parentY, childY));
+            const connectorEnd = worldToScreenRect(camera, tree.buffers.depth[parent], Math.max(parentY, childY));
+            ctx.moveTo(connectorStart.x, connectorStart.y);
+            ctx.lineTo(connectorEnd.x, connectorEnd.y);
+          }
+          const start = worldToScreenRect(camera, tree.buffers.depth[parent], childY);
+          const end = worldToScreenRect(camera, tree.buffers.depth[hover.node], childY);
           ctx.moveTo(start.x, start.y);
           ctx.lineTo(end.x, end.y);
           ctx.stroke();
@@ -851,7 +920,7 @@ export default function TreeCanvas({
           if (y < minY - 2 || y > maxY + 2) {
             continue;
           }
-          const text = tree.names[node] || `tip-${node}`;
+          const text = displayLabelText(tree.names[node] || "", `tip-${node}`);
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
           const x = screen.x + 8;
           const width = ctx.measureText(text).width;
@@ -983,10 +1052,8 @@ export default function TreeCanvas({
         }
       }
 
-      if (showNodeHeightLabels && camera.scaleY > 3.2 && camera.scaleX > 4) {
-        const fontSize = Math.max(9, Math.min(13, Math.min(camera.scaleY * 0.34, camera.scaleX * 0.25)));
+      if (showNodeHeightLabels && camera.scaleX > 1.2) {
         const labels: ScreenLabel[] = [];
-        ctx.font = `${fontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#64748b";
         ctx.textAlign = "center";
         ctx.textBaseline = "bottom";
@@ -994,14 +1061,27 @@ export default function TreeCanvas({
           if (tree.buffers.firstChild[node] < 0) {
             continue;
           }
+          const parent = tree.buffers.parent[node];
           const x = tree.buffers.depth[node];
           const y = layout.center[node];
           if (x < minX || x > maxX || y < minY || y > maxY) {
             continue;
           }
+          const subtreeSpanPx = Math.max(0, (layout.max[node] - layout.min[node]) * camera.scaleY);
+          const branchSpanPx = parent >= 0
+            ? Math.max(0, (tree.buffers.depth[node] - tree.buffers.depth[parent]) * camera.scaleX)
+            : 0;
+          if (camera.scaleY <= 3.2 && subtreeSpanPx < 10 && branchSpanPx < 14) {
+            continue;
+          }
+          const fontSize = Math.max(
+            8,
+            Math.min(13, Math.max(camera.scaleX * 0.18, 8 + (subtreeSpanPx * 0.025), 8 + (branchSpanPx * 0.04))),
+          );
+          ctx.font = `${fontSize}px ${LABEL_FONT}`;
           const screen = worldToScreenRect(camera, x, y);
           const labelY = screen.y - 5;
-          if (!canPlaceLinearLabel(labels, screen.x, labelY, fontSize * 1.7, fontSize * 4.8)) {
+          if (!canPlaceLinearLabel(labels, screen.x, labelY, fontSize * 1.45, fontSize * 3.9)) {
             continue;
           }
           labels.push({
@@ -1168,14 +1248,29 @@ export default function TreeCanvas({
         const hover = hoverRef.current;
         const parent = tree.buffers.parent[hover.node];
         if (parent >= 0) {
-          const theta = thetaFor(layout.center, hover.node, tree.leafCount);
-          const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
-          const endWorld = polarToCartesian(tree.buffers.depth[hover.node], theta);
-          const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
-          const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
           ctx.strokeStyle = HOVER_COLOR;
           ctx.lineWidth = 2;
           ctx.beginPath();
+          const parentTheta = thetaFor(layout.center, parent, tree.leafCount);
+          const childTheta = thetaFor(layout.center, hover.node, tree.leafCount);
+          if (Math.abs(childTheta - parentTheta) > 1e-6) {
+            const arcStart = thetaFor(layout.min, parent, tree.leafCount);
+            const arcEnd = thetaFor(layout.max, parent, tree.leafCount);
+            const arcLength = Math.max(0, arcEnd - arcStart);
+            const arcAngles = arcAnglesWithinSpan(parentTheta, childTheta, arcStart, arcLength);
+            const radiusPx = tree.buffers.depth[parent] * camera.scale;
+            if (radiusPx >= 0.25) {
+              ctx.moveTo(
+                centerPoint.x + Math.cos(arcAngles.start) * radiusPx,
+                centerPoint.y + Math.sin(arcAngles.start) * radiusPx,
+              );
+              ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start, arcAngles.end, false);
+            }
+          }
+          const startWorld = polarToCartesian(tree.buffers.depth[parent], childTheta);
+          const endWorld = polarToCartesian(tree.buffers.depth[hover.node], childTheta);
+          const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+          const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
           ctx.moveTo(start.x, start.y);
           ctx.lineTo(end.x, end.y);
           ctx.stroke();
@@ -1206,7 +1301,7 @@ export default function TreeCanvas({
           ) {
             continue;
           }
-          const text = tree.names[node] || `tip-${node}`;
+          const text = displayLabelText(tree.names[node] || "", `tip-${node}`);
           const width = ctx.measureText(text).width;
           circularVisibleTipLabels.push({ node, theta, x: screen.x, y: screen.y, text, width });
           maxVisibleTipLabelWidth = Math.max(maxVisibleTipLabelWidth, width);
@@ -1218,14 +1313,12 @@ export default function TreeCanvas({
       if (showGenusLabels) {
         const priorityBlocks = cache.genusBlocksPriority[order];
         const positionalBlocks = cache.genusBlocks[order];
-        const baseFontSize = Math.max(9, Math.min(16, Math.max(angularSpacingPx * 0.85, 9)));
+        const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
         const arcOffsetWorld = 12 / camera.scale;
-        const pullAway = tipLabelsVisible ? 1 : clamp01((angularSpacingPx - 2.8) / 4.4);
+        const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
+        const pullAway = clamp01((angularSpacingPx - 2.8) / 4.4);
         const localLineRadius = arcOffsetWorld;
-        const stableTipLabelWidth = Math.max(
-          maxVisibleTipLabelWidth,
-          estimateLabelWidth(tipFontSize, maxLeafLabelCharacters),
-        );
+        const stableTipLabelWidth = estimateLabelWidth(tipFontSize, maxLeafLabelCharacters);
         const tipOuterRadius = tipLabelRadius + ((stableTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
         const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
         const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
@@ -1256,9 +1349,9 @@ export default function TreeCanvas({
           const localAbsLabelRadius = block.maxDepth + localLabelRadius;
           const preliminaryLineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
           const preliminaryArcLengthPx = preliminaryLineRadius * camera.scale * angularSpan;
-          const fontSize = tipLabelsVisible
-            ? baseFontSize
-            : Math.max(baseFontSize, Math.min(22, baseFontSize + (preliminaryArcLengthPx * 0.018)));
+          const fontGrowth = 0.018 - (0.007 * tipLabelPressure);
+          const maxFontSize = 22 + (2 * tipLabelPressure);
+          const fontSize = Math.max(baseFontSize, Math.min(maxFontSize, baseFontSize + (preliminaryArcLengthPx * fontGrowth)));
           const adjustedOutboardLineRadius = tipOuterRadius + ((tipFontSize + fontSize * 1.8 + 34) / camera.scale);
           const adjustedOutboardLabelRadius = adjustedOutboardLineRadius + ((fontSize * 2.2 + 24) / camera.scale);
           const lineRadius = (localAbsLineRadius * (1 - pullAway)) + (adjustedOutboardLineRadius * pullAway);
@@ -1433,7 +1526,7 @@ export default function TreeCanvas({
         ctx.font = `11px ${LABEL_FONT}`;
         ctx.textBaseline = "middle";
         if (showCentralTimeLabels) {
-          const labelTheta = (order === "desc" ? Math.PI : 0) + (Math.PI / 36);
+          const labelTheta = circularTimeLabelTheta(order);
           ctx.textAlign = Math.cos(labelTheta) >= 0 ? "left" : "right";
           for (let index = 0; index < stripeBoundaries.length; index += 1) {
             const boundary = stripeBoundaries[index];
@@ -1507,9 +1600,16 @@ export default function TreeCanvas({
     }
   }, [cache, fitCamera, maxLeafLabelCharacters, order, showGenusLabels, showNodeHeightLabels, showScaleBars, showTimeStripes, size.height, size.width, tree, viewMode]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!tree || !cache) {
+      return;
+    }
+    fitCamera();
+  }, [cache, fitCamera, fitRequest, tree, viewMode]);
+
+  useLayoutEffect(() => {
     draw();
-  }, [draw]);
+  }, [draw, fitRequest]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
