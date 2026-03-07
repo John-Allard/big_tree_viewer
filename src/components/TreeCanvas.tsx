@@ -638,6 +638,13 @@ function clampCircularCamera(camera: CircularCamera, tree: TreeModel, width: num
   camera.translateY = Math.min(maxTranslateY, Math.max(minTranslateY, camera.translateY));
 }
 
+function estimateLabelWidth(fontSize: number, maxCharacters: number): number {
+  if (maxCharacters <= 0) {
+    return 0;
+  }
+  return Math.max(fontSize * 1.6, maxCharacters * fontSize * 0.61);
+}
+
 export default function TreeCanvas({
   tree,
   order,
@@ -661,6 +668,20 @@ export default function TreeCanvas({
   const [overlayHover, setOverlayHover] = useState<HoverInfo | null>(null);
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
+  const maxLeafLabelCharacters = useMemo(() => {
+    if (!tree) {
+      return 0;
+    }
+    let maxCharacters = 0;
+    for (let index = 0; index < tree.leafNodes.length; index += 1) {
+      const node = tree.leafNodes[index];
+      const text = tree.names[node] || `tip-${node}`;
+      if (text.length > maxCharacters) {
+        maxCharacters = text.length;
+      }
+    }
+    return maxCharacters;
+  }, [tree]);
 
   const fitCamera = useCallback(() => {
     if (!tree) {
@@ -816,6 +837,7 @@ export default function TreeCanvas({
 
       let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number }> = [];
       let tipLabelRightEdge = Number.NEGATIVE_INFINITY;
+      let tipLabelRightX = Number.NEGATIVE_INFINITY;
       const tipFontSize = Math.max(10, Math.min(22, camera.scaleY * 0.68));
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelsVisible || camera.scaleY > 3.1;
@@ -834,6 +856,7 @@ export default function TreeCanvas({
           const x = screen.x + 8;
           const width = ctx.measureText(text).width;
           measuredLabels.push({ node, text, x, y: screen.y, width });
+          tipLabelRightX = Math.max(tipLabelRightX, x);
           tipLabelRightEdge = Math.max(tipLabelRightEdge, x + width);
         }
       }
@@ -846,7 +869,13 @@ export default function TreeCanvas({
         const priorityBlocks = cache.genusBlocksPriority[order];
         const positionalBlocks = cache.genusBlocks[order];
         const baseFontSize = Math.max(10, Math.min(16, camera.scaleY * 0.38));
-        const outboardMinX = Number.isFinite(tipLabelRightEdge) ? tipLabelRightEdge + 22 : Number.NEGATIVE_INFINITY;
+        const stableTipLabelWidth = estimateLabelWidth(tipFontSize, maxLeafLabelCharacters);
+        const stableTipEnvelopeRightEdge = Number.isFinite(tipLabelRightX)
+          ? tipLabelRightX + stableTipLabelWidth
+          : tipLabelRightEdge;
+        const outboardMinX = Number.isFinite(stableTipEnvelopeRightEdge)
+          ? stableTipEnvelopeRightEdge + 22
+          : Number.NEGATIVE_INFINITY;
         const offsetPx = 10;
         const pullAway = clamp01((camera.scaleY - 2.4) / 4.6);
         ctx.fillStyle = GENUS_COLOR;
@@ -935,6 +964,10 @@ export default function TreeCanvas({
       }
 
       if (visibleTipLabels.length > 0) {
+        ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
+        ctx.fillStyle = "#111827";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
         for (let index = 0; index < visibleTipLabels.length; index += 1) {
           const label = visibleTipLabels[index];
           ctx.fillText(label.text, label.x, label.y);
@@ -1189,7 +1222,11 @@ export default function TreeCanvas({
         const arcOffsetWorld = 12 / camera.scale;
         const pullAway = tipLabelsVisible ? 1 : clamp01((angularSpacingPx - 2.8) / 4.4);
         const localLineRadius = arcOffsetWorld;
-        const tipOuterRadius = tipLabelRadius + ((maxVisibleTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
+        const stableTipLabelWidth = Math.max(
+          maxVisibleTipLabelWidth,
+          estimateLabelWidth(tipFontSize, maxLeafLabelCharacters),
+        );
+        const tipOuterRadius = tipLabelRadius + ((stableTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
         const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
         const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
         ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
@@ -1468,7 +1505,7 @@ export default function TreeCanvas({
         }
       }
     }
-  }, [cache, fitCamera, order, showGenusLabels, showNodeHeightLabels, showScaleBars, showTimeStripes, size.height, size.width, tree, viewMode]);
+  }, [cache, fitCamera, maxLeafLabelCharacters, order, showGenusLabels, showNodeHeightLabels, showScaleBars, showTimeStripes, size.height, size.width, tree, viewMode]);
 
   useEffect(() => {
     draw();
