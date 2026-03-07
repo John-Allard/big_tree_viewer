@@ -110,13 +110,16 @@ button.secondary {
 .segmented button {
   background: #ffffff;
   color: #0f172a;
-  padding-top: 0.78rem;
-  padding-bottom: 0.78rem;
 }
 
 .segmented button.active {
   background: #0f172a;
   color: #f8fafc;
+}
+
+.panel-section > .segmented + .segmented,
+.panel-section > .segmented + .button-row {
+  margin-top: 0.2rem;
 }
 
 .option-list {
