@@ -129,15 +129,19 @@ function drawHighlightedText(
 ): void {
   const fullWidth = ctx.measureText(text).width;
   const baseX = align === "right" ? x - fullWidth : x;
+  const previousAlign = ctx.textAlign;
+  ctx.textAlign = "left";
   ctx.fillStyle = baseColor;
   ctx.fillText(text, baseX, y);
   if (!highlightColor || !matchRange || matchRange.end <= matchRange.start) {
+    ctx.textAlign = previousAlign;
     return;
   }
   const prefixWidth = ctx.measureText(text.slice(0, matchRange.start)).width;
   const matchText = text.slice(matchRange.start, matchRange.end);
   ctx.fillStyle = highlightColor;
   ctx.fillText(matchText, baseX + prefixWidth, y);
+  ctx.textAlign = previousAlign;
 }
 
 export default function TreeCanvas({
@@ -161,6 +165,7 @@ export default function TreeCanvas({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraRef = useRef<CameraState | null>(null);
+  const previousViewModeRef = useRef<ViewMode>(viewMode);
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const handledFocusRequestRef = useRef(0);
@@ -201,6 +206,51 @@ export default function TreeCanvas({
       ? fitRectCamera(size.width, size.height, tree)
       : fitCircularCamera(size.width, size.height, tree, circularRotation);
     cameraRef.current = nextCamera;
+  }, [circularRotation, size.height, size.width, tree, viewMode]);
+
+  const convertCameraForViewMode = useCallback((fromCamera: CameraState): CameraState => {
+    if (!tree) {
+      return fromCamera;
+    }
+    const centerScreenX = size.width * 0.5;
+    const centerScreenY = size.height * 0.5;
+
+    if (fromCamera.kind === "circular" && viewMode === "rectangular") {
+      const world = screenToWorldCircular(fromCamera, centerScreenX, centerScreenY);
+      const radius = Math.sqrt((world.x * world.x) + (world.y * world.y));
+      const theta = wrapPositive(Math.atan2(world.y, world.x));
+      const targetX = radius;
+      const targetY = (theta / (Math.PI * 2)) * tree.leafCount;
+      const nextCamera = fitRectCamera(size.width, size.height, tree);
+      nextCamera.scaleX = Math.max(nextCamera.scaleX * 0.55, fromCamera.scale);
+      const pixelsPerLeaf = Math.max(
+        nextCamera.scaleY * 0.55,
+        Math.max(radius, tree.branchLengthMinPositive) * fromCamera.scale * ((Math.PI * 2) / Math.max(1, tree.leafCount)),
+      );
+      nextCamera.scaleY = pixelsPerLeaf;
+      nextCamera.translateX = centerScreenX - (targetX * nextCamera.scaleX);
+      nextCamera.translateY = centerScreenY - (targetY * nextCamera.scaleY);
+      clampRectCamera(nextCamera, tree, size.width, size.height);
+      return nextCamera;
+    }
+
+    if (fromCamera.kind === "rect" && viewMode === "circular") {
+      const world = screenToWorldRect(fromCamera, centerScreenX, centerScreenY);
+      const theta = ((world.y / Math.max(1, tree.leafCount)) * Math.PI * 2);
+      const point = polarToCartesian(world.x, theta);
+      const nextCamera = fitCircularCamera(size.width, size.height, tree, circularRotation);
+      const angularScale = world.x > tree.branchLengthMinPositive
+        ? (fromCamera.scaleY * Math.max(1, tree.leafCount)) / (Math.PI * 2 * world.x)
+        : 0;
+      nextCamera.scale = Math.max(nextCamera.scale * 0.55, fromCamera.scaleX, angularScale);
+      const rotatedPoint = rotateCircularWorldPoint(nextCamera, point.x, point.y);
+      nextCamera.translateX = centerScreenX - (rotatedPoint.x * nextCamera.scale);
+      nextCamera.translateY = centerScreenY - (rotatedPoint.y * nextCamera.scale);
+      clampCircularCamera(nextCamera, tree, size.width, size.height);
+      return nextCamera;
+    }
+
+    return fromCamera;
   }, [circularRotation, size.height, size.width, tree, viewMode]);
 
   useEffect(() => {
@@ -751,7 +801,7 @@ export default function TreeCanvas({
       const visibleCircleFraction = tree.isUltrametric
         ? fullyVisibleRadiusPx / Math.max(1e-9, tree.rootAge * camera.scale)
         : 0;
-      const showCentralTimeLabels = tree.isUltrametric && showScaleBars && visibleCircleFraction >= 0.72;
+      const showCentralTimeLabels = tree.isUltrametric && showScaleBars && visibleCircleFraction >= 0.58;
       const circularScaleBar = tree.isUltrametric && showScaleBars && !showCentralTimeLabels
         ? buildCircularScaleBar(
           centerPoint.x,
@@ -1403,8 +1453,16 @@ export default function TreeCanvas({
     if (!tree || !cache) {
       return;
     }
+    const previousViewMode = previousViewModeRef.current;
+    previousViewModeRef.current = viewMode;
+    const currentCamera = cameraRef.current;
+    if (currentCamera && previousViewMode !== viewMode) {
+      cameraRef.current = convertCameraForViewMode(currentCamera);
+      draw();
+      return;
+    }
     fitCamera();
-  }, [cache, fitCamera, fitRequest, tree, viewMode]);
+  }, [cache, convertCameraForViewMode, draw, fitCamera, fitRequest, tree, viewMode]);
 
   useLayoutEffect(() => {
     const camera = cameraRef.current;

@@ -363,7 +363,7 @@ export default function App() {
       return;
     }
     setFitRequest((value) => value + 1);
-  }, [tree, viewMode]);
+  }, [tree]);
 
   const onFileChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
