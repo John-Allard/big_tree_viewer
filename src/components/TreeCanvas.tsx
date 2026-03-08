@@ -178,6 +178,8 @@ export default function TreeCanvas({
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const handledFocusRequestRef = useRef(0);
+  const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
+  const pinchGestureRef = useRef<{ distance: number; centerX: number; centerY: number } | null>(null);
   const pointerDownRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const genusLabelHistoryRef = useRef<{
@@ -1774,62 +1776,11 @@ export default function TreeCanvas({
       }
     };
 
-    const handlePointerDown = (event: PointerEvent): void => {
-      pointerDownRef.current = true;
-      lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      canvas.setPointerCapture(event.pointerId);
-    };
-
-    const handlePointerMove = (event: PointerEvent): void => {
+    const zoomAtPoint = (localX: number, localY: number, zoom: number): void => {
       const camera = cameraRef.current;
       if (!camera) {
         return;
       }
-      if (pointerDownRef.current && lastPointerRef.current) {
-        const dx = event.clientX - lastPointerRef.current.x;
-        const dy = event.clientY - lastPointerRef.current.y;
-        lastPointerRef.current = { x: event.clientX, y: event.clientY };
-        if (camera.kind === "rect") {
-          camera.translateX += dx;
-          camera.translateY += dy;
-          clampRectCamera(camera, tree, size.width, size.height);
-        } else {
-          camera.translateX += dx;
-          camera.translateY += dy;
-          clampCircularCamera(camera, tree, size.width, size.height);
-        }
-        scheduleDraw();
-        return;
-      }
-      updateHover(event);
-    };
-
-    const handlePointerUp = (event: PointerEvent): void => {
-      pointerDownRef.current = false;
-      lastPointerRef.current = null;
-      canvas.releasePointerCapture(event.pointerId);
-    };
-
-    const handlePointerLeave = (): void => {
-      pointerDownRef.current = false;
-      lastPointerRef.current = null;
-      hoverRef.current = null;
-      setOverlayHover(null);
-      onHoverChange(null);
-      scheduleDraw();
-    };
-
-    const handleWheel = (event: WheelEvent): void => {
-      event.preventDefault();
-      const camera = cameraRef.current;
-      if (!camera) {
-        return;
-      }
-      const rect = canvas.getBoundingClientRect();
-      const localX = event.clientX - rect.left;
-      const localY = event.clientY - rect.top;
-      const zoom = Math.exp(-event.deltaY * 0.0015);
-
       if (camera.kind === "rect") {
         const world = screenToWorldRect(camera, localX, localY);
         const fit = fitRectCamera(size.width, size.height, tree);
@@ -1854,6 +1805,129 @@ export default function TreeCanvas({
         camera.translateY = localY - (rotated.y * camera.scale);
         clampCircularCamera(camera, tree, size.width, size.height);
       }
+    };
+
+    const handlePointerDown = (event: PointerEvent): void => {
+      activePointersRef.current.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+      if (activePointersRef.current.size === 1) {
+        pointerDownRef.current = true;
+        lastPointerRef.current = { x: event.clientX, y: event.clientY };
+        pinchGestureRef.current = null;
+      } else if (activePointersRef.current.size === 2) {
+        const points = [...activePointersRef.current.values()];
+        const dx = points[1].clientX - points[0].clientX;
+        const dy = points[1].clientY - points[0].clientY;
+        pinchGestureRef.current = {
+          distance: Math.max(1, Math.hypot(dx, dy)),
+          centerX: (points[0].clientX + points[1].clientX) * 0.5,
+          centerY: (points[0].clientY + points[1].clientY) * 0.5,
+        };
+        pointerDownRef.current = false;
+        lastPointerRef.current = null;
+      }
+      canvas.setPointerCapture(event.pointerId);
+    };
+
+    const handlePointerMove = (event: PointerEvent): void => {
+      const camera = cameraRef.current;
+      if (!camera) {
+        return;
+      }
+      if (activePointersRef.current.has(event.pointerId)) {
+        activePointersRef.current.set(event.pointerId, {
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
+      }
+      if (activePointersRef.current.size >= 2) {
+        const points = [...activePointersRef.current.values()].slice(0, 2);
+        const dx = points[1].clientX - points[0].clientX;
+        const dy = points[1].clientY - points[0].clientY;
+        const distance = Math.max(1, Math.hypot(dx, dy));
+        const centerClientX = (points[0].clientX + points[1].clientX) * 0.5;
+        const centerClientY = (points[0].clientY + points[1].clientY) * 0.5;
+        const rect = canvas.getBoundingClientRect();
+        const localX = centerClientX - rect.left;
+        const localY = centerClientY - rect.top;
+        const previous = pinchGestureRef.current;
+        if (previous) {
+          const zoom = distance / previous.distance;
+          zoomAtPoint(localX, localY, zoom);
+          camera.translateX += centerClientX - previous.centerX;
+          camera.translateY += centerClientY - previous.centerY;
+          if (camera.kind === "rect") {
+            clampRectCamera(camera, tree, size.width, size.height);
+          } else {
+            clampCircularCamera(camera, tree, size.width, size.height);
+          }
+          scheduleDraw();
+        }
+        pinchGestureRef.current = {
+          distance,
+          centerX: centerClientX,
+          centerY: centerClientY,
+        };
+        return;
+      }
+      if (pointerDownRef.current && lastPointerRef.current) {
+        const dx = event.clientX - lastPointerRef.current.x;
+        const dy = event.clientY - lastPointerRef.current.y;
+        lastPointerRef.current = { x: event.clientX, y: event.clientY };
+        if (camera.kind === "rect") {
+          camera.translateX += dx;
+          camera.translateY += dy;
+          clampRectCamera(camera, tree, size.width, size.height);
+        } else {
+          camera.translateX += dx;
+          camera.translateY += dy;
+          clampCircularCamera(camera, tree, size.width, size.height);
+        }
+        scheduleDraw();
+        return;
+      }
+      updateHover(event);
+    };
+
+    const handlePointerUp = (event: PointerEvent): void => {
+      activePointersRef.current.delete(event.pointerId);
+      if (activePointersRef.current.size === 0) {
+        pointerDownRef.current = false;
+        lastPointerRef.current = null;
+        pinchGestureRef.current = null;
+      } else if (activePointersRef.current.size === 1) {
+        const remaining = [...activePointersRef.current.values()][0];
+        pointerDownRef.current = true;
+        lastPointerRef.current = { x: remaining.clientX, y: remaining.clientY };
+        pinchGestureRef.current = null;
+      }
+      canvas.releasePointerCapture(event.pointerId);
+    };
+
+    const handlePointerLeave = (): void => {
+      activePointersRef.current.clear();
+      pinchGestureRef.current = null;
+      pointerDownRef.current = false;
+      lastPointerRef.current = null;
+      hoverRef.current = null;
+      setOverlayHover(null);
+      onHoverChange(null);
+      scheduleDraw();
+    };
+
+    const handleWheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      const camera = cameraRef.current;
+      if (!camera) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+      const zoom = Math.exp(-event.deltaY * 0.0015);
+      zoomAtPoint(localX, localY, zoom);
       scheduleDraw();
     };
 
@@ -1862,6 +1936,17 @@ export default function TreeCanvas({
     canvas.addEventListener("pointerup", handlePointerUp);
     canvas.addEventListener("pointerleave", handlePointerLeave);
     canvas.addEventListener("wheel", handleWheel, { passive: false });
+    const handleTouchMove = (event: TouchEvent): void => {
+      if (event.touches.length > 1) {
+        event.preventDefault();
+      }
+    };
+    const preventGestureDefault = (event: Event): void => {
+      event.preventDefault();
+    };
+    canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+    canvas.addEventListener("gesturestart", preventGestureDefault);
+    canvas.addEventListener("gesturechange", preventGestureDefault);
 
     return () => {
       canvas.removeEventListener("pointerdown", handlePointerDown);
@@ -1869,6 +1954,9 @@ export default function TreeCanvas({
       canvas.removeEventListener("pointerup", handlePointerUp);
       canvas.removeEventListener("pointerleave", handlePointerLeave);
       canvas.removeEventListener("wheel", handleWheel);
+      canvas.removeEventListener("touchmove", handleTouchMove);
+      canvas.removeEventListener("gesturestart", preventGestureDefault);
+      canvas.removeEventListener("gesturechange", preventGestureDefault);
     };
   }, [cache, draw, onHoverChange, order, scheduleDraw, tree, zoomAxisMode]);
 

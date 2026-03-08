@@ -152,6 +152,7 @@ export default function App() {
   const [visualOpen, setVisualOpen] = useSessionDisclosure("section-visual", false);
   const [searchOpen, setSearchOpen] = useSessionDisclosure("section-search", false);
   const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
+  const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
   const handleHoverChange = useCallback(() => {}, []);
 
   const searchResults = useMemo(() => {
@@ -395,7 +396,14 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sidebarVisible ? "" : " sidebar-hidden"}`}>
+      <button
+        type="button"
+        className="mobile-sidebar-toggle"
+        onClick={() => setSidebarVisible(!sidebarVisible)}
+      >
+        {sidebarVisible ? "Hide Panel" : "Show Panel"}
+      </button>
       <aside className="control-panel">
         <div className="panel-title-block">
           <h1>Big Tree Viewer</h1>

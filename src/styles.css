@@ -21,6 +21,7 @@ body,
 
 body {
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 button,
@@ -99,8 +100,13 @@ button.secondary {
 }
 
 .viewer-panel {
+  position: relative;
   min-width: 0;
   min-height: 0;
+}
+
+.mobile-sidebar-toggle {
+  display: none;
 }
 
 .panel-title-block h1 {
@@ -306,6 +312,7 @@ button.secondary {
   width: 100%;
   height: 100%;
   cursor: grab;
+  touch-action: none;
 }
 
 .tree-canvas:active {
@@ -338,5 +345,26 @@ button.secondary {
 
   .control-panel {
     max-height: 42vh;
+  }
+
+  .mobile-sidebar-toggle {
+    display: inline-flex;
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 0.7rem);
+    right: 0.7rem;
+    z-index: 60;
+    border-radius: 999px;
+    padding: 0.5rem 0.8rem;
+    background: rgba(15, 23, 42, 0.92);
+    color: #f8fafc;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.2);
+  }
+
+  .app-shell.sidebar-hidden {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .app-shell.sidebar-hidden .control-panel {
+    display: none;
   }
 }
