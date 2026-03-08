@@ -144,6 +144,14 @@ function drawHighlightedText(
   ctx.textAlign = previousAlign;
 }
 
+function quantizeLabelWidth(width: number, fallback: number): number {
+  if (!(width > 0)) {
+    return fallback;
+  }
+  const bucket = 40;
+  return Math.max(bucket, Math.ceil(width / bucket) * bucket);
+}
+
 export default function TreeCanvas({
   tree,
   order,
@@ -166,6 +174,7 @@ export default function TreeCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraRef = useRef<CameraState | null>(null);
   const previousViewModeRef = useRef<ViewMode>(viewMode);
+  const frameRequestRef = useRef<number | null>(null);
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const handledFocusRequestRef = useRef(0);
@@ -177,6 +186,8 @@ export default function TreeCanvas({
     order: LayoutOrder;
     zoom: number;
     visibleCenters: number[];
+    peakZoom: number;
+    peakVisibleCenters: number[];
   } | null>(null);
   const [size, setSize] = useState({ width: 1200, height: 800 });
   const [overlayHover, setOverlayHover] = useState<HoverInfo | null>(null);
@@ -523,7 +534,7 @@ export default function TreeCanvas({
           && previousGenusState.viewMode === "rectangular"
           && previousGenusState.order === order
           && camera.scaleY > previousGenusState.zoom + 1e-6
-          ? previousGenusState.visibleCenters
+          ? previousGenusState.peakVisibleCenters
           : [];
         const blockByCenter = new Map<number, GenusBlock>();
         for (let index = 0; index < priorityBlocks.length; index += 1) {
@@ -538,8 +549,14 @@ export default function TreeCanvas({
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
         const stableTipLabelWidth = estimateLabelWidth(tipFontSize, maxLeafLabelCharacters);
+        const localTipLabelWidth = tipLabelsVisible
+          ? quantizeLabelWidth(
+            measuredLabels.reduce((maxWidth, label) => Math.max(maxWidth, label.width), 0),
+            stableTipLabelWidth,
+          )
+          : stableTipLabelWidth;
         const stableTipEnvelopeRightEdge = Number.isFinite(tipLabelRightX)
-          ? tipLabelRightX + stableTipLabelWidth
+          ? tipLabelRightX + localTipLabelWidth
           : tipLabelRightEdge;
         const outboardMinX = Number.isFinite(stableTipEnvelopeRightEdge)
           ? stableTipEnvelopeRightEdge + 22
@@ -656,6 +673,20 @@ export default function TreeCanvas({
           order,
           zoom: camera.scaleY,
           visibleCenters: [...placedCenters],
+          peakZoom: previousGenusState
+            && previousGenusState.tree === tree
+            && previousGenusState.viewMode === "rectangular"
+            && previousGenusState.order === order
+            && camera.scaleY < previousGenusState.peakZoom
+            ? previousGenusState.peakZoom
+            : camera.scaleY,
+          peakVisibleCenters: previousGenusState
+            && previousGenusState.tree === tree
+            && previousGenusState.viewMode === "rectangular"
+            && previousGenusState.order === order
+            && camera.scaleY < previousGenusState.peakZoom
+            ? previousGenusState.peakVisibleCenters
+            : [...placedCenters],
         };
       } else {
         genusLabelHistoryRef.current = {
@@ -664,6 +695,8 @@ export default function TreeCanvas({
           order,
           zoom: camera.scaleY,
           visibleCenters: [],
+          peakZoom: camera.scaleY,
+          peakVisibleCenters: [],
         };
       }
 
@@ -1074,7 +1107,7 @@ export default function TreeCanvas({
           && previousGenusState.viewMode === "circular"
           && previousGenusState.order === order
           && camera.scale > previousGenusState.zoom + 1e-6
-          ? previousGenusState.visibleCenters
+          ? previousGenusState.peakVisibleCenters
           : [];
         const blockByCenter = new Map<number, GenusBlock>();
         for (let index = 0; index < priorityBlocks.length; index += 1) {
@@ -1093,7 +1126,10 @@ export default function TreeCanvas({
         const pullAway = clamp01((angularSpacingPx - 2.8) / 4.4);
         const localLineRadius = arcOffsetWorld;
         const stableTipLabelWidth = estimateLabelWidth(tipFontSize, maxLeafLabelCharacters);
-        const tipOuterRadius = tipLabelRadius + ((stableTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
+        const localTipLabelWidth = tipLabelsVisible
+          ? quantizeLabelWidth(maxVisibleTipLabelWidth, stableTipLabelWidth)
+          : stableTipLabelWidth;
+        const tipOuterRadius = tipLabelRadius + ((localTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
         const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
         const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
         ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
@@ -1109,7 +1145,7 @@ export default function TreeCanvas({
         const connectorArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number; color: string }> = [];
         const placedCenters = new Set<number>();
         const tryPlaceBlock = (block: GenusBlock): void => {
-          if (placedLabels.length >= maxGenusLabels || placedCenters.has(block.centerNode)) {
+          if (placedCenters.has(block.centerNode)) {
             return;
           }
           const startTheta = thetaFor(layout.center, block.firstNode, tree.leafCount);
@@ -1135,6 +1171,7 @@ export default function TreeCanvas({
           const genusOrderIndex = genusOrderByCenter.get(block.centerNode) ?? 0;
           const isActiveGenus = block.centerNode === activeSearchGenusCenterNode;
           const matchRange = findSearchMatchRange(block.label, searchQuery);
+          const arcColor = isActiveGenus ? "#c2410c" : GENUS_CONNECTOR_COLORS[genusOrderIndex % GENUS_CONNECTOR_COLORS.length];
           const arcVisible = arcIntersectsViewport(
             centerPoint.x,
             centerPoint.y,
@@ -1144,6 +1181,23 @@ export default function TreeCanvas({
             size.width,
             size.height,
           );
+          const pushArc = (): void => {
+            connectorArcs.push({
+              lineRadiusPx,
+              startTheta: renderStartTheta,
+              endTheta: renderEndTheta,
+              color: arcColor,
+            });
+          };
+          if (arcVisible) {
+            pushArc();
+          }
+          if (placedLabels.length >= maxGenusLabels) {
+            if (arcVisible) {
+              placedCenters.add(block.centerNode);
+            }
+            return;
+          }
           const labelPoint = worldToScreenCircular(
             camera,
             Math.cos(midTheta) * labelRadius,
@@ -1153,6 +1207,9 @@ export default function TreeCanvas({
             labelPoint.x < -160 || labelPoint.x > size.width + 160 ||
             labelPoint.y < -160 || labelPoint.y > size.height + 160
           ) {
+            if (arcVisible) {
+              placedCenters.add(block.centerNode);
+            }
             return;
           }
           const deg = (midTheta + rotationAngle) * 180 / Math.PI;
@@ -1165,6 +1222,9 @@ export default function TreeCanvas({
             fontSize * 0.9,
             fontSize * 3.5,
           )) {
+            if (arcVisible) {
+              placedCenters.add(block.centerNode);
+            }
             return;
           }
           placedCenters.add(block.centerNode);
@@ -1178,14 +1238,6 @@ export default function TreeCanvas({
             align: onRightSide ? "left" : "right",
             color: matchRange ? (isActiveGenus ? "#c2410c" : "#2563eb") : undefined,
           });
-          if (arcVisible) {
-            connectorArcs.push({
-              lineRadiusPx,
-              startTheta: renderStartTheta,
-              endTheta: renderEndTheta,
-              color: isActiveGenus ? "#c2410c" : GENUS_CONNECTOR_COLORS[genusOrderIndex % GENUS_CONNECTOR_COLORS.length],
-            });
-          }
         };
         for (let index = 0; index < preservedBlocks.length; index += 1) {
           tryPlaceBlock(preservedBlocks[index]);
@@ -1216,6 +1268,20 @@ export default function TreeCanvas({
           order,
           zoom: camera.scale,
           visibleCenters: [...placedCenters],
+          peakZoom: previousGenusState
+            && previousGenusState.tree === tree
+            && previousGenusState.viewMode === "circular"
+            && previousGenusState.order === order
+            && camera.scale < previousGenusState.peakZoom
+            ? previousGenusState.peakZoom
+            : camera.scale,
+          peakVisibleCenters: previousGenusState
+            && previousGenusState.tree === tree
+            && previousGenusState.viewMode === "circular"
+            && previousGenusState.order === order
+            && camera.scale < previousGenusState.peakZoom
+            ? previousGenusState.peakVisibleCenters
+            : [...placedCenters],
         };
       } else {
         genusLabelHistoryRef.current = {
@@ -1224,6 +1290,8 @@ export default function TreeCanvas({
           order,
           zoom: camera.scale,
           visibleCenters: [],
+          peakZoom: camera.scale,
+          peakVisibleCenters: [],
         };
       }
       if (circularGenusArcs.length > 0) {
@@ -1449,6 +1517,16 @@ export default function TreeCanvas({
     viewMode,
   ]);
 
+  const scheduleDraw = useCallback(() => {
+    if (frameRequestRef.current !== null) {
+      return;
+    }
+    frameRequestRef.current = window.requestAnimationFrame(() => {
+      frameRequestRef.current = null;
+      draw();
+    });
+  }, [draw]);
+
   useLayoutEffect(() => {
     if (!tree || !cache) {
       return;
@@ -1553,6 +1631,13 @@ export default function TreeCanvas({
     draw();
   }, [draw, fitRequest]);
 
+  useEffect(() => () => {
+    if (frameRequestRef.current !== null) {
+      window.cancelAnimationFrame(frameRequestRef.current);
+      frameRequestRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !tree || !cache) {
@@ -1598,7 +1683,7 @@ export default function TreeCanvas({
           hoverRef.current = hover;
           setOverlayHover(hover);
           onHoverChange(hover);
-          draw();
+          scheduleDraw();
         } else if (prev.screenX !== hover.screenX || prev.screenY !== hover.screenY) {
           hoverRef.current = hover;
           setOverlayHover(hover);
@@ -1680,7 +1765,7 @@ export default function TreeCanvas({
         hoverRef.current = hover;
         setOverlayHover(hover);
         onHoverChange(hover);
-        draw();
+        scheduleDraw();
       }
     };
 
@@ -1708,7 +1793,7 @@ export default function TreeCanvas({
           camera.translateY += dy;
           clampCircularCamera(camera, tree, size.width, size.height);
         }
-        draw();
+        scheduleDraw();
         return;
       }
       updateHover(event);
@@ -1726,7 +1811,7 @@ export default function TreeCanvas({
       hoverRef.current = null;
       setOverlayHover(null);
       onHoverChange(null);
-      draw();
+      scheduleDraw();
     };
 
     const handleWheel = (event: WheelEvent): void => {
@@ -1764,7 +1849,7 @@ export default function TreeCanvas({
         camera.translateY = localY - (rotated.y * camera.scale);
         clampCircularCamera(camera, tree, size.width, size.height);
       }
-      draw();
+      scheduleDraw();
     };
 
     canvas.addEventListener("pointerdown", handlePointerDown);
@@ -1780,7 +1865,7 @@ export default function TreeCanvas({
       canvas.removeEventListener("pointerleave", handlePointerLeave);
       canvas.removeEventListener("wheel", handleWheel);
     };
-  }, [cache, draw, onHoverChange, order, tree, zoomAxisMode]);
+  }, [cache, draw, onHoverChange, order, scheduleDraw, tree, zoomAxisMode]);
 
   return (
     <div className="tree-canvas-shell" ref={wrapperRef}>
