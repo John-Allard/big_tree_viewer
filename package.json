@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:pages": "BIG_TREE_VIEWER_BASE=/big_tree_viewer/ npm run build",
     "preview": "vite preview"
   },
   "dependencies": {
