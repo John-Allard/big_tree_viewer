@@ -91,6 +91,55 @@ function arcIntersectsViewport(
 
 const GENUS_CONNECTOR_COLORS = ["#111111", "#7a7a7a"] as const;
 
+function findSearchMatchRange(text: string, query: string): { start: number; end: number } | null {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) {
+    return null;
+  }
+  const normalizedText = text.toLowerCase().replaceAll("_", " ");
+  const normalizedQuery = query.toLowerCase().replaceAll("_", " ");
+  const hasTrailingSeparator = / $/.test(normalizedQuery);
+  const tokens = normalizedQuery.trim().split(/ +/).filter(Boolean);
+  if (tokens.length === 0) {
+    return null;
+  }
+  const escapedTokens = tokens.map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = hasTrailingSeparator
+    ? `${escapedTokens.join(" +")}(?: +|$)`
+    : escapedTokens.join(" +");
+  const match = new RegExp(pattern, "i").exec(normalizedText);
+  if (!match || match.index < 0) {
+    return null;
+  }
+  return {
+    start: match.index,
+    end: match.index + match[0].length,
+  };
+}
+
+function drawHighlightedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  align: CanvasTextAlign,
+  baseColor: string,
+  highlightColor: string | null,
+  matchRange: { start: number; end: number } | null,
+): void {
+  const fullWidth = ctx.measureText(text).width;
+  const baseX = align === "right" ? x - fullWidth : x;
+  ctx.fillStyle = baseColor;
+  ctx.fillText(text, baseX, y);
+  if (!highlightColor || !matchRange || matchRange.end <= matchRange.start) {
+    return;
+  }
+  const prefixWidth = ctx.measureText(text.slice(0, matchRange.start)).width;
+  const matchText = text.slice(matchRange.start, matchRange.end);
+  ctx.fillStyle = highlightColor;
+  ctx.fillText(matchText, baseX + prefixWidth, y);
+}
+
 export default function TreeCanvas({
   tree,
   order,
@@ -101,6 +150,7 @@ export default function TreeCanvas({
   showScaleBars,
   showGenusLabels,
   showNodeHeightLabels,
+  searchQuery,
   searchMatches,
   activeSearchNode,
   activeSearchGenusCenterNode,
@@ -486,6 +536,7 @@ export default function TreeCanvas({
           }
           const genusOrderIndex = genusOrderByCenter.get(block.centerNode) ?? 0;
           const isActiveGenus = block.centerNode === activeSearchGenusCenterNode;
+          const matchRange = findSearchMatchRange(block.label, searchQuery);
           placedCenters.add(block.centerNode);
           placedLabels.push({
             x: x + 7,
@@ -493,7 +544,7 @@ export default function TreeCanvas({
             text: block.label,
             alpha: 1,
             fontSize,
-            color: isActiveGenus ? "#c2410c" : GENUS_COLOR,
+            color: matchRange ? (isActiveGenus ? "#c2410c" : "#2563eb") : undefined,
           });
           connectorBlocks.push({
             x,
@@ -537,8 +588,16 @@ export default function TreeCanvas({
         for (let index = 0; index < placedLabels.length; index += 1) {
           const label = placedLabels[index];
           ctx.font = `${label.fontSize ?? baseFontSize}px ${LABEL_FONT}`;
-          ctx.fillStyle = label.color ?? GENUS_COLOR;
-          ctx.fillText(label.text, label.x, label.y);
+          drawHighlightedText(
+            ctx,
+            label.text,
+            label.x,
+            label.y,
+            "left",
+            GENUS_COLOR,
+            label.color ?? null,
+            findSearchMatchRange(label.text, searchQuery),
+          );
         }
         ctx.globalAlpha = 1;
         genusLabelHistoryRef.current = {
@@ -564,12 +623,21 @@ export default function TreeCanvas({
         ctx.textBaseline = "middle";
         for (let index = 0; index < visibleTipLabels.length; index += 1) {
           const label = visibleTipLabels[index];
-          ctx.fillStyle = label.node === activeSearchNode
+          const highlightColor = label.node === activeSearchNode
             ? "#c2410c"
             : searchMatchSet.has(label.node)
               ? "#2563eb"
-              : "#111827";
-          ctx.fillText(label.text, label.x, label.y);
+              : null;
+          drawHighlightedText(
+            ctx,
+            label.text,
+            label.x,
+            label.y,
+            "left",
+            "#111827",
+            highlightColor,
+            highlightColor ? findSearchMatchRange(label.text, searchQuery) : null,
+          );
           const width = ctx.measureText(label.text).width;
           labelHitsRef.current.push({
             node: label.node,
@@ -1016,6 +1084,7 @@ export default function TreeCanvas({
           const lineRadiusPx = lineRadius * camera.scale;
           const genusOrderIndex = genusOrderByCenter.get(block.centerNode) ?? 0;
           const isActiveGenus = block.centerNode === activeSearchGenusCenterNode;
+          const matchRange = findSearchMatchRange(block.label, searchQuery);
           const arcVisible = arcIntersectsViewport(
             centerPoint.x,
             centerPoint.y,
@@ -1057,7 +1126,7 @@ export default function TreeCanvas({
             fontSize,
             rotation: rotation * Math.PI / 180,
             align: onRightSide ? "left" : "right",
-            color: isActiveGenus ? "#c2410c" : GENUS_COLOR,
+            color: matchRange ? (isActiveGenus ? "#c2410c" : "#2563eb") : undefined,
           });
           if (arcVisible) {
             connectorArcs.push({
@@ -1135,16 +1204,25 @@ export default function TreeCanvas({
             const deg = (theta + rotationAngle) * 180 / Math.PI;
             const onRightSide = Math.cos(theta + rotationAngle) >= 0;
             const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
-            ctx.fillStyle = node === activeSearchNode
+            const highlightColor = node === activeSearchNode
               ? "#c2410c"
               : searchMatchSet.has(node)
                 ? "#2563eb"
-                : "#111827";
+                : null;
             ctx.save();
             ctx.translate(x, y);
             ctx.rotate(rotation * Math.PI / 180);
             ctx.textAlign = onRightSide ? "left" : "right";
-            ctx.fillText(label.text, 0, 0);
+            drawHighlightedText(
+              ctx,
+              label.text,
+              0,
+              0,
+              onRightSide ? "left" : "right",
+              "#111827",
+              highlightColor,
+              highlightColor ? findSearchMatchRange(label.text, searchQuery) : null,
+            );
             ctx.restore();
             labelHitsRef.current.push({
               node,
@@ -1162,12 +1240,20 @@ export default function TreeCanvas({
       for (let index = 0; index < circularGenusLabels.length; index += 1) {
         const label = circularGenusLabels[index];
         ctx.font = `${label.fontSize ?? circularGenusBaseFontSize}px ${LABEL_FONT}`;
-        ctx.fillStyle = label.color ?? GENUS_COLOR;
         ctx.save();
         ctx.translate(label.x, label.y);
         ctx.rotate(label.rotation ?? 0);
         ctx.textAlign = label.align ?? "left";
-        ctx.fillText(label.text, 0, 0);
+        drawHighlightedText(
+          ctx,
+          label.text,
+          0,
+          0,
+          label.align ?? "left",
+          GENUS_COLOR,
+          label.color ?? null,
+          findSearchMatchRange(label.text, searchQuery),
+        );
         ctx.restore();
       }
 

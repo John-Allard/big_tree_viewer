@@ -23,6 +23,10 @@ function normalizeSearchTarget(value: string): string {
   return value.trim().replaceAll("_", " ").toLowerCase();
 }
 
+function canonicalSearchKey(value: string): string {
+  return normalizeSearchTarget(value).replace(/\s+/g, " ");
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -149,10 +153,12 @@ export default function App() {
 
   const searchResults = useMemo(() => {
     const query = normalizeSearchQuery(searchQuery);
+    const queryKey = canonicalSearchKey(searchQuery);
     if (!tree || !searchQuery.trim()) {
       return [] as SearchResult[];
     }
-    const results: SearchResult[] = [];
+    const exactGenusResults: SearchResult[] = [];
+    const partialGenusResults: SearchResult[] = [];
     if (showGenusLabels) {
       const orderedLeaves = computeOrderedLeaves(tree, order);
       const genusBlocks = computeGenusBlocks(tree, orderedLeaves);
@@ -161,15 +167,22 @@ export default function App() {
         if (!matchesSearchQuery(block.label, query)) {
           continue;
         }
-        results.push({
+        const result = {
           kind: "genus",
           node: block.centerNode,
           displayName: block.label,
-        });
+        } satisfies SearchResult;
+        if (canonicalSearchKey(block.label) === queryKey) {
+          exactGenusResults.push(result);
+        } else {
+          partialGenusResults.push(result);
+        }
       }
     }
 
-    const nodeMatches: number[] = [];
+    const exactLeafMatches: number[] = [];
+    const exactInternalMatches: number[] = [];
+    const partialNodeMatches: number[] = [];
     for (let node = 0; node < tree.nodeCount; node += 1) {
       const rawName = (tree.names[node] || "").trim();
       if (!rawName) {
@@ -180,16 +193,30 @@ export default function App() {
         continue;
       }
       if (matchesSearchQuery(rawName, query)) {
-        nodeMatches.push(node);
+        const isExact = canonicalSearchKey(rawName) === queryKey;
+        if (isExact && !isInternal) {
+          exactLeafMatches.push(node);
+        } else if (isExact) {
+          exactInternalMatches.push(node);
+        } else {
+          partialNodeMatches.push(node);
+        }
       }
     }
-    nodeMatches.sort((left, right) => (
-      tree.layouts[order].center[left] - tree.layouts[order].center[right]
-      || tree.buffers.depth[left] - tree.buffers.depth[right]
-      || left - right
-    ));
-    for (let index = 0; index < nodeMatches.length; index += 1) {
-      const node = nodeMatches[index];
+    const sortNodes = (nodes: number[]): void => {
+      nodes.sort((left, right) => (
+        tree.layouts[order].center[left] - tree.layouts[order].center[right]
+        || tree.buffers.depth[left] - tree.buffers.depth[right]
+        || left - right
+      ));
+    };
+    sortNodes(exactLeafMatches);
+    sortNodes(exactInternalMatches);
+    sortNodes(partialNodeMatches);
+    const nodeResults = [...exactLeafMatches, ...exactInternalMatches, ...partialNodeMatches];
+    const results = [...exactGenusResults, ...partialGenusResults];
+    for (let index = 0; index < nodeResults.length; index += 1) {
+      const node = nodeResults[index];
       results.push({
         kind: "node",
         node,
@@ -535,6 +562,12 @@ export default function App() {
                 placeholder="Search tip, node, or genus names"
                 disabled={!tree}
                 onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && activeSearchResult !== null) {
+                    event.preventDefault();
+                    setFocusNodeRequest((value) => value + 1);
+                  }
+                }}
               />
               <button
                 type="button"
@@ -626,6 +659,7 @@ export default function App() {
           showScaleBars={showScaleBars}
           showGenusLabels={showGenusLabels}
           showNodeHeightLabels={showNodeHeightLabels}
+          searchQuery={searchQuery}
           searchMatches={searchMatches}
           activeSearchNode={activeSearchNode}
           activeSearchGenusCenterNode={activeSearchGenusCenterNode}

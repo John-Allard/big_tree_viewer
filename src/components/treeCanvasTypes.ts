@@ -11,6 +11,7 @@ export interface TreeCanvasProps {
   showScaleBars: boolean;
   showGenusLabels: boolean;
   showNodeHeightLabels: boolean;
+  searchQuery: string;
   searchMatches: number[];
   activeSearchNode: number | null;
   activeSearchGenusCenterNode: number | null;
