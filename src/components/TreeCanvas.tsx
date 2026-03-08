@@ -833,7 +833,10 @@ function estimateLabelWidth(fontSize: number, maxCharacters: number): number {
 
 function circularTimeLabelTheta(order: LayoutOrder): number {
   const offset = Math.PI / 36;
-  return order === "desc" ? -offset : offset;
+  if (order === "asc") {
+    return -offset;
+  }
+  return offset;
 }
 
 export default function TreeCanvas({
