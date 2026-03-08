@@ -192,6 +192,7 @@ export default function TreeCanvas({
     peakVisibleCenters: number[];
   } | null>(null);
   const [size, setSize] = useState({ width: 1200, height: 800 });
+  const previousSizeRef = useRef(size);
   const [overlayHover, setOverlayHover] = useState<HoverInfo | null>(null);
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
@@ -1535,14 +1536,26 @@ export default function TreeCanvas({
     }
     const previousViewMode = previousViewModeRef.current;
     previousViewModeRef.current = viewMode;
+    const previousSize = previousSizeRef.current;
+    previousSizeRef.current = size;
     const currentCamera = cameraRef.current;
+    const sizeChanged = previousSize.width !== size.width || previousSize.height !== size.height;
+    if (currentCamera && sizeChanged && previousViewMode === viewMode) {
+      if (currentCamera.kind === "rect") {
+        clampRectCamera(currentCamera, tree, size.width, size.height);
+      } else {
+        clampCircularCamera(currentCamera, tree, size.width, size.height);
+      }
+      draw();
+      return;
+    }
     if (currentCamera && previousViewMode !== viewMode) {
       cameraRef.current = convertCameraForViewMode(currentCamera);
       draw();
       return;
     }
     fitCamera();
-  }, [cache, convertCameraForViewMode, draw, fitCamera, fitRequest, tree, viewMode]);
+  }, [cache, convertCameraForViewMode, fitCamera, fitRequest, size, tree, viewMode]);
 
   useLayoutEffect(() => {
     const camera = cameraRef.current;
