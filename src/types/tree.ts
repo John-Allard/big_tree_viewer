@@ -52,6 +52,7 @@ export interface HoverInfo {
   parentDepth: number;
   parentAge: number | null;
   childAge: number | null;
+  descendantTipCount: number;
   name: string;
   screenX: number;
   screenY: number;
