@@ -144,12 +144,15 @@ function drawHighlightedText(
   ctx.textAlign = previousAlign;
 }
 
-function quantizeLabelWidth(width: number, fallback: number): number {
+function quantizeLabelWidth(width: number, fallback: number, bucket = 40): number {
   if (!(width > 0)) {
     return fallback;
   }
-  const bucket = 40;
   return Math.max(bucket, Math.ceil(width / bucket) * bucket);
+}
+
+function quantizeFontSize(fontSize: number, min: number, max: number, bucket = 1.5): number {
+  return Math.max(min, Math.min(max, Math.ceil(fontSize / bucket) * bucket));
 }
 
 function quantizedSegmentKey(
@@ -583,21 +586,23 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const stableTipLabelWidth = estimateLabelWidth(tipFontSize, maxLeafLabelCharacters);
+        const spacingTipFontSize = quantizeFontSize(tipFontSize, 6.5, 22, 1.5);
+        const stableTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
         const localTipLabelWidth = tipLabelsVisible
           ? quantizeLabelWidth(
             measuredLabels.reduce((maxWidth, label) => Math.max(maxWidth, label.width), 0),
             stableTipLabelWidth,
+            56,
           )
           : stableTipLabelWidth;
         const stableTipEnvelopeRightEdge = Number.isFinite(tipLabelRightX)
           ? tipLabelRightX + localTipLabelWidth
           : tipLabelRightEdge;
         const outboardMinX = Number.isFinite(stableTipEnvelopeRightEdge)
-          ? stableTipEnvelopeRightEdge + 22
+          ? stableTipEnvelopeRightEdge + 26
           : Number.NEGATIVE_INFINITY;
         const offsetPx = 10;
-        const pullAway = clamp01((camera.scaleY - 2.4) / 4.6);
+        const pullAway = tipLabelsVisible ? 1 : clamp01((camera.scaleY - 2.1) / 1.7);
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -619,7 +624,7 @@ export default function TreeCanvas({
           const spanPx = Math.abs(y2 - y1) * camera.scaleY;
           const localX = worldToScreenRect(camera, block.maxDepth, 0).x + offsetPx;
           const outboardX = Number.isFinite(outboardMinX) ? Math.max(localX, outboardMinX) : localX;
-          const x = localX + ((outboardX - localX) * pullAway);
+          const x = tipLabelsVisible ? outboardX : localX + ((outboardX - localX) * pullAway);
           if (x < -80 || x > size.width + 160) {
             return;
           }
@@ -1176,11 +1181,12 @@ export default function TreeCanvas({
         const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
         const arcOffsetWorld = 12 / camera.scale;
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
-        const pullAway = clamp01((angularSpacingPx - 2.8) / 4.4);
+        const pullAway = tipLabelsVisible ? 1 : clamp01((angularSpacingPx - 2.3) / 1.5);
         const localLineRadius = arcOffsetWorld;
-        const stableTipLabelWidth = estimateLabelWidth(tipFontSize, maxLeafLabelCharacters);
+        const spacingTipFontSize = quantizeFontSize(tipFontSize, 6.5, 20, 1.5);
+        const stableTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
         const localTipLabelWidth = tipLabelsVisible
-          ? quantizeLabelWidth(maxVisibleTipLabelWidth, stableTipLabelWidth)
+          ? quantizeLabelWidth(maxVisibleTipLabelWidth, stableTipLabelWidth, 56)
           : stableTipLabelWidth;
         const tipOuterRadius = tipLabelRadius + ((localTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
         const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
@@ -1218,8 +1224,12 @@ export default function TreeCanvas({
           const maxFontSize = 22 + (2 * tipLabelPressure);
           const fontSize = Math.max(baseFontSize, Math.min(maxFontSize, baseFontSize + (preliminaryArcLengthPx * fontGrowth)));
           const adjustedOutboardLabelRadius = outboardLineRadius + ((fontSize * 2.2 + 24) / camera.scale);
-          const lineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
-          const labelRadius = (localAbsLabelRadius * (1 - pullAway)) + (adjustedOutboardLabelRadius * pullAway);
+          const lineRadius = tipLabelsVisible
+            ? outboardLineRadius
+            : (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
+          const labelRadius = tipLabelsVisible
+            ? adjustedOutboardLabelRadius
+            : (localAbsLabelRadius * (1 - pullAway)) + (adjustedOutboardLabelRadius * pullAway);
           const lineRadiusPx = lineRadius * camera.scale;
           const genusOrderIndex = genusOrderByCenter.get(block.centerNode) ?? 0;
           const isActiveGenus = block.centerNode === activeSearchGenusCenterNode;
