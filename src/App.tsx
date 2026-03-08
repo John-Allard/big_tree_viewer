@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
+import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import type { WorkerResponse } from "./types/messages";
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
@@ -12,6 +13,95 @@ function formatNumber(value: number): string {
     return value.toExponential(3);
   }
   return value.toFixed(4).replace(/\.?0+$/, "");
+}
+
+function normalizeSearchQuery(value: string): string {
+  return value.toLowerCase();
+}
+
+function normalizeSearchTarget(value: string): string {
+  return value.trim().replaceAll("_", " ").toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function matchesSearchQuery(target: string, query: string): boolean {
+  const normalizedTarget = target.toLowerCase();
+  const normalizedQuery = normalizeSearchQuery(query);
+  const trimmedQuery = normalizedQuery.trim();
+  if (!trimmedQuery) {
+    return false;
+  }
+  const hasTrailingSeparator = /[_ ]$/.test(normalizedQuery);
+  const tokens = trimmedQuery.split(/[_ ]+/).filter(Boolean).map(escapeRegExp);
+  if (tokens.length === 0) {
+    return false;
+  }
+  const body = tokens.join("[_ ]+");
+  const pattern = hasTrailingSeparator ? `${body}(?:[_ ]+|$)` : body;
+  return new RegExp(pattern, "i").test(normalizedTarget);
+}
+
+function isNumericInternalLabel(value: string): boolean {
+  return /^[+-]?\d+(?:\.\d+)?$/.test(value.trim());
+}
+
+function useSessionDisclosure(key: string, defaultOpen: boolean): [boolean, (value: boolean) => void] {
+  const storageKey = `big-tree-viewer:${key}:open`;
+  const [isOpen, setIsOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") {
+      return defaultOpen;
+    }
+    const stored = window.sessionStorage.getItem(storageKey);
+    if (stored === null) {
+      return defaultOpen;
+    }
+    return stored === "true";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.sessionStorage.setItem(storageKey, isOpen ? "true" : "false");
+  }, [isOpen, storageKey]);
+
+  return [isOpen, setIsOpen];
+}
+
+function PanelSection({
+  title,
+  isOpen,
+  onToggle,
+  children,
+}: {
+  title: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <section className="panel-section">
+      <button
+        type="button"
+        className="section-toggle"
+        aria-expanded={isOpen}
+        onClick={onToggle}
+      >
+        <span className={`section-toggle-mark${isOpen ? " open" : ""}`}>▸</span>
+        <span>{title}</span>
+      </button>
+      {isOpen ? <div className="section-body">{children}</div> : null}
+    </section>
+  );
+}
+
+interface SearchResult {
+  kind: "node" | "genus";
+  node: number;
+  displayName: string;
 }
 
 function buildTreeModel(payload: WorkerTreePayload): TreeModel {
@@ -41,12 +131,92 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("rectangular");
   const [order, setOrder] = useState<LayoutOrder>("input");
   const [zoomAxisMode, setZoomAxisMode] = useState<ZoomAxisMode>("both");
+  const [circularRotationDegrees, setCircularRotationDegrees] = useState(0);
   const [showTimeStripes, setShowTimeStripes] = useState(true);
   const [showScaleBars, setShowScaleBars] = useState(true);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
   const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [fitRequest, setFitRequest] = useState(0);
+  const [focusNodeRequest, setFocusNodeRequest] = useState(0);
+  const [dataOpen, setDataOpen] = useSessionDisclosure("section-data", true);
+  const [viewOpen, setViewOpen] = useSessionDisclosure("section-view", true);
+  const [visualOpen, setVisualOpen] = useSessionDisclosure("section-visual", false);
+  const [searchOpen, setSearchOpen] = useSessionDisclosure("section-search", false);
+  const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
   const handleHoverChange = useCallback(() => {}, []);
+
+  const searchResults = useMemo(() => {
+    const query = normalizeSearchQuery(searchQuery);
+    if (!tree || !searchQuery.trim()) {
+      return [] as SearchResult[];
+    }
+    const results: SearchResult[] = [];
+    if (showGenusLabels) {
+      const orderedLeaves = computeOrderedLeaves(tree, order);
+      const genusBlocks = computeGenusBlocks(tree, orderedLeaves);
+      for (let index = 0; index < genusBlocks.length; index += 1) {
+        const block = genusBlocks[index];
+        if (!matchesSearchQuery(block.label, query)) {
+          continue;
+        }
+        results.push({
+          kind: "genus",
+          node: block.centerNode,
+          displayName: block.label,
+        });
+      }
+    }
+
+    const nodeMatches: number[] = [];
+    for (let node = 0; node < tree.nodeCount; node += 1) {
+      const rawName = (tree.names[node] || "").trim();
+      if (!rawName) {
+        continue;
+      }
+      const isInternal = tree.buffers.firstChild[node] >= 0;
+      if (isInternal && isNumericInternalLabel(rawName)) {
+        continue;
+      }
+      if (matchesSearchQuery(rawName, query)) {
+        nodeMatches.push(node);
+      }
+    }
+    nodeMatches.sort((left, right) => (
+      tree.layouts[order].center[left] - tree.layouts[order].center[right]
+      || tree.buffers.depth[left] - tree.buffers.depth[right]
+      || left - right
+    ));
+    for (let index = 0; index < nodeMatches.length; index += 1) {
+      const node = nodeMatches[index];
+      results.push({
+        kind: "node",
+        node,
+        displayName: normalizeSearchTarget(tree.names[node] || "").replaceAll("_", " ") || `node-${node}`,
+      });
+    }
+    return results;
+  }, [order, searchQuery, showGenusLabels, tree]);
+
+  const searchMatches = useMemo(
+    () => searchResults.filter((result) => result.kind === "node").map((result) => result.node),
+    [searchResults],
+  );
+
+  const activeSearchResult = searchResults.length > 0
+    ? searchResults[Math.min(activeSearchIndex, searchResults.length - 1)]
+    : null;
+  const activeSearchNode = activeSearchResult?.kind === "node" ? activeSearchResult.node : null;
+  const activeSearchGenusCenterNode = activeSearchResult?.kind === "genus" ? activeSearchResult.node : null;
+
+  useEffect(() => {
+    if (searchResults.length === 0) {
+      setActiveSearchIndex(0);
+      return;
+    }
+    setActiveSearchIndex((current) => Math.min(current, searchResults.length - 1));
+  }, [searchResults]);
 
   const handleWorkerMessage = useCallback((event: MessageEvent<WorkerResponse>): void => {
     const data = event.data;
@@ -138,7 +308,7 @@ export default function App() {
       error: null,
     });
     try {
-      const response = await fetch("./example-tree.nwk");
+      const response = await fetch(`${import.meta.env.BASE_URL}example-tree.nwk`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -178,6 +348,22 @@ export default function App() {
     event.target.value = "";
   };
 
+  const stepSearch = (direction: -1 | 1): void => {
+    if (searchResults.length === 0) {
+      return;
+    }
+    setActiveSearchIndex((current) => {
+      const next = current + direction;
+      if (next < 0) {
+        return searchResults.length - 1;
+      }
+      if (next >= searchResults.length) {
+        return 0;
+      }
+      return next;
+    });
+  };
+
   return (
     <div className="app-shell">
       <aside className="control-panel">
@@ -185,8 +371,7 @@ export default function App() {
           <h1>Big Tree Viewer</h1>
         </div>
 
-        <section className="panel-section">
-          <h2>Data</h2>
+        <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)}>
           <div className="button-row">
             <button type="button" onClick={() => void loadExample()} disabled={loadState.loading}>
               Load Example
@@ -208,10 +393,9 @@ export default function App() {
           </div>
           {loadState.loading && loadState.message ? <p className="status-line">{loadState.message}</p> : null}
           {loadState.error ? <p className="status-error">{loadState.error}</p> : null}
-        </section>
+        </PanelSection>
 
-        <section className="panel-section">
-          <h2>View</h2>
+        <PanelSection title="View" isOpen={viewOpen} onToggle={() => setViewOpen(!viewOpen)}>
           <div className="segmented">
             <button
               type="button"
@@ -270,10 +454,42 @@ export default function App() {
               Fit View
             </button>
           </div>
-        </section>
+          {viewMode === "circular" ? (
+            <div className="rotation-controls">
+              <label htmlFor="circular-rotation">Rotation</label>
+              <input
+                id="circular-rotation"
+                type="range"
+                min={-180}
+                max={180}
+                step={1}
+                value={circularRotationDegrees}
+                onChange={(event) => setCircularRotationDegrees(Number(event.target.value))}
+              />
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCircularRotationDegrees((value) => Math.max(-180, value - 15))}
+                >
+                  Rotate Left
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCircularRotationDegrees((value) => Math.min(180, value + 15))}
+                >
+                  Rotate Right
+                </button>
+                <button type="button" className="secondary" onClick={() => setCircularRotationDegrees(0)}>
+                  Reset
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </PanelSection>
 
-        <section className="panel-section">
-          <h2>Visual Options</h2>
+        <PanelSection title="Visual Options" isOpen={visualOpen} onToggle={() => setVisualOpen(!visualOpen)}>
           <div className="option-list">
             <label>
               <input
@@ -308,12 +524,78 @@ export default function App() {
               Show time stripes
             </label>
           </div>
-        </section>
+        </PanelSection>
 
-        <section className="panel-section">
+        <PanelSection title="Search" isOpen={searchOpen} onToggle={() => setSearchOpen(!searchOpen)}>
+          <div className="search-controls">
+            <div className="search-input-wrap">
+              <input
+                type="search"
+                value={searchQuery}
+                placeholder="Search tip, node, or genus names"
+                disabled={!tree}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+              <button
+                type="button"
+                className="search-clear"
+                aria-label="Clear search"
+                disabled={!searchQuery}
+                onClick={() => {
+                  setSearchQuery("");
+                  setActiveSearchIndex(0);
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="button-row">
+              <button
+                type="button"
+                className="secondary"
+                disabled={searchResults.length === 0}
+                onClick={() => stepSearch(-1)}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={searchResults.length === 0}
+                onClick={() => stepSearch(1)}
+              >
+                Next
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={activeSearchResult === null}
+                onClick={() => setFocusNodeRequest((value) => value + 1)}
+              >
+                Focus
+              </button>
+            </div>
+            {searchQuery.trim() ? (
+              <>
+                <p className="status-line">
+                  {searchResults.length === 0
+                  ? "No matches."
+                  : `Showing ${activeSearchIndex + 1} of ${searchResults.length}`}
+                </p>
+                {activeSearchResult ? (
+                  <p className="search-match-name">
+                    {activeSearchResult.kind === "genus" ? "Genus: " : "Match: "}
+                    {activeSearchResult.displayName}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        </PanelSection>
+
+        <PanelSection title="Stats" isOpen={statsOpen} onToggle={() => setStatsOpen(!statsOpen)}>
           {tree ? (
-            <details className="stats-panel">
-              <summary>Stats</summary>
+            <div>
               <dl className="stats-list">
                 <dt>Tips</dt>
                 <dd>{tree.leafCount.toLocaleString()}</dd>
@@ -326,11 +608,11 @@ export default function App() {
                 <dt>Ultrametric</dt>
                 <dd>{tree.isUltrametric ? "Yes" : "No"}</dd>
               </dl>
-            </details>
+            </div>
           ) : (
             <p className="empty-note">No tree loaded.</p>
           )}
-        </section>
+        </PanelSection>
       </aside>
 
       <main className="viewer-panel">
@@ -339,10 +621,15 @@ export default function App() {
           order={order}
           viewMode={viewMode}
           zoomAxisMode={viewMode === "circular" ? "both" : zoomAxisMode}
+          circularRotation={(circularRotationDegrees * Math.PI) / 180}
           showTimeStripes={showTimeStripes}
           showScaleBars={showScaleBars}
           showGenusLabels={showGenusLabels}
           showNodeHeightLabels={showNodeHeightLabels}
+          searchMatches={searchMatches}
+          activeSearchNode={activeSearchNode}
+          activeSearchGenusCenterNode={activeSearchGenusCenterNode}
+          focusNodeRequest={focusNodeRequest}
           fitRequest={fitRequest}
           onHoverChange={handleHoverChange}
         />

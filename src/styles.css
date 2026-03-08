@@ -29,6 +29,28 @@ select {
   font: inherit;
 }
 
+input[type="search"] {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.68rem 0.8rem;
+  background: #ffffff;
+  color: #0f172a;
+  appearance: none;
+}
+
+input[type="search"]:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.16);
+  border-color: #2563eb;
+}
+
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  appearance: none;
+}
+
 button {
   border: 1px solid #cbd5e1;
   background: #0f172a;
@@ -92,12 +114,40 @@ button.secondary {
   border-top: 1px solid rgba(15, 23, 42, 0.08);
 }
 
-.panel-section h2 {
-  margin: 0 0 0.75rem;
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #475569;
   font-size: 0.86rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #475569;
+}
+
+.section-toggle:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: #0f172a;
+  transform: none;
+}
+
+.section-toggle-mark {
+  display: inline-block;
+  font-size: 0.76rem;
+  line-height: 1;
+  transition: transform 140ms ease;
+}
+
+.section-toggle-mark.open {
+  transform: rotate(90deg);
+}
+
+.section-body {
+  margin-top: 0.75rem;
 }
 
 .button-row,
@@ -120,6 +170,66 @@ button.secondary {
 .panel-section > .segmented + .segmented,
 .panel-section > .segmented + .button-row {
   margin-top: 0.2rem;
+}
+
+.rotation-controls {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.rotation-controls label {
+  color: #475569;
+  font-size: 0.86rem;
+}
+
+.rotation-controls input[type="range"] {
+  width: 100%;
+}
+
+.search-controls {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.search-input-wrap {
+  position: relative;
+}
+
+.search-input-wrap input[type="search"] {
+  padding-right: 2.3rem;
+}
+
+.search-clear {
+  position: absolute;
+  top: 50%;
+  right: 0.45rem;
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  transform: translateY(-50%);
+}
+
+.search-clear:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.12);
+  color: #0f172a;
+  border-color: transparent;
+  transform: translateY(-50%);
+}
+
+.search-clear:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.search-match-name {
+  margin: 0;
+  color: #334155;
+  font-weight: 600;
 }
 
 .option-list {

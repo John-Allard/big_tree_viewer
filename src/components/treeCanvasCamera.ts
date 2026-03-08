@@ -1,6 +1,23 @@
 import type { TreeModel } from "../types/tree";
 import type { CircularCamera, RectCamera } from "./treeCanvasTypes";
 
+export function setCircularCameraRotation(camera: CircularCamera, rotation: number): void {
+  camera.rotation = rotation;
+  camera.rotationCos = Math.cos(rotation);
+  camera.rotationSin = Math.sin(rotation);
+}
+
+export function rotateCircularWorldPoint(
+  camera: CircularCamera,
+  x: number,
+  y: number,
+): { x: number; y: number } {
+  return {
+    x: (x * camera.rotationCos) - (y * camera.rotationSin),
+    y: (x * camera.rotationSin) + (y * camera.rotationCos),
+  };
+}
+
 export function lineIntersectsRect(
   x1: number,
   y1: number,
@@ -34,15 +51,20 @@ export function fitRectCamera(width: number, height: number, tree: TreeModel): R
   };
 }
 
-export function fitCircularCamera(width: number, height: number, tree: TreeModel): CircularCamera {
+export function fitCircularCamera(width: number, height: number, tree: TreeModel, rotation = 0): CircularCamera {
   const radius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
   const scale = (Math.min(width, height) * 0.44) / radius;
-  return {
+  const camera: CircularCamera = {
     kind: "circular",
     scale,
     translateX: width * 0.5,
     translateY: height * 0.5,
+    rotation,
+    rotationCos: 1,
+    rotationSin: 0,
   };
+  setCircularCameraRotation(camera, rotation);
+  return camera;
 }
 
 export function worldToScreenRect(camera: RectCamera, x: number, y: number): { x: number; y: number } {
@@ -60,16 +82,19 @@ export function screenToWorldRect(camera: RectCamera, x: number, y: number): { x
 }
 
 export function worldToScreenCircular(camera: CircularCamera, x: number, y: number): { x: number; y: number } {
+  const rotated = rotateCircularWorldPoint(camera, x, y);
   return {
-    x: camera.translateX + (x * camera.scale),
-    y: camera.translateY + (y * camera.scale),
+    x: camera.translateX + (rotated.x * camera.scale),
+    y: camera.translateY + (rotated.y * camera.scale),
   };
 }
 
 export function screenToWorldCircular(camera: CircularCamera, x: number, y: number): { x: number; y: number } {
+  const dx = (x - camera.translateX) / camera.scale;
+  const dy = (y - camera.translateY) / camera.scale;
   return {
-    x: (x - camera.translateX) / camera.scale,
-    y: (y - camera.translateY) / camera.scale,
+    x: (dx * camera.rotationCos) + (dy * camera.rotationSin),
+    y: (-dx * camera.rotationSin) + (dy * camera.rotationCos),
   };
 }
 

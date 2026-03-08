@@ -6,10 +6,15 @@ export interface TreeCanvasProps {
   order: LayoutOrder;
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;
+  circularRotation: number;
   showTimeStripes: boolean;
   showScaleBars: boolean;
   showGenusLabels: boolean;
   showNodeHeightLabels: boolean;
+  searchMatches: number[];
+  activeSearchNode: number | null;
+  activeSearchGenusCenterNode: number | null;
+  focusNodeRequest: number;
   fitRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
 }
@@ -27,6 +32,9 @@ export interface CircularCamera {
   scale: number;
   translateX: number;
   translateY: number;
+  rotation: number;
+  rotationCos: number;
+  rotationSin: number;
 }
 
 export type CameraState = RectCamera | CircularCamera;
@@ -59,6 +67,7 @@ export interface ScreenLabel {
   fontSize?: number;
   rotation?: number;
   align?: CanvasTextAlign;
+  color?: string;
 }
 
 export interface LabelHitbox {
