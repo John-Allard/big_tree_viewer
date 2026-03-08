@@ -9,8 +9,11 @@ function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
     return "n/a";
   }
-  if (Math.abs(value) >= 1000 || Math.abs(value) < 0.001) {
+  if (Math.abs(value) < 0.001) {
     return value.toExponential(3);
+  }
+  if (Math.abs(value) >= 1000) {
+    return value.toFixed(0);
   }
   return value.toFixed(4).replace(/\.?0+$/, "");
 }

@@ -68,6 +68,29 @@ export class UniformGridIndex {
     return hits;
   }
 
+  queryPoint(x: number, y: number, padCellsX = 0, padCellsY = 0): IndexedSegment[] {
+    const minCellX = this.clampX(Math.floor((x - this.minX) / this.cellWidth) - padCellsX);
+    const maxCellX = this.clampX(Math.floor((x - this.minX) / this.cellWidth) + padCellsX);
+    const minCellY = this.clampY(Math.floor((y - this.minY) / this.cellHeight) - padCellsY);
+    const maxCellY = this.clampY(Math.floor((y - this.minY) / this.cellHeight) + padCellsY);
+    const seen = new Set<number>();
+    const hits: IndexedSegment[] = [];
+    for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+        const cell = this.cells[cellY * this.width + cellX];
+        for (let index = 0; index < cell.length; index += 1) {
+          const segmentIndex = cell[index];
+          if (seen.has(segmentIndex)) {
+            continue;
+          }
+          seen.add(segmentIndex);
+          hits.push(this.segments[segmentIndex]);
+        }
+      }
+    }
+    return hits;
+  }
+
   private clampX(value: number): number {
     return Math.max(0, Math.min(this.width - 1, value));
   }

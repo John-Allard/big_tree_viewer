@@ -1693,18 +1693,23 @@ export default function TreeCanvas({
 
       if (camera.kind === "rect") {
         const world = screenToWorldRect(camera, localX, localY);
-        const radiusX = 6 / camera.scaleX;
-        const radiusY = 6 / camera.scaleY;
-        const candidates = cache.rectIndices[order].query(world.x, world.y, radiusX, radiusY);
+        const candidates = cache.rectIndices[order].queryPoint(world.x, world.y, 1, 1);
         let bestDistance = Number.POSITIVE_INFINITY;
+        const threshold = 16;
         for (let index = 0; index < candidates.length; index += 1) {
           const segment = candidates[index];
           const start = worldToScreenRect(camera, segment.x1, segment.y1);
           const end = worldToScreenRect(camera, segment.x2, segment.y2);
+          const minScreenX = Math.min(start.x, end.x) - threshold;
+          const maxScreenX = Math.max(start.x, end.x) + threshold;
+          const minScreenY = Math.min(start.y, end.y) - threshold;
+          const maxScreenY = Math.max(start.y, end.y) + threshold;
+          if (localX < minScreenX || localX > maxScreenX || localY < minScreenY || localY > maxScreenY) {
+            continue;
+          }
           const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
           if (distance < bestDistance) {
             bestDistance = distance;
-            const threshold = 16;
             if (distance <= threshold) {
               const node = segment.node;
               const parent = tree.buffers.parent[node];
