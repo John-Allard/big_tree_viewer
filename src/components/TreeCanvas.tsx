@@ -341,7 +341,7 @@ export default function TreeCanvas({
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const stripeLevels = buildStripeLevels(Math.max(1e-9, maxX - minX), camera.scaleX);
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
-      const tipLabelsVisible = camera.scaleY > 6;
+      const tipLabelsVisible = camera.scaleY > 4.2;
 
       if (showTimeStripes) {
         const drawBands = (step: number, alpha: number) => {
@@ -533,7 +533,7 @@ export default function TreeCanvas({
       let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number }> = [];
       let tipLabelRightEdge = Number.NEGATIVE_INFINITY;
       let tipLabelRightX = Number.NEGATIVE_INFINITY;
-      const tipFontSize = Math.max(10, Math.min(22, camera.scaleY * 0.68));
+      const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelsVisible || camera.scaleY > 3.1;
       if (needTipEnvelope) {
@@ -555,7 +555,7 @@ export default function TreeCanvas({
           tipLabelRightEdge = Math.max(tipLabelRightEdge, x + width);
         }
       }
-      const maxVisibleLabels = 4500;
+      const maxVisibleLabels = 5200;
       if (tipLabelsVisible && measuredLabels.length <= maxVisibleLabels) {
         visibleTipLabels = measuredLabels.map(({ node, text, x, y }) => ({ node, text, x, y }));
       }
@@ -1119,8 +1119,8 @@ export default function TreeCanvas({
         }
       }
 
-      const tipLabelsVisible = angularSpacingPx > 7;
-      const tipFontSize = Math.max(9, Math.min(20, angularSpacingPx * 0.85));
+      const tipLabelsVisible = angularSpacingPx > 4.5;
+      const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const circularTipVisibilityMargin = 140;
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
@@ -1367,7 +1367,7 @@ export default function TreeCanvas({
         const fontSize = tipFontSize;
         ctx.font = `${fontSize}px ${LABEL_FONT}`;
         ctx.textBaseline = "middle";
-        const maxVisibleLabels = 3200;
+        const maxVisibleLabels = 4200;
         if (circularVisibleTipLabels.length <= maxVisibleLabels) {
           for (let index = 0; index < circularVisibleTipLabels.length; index += 1) {
             const label = circularVisibleTipLabels[index];

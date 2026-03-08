@@ -173,8 +173,10 @@ button.secondary {
   color: #f8fafc;
 }
 
-.panel-section > .segmented + .segmented,
-.panel-section > .segmented + .button-row {
+.section-body > .segmented + .segmented,
+.section-body > .segmented + .button-row,
+.section-body > .button-row + .segmented,
+.section-body > .button-row + .button-row {
   margin-top: 0.2rem;
 }
 
