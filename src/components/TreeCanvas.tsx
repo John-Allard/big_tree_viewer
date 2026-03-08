@@ -152,6 +152,21 @@ function quantizeLabelWidth(width: number, fallback: number): number {
   return Math.max(bucket, Math.ceil(width / bucket) * bucket);
 }
 
+function quantizedSegmentKey(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  bucket = 1.5,
+): string {
+  return [
+    Math.round(x1 / bucket),
+    Math.round(y1 / bucket),
+    Math.round(x2 / bucket),
+    Math.round(y2 / bucket),
+  ].join(":");
+}
+
 export default function TreeCanvas({
   tree,
   order,
@@ -355,6 +370,9 @@ export default function TreeCanvas({
       ctx.strokeStyle = BRANCH_COLOR;
       ctx.lineWidth = 1;
       ctx.beginPath();
+      const useDenseRectLOD = camera.scaleY < 1.25;
+      const rectConnectorKeys = useDenseRectLOD ? new Set<string>() : null;
+      const rectStemKeys = useDenseRectLOD ? new Set<string>() : null;
       for (let node = 0; node < tree.nodeCount; node += 1) {
         const ordered = children[node];
         if (ordered.length < 2) {
@@ -368,6 +386,13 @@ export default function TreeCanvas({
         }
         const start = worldToScreenRect(camera, x, firstY);
         const end = worldToScreenRect(camera, x, lastY);
+        if (useDenseRectLOD) {
+          const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+          if (rectConnectorKeys?.has(key)) {
+            continue;
+          }
+          rectConnectorKeys?.add(key);
+        }
         ctx.moveTo(start.x, start.y);
         ctx.lineTo(end.x, end.y);
       }
@@ -384,6 +409,13 @@ export default function TreeCanvas({
         }
         const start = worldToScreenRect(camera, x1, y);
         const end = worldToScreenRect(camera, x2, y);
+        if (useDenseRectLOD) {
+          const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+          if (rectStemKeys?.has(key)) {
+            continue;
+          }
+          rectStemKeys?.add(key);
+        }
         ctx.moveTo(start.x, start.y);
         ctx.lineTo(end.x, end.y);
       }
@@ -823,6 +855,7 @@ export default function TreeCanvas({
       const children = cache.orderedChildren[order];
       const rotationAngle = camera.rotation;
       const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+      const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree.leafCount));
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const visibleRadius = Math.max(1e-9, Math.min(size.width, size.height) / (2 * camera.scale));
       const stripeLevels = buildStripeLevels(visibleRadius, camera.scale);
@@ -878,6 +911,9 @@ export default function TreeCanvas({
       ctx.strokeStyle = BRANCH_COLOR;
       ctx.lineWidth = 1;
       ctx.beginPath();
+      const useDenseCircularLOD = angularSpacingPx < 1.1;
+      const circularConnectorKeys = useDenseCircularLOD ? new Set<string>() : null;
+      const circularStemKeys = useDenseCircularLOD ? new Set<string>() : null;
       for (let node = 0; node < tree.nodeCount; node += 1) {
         const ordered = children[node];
         if (ordered.length < 2) {
@@ -895,10 +931,18 @@ export default function TreeCanvas({
           continue;
         }
         const centerPoint = worldToScreenCircular(camera, 0, 0);
-        ctx.moveTo(
-          centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx,
-          centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx,
-        );
+        const startX = centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx;
+        const startY = centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx;
+        const endX = centerPoint.x + Math.cos(arcAngles.end + rotationAngle) * radiusPx;
+        const endY = centerPoint.y + Math.sin(arcAngles.end + rotationAngle) * radiusPx;
+        if (useDenseCircularLOD) {
+          const key = quantizedSegmentKey(startX, startY, endX, endY);
+          if (circularConnectorKeys?.has(key)) {
+            continue;
+          }
+          circularConnectorKeys?.add(key);
+        }
+        ctx.moveTo(startX, startY);
         ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
       }
       for (let node = 0; node < tree.nodeCount; node += 1) {
@@ -913,6 +957,13 @@ export default function TreeCanvas({
         const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
         if (!lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, size.width, size.height)) {
           continue;
+        }
+        if (useDenseCircularLOD) {
+          const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+          if (circularStemKeys?.has(key)) {
+            continue;
+          }
+          circularStemKeys?.add(key);
         }
         ctx.moveTo(start.x, start.y);
         ctx.lineTo(end.x, end.y);
@@ -1068,7 +1119,6 @@ export default function TreeCanvas({
         }
       }
 
-      const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree.leafCount));
       const tipLabelsVisible = angularSpacingPx > 7;
       const tipFontSize = Math.max(9, Math.min(20, angularSpacingPx * 0.85));
       const tipLabelRadius = maxRadius + (20 / camera.scale);
