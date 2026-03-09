@@ -450,6 +450,8 @@ export default function TreeCanvas({
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const stripeLevels = buildStripeLevels(Math.max(1e-9, maxX - minX), camera.scaleX);
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
+      const tipLabelCueVisible = camera.scaleY > 1.45;
+      const microTipLabelsVisible = camera.scaleY > 2.7;
       const tipLabelsVisible = camera.scaleY > 4.2;
 
       if (showTimeStripes) {
@@ -652,8 +654,9 @@ export default function TreeCanvas({
       let tipLabelRightEdge = Number.NEGATIVE_INFINITY;
       let tipLabelRightX = Number.NEGATIVE_INFINITY;
       const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
+      const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
-      const needTipEnvelope = tipLabelsVisible || camera.scaleY > 2.35;
+      const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
         ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
@@ -677,7 +680,7 @@ export default function TreeCanvas({
         }
       }
       const maxVisibleLabels = 5200;
-      if (tipLabelsVisible && measuredLabels.length <= maxVisibleLabels) {
+      if (microTipLabelsVisible && measuredLabels.length <= maxVisibleLabels) {
         visibleTipLabels = measuredLabels.map(({ node, text, x, y }) => ({ node, text, x, y }));
       }
 
@@ -864,37 +867,54 @@ export default function TreeCanvas({
       }
 
       if (visibleTipLabels.length > 0) {
-        ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
+        const renderTipFontSize = tipLabelsVisible ? tipFontSize : microTipFontSize;
+        ctx.font = `${renderTipFontSize}px ${LABEL_FONT}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         for (let index = 0; index < visibleTipLabels.length; index += 1) {
           const label = visibleTipLabels[index];
-          const highlightColor = label.node === activeSearchNode
-            ? "#c2410c"
-            : searchMatchSet.has(label.node)
-              ? "#2563eb"
-              : null;
-          drawHighlightedText(
-            ctx,
-            label.text,
-            label.x,
-            label.y,
-            "left",
-            "#111827",
-            highlightColor,
-            highlightColor ? findSearchMatchRange(label.text, searchQuery) : null,
-          );
-          const width = ctx.measureText(label.text).width;
-          labelHitsRef.current.push({
-            node: label.node,
-            kind: "rect",
-            source: "label",
-            x: label.x,
-            y: label.y - (tipFontSize * 0.55),
-            width,
-            height: tipFontSize * 1.1,
-          });
+          if (tipLabelsVisible) {
+            const highlightColor = label.node === activeSearchNode
+              ? "#c2410c"
+              : searchMatchSet.has(label.node)
+                ? "#2563eb"
+                : null;
+            drawHighlightedText(
+              ctx,
+              label.text,
+              label.x,
+              label.y,
+              "left",
+              "#111827",
+              highlightColor,
+              highlightColor ? findSearchMatchRange(label.text, searchQuery) : null,
+            );
+            const width = ctx.measureText(label.text).width;
+            labelHitsRef.current.push({
+              node: label.node,
+              kind: "rect",
+              source: "label",
+              x: label.x,
+              y: label.y - (renderTipFontSize * 0.55),
+              width,
+              height: renderTipFontSize * 1.1,
+            });
+          } else {
+            ctx.fillStyle = "rgba(15,23,42,0.6)";
+            ctx.fillText(label.text, label.x, label.y);
+          }
         }
+      } else if (tipLabelCueVisible && measuredLabels.length <= 9000) {
+        ctx.strokeStyle = "rgba(15,23,42,0.42)";
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        for (let index = 0; index < measuredLabels.length; index += 1) {
+          const label = measuredLabels[index];
+          const cueLength = Math.max(3.5, Math.min(7, camera.scaleY * 0.7));
+          ctx.moveTo(label.x, label.y);
+          ctx.lineTo(label.x + cueLength, label.y);
+        }
+        ctx.stroke();
       }
 
       if (visibleCollapsedNodes.length > 0) {
@@ -1286,13 +1306,16 @@ export default function TreeCanvas({
         }
       }
 
+      const tipLabelCueVisible = angularSpacingPx > 1.6;
+      const microTipLabelsVisible = angularSpacingPx > 2.9;
       const tipLabelsVisible = angularSpacingPx > 4.5;
       const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
+      const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const circularTipVisibilityMargin = 140;
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
       let maxVisibleTipLabelWidth = 0;
-      if (tipLabelsVisible) {
+      if (tipLabelCueVisible) {
         ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
@@ -1584,6 +1607,38 @@ export default function TreeCanvas({
             });
           }
         }
+      } else if (microTipLabelsVisible) {
+        const fontSize = microTipFontSize;
+        ctx.font = `${fontSize}px ${LABEL_FONT}`;
+        ctx.textBaseline = "middle";
+        const maxVisibleLabels = 4200;
+        if (circularVisibleTipLabels.length <= maxVisibleLabels) {
+          ctx.fillStyle = "rgba(15,23,42,0.6)";
+          for (let index = 0; index < circularVisibleTipLabels.length; index += 1) {
+            const label = circularVisibleTipLabels[index];
+            const deg = (label.theta + rotationAngle) * 180 / Math.PI;
+            const onRightSide = Math.cos(label.theta + rotationAngle) >= 0;
+            const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
+            ctx.save();
+            ctx.translate(label.x, label.y);
+            ctx.rotate(rotation * Math.PI / 180);
+            ctx.textAlign = onRightSide ? "left" : "right";
+            ctx.fillText(label.text, 0, 0);
+            ctx.restore();
+          }
+        }
+      } else if (tipLabelCueVisible && circularVisibleTipLabels.length <= 9000) {
+        ctx.strokeStyle = "rgba(15,23,42,0.42)";
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        for (let index = 0; index < circularVisibleTipLabels.length; index += 1) {
+          const label = circularVisibleTipLabels[index];
+          const theta = label.theta + rotationAngle;
+          const cueLength = Math.max(3.5, Math.min(7, angularSpacingPx * 0.9));
+          ctx.moveTo(label.x, label.y);
+          ctx.lineTo(label.x + (Math.cos(theta) * cueLength), label.y + (Math.sin(theta) * cueLength));
+        }
+        ctx.stroke();
       }
       if (visibleCollapsedNodes.length > 0) {
         ctx.fillStyle = "#cbd5e1";
