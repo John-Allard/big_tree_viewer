@@ -106,7 +106,11 @@ export interface CircularScaleBar {
 
 export type HoverTargetKind = "stem" | "connector" | "label";
 export type HoverSegment = Pick<IndexedSegment, "kind" | "x1" | "y1" | "x2" | "y2">;
-export type CanvasHoverInfo = HoverInfo & { targetKind: HoverTargetKind; hoveredSegment?: HoverSegment };
+export type CanvasHoverInfo = HoverInfo & {
+  targetKind: HoverTargetKind;
+  hoveredSegment?: HoverSegment;
+  ownerNode?: number;
+};
 
 export const LABEL_FONT = `"IBM Plex Sans", "Segoe UI", sans-serif`;
 export const BRANCH_COLOR = "#0f172a";

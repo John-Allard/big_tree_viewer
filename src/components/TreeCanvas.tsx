@@ -900,32 +900,28 @@ export default function TreeCanvas({
           ctx.strokeStyle = HOVER_COLOR;
           ctx.lineWidth = 2;
           ctx.beginPath();
-          if (hover.targetKind === "connector" && children[hover.node].length >= 2) {
-            const hoverWorld = screenToWorldRect(camera, hover.screenX, hover.screenY);
-            const ownerY = layout.center[hover.node];
-            const child = pickRectConnectorChild(children[hover.node], layout.center, ownerY, hoverWorld.y);
-            if (child !== null) {
-              const childY = layout.center[child];
-              const connectorSpanPx = Math.abs(childY - ownerY) * camera.scaleY;
-              if (connectorSpanPx >= 1) {
-                const connectorStart = worldToScreenRect(
-                  camera,
-                  tree.buffers.depth[hover.node],
-                  Math.min(ownerY, childY),
-                );
-                const connectorEnd = worldToScreenRect(
-                  camera,
-                  tree.buffers.depth[hover.node],
-                  Math.max(ownerY, childY),
-                );
-                ctx.moveTo(connectorStart.x, connectorStart.y);
-                ctx.lineTo(connectorEnd.x, connectorEnd.y);
-              }
-              const start = worldToScreenRect(camera, tree.buffers.depth[hover.node], childY);
-              const end = worldToScreenRect(camera, tree.buffers.depth[child], childY);
-              ctx.moveTo(start.x, start.y);
-              ctx.lineTo(end.x, end.y);
+          if (hover.targetKind === "connector" && hover.ownerNode !== undefined) {
+            const ownerY = layout.center[hover.ownerNode];
+            const childY = layout.center[hover.node];
+            const connectorSpanPx = Math.abs(childY - ownerY) * camera.scaleY;
+            if (connectorSpanPx >= 1) {
+              const connectorStart = worldToScreenRect(
+                camera,
+                tree.buffers.depth[hover.ownerNode],
+                Math.min(ownerY, childY),
+              );
+              const connectorEnd = worldToScreenRect(
+                camera,
+                tree.buffers.depth[hover.ownerNode],
+                Math.max(ownerY, childY),
+              );
+              ctx.moveTo(connectorStart.x, connectorStart.y);
+              ctx.lineTo(connectorEnd.x, connectorEnd.y);
             }
+            const start = worldToScreenRect(camera, tree.buffers.depth[hover.ownerNode], childY);
+            const end = worldToScreenRect(camera, tree.buffers.depth[hover.node], childY);
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
           } else {
             const parentY = layout.center[parent];
             const childY = layout.center[hover.node];
@@ -1629,41 +1625,27 @@ export default function TreeCanvas({
           ctx.lineWidth = 2;
           ctx.beginPath();
           const childTheta = thetaFor(layout.center, hover.node, tree.leafCount);
-          if (hover.targetKind === "connector" && children[hover.node].length >= 2) {
-            const hoverWorld = screenToWorldCircular(camera, hover.screenX, hover.screenY);
-            const hoverTheta = wrapPositive(Math.atan2(hoverWorld.y, hoverWorld.x));
-            const ownerTheta = thetaFor(layout.center, hover.node, tree.leafCount);
-            const ownerArcStart = thetaFor(layout.min, hover.node, tree.leafCount);
-            const ownerArcEnd = thetaFor(layout.max, hover.node, tree.leafCount);
+          if (hover.targetKind === "connector" && hover.ownerNode !== undefined) {
+            const ownerTheta = thetaFor(layout.center, hover.ownerNode, tree.leafCount);
+            const ownerArcStart = thetaFor(layout.min, hover.ownerNode, tree.leafCount);
+            const ownerArcEnd = thetaFor(layout.max, hover.ownerNode, tree.leafCount);
             const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
-            const child = pickCircularConnectorChild(
-              children[hover.node],
-              layout.center,
-              hoverTheta,
-              ownerTheta,
-              tree.leafCount,
-              ownerArcStart,
-              ownerArcLength,
-            );
-            if (child !== null) {
-              const branchTheta = thetaFor(layout.center, child, tree.leafCount);
-              const arcSpan = arcSubspanWithinSpan(ownerTheta, branchTheta, ownerArcStart, ownerArcLength);
-              const radiusPx = tree.buffers.depth[hover.node] * camera.scale;
-              const connectorSpanPx = (arcSpan?.length ?? 0) * radiusPx;
-              if (arcSpan && radiusPx >= 0.25 && connectorSpanPx >= 1) {
-                ctx.moveTo(
-                  centerPoint.x + Math.cos(arcSpan.start + rotationAngle) * radiusPx,
-                  centerPoint.y + Math.sin(arcSpan.start + rotationAngle) * radiusPx,
-                );
-                ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcSpan.start + rotationAngle, arcSpan.end + rotationAngle, false);
-              }
-              const startWorld = polarToCartesian(tree.buffers.depth[hover.node], branchTheta);
-              const endWorld = polarToCartesian(tree.buffers.depth[child], branchTheta);
-              const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
-              const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
-              ctx.moveTo(start.x, start.y);
-              ctx.lineTo(end.x, end.y);
+            const arcSpan = arcSubspanWithinSpan(ownerTheta, childTheta, ownerArcStart, ownerArcLength);
+            const radiusPx = tree.buffers.depth[hover.ownerNode] * camera.scale;
+            const connectorSpanPx = (arcSpan?.length ?? 0) * radiusPx;
+            if (arcSpan && radiusPx >= 0.25 && connectorSpanPx >= 1) {
+              ctx.moveTo(
+                centerPoint.x + Math.cos(arcSpan.start + rotationAngle) * radiusPx,
+                centerPoint.y + Math.sin(arcSpan.start + rotationAngle) * radiusPx,
+              );
+              ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcSpan.start + rotationAngle, arcSpan.end + rotationAngle, false);
             }
+            const startWorld = polarToCartesian(tree.buffers.depth[hover.ownerNode], childTheta);
+            const endWorld = polarToCartesian(tree.buffers.depth[hover.node], childTheta);
+            const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+            const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
           } else {
             const parentTheta = thetaFor(layout.center, parent, tree.leafCount);
             if (Math.abs(childTheta - parentTheta) > 1e-6) {
@@ -2519,6 +2501,8 @@ export default function TreeCanvas({
     if (!canvas || !tree || !cache) {
       return undefined;
     }
+    const layout = collapsedView?.layout ?? tree.layouts[order];
+    const children = cache.orderedChildren[order];
 
     const hitTestAt = (localX: number, localY: number): CanvasHoverInfo | null => {
       const camera = cameraRef.current;
@@ -2526,15 +2510,16 @@ export default function TreeCanvas({
         return null;
       }
       let hover: CanvasHoverInfo | null = null;
-
-      for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
-        const hitbox = labelHitsRef.current[index];
-        if (!pointInLabelHitbox(localX, localY, hitbox)) {
-          continue;
-        }
-        const node = hitbox.node;
+      const buildHoverInfo = (
+        node: number,
+        targetKind: "label" | "stem" | "connector",
+        screenX: number,
+        screenY: number,
+        hoveredSegment?: CanvasHoverInfo["hoveredSegment"],
+        ownerNode?: number,
+      ): CanvasHoverInfo => {
         const parent = tree.buffers.parent[node];
-        hover = {
+        return {
           node,
           branchLength: tree.buffers.branchLength[node],
           parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
@@ -2542,11 +2527,20 @@ export default function TreeCanvas({
           childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
           name: displayNodeName(tree, node),
           descendantTipCount: tree.buffers.leafCount[node],
-          screenX: localX,
-          screenY: localY,
-          targetKind: "label",
-          hoveredSegment: undefined,
+          screenX,
+          screenY,
+          targetKind,
+          hoveredSegment,
+          ownerNode,
         };
+      };
+
+      for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
+        const hitbox = labelHitsRef.current[index];
+        if (!pointInLabelHitbox(localX, localY, hitbox)) {
+          continue;
+        }
+        hover = buildHoverInfo(hitbox.node, "label", localX, localY);
         break;
       }
 
@@ -2577,21 +2571,15 @@ export default function TreeCanvas({
           if (distance < bestDistance) {
             bestDistance = distance;
             if (distance <= threshold) {
-              const node = segment.node;
-              const parent = tree.buffers.parent[node];
-              hover = {
-                node,
-                branchLength: tree.buffers.branchLength[node],
-                parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-                parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
-                childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
-                name: displayNodeName(tree, node),
-                descendantTipCount: tree.buffers.leafCount[node],
-                screenX: localX,
-                screenY: localY,
-                targetKind: segment.kind,
-                hoveredSegment: segment.kind === "connector" ? segment : undefined,
-              };
+              if (segment.kind === "connector") {
+                const ownerNode = segment.node;
+                const childNode = pickRectConnectorChild(children[ownerNode], layout.center, layout.center[ownerNode], world.y);
+                if (childNode !== null) {
+                  hover = buildHoverInfo(childNode, "connector", localX, localY, segment, ownerNode);
+                }
+              } else {
+                hover = buildHoverInfo(segment.node, "stem", localX, localY);
+              }
             }
           }
         }
@@ -2610,21 +2598,28 @@ export default function TreeCanvas({
           const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
           if (distance < bestDistance && distance <= 16) {
             bestDistance = distance;
-            const node = segment.node;
-            const parent = tree.buffers.parent[node];
-            hover = {
-              node,
-              branchLength: tree.buffers.branchLength[node],
-              parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-              parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
-              childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
-              name: displayNodeName(tree, node),
-              descendantTipCount: tree.buffers.leafCount[node],
-              screenX: localX,
-              screenY: localY,
-              targetKind: segment.kind,
-              hoveredSegment: segment.kind === "connector" ? segment : undefined,
-            };
+            if (segment.kind === "connector") {
+              const ownerNode = segment.node;
+              const ownerTheta = thetaFor(layout.center, ownerNode, tree.leafCount);
+              const arcStart = thetaFor(layout.min, ownerNode, tree.leafCount);
+              const arcEnd = thetaFor(layout.max, ownerNode, tree.leafCount);
+              const arcLength = Math.max(0, arcEnd - arcStart);
+              const hoverTheta = wrapPositive(Math.atan2(world.y, world.x));
+              const childNode = pickCircularConnectorChild(
+                children[ownerNode],
+                layout.center,
+                hoverTheta,
+                ownerTheta,
+                tree.leafCount,
+                arcStart,
+                arcLength,
+              );
+              if (childNode !== null) {
+                hover = buildHoverInfo(childNode, "connector", localX, localY, segment, ownerNode);
+              }
+            } else {
+              hover = buildHoverInfo(segment.node, "stem", localX, localY);
+            }
           }
         }
       }
@@ -2911,7 +2906,7 @@ export default function TreeCanvas({
       canvas.removeEventListener("gesturestart", preventGestureDefault);
       canvas.removeEventListener("gesturechange", preventGestureDefault);
     };
-  }, [cache, collapsedNodes, draw, onHoverChange, order, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
+  }, [cache, collapsedNodes, collapsedView, draw, onHoverChange, order, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2970,14 +2965,6 @@ export default function TreeCanvas({
     };
   }, [circularClampExtraRadiusPx, draw, fitCamera, rectClampPadding, size.height, size.width, tree]);
 
-  const handleContextCenterNode = useCallback(() => {
-    if (!contextMenu || !tree) {
-      return;
-    }
-    focusNodeTarget(contextMenu.node, tree.buffers.firstChild[contextMenu.node] < 0 ? "tip" : "node");
-    setContextMenu(null);
-  }, [contextMenu, focusNodeTarget, tree]);
-
   const handleContextZoomToSubtree = useCallback(() => {
     if (!contextMenu) {
       return;
@@ -2985,6 +2972,18 @@ export default function TreeCanvas({
     zoomToSubtreeTarget(contextMenu.node);
     setContextMenu(null);
   }, [contextMenu, zoomToSubtreeTarget]);
+
+  const handleContextZoomToParentSubtree = useCallback(() => {
+    if (!contextMenu || !tree) {
+      return;
+    }
+    const parent = tree.buffers.parent[contextMenu.node];
+    if (parent < 0) {
+      return;
+    }
+    zoomToSubtreeTarget(parent);
+    setContextMenu(null);
+  }, [contextMenu, tree, zoomToSubtreeTarget]);
 
   const handleContextToggleCollapse = useCallback(() => {
     if (!contextMenu || !tree || tree.buffers.firstChild[contextMenu.node] < 0) {
@@ -3040,15 +3039,17 @@ export default function TreeCanvas({
           <div className="tree-context-menu-meta">
             Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}
           </div>
-          <button type="button" className="tree-context-menu-item" onClick={handleContextCenterNode}>
-            Center On Node
-          </button>
           <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToSubtree}>
             Zoom To Subtree
           </button>
+          {tree && tree.buffers.parent[contextMenu.node] >= 0 ? (
+            <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToParentSubtree}>
+              Zoom To Parent Subtree
+            </button>
+          ) : null}
           {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
             <button type="button" className="tree-context-menu-item" onClick={handleContextToggleCollapse}>
-              {collapsedNodes.has(contextMenu.node) ? "Expand Subtree" : "Collapse Subtree"}
+              {collapsedNodes.has(contextMenu.node) ? "Expand Subclade" : "Collapse Subclade"}
             </button>
           ) : null}
         </div>
