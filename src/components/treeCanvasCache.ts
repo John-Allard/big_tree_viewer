@@ -143,6 +143,16 @@ export function buildCache(tree: TreeModel): RenderCache {
       const parent = tree.buffers.parent[node];
       if (parent < 0) {
         if (children[node].length >= 2) {
+          rect.push({
+            node,
+            kind: "connector",
+            x1: tree.buffers.depth[node],
+            y1: center[children[node][0]],
+            x2: tree.buffers.depth[node],
+            y2: center[children[node][children[node].length - 1]],
+          });
+        }
+        if (children[node].length >= 2) {
           const startTheta = thetaFor(center, children[node][0], tree.leafCount);
           const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount);
           const arcStart = thetaFor(layout.min, node, tree.leafCount);
