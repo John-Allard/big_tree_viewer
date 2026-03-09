@@ -240,21 +240,22 @@ export default function TreeCanvas({
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
-  const maxLeafLabelCharacters = useMemo(() => {
+  const reservedTipLabelCharacters = useMemo(() => {
     if (!tree) {
-      return 0;
+      return 6;
     }
-    let maxCharacters = 0;
+    const lengths: number[] = [];
     for (let index = 0; index < tree.leafNodes.length; index += 1) {
       const node = tree.leafNodes[index];
-      const text = tree.names[node] || `tip-${node}`;
-      if (text.length > maxCharacters) {
-        maxCharacters = text.length;
-      }
+      lengths.push(displayLabelText(tree.names[node] || "", `tip-${node}`).length);
     }
-    return maxCharacters;
+    if (lengths.length === 0) {
+      return 6;
+    }
+    lengths.sort((left, right) => left - right);
+    const percentileIndex = Math.min(lengths.length - 1, Math.floor((lengths.length - 1) * 0.99));
+    return Math.max(6, Math.min(lengths[percentileIndex], 32));
   }, [tree]);
-  const reservedTipLabelCharacters = useMemo(() => Math.max(6, Math.min(maxLeafLabelCharacters, 18)), [maxLeafLabelCharacters]);
   const maxGenusLabelCharacters = useMemo(() => {
     if (!cache) {
       return 0;
@@ -269,10 +270,99 @@ export default function TreeCanvas({
     return maxCharacters;
   }, [cache]);
 
+  const collapsedView = useMemo(() => {
+    if (!tree || !cache) {
+      return null;
+    }
+    const baseLayout = tree.layouts[order];
+    const hiddenNodes = new Uint8Array(tree.nodeCount);
+    const visibleCollapsedNodes: number[] = [];
+    if (collapsedNodes.size > 0) {
+      collapsedNodes.forEach((node) => {
+        if (hiddenNodes[node]) {
+          return;
+        }
+        visibleCollapsedNodes.push(node);
+        for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+          const stack = [child];
+          while (stack.length > 0) {
+            const current = stack.pop()!;
+            if (hiddenNodes[current]) {
+              continue;
+            }
+            hiddenNodes[current] = 1;
+            for (let descendant = tree.buffers.firstChild[current]; descendant >= 0; descendant = tree.buffers.nextSibling[descendant]) {
+              stack.push(descendant);
+            }
+          }
+        }
+      });
+    }
+    if (visibleCollapsedNodes.length === 0) {
+      return {
+        hiddenNodes,
+        visibleCollapsedNodes,
+        layout: baseLayout,
+      };
+    }
+    const center = new Float64Array(baseLayout.center);
+    const postorder: number[] = [];
+    const stack: number[] = [tree.root];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      postorder.push(node);
+      for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+        stack.push(child);
+      }
+    }
+    for (let index = postorder.length - 1; index >= 0; index -= 1) {
+      const node = postorder[index];
+      if (hiddenNodes[node] || tree.buffers.firstChild[node] < 0) {
+        continue;
+      }
+      if (collapsedNodes.has(node)) {
+        center[node] = (baseLayout.min[node] + baseLayout.max[node]) * 0.5;
+        continue;
+      }
+      const orderedChildren = cache.orderedChildren[order][node];
+      let firstVisibleChild = -1;
+      let lastVisibleChild = -1;
+      for (let childIndex = 0; childIndex < orderedChildren.length; childIndex += 1) {
+        const child = orderedChildren[childIndex];
+        if (hiddenNodes[child]) {
+          continue;
+        }
+        if (firstVisibleChild < 0) {
+          firstVisibleChild = child;
+        }
+        lastVisibleChild = child;
+      }
+      if (firstVisibleChild >= 0 && lastVisibleChild >= 0) {
+        center[node] = (center[firstVisibleChild] + center[lastVisibleChild]) * 0.5;
+      }
+    }
+    return {
+      hiddenNodes,
+      visibleCollapsedNodes,
+      layout: {
+        center,
+        min: baseLayout.min,
+        max: baseLayout.max,
+      },
+    };
+  }, [cache, collapsedNodes, order, tree]);
+
+  useEffect(() => {
+    hiddenNodesRef.current = collapsedView?.hiddenNodes ?? null;
+  }, [collapsedView]);
+
   const rectClampPadding = useCallback((camera: RectCamera) => {
+    const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
+    const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
+    const tipBandFontSize = camera.scaleY > 4.2 ? tipFontSize : camera.scaleY > 2.7 ? microTipFontSize : 0;
     const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
-    const labelFontSize = quantizeFontSize(Math.max(10.5, genusFontSize), 6.5, 22, 1.5);
-    const labelCharacters = Math.max(reservedTipLabelCharacters, maxGenusLabelCharacters);
+    const labelFontSize = quantizeFontSize(Math.max(genusFontSize, tipBandFontSize), 4.5, 22, 1.5);
+    const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
     const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
     return {
       right: labelWidthPx + 140,
@@ -282,9 +372,12 @@ export default function TreeCanvas({
   const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
     const maxRadius = Math.max(tree?.maxDepth ?? 0, tree?.branchLengthMinPositive ?? 1);
     const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree?.leafCount ?? 1));
+    const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
+    const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
+    const tipBandFontSize = angularSpacingPx > 4.5 ? tipFontSize : angularSpacingPx > 2.9 ? microTipFontSize : 0;
     const genusFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
-    const labelFontSize = quantizeFontSize(Math.max(10.5, genusFontSize), 6.5, 20, 1.5);
-    const labelCharacters = Math.max(reservedTipLabelCharacters, maxGenusLabelCharacters);
+    const labelFontSize = quantizeFontSize(Math.max(genusFontSize, tipBandFontSize), 4.5, 20, 1.5);
+    const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
     const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
     return labelWidthPx + 120;
   }, [maxGenusLabelCharacters, reservedTipLabelCharacters, tree]);
@@ -403,33 +496,12 @@ export default function TreeCanvas({
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(0, 0, size.width, size.height);
     labelHitsRef.current = [];
-    const hiddenNodes = new Uint8Array(tree.nodeCount);
-    const visibleCollapsedNodes: number[] = [];
-    if (collapsedNodes.size > 0) {
-      collapsedNodes.forEach((node) => {
-        if (hiddenNodes[node]) {
-          return;
-        }
-        visibleCollapsedNodes.push(node);
-        for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
-          const stack = [child];
-          while (stack.length > 0) {
-            const current = stack.pop()!;
-            if (hiddenNodes[current]) {
-              continue;
-            }
-            hiddenNodes[current] = 1;
-            for (let descendant = tree.buffers.firstChild[current]; descendant >= 0; descendant = tree.buffers.nextSibling[descendant]) {
-              stack.push(descendant);
-            }
-          }
-        }
-      });
-    }
+    const hiddenNodes = collapsedView?.hiddenNodes ?? new Uint8Array(tree.nodeCount);
+    const visibleCollapsedNodes = collapsedView?.visibleCollapsedNodes ?? [];
     hiddenNodesRef.current = hiddenNodes;
 
     if (viewMode === "rectangular" && camera.kind === "rect") {
-      const layout = tree.layouts[order];
+      const layout = collapsedView?.layout ?? tree.layouts[order];
       const children = cache.orderedChildren[order];
       const worldMin = screenToWorldRect(camera, 0, 0);
       const worldMax = screenToWorldRect(camera, size.width, size.height);
@@ -647,7 +719,11 @@ export default function TreeCanvas({
       let tipLabelRightX = Number.NEGATIVE_INFINITY;
       const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
       const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
-      const globalTipLabelSpacePx = estimateLabelWidth(10.5, reservedTipLabelCharacters);
+      const tipBandFontSize = tipLabelsVisible ? tipFontSize : microTipLabelsVisible ? microTipFontSize : 0;
+      const globalTipLabelSpacePx = estimateLabelWidth(
+        quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 22, 1.5),
+        reservedTipLabelCharacters,
+      );
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
@@ -1021,7 +1097,7 @@ export default function TreeCanvas({
     }
 
     if (viewMode === "circular" && camera.kind === "circular") {
-      const layout = tree.layouts[order];
+      const layout = collapsedView?.layout ?? tree.layouts[order];
       const children = cache.orderedChildren[order];
       const rotationAngle = camera.rotation;
       const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
@@ -1303,7 +1379,11 @@ export default function TreeCanvas({
       const tipLabelsVisible = angularSpacingPx > 4.5;
       const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
       const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
-      const globalTipLabelSpacePx = estimateLabelWidth(10.5, reservedTipLabelCharacters);
+      const tipBandFontSize = tipLabelsVisible ? tipFontSize : microTipLabelsVisible ? microTipFontSize : 0;
+      const globalTipLabelSpacePx = estimateLabelWidth(
+        quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 20, 1.5),
+        reservedTipLabelCharacters,
+      );
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const circularTipVisibilityMargin = 140;
@@ -1897,7 +1977,7 @@ export default function TreeCanvas({
     if (!camera) {
       return;
     }
-    const layout = tree.layouts[order];
+    const layout = collapsedView?.layout ?? tree.layouts[order];
     if (camera.kind === "rect") {
       const fit = fitRectCamera(size.width, size.height, tree);
       const minTipScaleY = 10.5;
@@ -1938,6 +2018,7 @@ export default function TreeCanvas({
     }
     draw();
   }, [
+    collapsedView,
     circularClampExtraRadiusPx,
     circularRotation,
     draw,
@@ -1966,7 +2047,7 @@ export default function TreeCanvas({
     if (!camera) {
       return;
     }
-    const layout = tree.layouts[order];
+    const layout = collapsedView?.layout ?? tree.layouts[order];
     const subtreeMaxDepth = measureSubtreeMaxDepth(tree, targetNode);
     if (camera.kind === "rect") {
       const padLeft = 52;

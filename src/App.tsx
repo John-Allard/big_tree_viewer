@@ -23,7 +23,7 @@ function normalizeSearchQuery(value: string): string {
 }
 
 function normalizeSearchTarget(value: string): string {
-  return value.trim().replaceAll("_", " ").toLowerCase();
+  return value.trim().replace(/^['"]+|['"]+$/g, "").replaceAll("_", " ").toLowerCase();
 }
 
 function canonicalSearchKey(value: string): string {

@@ -214,7 +214,7 @@ export function buildCircularScaleBar(
 }
 
 export function displayLabelText(raw: string, fallback: string): string {
-  const trimmed = raw.trim().replaceAll("_", " ");
+  const trimmed = raw.trim().replace(/^['"]+|['"]+$/g, "").replaceAll("_", " ");
   return trimmed || fallback;
 }
 
@@ -234,7 +234,7 @@ export function displayNodeName(tree: TreeModel, node: number): string {
 }
 
 export function extractGenusToken(name: string): string | null {
-  const match = name.trim().match(/^([^_ ]+)[_ ]+/);
+  const match = name.trim().replace(/^['"]+|['"]+$/g, "").match(/^([^_ ]+)[_ ]+/);
   if (!match) {
     return null;
   }

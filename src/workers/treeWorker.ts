@@ -33,6 +33,9 @@ function normalizeQuotedLabel(raw: string): string {
   if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
     return trimmed.slice(1, -1).replaceAll("''", "'");
   }
+  if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+    return trimmed.slice(1, -1).replaceAll("\\\"", "\"");
+  }
   return trimmed;
 }
 
