@@ -146,13 +146,6 @@ function drawHighlightedText(
   ctx.textAlign = previousAlign;
 }
 
-function quantizeLabelWidth(width: number, fallback: number, bucket = 40): number {
-  if (!(width > 0)) {
-    return fallback;
-  }
-  return Math.max(bucket, Math.ceil(width / bucket) * bucket);
-}
-
 function quantizeFontSize(fontSize: number, min: number, max: number, bucket = 1.5): number {
   return Math.max(min, Math.min(max, Math.ceil(fontSize / bucket) * bucket));
 }
@@ -707,17 +700,8 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const spacingTipFontSize = quantizeFontSize(tipFontSize, 6.5, 22, 1.5);
-        const stableTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
-        const measuredTipLabelWidth = tipLabelsVisible
-          ? quantizeLabelWidth(
-            measuredLabels.reduce((maxWidth, label) => Math.max(maxWidth, label.width), 0),
-            stableTipLabelWidth,
-            56,
-          )
-          : stableTipLabelWidth;
-        const tipWidthSettle = smoothstep01((camera.scaleY - 4.2) / 1.15);
-        const localTipLabelWidth = (stableTipLabelWidth * (1 - tipWidthSettle)) + (measuredTipLabelWidth * tipWidthSettle);
+        const spacingTipFontSize = quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 22, 1.5);
+        const localTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
         const stableTipEnvelopeRightEdge = Number.isFinite(tipLabelRightX)
           ? tipLabelRightX + localTipLabelWidth
           : tipLabelRightEdge;
@@ -725,7 +709,7 @@ export default function TreeCanvas({
           ? stableTipEnvelopeRightEdge + 26
           : Number.NEGATIVE_INFINITY;
         const offsetPx = 10;
-        const pullAway = smoothstep01((camera.scaleY - 2.25) / 1.95);
+        const pullAway = smoothstep01((camera.scaleY - 1.55) / 0.9);
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -1312,6 +1296,7 @@ export default function TreeCanvas({
       const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
       const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
       const tipLabelRadius = maxRadius + (20 / camera.scale);
+      const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const circularTipVisibilityMargin = 140;
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
       let maxVisibleTipLabelWidth = 0;
@@ -1325,7 +1310,8 @@ export default function TreeCanvas({
             continue;
           }
           const theta = thetaFor(layout.center, node, tree.leafCount);
-          const point = polarToCartesian(tipLabelRadius, theta);
+          const labelAnchorRadius = microTipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
+          const point = polarToCartesian(labelAnchorRadius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
           if (
             screen.x < -circularTipVisibilityMargin ||
@@ -1369,15 +1355,10 @@ export default function TreeCanvas({
         const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
         const arcOffsetWorld = 12 / camera.scale;
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
-        const pullAway = smoothstep01((angularSpacingPx - 2.25) / 2.2);
+        const pullAway = smoothstep01((angularSpacingPx - 1.7) / 0.95);
         const localLineRadius = arcOffsetWorld;
-        const spacingTipFontSize = quantizeFontSize(tipFontSize, 6.5, 20, 1.5);
-        const stableTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
-        const measuredTipLabelWidth = tipLabelsVisible
-          ? quantizeLabelWidth(maxVisibleTipLabelWidth, stableTipLabelWidth, 56)
-          : stableTipLabelWidth;
-        const tipWidthSettle = smoothstep01((angularSpacingPx - 4.5) / 1.2);
-        const localTipLabelWidth = (stableTipLabelWidth * (1 - tipWidthSettle)) + (measuredTipLabelWidth * tipWidthSettle);
+        const spacingTipFontSize = quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 20, 1.5);
+        const localTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
         const tipOuterRadius = tipLabelRadius + ((localTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
         const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
         const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
