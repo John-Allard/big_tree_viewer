@@ -1372,6 +1372,7 @@ export default function TreeCanvas({
       let circularMaxX = Number.NEGATIVE_INFINITY;
       let circularMinY = Number.POSITIVE_INFINITY;
       let circularMaxY = Number.NEGATIVE_INFINITY;
+      const circularWorldOverscan = Math.max(tree.branchLengthMinPositive * 2, 24 / camera.scale);
       for (let index = 0; index < cornerWorldPoints.length; index += 1) {
         circularMinX = Math.min(circularMinX, cornerWorldPoints[index].x);
         circularMaxX = Math.max(circularMaxX, cornerWorldPoints[index].x);
@@ -1382,8 +1383,8 @@ export default function TreeCanvas({
         ? cache.circularIndices[order].query(
           (circularMinX + circularMaxX) * 0.5,
           (circularMinY + circularMaxY) * 0.5,
-          Math.max(1e-6, (circularMaxX - circularMinX) * 0.5),
-          Math.max(1e-6, (circularMaxY - circularMinY) * 0.5),
+          Math.max(1e-6, (circularMaxX - circularMinX) * 0.5) + circularWorldOverscan,
+          Math.max(1e-6, (circularMaxY - circularMinY) * 0.5) + circularWorldOverscan,
         )
         : null;
       if (visibleCircularSegments) {
@@ -1662,13 +1663,14 @@ export default function TreeCanvas({
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
       const circularTipVisibilityMargin = 140;
+      const leafVisibilityRadiusPx = Math.max(maxRadius * camera.scale, tipBandAnchorRadius * camera.scale * 0.82);
       const visibleAngleSpans = computeVisibleCircularAngleSpans(
         centerPoint.x,
         centerPoint.y,
-        tipBandAnchorRadius * camera.scale,
+        leafVisibilityRadiusPx,
         size.width,
         size.height,
-        circularTipVisibilityMargin,
+        circularTipVisibilityMargin + 80,
       );
       const visibleLeafRanges = visibleAngleSpans.length > 0
         ? circularSpansToLeafRanges(visibleAngleSpans, rotationAngle, orderedLeaves, layout.center, tree.leafCount)
