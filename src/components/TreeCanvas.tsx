@@ -188,6 +188,24 @@ function quantizedSegmentKey(
   ].join(":");
 }
 
+function lowerBoundLeaves(
+  orderedLeaves: number[],
+  center: Float64Array,
+  target: number,
+): number {
+  let low = 0;
+  let high = orderedLeaves.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) * 0.5);
+    if (center[orderedLeaves[mid]] < target) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
 function measureSubtreeMaxDepth(tree: TreeModel, node: number): number {
   let maxDepth = tree.buffers.depth[node];
   const stack = [node];
@@ -235,6 +253,8 @@ export default function TreeCanvas({
   const pinchGestureRef = useRef<{ distance: number; centerX: number; centerY: number } | null>(null);
   const pointerDownRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
   const genusLabelHistoryRef = useRef<{
     tree: TreeModel | null;
     viewMode: ViewMode;
@@ -583,57 +603,82 @@ export default function TreeCanvas({
       const useDenseRectLOD = camera.scaleY < 1.25;
       const rectConnectorKeys = useDenseRectLOD ? new Set<string>() : null;
       const rectStemKeys = useDenseRectLOD ? new Set<string>() : null;
-      for (let node = 0; node < tree.nodeCount; node += 1) {
-        if (hiddenNodes[node] || collapsedNodes.has(node)) {
-          continue;
+      const visibleRectSegments = collapsedNodes.size === 0
+        ? cache.rectIndices[order].query(
+          (minX + maxX) * 0.5,
+          (minY + maxY) * 0.5,
+          Math.max(1e-6, (maxX - minX) * 0.5),
+          Math.max(1e-6, (maxY - minY) * 0.5),
+        )
+        : null;
+      if (visibleRectSegments) {
+        for (let index = 0; index < visibleRectSegments.length; index += 1) {
+          const segment = visibleRectSegments[index];
+          const start = worldToScreenRect(camera, segment.x1, segment.y1);
+          const end = worldToScreenRect(camera, segment.x2, segment.y2);
+          if (useDenseRectLOD) {
+            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+            if ((segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.has(key)) {
+              continue;
+            }
+            (segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.add(key);
+          }
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(end.x, end.y);
         }
-        const ordered = children[node];
-        if (ordered.length < 2) {
-          continue;
-        }
-        const x = tree.buffers.depth[node];
-        const firstY = layout.center[ordered[0]];
-        const lastY = layout.center[ordered[ordered.length - 1]];
-        if (!lineIntersectsRect(x, firstY, x, lastY, minX, minY, maxX, maxY)) {
-          continue;
-        }
-        const start = worldToScreenRect(camera, x, firstY);
-        const end = worldToScreenRect(camera, x, lastY);
-        if (useDenseRectLOD) {
-          const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-          if (rectConnectorKeys?.has(key)) {
+      } else {
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (hiddenNodes[node] || collapsedNodes.has(node)) {
             continue;
           }
-          rectConnectorKeys?.add(key);
-        }
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(end.x, end.y);
-      }
-      for (let node = 0; node < tree.nodeCount; node += 1) {
-        if (hiddenNodes[node]) {
-          continue;
-        }
-        const parent = tree.buffers.parent[node];
-        if (parent < 0) {
-          continue;
-        }
-        const x1 = tree.buffers.depth[parent];
-        const x2 = tree.buffers.depth[node];
-        const y = layout.center[node];
-        if (!lineIntersectsRect(x1, y, x2, y, minX, minY, maxX, maxY)) {
-          continue;
-        }
-        const start = worldToScreenRect(camera, x1, y);
-        const end = worldToScreenRect(camera, x2, y);
-        if (useDenseRectLOD) {
-          const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-          if (rectStemKeys?.has(key)) {
+          const ordered = children[node];
+          if (ordered.length < 2) {
             continue;
           }
-          rectStemKeys?.add(key);
+          const x = tree.buffers.depth[node];
+          const firstY = layout.center[ordered[0]];
+          const lastY = layout.center[ordered[ordered.length - 1]];
+          if (!lineIntersectsRect(x, firstY, x, lastY, minX, minY, maxX, maxY)) {
+            continue;
+          }
+          const start = worldToScreenRect(camera, x, firstY);
+          const end = worldToScreenRect(camera, x, lastY);
+          if (useDenseRectLOD) {
+            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+            if (rectConnectorKeys?.has(key)) {
+              continue;
+            }
+            rectConnectorKeys?.add(key);
+          }
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(end.x, end.y);
         }
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(end.x, end.y);
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const parent = tree.buffers.parent[node];
+          if (parent < 0) {
+            continue;
+          }
+          const x1 = tree.buffers.depth[parent];
+          const x2 = tree.buffers.depth[node];
+          const y = layout.center[node];
+          if (!lineIntersectsRect(x1, y, x2, y, minX, minY, maxX, maxY)) {
+            continue;
+          }
+          const start = worldToScreenRect(camera, x1, y);
+          const end = worldToScreenRect(camera, x2, y);
+          if (useDenseRectLOD) {
+            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+            if (rectStemKeys?.has(key)) {
+              continue;
+            }
+            rectStemKeys?.add(key);
+          }
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(end.x, end.y);
+        }
       }
       ctx.stroke();
 
@@ -774,15 +819,15 @@ export default function TreeCanvas({
         ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
-        for (let index = 0; index < tree.leafNodes.length; index += 1) {
-          const node = tree.leafNodes[index];
+        const orderedLeaves = cache.orderedLeaves[order];
+        const startLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, minY - 2);
+        const endLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, maxY + 2.000001);
+        for (let index = startLeafIndex; index < endLeafIndex; index += 1) {
+          const node = orderedLeaves[index];
           if (hiddenNodes[node]) {
             continue;
           }
           const y = layout.center[node];
-          if (y < minY - 2 || y > maxY + 2) {
-            continue;
-          }
           const text = displayLabelText(tree.names[node] || "", `tip-${node}`);
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
           const x = screen.x + 8;
@@ -2396,6 +2441,7 @@ export default function TreeCanvas({
 
     const handlePointerDown = (event: PointerEvent): void => {
       setContextMenu(null);
+      clearLongPress();
       const rect = canvas.getBoundingClientRect();
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
@@ -2415,6 +2461,23 @@ export default function TreeCanvas({
         pointerDownRef.current = true;
         lastPointerRef.current = { x: event.clientX, y: event.clientY };
         pinchGestureRef.current = null;
+        if (event.pointerType === "touch") {
+          longPressRef.current = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+          };
+          longPressTimerRef.current = window.setTimeout(() => {
+            if (longPressRef.current?.pointerId !== event.pointerId) {
+              return;
+            }
+            clearLongPress();
+            pointerDownRef.current = false;
+            lastPointerRef.current = null;
+            activePointersRef.current.delete(event.pointerId);
+            showContextMenuAt(localX, localY);
+          }, 550);
+        }
       } else if (activePointersRef.current.size === 2) {
         const points = [...activePointersRef.current.values()];
         const dx = points[1].clientX - points[0].clientX;
@@ -2424,6 +2487,7 @@ export default function TreeCanvas({
           centerX: (points[0].clientX + points[1].clientX) * 0.5,
           centerY: (points[0].clientY + points[1].clientY) * 0.5,
         };
+        clearLongPress();
         pointerDownRef.current = false;
         lastPointerRef.current = null;
       }
@@ -2441,7 +2505,15 @@ export default function TreeCanvas({
           clientY: event.clientY,
         });
       }
+      if (longPressRef.current?.pointerId === event.pointerId) {
+        const dx = event.clientX - longPressRef.current.startX;
+        const dy = event.clientY - longPressRef.current.startY;
+        if (Math.hypot(dx, dy) > 10) {
+          clearLongPress();
+        }
+      }
       if (activePointersRef.current.size >= 2) {
+        clearLongPress();
         const points = [...activePointersRef.current.values()].slice(0, 2);
         const dx = points[1].clientX - points[0].clientX;
         const dy = points[1].clientY - points[0].clientY;
@@ -2491,6 +2563,7 @@ export default function TreeCanvas({
     };
 
     const handlePointerUp = (event: PointerEvent): void => {
+      clearLongPress();
       activePointersRef.current.delete(event.pointerId);
       if (activePointersRef.current.size === 0) {
         pointerDownRef.current = false;
@@ -2506,6 +2579,7 @@ export default function TreeCanvas({
     };
 
     const handlePointerLeave = (): void => {
+      clearLongPress();
       activePointersRef.current.clear();
       pinchGestureRef.current = null;
       pointerDownRef.current = false;
@@ -2531,11 +2605,15 @@ export default function TreeCanvas({
       scheduleDraw();
     };
 
-    const handleContextMenu = (event: MouseEvent): void => {
-      event.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const localX = event.clientX - rect.left;
-      const localY = event.clientY - rect.top;
+    const clearLongPress = (): void => {
+      if (longPressTimerRef.current !== null) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+      longPressRef.current = null;
+    };
+
+    const showContextMenuAt = (localX: number, localY: number): void => {
       const hover = hitTestAt(localX, localY);
       if (!hover) {
         setContextMenu(null);
@@ -2552,6 +2630,14 @@ export default function TreeCanvas({
         descendantTipCount: hover.descendantTipCount,
       });
       scheduleDraw();
+    };
+
+    const handleContextMenu = (event: MouseEvent): void => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+      showContextMenuAt(localX, localY);
     };
 
     canvas.addEventListener("pointerdown", handlePointerDown);
