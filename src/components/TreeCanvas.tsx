@@ -593,13 +593,15 @@ export default function TreeCanvas({
         }
         const spacingTipFontSize = quantizeFontSize(tipFontSize, 6.5, 22, 1.5);
         const stableTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
-        const localTipLabelWidth = tipLabelsVisible
+        const measuredTipLabelWidth = tipLabelsVisible
           ? quantizeLabelWidth(
             measuredLabels.reduce((maxWidth, label) => Math.max(maxWidth, label.width), 0),
             stableTipLabelWidth,
             56,
           )
           : stableTipLabelWidth;
+        const tipWidthSettle = smoothstep01((camera.scaleY - 4.2) / 1.15);
+        const localTipLabelWidth = (stableTipLabelWidth * (1 - tipWidthSettle)) + (measuredTipLabelWidth * tipWidthSettle);
         const stableTipEnvelopeRightEdge = Number.isFinite(tipLabelRightX)
           ? tipLabelRightX + localTipLabelWidth
           : tipLabelRightEdge;
@@ -607,7 +609,7 @@ export default function TreeCanvas({
           ? stableTipEnvelopeRightEdge + 26
           : Number.NEGATIVE_INFINITY;
         const offsetPx = 10;
-        const pullAway = tipLabelsVisible ? 1 : smoothstep01((camera.scaleY - 2.25) / 1.55);
+        const pullAway = smoothstep01((camera.scaleY - 2.25) / 1.95);
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -629,7 +631,7 @@ export default function TreeCanvas({
           const spanPx = Math.abs(y2 - y1) * camera.scaleY;
           const localX = worldToScreenRect(camera, block.maxDepth, 0).x + offsetPx;
           const outboardX = Number.isFinite(outboardMinX) ? Math.max(localX, outboardMinX) : localX;
-          const x = tipLabelsVisible ? outboardX : localX + ((outboardX - localX) * pullAway);
+          const x = localX + ((outboardX - localX) * pullAway);
           if (x < -80 || x > size.width + 160) {
             return;
           }
@@ -1186,13 +1188,15 @@ export default function TreeCanvas({
         const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
         const arcOffsetWorld = 12 / camera.scale;
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
-        const pullAway = tipLabelsVisible ? 1 : smoothstep01((angularSpacingPx - 2.25) / 1.7);
+        const pullAway = smoothstep01((angularSpacingPx - 2.25) / 2.2);
         const localLineRadius = arcOffsetWorld;
         const spacingTipFontSize = quantizeFontSize(tipFontSize, 6.5, 20, 1.5);
         const stableTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
-        const localTipLabelWidth = tipLabelsVisible
+        const measuredTipLabelWidth = tipLabelsVisible
           ? quantizeLabelWidth(maxVisibleTipLabelWidth, stableTipLabelWidth, 56)
           : stableTipLabelWidth;
+        const tipWidthSettle = smoothstep01((angularSpacingPx - 4.5) / 1.2);
+        const localTipLabelWidth = (stableTipLabelWidth * (1 - tipWidthSettle)) + (measuredTipLabelWidth * tipWidthSettle);
         const tipOuterRadius = tipLabelRadius + ((localTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
         const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
         const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
@@ -1229,12 +1233,8 @@ export default function TreeCanvas({
           const maxFontSize = 22 + (2 * tipLabelPressure);
           const fontSize = Math.max(baseFontSize, Math.min(maxFontSize, baseFontSize + (preliminaryArcLengthPx * fontGrowth)));
           const adjustedOutboardLabelRadius = outboardLineRadius + ((fontSize * 2.2 + 24) / camera.scale);
-          const lineRadius = tipLabelsVisible
-            ? outboardLineRadius
-            : (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
-          const labelRadius = tipLabelsVisible
-            ? adjustedOutboardLabelRadius
-            : (localAbsLabelRadius * (1 - pullAway)) + (adjustedOutboardLabelRadius * pullAway);
+          const lineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
+          const labelRadius = (localAbsLabelRadius * (1 - pullAway)) + (adjustedOutboardLabelRadius * pullAway);
           const lineRadiusPx = lineRadius * camera.scale;
           const genusOrderIndex = genusOrderByCenter.get(block.centerNode) ?? 0;
           const isActiveGenus = block.centerNode === activeSearchGenusCenterNode;
