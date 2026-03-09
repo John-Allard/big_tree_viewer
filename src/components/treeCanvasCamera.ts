@@ -113,12 +113,16 @@ export function clampRectCamera(
   padding: RectClampPadding = {},
 ): void {
   const visibleMargin = 48;
-  const spanX = tree.maxDepth * camera.scaleX;
-  const spanY = Math.max(1, tree.leafCount - 1) * camera.scaleY;
-  const minTranslateX = (visibleMargin + (padding.left ?? 0)) - spanX;
-  const maxTranslateX = width - visibleMargin - (padding.right ?? 0);
-  const minTranslateY = (visibleMargin + (padding.top ?? 0)) - spanY;
-  const maxTranslateY = height - visibleMargin - (padding.bottom ?? 0);
+  const leftPadding = padding.left ?? 0;
+  const rightPadding = padding.right ?? 0;
+  const topPadding = padding.top ?? 0;
+  const bottomPadding = padding.bottom ?? 0;
+  const spanX = (tree.maxDepth * camera.scaleX) + leftPadding + rightPadding;
+  const spanY = Math.max(1, tree.leafCount - 1) * camera.scaleY + topPadding + bottomPadding;
+  const minTranslateX = visibleMargin - spanX + leftPadding;
+  const maxTranslateX = width - visibleMargin + leftPadding;
+  const minTranslateY = visibleMargin - spanY + topPadding;
+  const maxTranslateY = height - visibleMargin + topPadding;
   camera.translateX = Math.min(maxTranslateX, Math.max(minTranslateX, camera.translateX));
   camera.translateY = Math.min(maxTranslateY, Math.max(minTranslateY, camera.translateY));
 }
