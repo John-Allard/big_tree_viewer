@@ -206,6 +206,103 @@ function lowerBoundLeaves(
   return low;
 }
 
+function computeVisibleCircularAngleSpans(
+  centerX: number,
+  centerY: number,
+  radiusPx: number,
+  width: number,
+  height: number,
+  marginPx: number,
+  samples = 720,
+): Array<{ start: number; end: number }> {
+  if (!(radiusPx > 0)) {
+    return [];
+  }
+  const visible = new Array<boolean>(samples);
+  let visibleCount = 0;
+  for (let index = 0; index < samples; index += 1) {
+    const angle = (index / samples) * Math.PI * 2;
+    const x = centerX + (Math.cos(angle) * radiusPx);
+    const y = centerY + (Math.sin(angle) * radiusPx);
+    const inView = x >= -marginPx && x <= width + marginPx && y >= -marginPx && y <= height + marginPx;
+    visible[index] = inView;
+    if (inView) {
+      visibleCount += 1;
+    }
+  }
+  if (visibleCount === 0) {
+    return [];
+  }
+  if (visibleCount === samples) {
+    return [{ start: 0, end: Math.PI * 2 }];
+  }
+  const spans: Array<{ start: number; end: number }> = [];
+  let startIndex = -1;
+  for (let index = 0; index < samples; index += 1) {
+    if (visible[index]) {
+      if (startIndex < 0) {
+        startIndex = index;
+      }
+    } else if (startIndex >= 0) {
+      spans.push({
+        start: (startIndex / samples) * Math.PI * 2,
+        end: (index / samples) * Math.PI * 2,
+      });
+      startIndex = -1;
+    }
+  }
+  if (startIndex >= 0) {
+    spans.push({
+      start: (startIndex / samples) * Math.PI * 2,
+      end: Math.PI * 2,
+    });
+  }
+  if (spans.length >= 2 && spans[0].start === 0 && spans[spans.length - 1].end === Math.PI * 2) {
+    const first = spans.shift()!;
+    const last = spans.pop()!;
+    spans.unshift({
+      start: last.start,
+      end: first.end + Math.PI * 2,
+    });
+  }
+  return spans;
+}
+
+function circularSpansToLeafRanges(
+  spans: Array<{ start: number; end: number }>,
+  rotationAngle: number,
+  orderedLeaves: number[],
+  center: Float64Array,
+  leafCount: number,
+): Array<{ startIndex: number; endIndex: number }> {
+  const ranges: Array<{ startIndex: number; endIndex: number }> = [];
+  const tau = Math.PI * 2;
+  const pushRange = (thetaStart: number, thetaEnd: number): void => {
+    const startCenter = (thetaStart / tau) * leafCount;
+    const endCenter = (thetaEnd / tau) * leafCount;
+    const startIndex = lowerBoundLeaves(orderedLeaves, center, startCenter);
+    const endIndex = Math.min(orderedLeaves.length, lowerBoundLeaves(orderedLeaves, center, endCenter) + 1);
+    if (endIndex > startIndex) {
+      ranges.push({ startIndex, endIndex });
+    }
+  };
+  for (let index = 0; index < spans.length; index += 1) {
+    const thetaStart = wrapPositive(spans[index].start - rotationAngle);
+    const thetaEnd = wrapPositive(spans[index].end - rotationAngle);
+    if (spans[index].end - spans[index].start >= tau - 1e-6) {
+      ranges.push({ startIndex: 0, endIndex: orderedLeaves.length });
+      continue;
+    }
+    if (thetaEnd < thetaStart) {
+      pushRange(thetaStart, tau);
+      pushRange(0, thetaEnd);
+    } else {
+      pushRange(thetaStart, thetaEnd);
+    }
+  }
+  return ranges;
+}
+
 function measureSubtreeMaxDepth(tree: TreeModel, node: number): number {
   let maxDepth = tree.buffers.depth[node];
   const stack = [node];
@@ -1202,6 +1299,7 @@ export default function TreeCanvas({
     if (viewMode === "circular" && camera.kind === "circular") {
       const layout = collapsedView?.layout ?? tree.layouts[order];
       const children = cache.orderedChildren[order];
+      const orderedLeaves = cache.orderedLeaves[order];
       const rotationAngle = camera.rotation;
       const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
       const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree.leafCount));
@@ -1263,65 +1361,128 @@ export default function TreeCanvas({
       const useDenseCircularLOD = angularSpacingPx < 1.1;
       const circularConnectorKeys = useDenseCircularLOD ? new Set<string>() : null;
       const circularStemKeys = useDenseCircularLOD ? new Set<string>() : null;
-      for (let node = 0; node < tree.nodeCount; node += 1) {
-        if (hiddenNodes[node] || collapsedNodes.has(node)) {
-          continue;
-        }
-        const ordered = children[node];
-        if (ordered.length < 2) {
-          continue;
-        }
-        const radius = tree.buffers.depth[node];
-        const startTheta = thetaFor(layout.center, ordered[0], tree.leafCount);
-        const endTheta = thetaFor(layout.center, ordered[ordered.length - 1], tree.leafCount);
-        const arcStart = thetaFor(layout.min, node, tree.leafCount);
-        const arcEnd = thetaFor(layout.max, node, tree.leafCount);
-        const arcLength = Math.max(0, arcEnd - arcStart);
-        const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-        const radiusPx = radius * camera.scale;
-        if (radiusPx < 0.25) {
-          continue;
-        }
-        const centerPoint = worldToScreenCircular(camera, 0, 0);
-        const startX = centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx;
-        const startY = centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx;
-        const endX = centerPoint.x + Math.cos(arcAngles.end + rotationAngle) * radiusPx;
-        const endY = centerPoint.y + Math.sin(arcAngles.end + rotationAngle) * radiusPx;
-        if (useDenseCircularLOD) {
-          const key = quantizedSegmentKey(startX, startY, endX, endY);
-          if (circularConnectorKeys?.has(key)) {
-            continue;
-          }
-          circularConnectorKeys?.add(key);
-        }
-        ctx.moveTo(startX, startY);
-        ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
+      const cornerWorldPoints = [
+        screenToWorldCircular(camera, 0, 0),
+        screenToWorldCircular(camera, size.width, 0),
+        screenToWorldCircular(camera, 0, size.height),
+        screenToWorldCircular(camera, size.width, size.height),
+      ];
+      let circularMinX = Number.POSITIVE_INFINITY;
+      let circularMaxX = Number.NEGATIVE_INFINITY;
+      let circularMinY = Number.POSITIVE_INFINITY;
+      let circularMaxY = Number.NEGATIVE_INFINITY;
+      for (let index = 0; index < cornerWorldPoints.length; index += 1) {
+        circularMinX = Math.min(circularMinX, cornerWorldPoints[index].x);
+        circularMaxX = Math.max(circularMaxX, cornerWorldPoints[index].x);
+        circularMinY = Math.min(circularMinY, cornerWorldPoints[index].y);
+        circularMaxY = Math.max(circularMaxY, cornerWorldPoints[index].y);
       }
-      for (let node = 0; node < tree.nodeCount; node += 1) {
-        if (hiddenNodes[node]) {
-          continue;
+      const visibleCircularSegments = collapsedNodes.size === 0
+        ? cache.circularIndices[order].query(
+          (circularMinX + circularMaxX) * 0.5,
+          (circularMinY + circularMaxY) * 0.5,
+          Math.max(1e-6, (circularMaxX - circularMinX) * 0.5),
+          Math.max(1e-6, (circularMaxY - circularMinY) * 0.5),
+        )
+        : null;
+      if (visibleCircularSegments) {
+        for (let index = 0; index < visibleCircularSegments.length; index += 1) {
+          const segment = visibleCircularSegments[index];
+          const start = worldToScreenCircular(camera, segment.x1, segment.y1);
+          const end = worldToScreenCircular(camera, segment.x2, segment.y2);
+          if (useDenseCircularLOD) {
+            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+            if ((segment.kind === "connector" ? circularConnectorKeys : circularStemKeys)?.has(key)) {
+              continue;
+            }
+            (segment.kind === "connector" ? circularConnectorKeys : circularStemKeys)?.add(key);
+          }
+          if (segment.kind === "connector") {
+            const node = segment.node;
+            const ordered = children[node];
+            if (ordered.length < 2) {
+              continue;
+            }
+            const radiusPx = tree.buffers.depth[node] * camera.scale;
+            if (radiusPx < 0.25) {
+              continue;
+            }
+            const startTheta = thetaFor(layout.center, ordered[0], tree.leafCount);
+            const endTheta = thetaFor(layout.center, ordered[ordered.length - 1], tree.leafCount);
+            const arcStart = thetaFor(layout.min, node, tree.leafCount);
+            const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+            const arcLength = Math.max(0, arcEnd - arcStart);
+            const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+            ctx.moveTo(
+              centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx,
+              centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx,
+            );
+            ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
+          } else {
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+          }
         }
-        const parent = tree.buffers.parent[node];
-        if (parent < 0) {
-          continue;
-        }
-        const theta = thetaFor(layout.center, node, tree.leafCount);
-        const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
-        const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
-        const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
-        const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
-        if (!lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, size.width, size.height)) {
-          continue;
-        }
-        if (useDenseCircularLOD) {
-          const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-          if (circularStemKeys?.has(key)) {
+      } else {
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (hiddenNodes[node] || collapsedNodes.has(node)) {
             continue;
           }
-          circularStemKeys?.add(key);
+          const ordered = children[node];
+          if (ordered.length < 2) {
+            continue;
+          }
+          const radius = tree.buffers.depth[node];
+          const startTheta = thetaFor(layout.center, ordered[0], tree.leafCount);
+          const endTheta = thetaFor(layout.center, ordered[ordered.length - 1], tree.leafCount);
+          const arcStart = thetaFor(layout.min, node, tree.leafCount);
+          const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+          const arcLength = Math.max(0, arcEnd - arcStart);
+          const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+          const radiusPx = radius * camera.scale;
+          if (radiusPx < 0.25) {
+            continue;
+          }
+          const startX = centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx;
+          const startY = centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx;
+          const endX = centerPoint.x + Math.cos(arcAngles.end + rotationAngle) * radiusPx;
+          const endY = centerPoint.y + Math.sin(arcAngles.end + rotationAngle) * radiusPx;
+          if (useDenseCircularLOD) {
+            const key = quantizedSegmentKey(startX, startY, endX, endY);
+            if (circularConnectorKeys?.has(key)) {
+              continue;
+            }
+            circularConnectorKeys?.add(key);
+          }
+          ctx.moveTo(startX, startY);
+          ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
         }
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(end.x, end.y);
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const parent = tree.buffers.parent[node];
+          if (parent < 0) {
+            continue;
+          }
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
+          const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+          const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+          const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+          if (!lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, size.width, size.height)) {
+            continue;
+          }
+          if (useDenseCircularLOD) {
+            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+            if (circularStemKeys?.has(key)) {
+              continue;
+            }
+            circularStemKeys?.add(key);
+          }
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(end.x, end.y);
+        }
       }
       ctx.stroke();
 
@@ -1500,33 +1661,47 @@ export default function TreeCanvas({
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
       const circularTipVisibilityMargin = 140;
+      const visibleAngleSpans = computeVisibleCircularAngleSpans(
+        centerPoint.x,
+        centerPoint.y,
+        tipBandAnchorRadius * camera.scale,
+        size.width,
+        size.height,
+        circularTipVisibilityMargin,
+      );
+      const visibleLeafRanges = visibleAngleSpans.length > 0
+        ? circularSpansToLeafRanges(visibleAngleSpans, rotationAngle, orderedLeaves, layout.center, tree.leafCount)
+        : [];
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
       let maxVisibleTipLabelWidth = 0;
       if (tipLabelCueVisible) {
         ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
-        for (let index = 0; index < tree.leafNodes.length; index += 1) {
-          const node = tree.leafNodes[index];
-          if (hiddenNodes[node]) {
-            continue;
+        const labelAnchorRadius = microTipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
+        for (let rangeIndex = 0; rangeIndex < visibleLeafRanges.length; rangeIndex += 1) {
+          const range = visibleLeafRanges[rangeIndex];
+          for (let index = range.startIndex; index < range.endIndex; index += 1) {
+            const node = orderedLeaves[index];
+            if (hiddenNodes[node]) {
+              continue;
+            }
+            const theta = thetaFor(layout.center, node, tree.leafCount);
+            const point = polarToCartesian(labelAnchorRadius, theta);
+            const screen = worldToScreenCircular(camera, point.x, point.y);
+            if (
+              screen.x < -circularTipVisibilityMargin ||
+              screen.x > size.width + circularTipVisibilityMargin ||
+              screen.y < -circularTipVisibilityMargin ||
+              screen.y > size.height + circularTipVisibilityMargin
+            ) {
+              continue;
+            }
+            const text = displayLabelText(tree.names[node] || "", `tip-${node}`);
+            const width = ctx.measureText(text).width;
+            circularVisibleTipLabels.push({ node, theta, x: screen.x, y: screen.y, text, width });
+            maxVisibleTipLabelWidth = Math.max(maxVisibleTipLabelWidth, width);
           }
-          const theta = thetaFor(layout.center, node, tree.leafCount);
-          const labelAnchorRadius = microTipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
-          const point = polarToCartesian(labelAnchorRadius, theta);
-          const screen = worldToScreenCircular(camera, point.x, point.y);
-          if (
-            screen.x < -circularTipVisibilityMargin ||
-            screen.x > size.width + circularTipVisibilityMargin ||
-            screen.y < -circularTipVisibilityMargin ||
-            screen.y > size.height + circularTipVisibilityMargin
-          ) {
-            continue;
-          }
-          const text = displayLabelText(tree.names[node] || "", `tip-${node}`);
-          const width = ctx.measureText(text).width;
-          circularVisibleTipLabels.push({ node, theta, x: screen.x, y: screen.y, text, width });
-          maxVisibleTipLabelWidth = Math.max(maxVisibleTipLabelWidth, width);
         }
       }
       let circularGenusLabels: ScreenLabel[] = [];
