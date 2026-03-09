@@ -151,6 +151,28 @@ function smoothstep01(value: number): number {
   return clamped * clamped * (3 - (2 * clamped));
 }
 
+function interpolateTipBandWidthPx(
+  zoom: number,
+  preRampStart: number,
+  microStart: number,
+  readableStart: number,
+  microWidthPx: number,
+  readableWidthPx: number,
+): number {
+  if (zoom <= preRampStart) {
+    return 0;
+  }
+  if (zoom < microStart) {
+    const progress = clamp01((zoom - preRampStart) / Math.max(1e-6, microStart - preRampStart));
+    return microWidthPx * progress * progress;
+  }
+  if (zoom < readableStart) {
+    const progress = smoothstep01((zoom - microStart) / Math.max(1e-6, readableStart - microStart));
+    return microWidthPx + ((readableWidthPx - microWidthPx) * progress);
+  }
+  return readableWidthPx;
+}
+
 function quantizedSegmentKey(
   x1: number,
   y1: number,
@@ -361,11 +383,13 @@ export default function TreeCanvas({
       ? 0
       : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
     const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
+    const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
+    const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
+    const tipBandWidthPx = interpolateTipBandWidthPx(camera.scaleY, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx);
     const labelFontSize = Math.max(4.5, Math.min(22, Math.max(genusFontSize, tipBandFontSize)));
-    const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
-    const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
+    const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return {
-      right: labelWidthPx + 140,
+      right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140,
     };
   }, [maxGenusLabelCharacters, reservedTipLabelCharacters]);
 
@@ -379,10 +403,12 @@ export default function TreeCanvas({
       ? 0
       : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
     const genusFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
+    const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
+    const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
+    const tipBandWidthPx = interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx);
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
-    const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
-    const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
-    return labelWidthPx + 120;
+    const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
+    return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120;
   }, [maxGenusLabelCharacters, reservedTipLabelCharacters, tree]);
 
   const fitCamera = useCallback(() => {
@@ -730,12 +756,16 @@ export default function TreeCanvas({
       const tipBandFontSize = camera.scaleY <= 2.7
         ? 0
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
-      const globalTipLabelSpacePx = tipBandFontSize > 0
-        ? estimateLabelWidth(
-          Math.max(tipBandFontSize, 4.5),
-          reservedTipLabelCharacters,
-        )
-        : 0;
+      const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
+      const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
+      const globalTipLabelSpacePx = interpolateTipBandWidthPx(
+        camera.scaleY,
+        1.55,
+        2.7,
+        4.2,
+        microBandWidthPx,
+        readableBandWidthPx,
+      );
       const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + 8;
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
@@ -1411,12 +1441,16 @@ export default function TreeCanvas({
       const tipBandFontSize = angularSpacingPx <= 2.9
         ? 0
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
-      const globalTipLabelSpacePx = tipBandFontSize > 0
-        ? estimateLabelWidth(
-          Math.max(tipBandFontSize, 4.5),
-          reservedTipLabelCharacters,
-        )
-        : 0;
+      const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
+      const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
+      const globalTipLabelSpacePx = interpolateTipBandWidthPx(
+        angularSpacingPx,
+        1.6,
+        2.9,
+        4.5,
+        microBandWidthPx,
+        readableBandWidthPx,
+      );
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;

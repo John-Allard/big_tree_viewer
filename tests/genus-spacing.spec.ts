@@ -68,7 +68,7 @@ test("rectangular genus band remains smooth and monotonic", async ({ page }) => 
   await waitForViewer(page);
   await configureRectangularView(page);
 
-  const earlyScales = [1.7, 2.1, 2.5];
+  const earlyScales = [1.7, 1.8, 1.9];
   const earlyOffsets: number[] = [];
   for (const scaleY of earlyScales) {
     await setRectScaleY(page, scaleY);
@@ -76,10 +76,10 @@ test("rectangular genus band remains smooth and monotonic", async ({ page }) => 
     expect(debug.connectorXs.length).toBeGreaterThan(0);
     earlyOffsets.push(debug.genusBandOffsetPx ?? -1);
   }
-  expect(Math.max(...earlyOffsets) - Math.min(...earlyOffsets)).toBeLessThan(0.75);
   expect(earlyOffsets[0]).toBeLessThan(14);
+  expect(earlyOffsets[2]).toBeLessThan(20);
 
-  const zoomScales = [2.9, 3.2, 3.6, 4.0, 4.4, 4.9, 5.4];
+  const zoomScales = Array.from({ length: 28 }, (_, index) => Number((2.1 + (index * 0.1)).toFixed(1)));
   const zoomOffsets: number[] = [];
   for (const scaleY of zoomScales) {
     await setRectScaleY(page, scaleY);
@@ -92,6 +92,6 @@ test("rectangular genus band remains smooth and monotonic", async ({ page }) => 
 
   for (let index = 1; index < zoomOffsets.length; index += 1) {
     expect(zoomOffsets[index]).toBeGreaterThanOrEqual(zoomOffsets[index - 1] - 0.2);
-    expect(zoomOffsets[index] - zoomOffsets[index - 1]).toBeLessThan(18);
+    expect(zoomOffsets[index] - zoomOffsets[index - 1]).toBeLessThan(13);
   }
 });
