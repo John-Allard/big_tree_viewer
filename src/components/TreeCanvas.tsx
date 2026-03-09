@@ -213,11 +213,12 @@ function computeVisibleCircularAngleSpans(
   width: number,
   height: number,
   marginPx: number,
-  samples = 720,
 ): Array<{ start: number; end: number }> {
   if (!(radiusPx > 0)) {
     return [];
   }
+  const circumferencePx = Math.PI * 2 * radiusPx;
+  const samples = Math.max(1024, Math.min(8192, Math.ceil(circumferencePx / 6)));
   const visible = new Array<boolean>(samples);
   let visibleCount = 0;
   for (let index = 0; index < samples; index += 1) {
