@@ -136,7 +136,7 @@ export default function App() {
     error: null,
   });
   const [viewMode, setViewMode] = useState<ViewMode>("rectangular");
-  const [order, setOrder] = useState<LayoutOrder>("input");
+  const [order, setOrder] = useState<LayoutOrder>("asc");
   const [zoomAxisMode, setZoomAxisMode] = useState<ZoomAxisMode>("both");
   const [circularRotationDegrees, setCircularRotationDegrees] = useState(0);
   const [showTimeStripes, setShowTimeStripes] = useState(true);
@@ -407,6 +407,7 @@ export default function App() {
       <aside className="control-panel">
         <div className="panel-title-block">
           <h1>Big Tree Viewer</h1>
+          <p>by John B Allard</p>
         </div>
 
         <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)}>
@@ -454,11 +455,11 @@ export default function App() {
             <button type="button" className={order === "input" ? "active" : ""} onClick={() => setOrder("input")}>
               Input Order
             </button>
-            <button type="button" className={order === "desc" ? "active" : ""} onClick={() => setOrder("desc")}>
-              Largest First
-            </button>
             <button type="button" className={order === "asc" ? "active" : ""} onClick={() => setOrder("asc")}>
               Smallest First
+            </button>
+            <button type="button" className={order === "desc" ? "active" : ""} onClick={() => setOrder("desc")}>
+              Largest First
             </button>
           </div>
           <div className="segmented">

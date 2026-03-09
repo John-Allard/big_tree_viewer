@@ -115,6 +115,13 @@ button.secondary {
   line-height: 1;
 }
 
+.panel-title-block p {
+  margin: 0.32rem 0 0;
+  font-size: 0.82rem;
+  color: #64748b;
+  letter-spacing: 0.01em;
+}
+
 .panel-section {
   padding-top: 0.9rem;
   border-top: 1px solid rgba(15, 23, 42, 0.08);

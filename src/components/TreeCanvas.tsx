@@ -155,6 +155,11 @@ function quantizeFontSize(fontSize: number, min: number, max: number, bucket = 1
   return Math.max(min, Math.min(max, Math.ceil(fontSize / bucket) * bucket));
 }
 
+function smoothstep01(value: number): number {
+  const clamped = clamp01(value);
+  return clamped * clamped * (3 - (2 * clamped));
+}
+
 function quantizedSegmentKey(
   x1: number,
   y1: number,
@@ -538,7 +543,7 @@ export default function TreeCanvas({
       let tipLabelRightX = Number.NEGATIVE_INFINITY;
       const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
-      const needTipEnvelope = tipLabelsVisible || camera.scaleY > 3.1;
+      const needTipEnvelope = tipLabelsVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
         ctx.font = `${tipFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = "#111827";
@@ -602,7 +607,7 @@ export default function TreeCanvas({
           ? stableTipEnvelopeRightEdge + 26
           : Number.NEGATIVE_INFINITY;
         const offsetPx = 10;
-        const pullAway = tipLabelsVisible ? 1 : clamp01((camera.scaleY - 2.1) / 1.7);
+        const pullAway = tipLabelsVisible ? 1 : smoothstep01((camera.scaleY - 2.25) / 1.55);
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -1181,7 +1186,7 @@ export default function TreeCanvas({
         const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
         const arcOffsetWorld = 12 / camera.scale;
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
-        const pullAway = tipLabelsVisible ? 1 : clamp01((angularSpacingPx - 2.3) / 1.5);
+        const pullAway = tipLabelsVisible ? 1 : smoothstep01((angularSpacingPx - 2.25) / 1.7);
         const localLineRadius = arcOffsetWorld;
         const spacingTipFontSize = quantizeFontSize(tipFontSize, 6.5, 20, 1.5);
         const stableTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
