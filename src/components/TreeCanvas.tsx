@@ -254,6 +254,7 @@ export default function TreeCanvas({
     }
     return maxCharacters;
   }, [tree]);
+  const reservedTipLabelCharacters = useMemo(() => Math.max(6, Math.min(maxLeafLabelCharacters, 18)), [maxLeafLabelCharacters]);
   const maxGenusLabelCharacters = useMemo(() => {
     if (!cache) {
       return 0;
@@ -269,26 +270,24 @@ export default function TreeCanvas({
   }, [cache]);
 
   const rectClampPadding = useCallback((camera: RectCamera) => {
-    const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
     const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
-    const labelFontSize = quantizeFontSize(Math.max(tipFontSize, genusFontSize), 6.5, 22, 1.5);
-    const labelCharacters = Math.max(maxLeafLabelCharacters, maxGenusLabelCharacters);
+    const labelFontSize = quantizeFontSize(Math.max(10.5, genusFontSize), 6.5, 22, 1.5);
+    const labelCharacters = Math.max(reservedTipLabelCharacters, maxGenusLabelCharacters);
     const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
     return {
       right: labelWidthPx + 140,
     };
-  }, [maxGenusLabelCharacters, maxLeafLabelCharacters]);
+  }, [maxGenusLabelCharacters, reservedTipLabelCharacters]);
 
   const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
     const maxRadius = Math.max(tree?.maxDepth ?? 0, tree?.branchLengthMinPositive ?? 1);
     const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree?.leafCount ?? 1));
-    const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
     const genusFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
-    const labelFontSize = quantizeFontSize(Math.max(tipFontSize, genusFontSize), 6.5, 20, 1.5);
-    const labelCharacters = Math.max(maxLeafLabelCharacters, maxGenusLabelCharacters);
+    const labelFontSize = quantizeFontSize(Math.max(10.5, genusFontSize), 6.5, 20, 1.5);
+    const labelCharacters = Math.max(reservedTipLabelCharacters, maxGenusLabelCharacters);
     const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
     return labelWidthPx + 120;
-  }, [maxGenusLabelCharacters, maxLeafLabelCharacters, tree]);
+  }, [maxGenusLabelCharacters, reservedTipLabelCharacters, tree]);
 
   const fitCamera = useCallback(() => {
     if (!tree) {
@@ -648,10 +647,7 @@ export default function TreeCanvas({
       let tipLabelRightX = Number.NEGATIVE_INFINITY;
       const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
       const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
-      const globalTipLabelSpacePx = estimateLabelWidth(
-        quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 22, 1.5),
-        maxLeafLabelCharacters,
-      );
+      const globalTipLabelSpacePx = estimateLabelWidth(10.5, reservedTipLabelCharacters);
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
@@ -915,25 +911,29 @@ export default function TreeCanvas({
         ctx.lineWidth = 1.1;
         for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
           const node = visibleCollapsedNodes[index];
-          const screen = worldToScreenRect(camera, tree.buffers.depth[node], layout.center[node]);
-          const spanPx = Math.max(12, Math.min(30, (layout.max[node] - layout.min[node]) * camera.scaleY));
-          const triWidth = Math.max(14, Math.min(34, spanPx * 0.95));
-          const triHeight = Math.max(12, Math.min(28, spanPx));
+          const apex = worldToScreenRect(camera, tree.buffers.depth[node], layout.center[node]);
+          const subtreeTipDepth = measureSubtreeMaxDepth(tree, node);
+          const baseTop = worldToScreenRect(camera, subtreeTipDepth, layout.min[node]);
+          const baseBottom = worldToScreenRect(camera, subtreeTipDepth, layout.max[node]);
           ctx.beginPath();
-          ctx.moveTo(screen.x, screen.y - (triHeight * 0.5));
-          ctx.lineTo(screen.x, screen.y + (triHeight * 0.5));
-          ctx.lineTo(screen.x + triWidth, screen.y);
+          ctx.moveTo(apex.x, apex.y);
+          ctx.lineTo(baseTop.x, baseTop.y);
+          ctx.lineTo(baseBottom.x, baseBottom.y);
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
+          const hitMinX = Math.min(apex.x, baseTop.x, baseBottom.x);
+          const hitMaxX = Math.max(apex.x, baseTop.x, baseBottom.x);
+          const hitMinY = Math.min(apex.y, baseTop.y, baseBottom.y);
+          const hitMaxY = Math.max(apex.y, baseTop.y, baseBottom.y);
           labelHitsRef.current.push({
             node,
             kind: "rect",
             source: "collapse",
-            x: screen.x,
-            y: screen.y - (triHeight * 0.5),
-            width: triWidth,
-            height: triHeight,
+            x: hitMinX,
+            y: hitMinY,
+            width: hitMaxX - hitMinX,
+            height: hitMaxY - hitMinY,
           });
         }
       }
@@ -1303,10 +1303,7 @@ export default function TreeCanvas({
       const tipLabelsVisible = angularSpacingPx > 4.5;
       const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
       const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
-      const globalTipLabelSpacePx = estimateLabelWidth(
-        quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 20, 1.5),
-        maxLeafLabelCharacters,
-      );
+      const globalTipLabelSpacePx = estimateLabelWidth(10.5, reservedTipLabelCharacters);
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const circularTipVisibilityMargin = 140;
@@ -1647,40 +1644,36 @@ export default function TreeCanvas({
         ctx.lineWidth = 1.1;
         for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
           const node = visibleCollapsedNodes[index];
-          const baseTheta = thetaFor(layout.center, node, tree.leafCount);
-          const theta = baseTheta + rotationAngle;
-          const point = worldToScreenCircular(
+          const apexTheta = thetaFor(layout.center, node, tree.leafCount);
+          const startTheta = thetaFor(layout.min, node, tree.leafCount);
+          const endTheta = thetaFor(layout.max, node, tree.leafCount);
+          const apex = worldToScreenCircular(
             camera,
-            Math.cos(baseTheta) * tree.buffers.depth[node],
-            Math.sin(baseTheta) * tree.buffers.depth[node],
+            Math.cos(apexTheta) * tree.buffers.depth[node],
+            Math.sin(apexTheta) * tree.buffers.depth[node],
           );
-          const spanPx = Math.max(
-            12,
-            Math.min(30, (layout.max[node] - layout.min[node]) * maxRadius * camera.scale * ((Math.PI * 2) / Math.max(1, tree.leafCount))),
+          const subtreeTipDepth = measureSubtreeMaxDepth(tree, node);
+          const baseStart = worldToScreenCircular(
+            camera,
+            Math.cos(startTheta) * subtreeTipDepth,
+            Math.sin(startTheta) * subtreeTipDepth,
           );
-          const triLength = Math.max(16, Math.min(34, spanPx * 1.1));
-          const triWidth = Math.max(12, Math.min(28, spanPx));
-          const ux = Math.cos(theta);
-          const uy = Math.sin(theta);
-          const px = -uy;
-          const py = ux;
-          const base1x = point.x - (px * triWidth * 0.5);
-          const base1y = point.y - (py * triWidth * 0.5);
-          const base2x = point.x + (px * triWidth * 0.5);
-          const base2y = point.y + (py * triWidth * 0.5);
-          const apexX = point.x + (ux * triLength);
-          const apexY = point.y + (uy * triLength);
+          const baseEnd = worldToScreenCircular(
+            camera,
+            Math.cos(endTheta) * subtreeTipDepth,
+            Math.sin(endTheta) * subtreeTipDepth,
+          );
           ctx.beginPath();
-          ctx.moveTo(base1x, base1y);
-          ctx.lineTo(base2x, base2y);
-          ctx.lineTo(apexX, apexY);
+          ctx.moveTo(apex.x, apex.y);
+          ctx.lineTo(baseStart.x, baseStart.y);
+          ctx.lineTo(baseEnd.x, baseEnd.y);
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
-          const hitMinX = Math.min(base1x, base2x, apexX);
-          const hitMaxX = Math.max(base1x, base2x, apexX);
-          const hitMinY = Math.min(base1y, base2y, apexY);
-          const hitMaxY = Math.max(base1y, base2y, apexY);
+          const hitMinX = Math.min(baseStart.x, baseEnd.x, apex.x);
+          const hitMaxX = Math.max(baseStart.x, baseEnd.x, apex.x);
+          const hitMinY = Math.min(baseStart.y, baseEnd.y, apex.y);
+          const hitMaxY = Math.max(baseStart.y, baseEnd.y, apex.y);
           labelHitsRef.current.push({
             node,
             kind: "rect",
@@ -1841,8 +1834,8 @@ export default function TreeCanvas({
     cache,
     collapsedNodes,
     fitCamera,
-    maxLeafLabelCharacters,
     order,
+    reservedTipLabelCharacters,
     searchMatches,
     searchMatchSet,
     showGenusLabels,
