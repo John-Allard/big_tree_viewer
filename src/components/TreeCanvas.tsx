@@ -50,6 +50,7 @@ import {
   pickRectConnectorChild,
   pointInLabelHitbox,
   polarToCartesian,
+  serializeSubtreeToNewick,
   thetaFor,
   wrapPositive,
 } from "./treeCanvasUtils";
@@ -1236,6 +1237,7 @@ export default function TreeCanvas({
         ctx.lineWidth = 1.1;
         for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
           const node = visibleCollapsedNodes[index];
+          const parent = tree.buffers.parent[node];
           const apex = worldToScreenRect(camera, tree.buffers.depth[node], layout.center[node]);
           const subtreeTipDepth = measureSubtreeMaxDepth(tree, node);
           const baseTop = worldToScreenRect(camera, subtreeTipDepth, layout.min[node]);
@@ -1260,6 +1262,22 @@ export default function TreeCanvas({
             width: hitMaxX - hitMinX,
             height: hitMaxY - hitMinY,
           });
+          if (parent >= 0) {
+            const edgeStart = worldToScreenRect(camera, tree.buffers.depth[parent], layout.center[node]);
+            const edgeMinX = Math.min(edgeStart.x, apex.x);
+            const edgeMaxX = Math.max(edgeStart.x, apex.x);
+            const edgeMinY = Math.min(edgeStart.y, apex.y) - 8;
+            const edgeMaxY = Math.max(edgeStart.y, apex.y) + 8;
+            labelHitsRef.current.push({
+              node,
+              kind: "rect",
+              source: "collapse-edge",
+              x: edgeMinX,
+              y: edgeMinY,
+              width: Math.max(10, edgeMaxX - edgeMinX),
+              height: Math.max(16, edgeMaxY - edgeMinY),
+            });
+          }
         }
       }
 
@@ -2072,6 +2090,7 @@ export default function TreeCanvas({
         ctx.lineWidth = 1.1;
         for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
           const node = visibleCollapsedNodes[index];
+          const parent = tree.buffers.parent[node];
           const apexTheta = thetaFor(layout.center, node, tree.leafCount);
           const startTheta = thetaFor(layout.min, node, tree.leafCount);
           const endTheta = thetaFor(layout.max, node, tree.leafCount);
@@ -2111,6 +2130,27 @@ export default function TreeCanvas({
             width: hitMaxX - hitMinX,
             height: hitMaxY - hitMinY,
           });
+          if (parent >= 0) {
+            const edgeTheta = thetaFor(layout.center, node, tree.leafCount);
+            const edgeStart = worldToScreenCircular(
+              camera,
+              Math.cos(edgeTheta) * tree.buffers.depth[parent],
+              Math.sin(edgeTheta) * tree.buffers.depth[parent],
+            );
+            const edgeMinX = Math.min(edgeStart.x, apex.x) - 8;
+            const edgeMaxX = Math.max(edgeStart.x, apex.x) + 8;
+            const edgeMinY = Math.min(edgeStart.y, apex.y) - 8;
+            const edgeMaxY = Math.max(edgeStart.y, apex.y) + 8;
+            labelHitsRef.current.push({
+              node,
+              kind: "rect",
+              source: "collapse-edge",
+              x: edgeMinX,
+              y: edgeMinY,
+              width: Math.max(16, edgeMaxX - edgeMinX),
+              height: Math.max(16, edgeMaxY - edgeMinY),
+            });
+          }
         }
       }
       for (let index = 0; index < circularGenusLabels.length; index += 1) {
@@ -2417,7 +2457,6 @@ export default function TreeCanvas({
       camera.scaleY = usableHeight / Math.max(maxY - minY, 1);
       camera.translateX = padLeft - (minX * camera.scaleX);
       camera.translateY = padTop - (minY * camera.scaleY);
-      clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
     } else {
       const fit = fitCircularCamera(size.width, size.height, tree, circularRotation);
       const startTheta = thetaFor(layout.min, targetNode, tree.leafCount);
@@ -2435,17 +2474,14 @@ export default function TreeCanvas({
       const screen = worldToScreenCircular(camera, point.x, point.y);
       camera.translateX += (size.width * 0.5) - screen.x;
       camera.translateY += (size.height * 0.5) - screen.y;
-      clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
     }
     draw();
   }, [
-    circularClampExtraRadiusPx,
     circularRotation,
     draw,
     fitCamera,
     focusNodeTarget,
     order,
-    rectClampPadding,
     size.height,
     size.width,
     tree,
@@ -2985,6 +3021,19 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [contextMenu, tree, zoomToSubtreeTarget]);
 
+  const handleContextOpenSubtreeInNewTab = useCallback(() => {
+    if (!contextMenu || typeof window === "undefined" || !tree) {
+      return;
+    }
+    const key = `big-tree-viewer:subtree:${crypto.randomUUID()}`;
+    const newick = serializeSubtreeToNewick(tree, contextMenu.node);
+    window.localStorage.setItem(key, newick);
+    const url = new URL(window.location.href);
+    url.searchParams.set("subtree", key);
+    window.open(url.toString(), "_blank", "noopener");
+    setContextMenu(null);
+  }, [contextMenu, tree]);
+
   const handleContextToggleCollapse = useCallback(() => {
     if (!contextMenu || !tree || tree.buffers.firstChild[contextMenu.node] < 0) {
       return;
@@ -3047,9 +3096,12 @@ export default function TreeCanvas({
               Zoom To Parent Subtree
             </button>
           ) : null}
+          <button type="button" className="tree-context-menu-item" onClick={handleContextOpenSubtreeInNewTab}>
+            Open Subtree In New Tab
+          </button>
           {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
             <button type="button" className="tree-context-menu-item" onClick={handleContextToggleCollapse}>
-              {collapsedNodes.has(contextMenu.node) ? "Expand Subclade" : "Collapse Subclade"}
+              {collapsedNodes.has(contextMenu.node) ? "Expand Subtree" : "Collapse Subtree"}
             </button>
           ) : null}
         </div>

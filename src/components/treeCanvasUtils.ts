@@ -218,6 +218,45 @@ export function displayLabelText(raw: string, fallback: string): string {
   return trimmed || fallback;
 }
 
+function quoteNewickName(raw: string): string {
+  const trimmed = raw.trim().replace(/^['"]+|['"]+$/g, "");
+  if (!trimmed) {
+    return "";
+  }
+  if (!/[,\s:;()'"]/.test(trimmed)) {
+    return trimmed;
+  }
+  return `'${trimmed.replace(/'/g, "''")}'`;
+}
+
+function formatBranchLength(length: number): string {
+  if (!Number.isFinite(length)) {
+    return "0";
+  }
+  return Number(length.toPrecision(12)).toString();
+}
+
+export function serializeSubtreeToNewick(tree: TreeModel, node: number): string {
+  const serializeNode = (current: number, includeLength: boolean): string => {
+    const children: number[] = [];
+    let child = tree.buffers.firstChild[current];
+    while (child >= 0) {
+      children.push(child);
+      child = tree.buffers.nextSibling[child];
+    }
+    const rawName = (tree.names[current] || "").trim().replace(/^['"]+|['"]+$/g, "");
+    const safeName = quoteNewickName(rawName);
+    const label = /^[+-]?\d+(?:\.\d+)?$/.test(rawName) ? "" : safeName;
+    const branch = includeLength ? `:${formatBranchLength(tree.buffers.branchLength[current])}` : "";
+    if (children.length === 0) {
+      return `${label}${branch}`;
+    }
+    const body = children.map((descendant) => serializeNode(descendant, true)).join(",");
+    return `(${body})${label}${branch}`;
+  };
+  return `${serializeNode(node, false)};`;
+}
+
 export function displayNodeName(tree: TreeModel, node: number): string {
   const raw = (tree.names[node] || "").trim();
   const isLeaf = tree.buffers.firstChild[node] < 0;

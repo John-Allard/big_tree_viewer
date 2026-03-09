@@ -332,6 +332,28 @@ export default function App() {
     });
   }, [ensureWorker]);
 
+  const loadSubtreeFromUrl = useCallback(async (): Promise<boolean> => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const subtreeKey = params.get("subtree");
+    if (!subtreeKey) {
+      return false;
+    }
+    const text = window.localStorage.getItem(subtreeKey);
+    if (!text) {
+      setLoadState({
+        loading: false,
+        message: "Unable to load shared subtree.",
+        error: "The requested subtree payload is not available in local storage.",
+      });
+      return true;
+    }
+    await parseText(text, "shared subtree");
+    return true;
+  }, [parseText]);
+
   const loadExample = async (): Promise<void> => {
     setLoadState({
       loading: true,
@@ -359,8 +381,13 @@ export default function App() {
       return;
     }
     didAutoloadRef.current = true;
-    void loadExample();
-  }, []);
+    void (async () => {
+      const loadedSubtree = await loadSubtreeFromUrl();
+      if (!loadedSubtree) {
+        await loadExample();
+      }
+    })();
+  }, [loadExample, loadSubtreeFromUrl]);
 
   useEffect(() => {
     if (!tree) {
