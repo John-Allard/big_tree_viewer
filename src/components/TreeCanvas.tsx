@@ -146,10 +146,6 @@ function drawHighlightedText(
   ctx.textAlign = previousAlign;
 }
 
-function quantizeFontSize(fontSize: number, min: number, max: number, bucket = 1.5): number {
-  return Math.max(min, Math.min(max, Math.ceil(fontSize / bucket) * bucket));
-}
-
 function smoothstep01(value: number): number {
   const clamped = clamp01(value);
   return clamped * clamped * (3 - (2 * clamped));
@@ -359,15 +355,12 @@ export default function TreeCanvas({
   const rectClampPadding = useCallback((camera: RectCamera) => {
     const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
     const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
-    const cueBandProgress = smoothstep01((camera.scaleY - 1.45) / Math.max(1e-6, 2.7 - 1.45));
     const readableBandProgress = smoothstep01((camera.scaleY - 2.7) / Math.max(1e-6, 4.2 - 2.7));
-    const tipBandFontSize = camera.scaleY <= 1.45
+    const tipBandFontSize = camera.scaleY <= 2.7
       ? 0
-      : camera.scaleY < 2.7
-        ? microTipFontSize * cueBandProgress
-        : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
+      : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
     const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
-    const labelFontSize = quantizeFontSize(Math.max(genusFontSize, tipBandFontSize), 4.5, 22, 1.5);
+    const labelFontSize = Math.max(4.5, Math.min(22, Math.max(genusFontSize, tipBandFontSize)));
     const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
     const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
     return {
@@ -380,15 +373,12 @@ export default function TreeCanvas({
     const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree?.leafCount ?? 1));
     const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
     const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
-    const cueBandProgress = smoothstep01((angularSpacingPx - 1.6) / Math.max(1e-6, 2.9 - 1.6));
     const readableBandProgress = smoothstep01((angularSpacingPx - 2.9) / Math.max(1e-6, 4.5 - 2.9));
-    const tipBandFontSize = angularSpacingPx <= 1.6
+    const tipBandFontSize = angularSpacingPx <= 2.9
       ? 0
-      : angularSpacingPx < 2.9
-        ? microTipFontSize * cueBandProgress
-        : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
+      : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
     const genusFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
-    const labelFontSize = quantizeFontSize(Math.max(genusFontSize, tipBandFontSize), 4.5, 20, 1.5);
+    const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
     const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
     return labelWidthPx + 120;
@@ -729,16 +719,13 @@ export default function TreeCanvas({
       let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
       const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
-      const cueBandProgress = smoothstep01((camera.scaleY - 1.45) / Math.max(1e-6, 2.7 - 1.45));
       const readableBandProgress = smoothstep01((camera.scaleY - 2.7) / Math.max(1e-6, 4.2 - 2.7));
-      const tipBandFontSize = camera.scaleY <= 1.45
+      const tipBandFontSize = camera.scaleY <= 2.7
         ? 0
-        : camera.scaleY < 2.7
-          ? microTipFontSize * cueBandProgress
-          : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
+        : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const globalTipLabelSpacePx = tipBandFontSize > 0
         ? estimateLabelWidth(
-          quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 22, 1.5),
+          Math.max(tipBandFontSize, 4.5),
           reservedTipLabelCharacters,
         )
         : 0;
@@ -792,7 +779,7 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const genusGapPx = 24;
+        const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -1386,16 +1373,13 @@ export default function TreeCanvas({
       const tipLabelsVisible = angularSpacingPx > 4.5;
       const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
       const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
-      const cueBandProgress = smoothstep01((angularSpacingPx - 1.6) / Math.max(1e-6, 2.9 - 1.6));
       const readableBandProgress = smoothstep01((angularSpacingPx - 2.9) / Math.max(1e-6, 4.5 - 2.9));
-      const tipBandFontSize = angularSpacingPx <= 1.6
+      const tipBandFontSize = angularSpacingPx <= 2.9
         ? 0
-        : angularSpacingPx < 2.9
-          ? microTipFontSize * cueBandProgress
-          : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
+        : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const globalTipLabelSpacePx = tipBandFontSize > 0
         ? estimateLabelWidth(
-          quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 20, 1.5),
+          Math.max(tipBandFontSize, 4.5),
           reservedTipLabelCharacters,
         )
         : 0;
@@ -1459,7 +1443,7 @@ export default function TreeCanvas({
         const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
         const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
-        const lineGapPx = 18;
+        const lineGapPx = Math.max(12, tipBandFontSize * 1.9);
         ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
