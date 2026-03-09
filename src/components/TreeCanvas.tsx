@@ -217,54 +217,91 @@ function computeVisibleCircularAngleSpans(
   if (!(radiusPx > 0)) {
     return [];
   }
-  const circumferencePx = Math.PI * 2 * radiusPx;
-  const samples = Math.max(1024, Math.min(8192, Math.ceil(circumferencePx / 6)));
-  const visible = new Array<boolean>(samples);
-  let visibleCount = 0;
-  for (let index = 0; index < samples; index += 1) {
-    const angle = (index / samples) * Math.PI * 2;
+  const left = -marginPx;
+  const right = width + marginPx;
+  const top = -marginPx;
+  const bottom = height + marginPx;
+  const tau = Math.PI * 2;
+  const epsilon = 1e-7;
+  const isVisibleAngle = (angle: number): boolean => {
     const x = centerX + (Math.cos(angle) * radiusPx);
     const y = centerY + (Math.sin(angle) * radiusPx);
-    const inView = x >= -marginPx && x <= width + marginPx && y >= -marginPx && y <= height + marginPx;
-    visible[index] = inView;
-    if (inView) {
-      visibleCount += 1;
-    }
-  }
-  if (visibleCount === 0) {
-    return [];
-  }
-  if (visibleCount === samples) {
-    return [{ start: 0, end: Math.PI * 2 }];
-  }
-  const spans: Array<{ start: number; end: number }> = [];
-  let startIndex = -1;
-  for (let index = 0; index < samples; index += 1) {
-    if (visible[index]) {
-      if (startIndex < 0) {
-        startIndex = index;
+    return x >= left && x <= right && y >= top && y <= bottom;
+  };
+  const angles: number[] = [];
+  const pushAngle = (angle: number): void => {
+    const wrapped = wrapPositive(angle);
+    for (let index = 0; index < angles.length; index += 1) {
+      const delta = Math.abs(angles[index] - wrapped);
+      if (delta <= epsilon || Math.abs(delta - tau) <= epsilon) {
+        return;
       }
-    } else if (startIndex >= 0) {
-      spans.push({
-        start: (startIndex / samples) * Math.PI * 2,
-        end: (index / samples) * Math.PI * 2,
-      });
-      startIndex = -1;
+    }
+    angles.push(wrapped);
+  };
+
+  const cardinalAngles = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];
+  for (let index = 0; index < cardinalAngles.length; index += 1) {
+    if (isVisibleAngle(cardinalAngles[index])) {
+      pushAngle(cardinalAngles[index]);
     }
   }
-  if (startIndex >= 0) {
-    spans.push({
-      start: (startIndex / samples) * Math.PI * 2,
-      end: Math.PI * 2,
-    });
+
+  const verticalEdges = [left, right];
+  for (let edgeIndex = 0; edgeIndex < verticalEdges.length; edgeIndex += 1) {
+    const normalizedX = (verticalEdges[edgeIndex] - centerX) / radiusPx;
+    if (Math.abs(normalizedX) > 1 + epsilon) {
+      continue;
+    }
+    const clampedX = Math.max(-1, Math.min(1, normalizedX));
+    const offsetY = Math.sqrt(Math.max(0, 1 - (clampedX * clampedX))) * radiusPx;
+    const y1 = centerY + offsetY;
+    const y2 = centerY - offsetY;
+    if (y1 >= top - epsilon && y1 <= bottom + epsilon) {
+      pushAngle(Math.atan2(y1 - centerY, verticalEdges[edgeIndex] - centerX));
+    }
+    if (y2 >= top - epsilon && y2 <= bottom + epsilon) {
+      pushAngle(Math.atan2(y2 - centerY, verticalEdges[edgeIndex] - centerX));
+    }
   }
-  if (spans.length >= 2 && spans[0].start === 0 && spans[spans.length - 1].end === Math.PI * 2) {
-    const first = spans.shift()!;
-    const last = spans.pop()!;
-    spans.unshift({
-      start: last.start,
-      end: first.end + Math.PI * 2,
-    });
+
+  const horizontalEdges = [top, bottom];
+  for (let edgeIndex = 0; edgeIndex < horizontalEdges.length; edgeIndex += 1) {
+    const normalizedY = (horizontalEdges[edgeIndex] - centerY) / radiusPx;
+    if (Math.abs(normalizedY) > 1 + epsilon) {
+      continue;
+    }
+    const clampedY = Math.max(-1, Math.min(1, normalizedY));
+    const offsetX = Math.sqrt(Math.max(0, 1 - (clampedY * clampedY))) * radiusPx;
+    const x1 = centerX + offsetX;
+    const x2 = centerX - offsetX;
+    if (x1 >= left - epsilon && x1 <= right + epsilon) {
+      pushAngle(Math.atan2(horizontalEdges[edgeIndex] - centerY, x1 - centerX));
+    }
+    if (x2 >= left - epsilon && x2 <= right + epsilon) {
+      pushAngle(Math.atan2(horizontalEdges[edgeIndex] - centerY, x2 - centerX));
+    }
+  }
+
+  if (angles.length === 0) {
+    return isVisibleAngle(0) ? [{ start: 0, end: tau }] : [];
+  }
+
+  angles.sort((leftAngle, rightAngle) => leftAngle - rightAngle);
+  const spans: Array<{ start: number; end: number }> = [];
+  for (let index = 0; index < angles.length; index += 1) {
+    const start = angles[index];
+    const end = index === angles.length - 1 ? angles[0] + tau : angles[index + 1];
+    if ((end - start) <= epsilon) {
+      continue;
+    }
+    const mid = start + ((end - start) * 0.5);
+    if (isVisibleAngle(mid)) {
+      spans.push({ start, end });
+    }
+  }
+  if (spans.length === 0) {
+    return isVisibleAngle(0) ? [{ start: 0, end: tau }] : [];
   }
   return spans;
 }
@@ -1678,6 +1715,7 @@ export default function TreeCanvas({
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
       const circularTipVisibilityMargin = 140;
+      const visibleLeafOverscan = Math.max(12, Math.min(1600, Math.ceil((circularTipVisibilityMargin + 120) / Math.max(0.5, angularSpacingPx))));
       const leafVisibilityRadiusPx = Math.max(maxRadius * camera.scale, tipBandAnchorRadius * camera.scale * 0.82);
       const visibleAngleSpans = computeVisibleCircularAngleSpans(
         centerPoint.x,
@@ -1687,7 +1725,6 @@ export default function TreeCanvas({
         size.height,
         circularTipVisibilityMargin + 80,
       );
-      const visibleLeafOverscan = Math.max(12, Math.min(1600, Math.ceil((circularTipVisibilityMargin + 120) / Math.max(0.5, angularSpacingPx))));
       const visibleLeafRanges = visibleAngleSpans.length > 0
         ? circularSpansToLeafRanges(
           visibleAngleSpans,
@@ -1894,8 +1931,10 @@ export default function TreeCanvas({
           tipBandFontSize,
           tipBandWidthPx: globalTipLabelSpacePx,
           tipBandAnchorRadiusPx: tipBandAnchorRadius * camera.scale,
+          visibleTipLabelCount: circularVisibleTipLabels.length,
           genusGapPx: lineGapPx,
           genusLineRadiusPx: connectorArcs[0]?.lineRadiusPx ?? null,
+          visibleLeafRanges: visibleLeafRanges.map((range) => [range.startIndex, range.endIndex]),
         };
         genusLabelHistoryRef.current = {
           tree,
@@ -1926,8 +1965,10 @@ export default function TreeCanvas({
           tipBandFontSize,
           tipBandWidthPx: globalTipLabelSpacePx,
           tipBandAnchorRadiusPx: tipBandAnchorRadius * camera.scale,
+          visibleTipLabelCount: circularVisibleTipLabels.length,
           genusGapPx: null,
           genusLineRadiusPx: null,
+          visibleLeafRanges: visibleLeafRanges.map((range) => [range.startIndex, range.endIndex]),
         };
         genusLabelHistoryRef.current = {
           tree,
