@@ -780,6 +780,8 @@ export default function TreeCanvas({
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
         const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
+        const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
+        const genusBandX = worldToScreenRect(camera, tipSideDepth, 0).x + 8 + globalTipLabelSpacePx + genusGapPx;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -802,7 +804,7 @@ export default function TreeCanvas({
             return;
           }
           const spanPx = Math.abs(y2 - y1) * camera.scaleY;
-          const x = worldToScreenRect(camera, block.maxDepth, 0).x + 8 + globalTipLabelSpacePx + genusGapPx;
+          const x = genusBandX;
           if (x < -80 || x > size.width + 160) {
             return;
           }
