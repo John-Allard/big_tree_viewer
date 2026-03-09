@@ -275,14 +275,15 @@ function circularSpansToLeafRanges(
   orderedLeaves: number[],
   center: Float64Array,
   leafCount: number,
+  overscanLeaves: number,
 ): Array<{ startIndex: number; endIndex: number }> {
   const ranges: Array<{ startIndex: number; endIndex: number }> = [];
   const tau = Math.PI * 2;
   const pushRange = (thetaStart: number, thetaEnd: number): void => {
     const startCenter = (thetaStart / tau) * leafCount;
     const endCenter = (thetaEnd / tau) * leafCount;
-    const startIndex = lowerBoundLeaves(orderedLeaves, center, startCenter);
-    const endIndex = Math.min(orderedLeaves.length, lowerBoundLeaves(orderedLeaves, center, endCenter) + 1);
+    const startIndex = Math.max(0, lowerBoundLeaves(orderedLeaves, center, startCenter) - overscanLeaves);
+    const endIndex = Math.min(orderedLeaves.length, lowerBoundLeaves(orderedLeaves, center, endCenter) + 1 + overscanLeaves);
     if (endIndex > startIndex) {
       ranges.push({ startIndex, endIndex });
     }
@@ -301,7 +302,21 @@ function circularSpansToLeafRanges(
       pushRange(thetaStart, thetaEnd);
     }
   }
-  return ranges;
+  if (ranges.length <= 1) {
+    return ranges;
+  }
+  ranges.sort((left, right) => left.startIndex - right.startIndex);
+  const merged: Array<{ startIndex: number; endIndex: number }> = [ranges[0]];
+  for (let index = 1; index < ranges.length; index += 1) {
+    const previous = merged[merged.length - 1];
+    const current = ranges[index];
+    if (current.startIndex <= previous.endIndex) {
+      previous.endIndex = Math.max(previous.endIndex, current.endIndex);
+    } else {
+      merged.push(current);
+    }
+  }
+  return merged;
 }
 
 function measureSubtreeMaxDepth(tree: TreeModel, node: number): number {
@@ -1672,8 +1687,16 @@ export default function TreeCanvas({
         size.height,
         circularTipVisibilityMargin + 80,
       );
+      const visibleLeafOverscan = Math.max(12, Math.min(1600, Math.ceil((circularTipVisibilityMargin + 120) / Math.max(0.5, angularSpacingPx))));
       const visibleLeafRanges = visibleAngleSpans.length > 0
-        ? circularSpansToLeafRanges(visibleAngleSpans, rotationAngle, orderedLeaves, layout.center, tree.leafCount)
+        ? circularSpansToLeafRanges(
+          visibleAngleSpans,
+          rotationAngle,
+          orderedLeaves,
+          layout.center,
+          tree.leafCount,
+          visibleLeafOverscan,
+        )
         : [];
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
       let maxVisibleTipLabelWidth = 0;
