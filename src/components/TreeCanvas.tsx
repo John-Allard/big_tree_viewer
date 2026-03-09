@@ -643,11 +643,15 @@ export default function TreeCanvas({
         }
       }
 
-      let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number }> = [];
+      let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       let tipLabelRightEdge = Number.NEGATIVE_INFINITY;
       let tipLabelRightX = Number.NEGATIVE_INFINITY;
       const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
       const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
+      const globalTipLabelSpacePx = estimateLabelWidth(
+        quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 22, 1.5),
+        maxLeafLabelCharacters,
+      );
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
@@ -674,7 +678,7 @@ export default function TreeCanvas({
       }
       const maxVisibleLabels = 5200;
       if (microTipLabelsVisible && measuredLabels.length <= maxVisibleLabels) {
-        visibleTipLabels = measuredLabels.map(({ node, text, x, y }) => ({ node, text, x, y }));
+        visibleTipLabels = measuredLabels.map(({ node, text, x, y, width }) => ({ node, text, x, y, width }));
       }
 
       if (showGenusLabels) {
@@ -700,10 +704,8 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const spacingTipFontSize = quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 22, 1.5);
-        const localTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
         const stableTipEnvelopeRightEdge = Number.isFinite(tipLabelRightX)
-          ? tipLabelRightX + localTipLabelWidth
+          ? tipLabelRightX + globalTipLabelSpacePx
           : tipLabelRightEdge;
         const outboardMinX = Number.isFinite(stableTipEnvelopeRightEdge)
           ? stableTipEnvelopeRightEdge + 26
@@ -852,11 +854,18 @@ export default function TreeCanvas({
 
       if (visibleTipLabels.length > 0) {
         const renderTipFontSize = tipLabelsVisible ? tipFontSize : microTipFontSize;
-        ctx.font = `${renderTipFontSize}px ${LABEL_FONT}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         for (let index = 0; index < visibleTipLabels.length; index += 1) {
           const label = visibleTipLabels[index];
+          const fittedFontSize = Math.max(
+            4,
+            Math.min(
+              renderTipFontSize,
+              renderTipFontSize * Math.min(1, globalTipLabelSpacePx / Math.max(1e-6, label.width)),
+            ),
+          );
+          ctx.font = `${fittedFontSize}px ${LABEL_FONT}`;
           if (tipLabelsVisible) {
             const highlightColor = label.node === activeSearchNode
               ? "#c2410c"
@@ -873,15 +882,14 @@ export default function TreeCanvas({
               highlightColor,
               highlightColor ? findSearchMatchRange(label.text, searchQuery) : null,
             );
-            const width = ctx.measureText(label.text).width;
             labelHitsRef.current.push({
               node: label.node,
               kind: "rect",
               source: "label",
               x: label.x,
-              y: label.y - (renderTipFontSize * 0.55),
-              width,
-              height: renderTipFontSize * 1.1,
+              y: label.y - (fittedFontSize * 0.55),
+              width: Math.min(globalTipLabelSpacePx, ctx.measureText(label.text).width),
+              height: fittedFontSize * 1.1,
             });
           } else {
             ctx.fillStyle = "rgba(15,23,42,0.6)";
@@ -1295,6 +1303,10 @@ export default function TreeCanvas({
       const tipLabelsVisible = angularSpacingPx > 4.5;
       const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
       const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
+      const globalTipLabelSpacePx = estimateLabelWidth(
+        quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 20, 1.5),
+        maxLeafLabelCharacters,
+      );
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const circularTipVisibilityMargin = 140;
@@ -1357,9 +1369,7 @@ export default function TreeCanvas({
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
         const pullAway = smoothstep01((angularSpacingPx - 1.7) / 0.95);
         const localLineRadius = arcOffsetWorld;
-        const spacingTipFontSize = quantizeFontSize(Math.max(tipFontSize, microTipFontSize), 6.5, 20, 1.5);
-        const localTipLabelWidth = estimateLabelWidth(spacingTipFontSize, maxLeafLabelCharacters);
-        const tipOuterRadius = tipLabelRadius + ((localTipLabelWidth + (tipFontSize * 0.8) + 12) / camera.scale);
+        const tipOuterRadius = tipLabelRadius + ((globalTipLabelSpacePx + (tipFontSize * 0.8) + 12) / camera.scale);
         const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
         const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
         ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
@@ -1552,6 +1562,10 @@ export default function TreeCanvas({
           for (let index = 0; index < circularVisibleTipLabels.length; index += 1) {
             const label = circularVisibleTipLabels[index];
             const { node, theta, x, y } = label;
+            const fittedFontSize = Math.max(
+              4,
+              Math.min(fontSize, fontSize * Math.min(1, globalTipLabelSpacePx / Math.max(1e-6, label.width))),
+            );
             const deg = (theta + rotationAngle) * 180 / Math.PI;
             const onRightSide = Math.cos(theta + rotationAngle) >= 0;
             const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
@@ -1560,6 +1574,7 @@ export default function TreeCanvas({
               : searchMatchSet.has(node)
                 ? "#2563eb"
                 : null;
+            ctx.font = `${fittedFontSize}px ${LABEL_FONT}`;
             ctx.save();
             ctx.translate(x, y);
             ctx.rotate(rotation * Math.PI / 180);
@@ -1581,8 +1596,8 @@ export default function TreeCanvas({
               source: "label",
               x,
               y,
-              width: label.width,
-              height: fontSize * 1.15,
+              width: Math.min(globalTipLabelSpacePx, ctx.measureText(label.text).width),
+              height: fittedFontSize * 1.15,
               rotation: rotation * Math.PI / 180,
               align: onRightSide ? "left" : "right",
             });
@@ -1597,9 +1612,14 @@ export default function TreeCanvas({
           ctx.fillStyle = "rgba(15,23,42,0.6)";
           for (let index = 0; index < circularVisibleTipLabels.length; index += 1) {
             const label = circularVisibleTipLabels[index];
+            const fittedFontSize = Math.max(
+              4,
+              Math.min(fontSize, fontSize * Math.min(1, globalTipLabelSpacePx / Math.max(1e-6, label.width))),
+            );
             const deg = (label.theta + rotationAngle) * 180 / Math.PI;
             const onRightSide = Math.cos(label.theta + rotationAngle) >= 0;
             const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
+            ctx.font = `${fittedFontSize}px ${LABEL_FONT}`;
             ctx.save();
             ctx.translate(label.x, label.y);
             ctx.rotate(rotation * Math.PI / 180);
