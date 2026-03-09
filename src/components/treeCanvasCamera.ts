@@ -1,6 +1,13 @@
 import type { TreeModel } from "../types/tree";
 import type { CircularCamera, RectCamera } from "./treeCanvasTypes";
 
+interface RectClampPadding {
+  left?: number;
+  right?: number;
+  top?: number;
+  bottom?: number;
+}
+
 export function setCircularCameraRotation(camera: CircularCamera, rotation: number): void {
   camera.rotation = rotation;
   camera.rotationCos = Math.cos(rotation);
@@ -98,21 +105,33 @@ export function screenToWorldCircular(camera: CircularCamera, x: number, y: numb
   };
 }
 
-export function clampRectCamera(camera: RectCamera, tree: TreeModel, width: number, height: number): void {
+export function clampRectCamera(
+  camera: RectCamera,
+  tree: TreeModel,
+  width: number,
+  height: number,
+  padding: RectClampPadding = {},
+): void {
   const visibleMargin = 48;
   const spanX = tree.maxDepth * camera.scaleX;
   const spanY = Math.max(1, tree.leafCount - 1) * camera.scaleY;
-  const minTranslateX = visibleMargin - spanX;
-  const maxTranslateX = width - visibleMargin;
-  const minTranslateY = visibleMargin - spanY;
-  const maxTranslateY = height - visibleMargin;
+  const minTranslateX = (visibleMargin + (padding.left ?? 0)) - spanX;
+  const maxTranslateX = width - visibleMargin - (padding.right ?? 0);
+  const minTranslateY = (visibleMargin + (padding.top ?? 0)) - spanY;
+  const maxTranslateY = height - visibleMargin - (padding.bottom ?? 0);
   camera.translateX = Math.min(maxTranslateX, Math.max(minTranslateX, camera.translateX));
   camera.translateY = Math.min(maxTranslateY, Math.max(minTranslateY, camera.translateY));
 }
 
-export function clampCircularCamera(camera: CircularCamera, tree: TreeModel, width: number, height: number): void {
+export function clampCircularCamera(
+  camera: CircularCamera,
+  tree: TreeModel,
+  width: number,
+  height: number,
+  extraRadiusPx = 0,
+): void {
   const visibleMargin = 56;
-  const radiusPx = Math.max(tree.maxDepth, tree.branchLengthMinPositive) * camera.scale;
+  const radiusPx = (Math.max(tree.maxDepth, tree.branchLengthMinPositive) * camera.scale) + extraRadiusPx;
   const minTranslateX = visibleMargin - radiusPx;
   const maxTranslateX = width - visibleMargin + radiusPx;
   const minTranslateY = visibleMargin - radiusPx;

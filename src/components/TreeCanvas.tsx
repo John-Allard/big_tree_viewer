@@ -17,9 +17,11 @@ import {
 import type { HoverInfo } from "../types/tree";
 import type {
   CameraState,
+  CircularCamera,
   CanvasHoverInfo,
   GenusBlock,
   LabelHitbox,
+  RectCamera,
   ScreenLabel,
   TreeCanvasProps,
 } from "./treeCanvasTypes";
@@ -234,6 +236,41 @@ export default function TreeCanvas({
     }
     return maxCharacters;
   }, [tree]);
+  const maxGenusLabelCharacters = useMemo(() => {
+    if (!cache) {
+      return 0;
+    }
+    let maxCharacters = 0;
+    const blocks = cache.genusBlocks.input;
+    for (let index = 0; index < blocks.length; index += 1) {
+      if (blocks[index].label.length > maxCharacters) {
+        maxCharacters = blocks[index].label.length;
+      }
+    }
+    return maxCharacters;
+  }, [cache]);
+
+  const rectClampPadding = useCallback((camera: RectCamera) => {
+    const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
+    const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
+    const labelFontSize = quantizeFontSize(Math.max(tipFontSize, genusFontSize), 6.5, 22, 1.5);
+    const labelCharacters = Math.max(maxLeafLabelCharacters, maxGenusLabelCharacters);
+    const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
+    return {
+      right: labelWidthPx + 140,
+    };
+  }, [maxGenusLabelCharacters, maxLeafLabelCharacters]);
+
+  const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
+    const maxRadius = Math.max(tree?.maxDepth ?? 0, tree?.branchLengthMinPositive ?? 1);
+    const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree?.leafCount ?? 1));
+    const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
+    const genusFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
+    const labelFontSize = quantizeFontSize(Math.max(tipFontSize, genusFontSize), 6.5, 20, 1.5);
+    const labelCharacters = Math.max(maxLeafLabelCharacters, maxGenusLabelCharacters);
+    const labelWidthPx = estimateLabelWidth(labelFontSize, labelCharacters);
+    return labelWidthPx + 120;
+  }, [maxGenusLabelCharacters, maxLeafLabelCharacters, tree]);
 
   const fitCamera = useCallback(() => {
     if (!tree) {
@@ -267,7 +304,7 @@ export default function TreeCanvas({
       nextCamera.scaleY = pixelsPerLeaf;
       nextCamera.translateX = centerScreenX - (targetX * nextCamera.scaleX);
       nextCamera.translateY = centerScreenY - (targetY * nextCamera.scaleY);
-      clampRectCamera(nextCamera, tree, size.width, size.height);
+      clampRectCamera(nextCamera, tree, size.width, size.height, rectClampPadding(nextCamera));
       return nextCamera;
     }
 
@@ -283,7 +320,7 @@ export default function TreeCanvas({
       const rotatedPoint = rotateCircularWorldPoint(nextCamera, point.x, point.y);
       nextCamera.translateX = centerScreenX - (rotatedPoint.x * nextCamera.scale);
       nextCamera.translateY = centerScreenY - (rotatedPoint.y * nextCamera.scale);
-      clampCircularCamera(nextCamera, tree, size.width, size.height);
+      clampCircularCamera(nextCamera, tree, size.width, size.height, circularClampExtraRadiusPx(nextCamera));
       return nextCamera;
     }
 
@@ -1607,9 +1644,9 @@ export default function TreeCanvas({
     const sizeChanged = previousSize.width !== size.width || previousSize.height !== size.height;
     if (currentCamera && sizeChanged && previousViewMode === viewMode) {
       if (currentCamera.kind === "rect") {
-        clampRectCamera(currentCamera, tree, size.width, size.height);
+        clampRectCamera(currentCamera, tree, size.width, size.height, rectClampPadding(currentCamera));
       } else {
-        clampCircularCamera(currentCamera, tree, size.width, size.height);
+        clampCircularCamera(currentCamera, tree, size.width, size.height, circularClampExtraRadiusPx(currentCamera));
       }
       draw();
       return;
@@ -1671,7 +1708,7 @@ export default function TreeCanvas({
       const worldY = layout.center[targetNode];
       camera.translateX = (size.width * 0.44) - (worldX * camera.scaleX);
       camera.translateY = (size.height * 0.5) - (worldY * camera.scaleY);
-      clampRectCamera(camera, tree, size.width, size.height);
+      clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
     } else {
       const fit = fitCircularCamera(size.width, size.height, tree, circularRotation);
       const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
@@ -1690,7 +1727,7 @@ export default function TreeCanvas({
       const screen = worldToScreenCircular(camera, point.x, point.y);
       camera.translateX += (size.width * 0.5) - screen.x;
       camera.translateY += (size.height * 0.5) - screen.y;
-      clampCircularCamera(camera, tree, size.width, size.height);
+      clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
     }
     draw();
   }, [
@@ -1872,7 +1909,7 @@ export default function TreeCanvas({
           camera.scaleY = Math.max(minScaleY, camera.scaleY * zoom);
           camera.translateY = localY - (world.y * camera.scaleY);
         }
-        clampRectCamera(camera, tree, size.width, size.height);
+        clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
       } else {
         const world = screenToWorldCircular(camera, localX, localY);
         const fit = fitCircularCamera(size.width, size.height, tree, camera.rotation);
@@ -1881,7 +1918,7 @@ export default function TreeCanvas({
         const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
         camera.translateX = localX - (rotated.x * camera.scale);
         camera.translateY = localY - (rotated.y * camera.scale);
-        clampCircularCamera(camera, tree, size.width, size.height);
+        clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
       }
     };
 
@@ -1937,9 +1974,9 @@ export default function TreeCanvas({
           camera.translateX += centerClientX - previous.centerX;
           camera.translateY += centerClientY - previous.centerY;
           if (camera.kind === "rect") {
-            clampRectCamera(camera, tree, size.width, size.height);
+            clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
           } else {
-            clampCircularCamera(camera, tree, size.width, size.height);
+            clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
           }
           scheduleDraw();
         }
@@ -1957,11 +1994,11 @@ export default function TreeCanvas({
         if (camera.kind === "rect") {
           camera.translateX += dx;
           camera.translateY += dy;
-          clampRectCamera(camera, tree, size.width, size.height);
+          clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
         } else {
           camera.translateX += dx;
           camera.translateY += dy;
-          clampCircularCamera(camera, tree, size.width, size.height);
+          clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
         }
         scheduleDraw();
         return;
