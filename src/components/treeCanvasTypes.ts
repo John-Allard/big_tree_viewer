@@ -74,6 +74,7 @@ export interface ScreenLabel {
 export interface LabelHitbox {
   node: number;
   kind: "rect" | "rotated";
+  source?: "label" | "collapse";
   x: number;
   y: number;
   width: number;

@@ -235,6 +235,8 @@ export default function TreeCanvas({
   const [size, setSize] = useState({ width: 1200, height: 800 });
   const previousSizeRef = useRef(size);
   const [overlayHover, setOverlayHover] = useState<HoverInfo | null>(null);
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<number>>(() => new Set());
+  const hiddenNodesRef = useRef<Uint8Array | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -304,6 +306,21 @@ export default function TreeCanvas({
       : fitCircularCamera(size.width, size.height, tree, circularRotation);
     cameraRef.current = nextCamera;
   }, [circularRotation, size.height, size.width, tree, viewMode]);
+
+  const toggleCollapsedNode = useCallback((node: number) => {
+    if (!tree || tree.buffers.firstChild[node] < 0) {
+      return;
+    }
+    setCollapsedNodes((current) => {
+      const next = new Set(current);
+      if (next.has(node)) {
+        next.delete(node);
+      } else {
+        next.add(node);
+      }
+      return next;
+    });
+  }, [tree]);
 
   const convertCameraForViewMode = useCallback((fromCamera: CameraState): CameraState => {
     if (!tree) {
@@ -394,6 +411,30 @@ export default function TreeCanvas({
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(0, 0, size.width, size.height);
     labelHitsRef.current = [];
+    const hiddenNodes = new Uint8Array(tree.nodeCount);
+    const visibleCollapsedNodes: number[] = [];
+    if (collapsedNodes.size > 0) {
+      collapsedNodes.forEach((node) => {
+        if (hiddenNodes[node]) {
+          return;
+        }
+        visibleCollapsedNodes.push(node);
+        for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+          const stack = [child];
+          while (stack.length > 0) {
+            const current = stack.pop()!;
+            if (hiddenNodes[current]) {
+              continue;
+            }
+            hiddenNodes[current] = 1;
+            for (let descendant = tree.buffers.firstChild[current]; descendant >= 0; descendant = tree.buffers.nextSibling[descendant]) {
+              stack.push(descendant);
+            }
+          }
+        }
+      });
+    }
+    hiddenNodesRef.current = hiddenNodes;
 
     if (viewMode === "rectangular" && camera.kind === "rect") {
       const layout = tree.layouts[order];
@@ -442,6 +483,9 @@ export default function TreeCanvas({
       const rectConnectorKeys = useDenseRectLOD ? new Set<string>() : null;
       const rectStemKeys = useDenseRectLOD ? new Set<string>() : null;
       for (let node = 0; node < tree.nodeCount; node += 1) {
+        if (hiddenNodes[node] || collapsedNodes.has(node)) {
+          continue;
+        }
         const ordered = children[node];
         if (ordered.length < 2) {
           continue;
@@ -465,6 +509,9 @@ export default function TreeCanvas({
         ctx.lineTo(end.x, end.y);
       }
       for (let node = 0; node < tree.nodeCount; node += 1) {
+        if (hiddenNodes[node]) {
+          continue;
+        }
         const parent = tree.buffers.parent[node];
         if (parent < 0) {
           continue;
@@ -503,6 +550,9 @@ export default function TreeCanvas({
           ctx.beginPath();
           for (let index = 0; index < nodes.length; index += 1) {
             const node = nodes[index];
+            if (hiddenNodes[node] || collapsedNodes.has(node)) {
+              continue;
+            }
             const parent = tree.buffers.parent[node];
             const y = layout.center[node];
             const x = tree.buffers.depth[node];
@@ -610,6 +660,9 @@ export default function TreeCanvas({
         ctx.textBaseline = "middle";
         for (let index = 0; index < tree.leafNodes.length; index += 1) {
           const node = tree.leafNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
           const y = layout.center[node];
           if (y < minY - 2 || y > maxY + 2) {
             continue;
@@ -680,6 +733,9 @@ export default function TreeCanvas({
         const connectorBlocks: Array<{ x: number; y1: number; y2: number; color: string }> = [];
         const placedCenters = new Set<number>();
         const tryPlaceBlock = (block: GenusBlock): void => {
+          if (hiddenNodes[block.centerNode]) {
+            return;
+          }
           if (placedLabels.length >= maxGenusLabels || placedCenters.has(block.centerNode)) {
             return;
           }
@@ -832,10 +888,40 @@ export default function TreeCanvas({
           labelHitsRef.current.push({
             node: label.node,
             kind: "rect",
+            source: "label",
             x: label.x,
             y: label.y - (tipFontSize * 0.55),
             width,
             height: tipFontSize * 1.1,
+          });
+        }
+      }
+
+      if (visibleCollapsedNodes.length > 0) {
+        ctx.fillStyle = "#cbd5e1";
+        ctx.strokeStyle = "#64748b";
+        ctx.lineWidth = 1.1;
+        for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
+          const node = visibleCollapsedNodes[index];
+          const screen = worldToScreenRect(camera, tree.buffers.depth[node], layout.center[node]);
+          const spanPx = Math.max(12, Math.min(30, (layout.max[node] - layout.min[node]) * camera.scaleY));
+          const triWidth = Math.max(14, Math.min(34, spanPx * 0.95));
+          const triHeight = Math.max(12, Math.min(28, spanPx));
+          ctx.beginPath();
+          ctx.moveTo(screen.x, screen.y - (triHeight * 0.5));
+          ctx.lineTo(screen.x, screen.y + (triHeight * 0.5));
+          ctx.lineTo(screen.x + triWidth, screen.y);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          labelHitsRef.current.push({
+            node,
+            kind: "rect",
+            source: "collapse",
+            x: screen.x,
+            y: screen.y - (triHeight * 0.5),
+            width: triWidth,
+            height: triHeight,
           });
         }
       }
@@ -987,6 +1073,9 @@ export default function TreeCanvas({
       const circularConnectorKeys = useDenseCircularLOD ? new Set<string>() : null;
       const circularStemKeys = useDenseCircularLOD ? new Set<string>() : null;
       for (let node = 0; node < tree.nodeCount; node += 1) {
+        if (hiddenNodes[node] || collapsedNodes.has(node)) {
+          continue;
+        }
         const ordered = children[node];
         if (ordered.length < 2) {
           continue;
@@ -1018,6 +1107,9 @@ export default function TreeCanvas({
         ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
       }
       for (let node = 0; node < tree.nodeCount; node += 1) {
+        if (hiddenNodes[node]) {
+          continue;
+        }
         const parent = tree.buffers.parent[node];
         if (parent < 0) {
           continue;
@@ -1056,6 +1148,9 @@ export default function TreeCanvas({
           ctx.beginPath();
           for (let index = 0; index < nodes.length; index += 1) {
             const node = nodes[index];
+            if (hiddenNodes[node] || collapsedNodes.has(node)) {
+              continue;
+            }
             const parent = tree.buffers.parent[node];
             const theta = thetaFor(layout.center, node, tree.leafCount);
             const x = tree.buffers.depth[node];
@@ -1203,6 +1298,9 @@ export default function TreeCanvas({
         ctx.textBaseline = "middle";
         for (let index = 0; index < tree.leafNodes.length; index += 1) {
           const node = tree.leafNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
           const theta = thetaFor(layout.center, node, tree.leafCount);
           const point = polarToCartesian(tipLabelRadius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
@@ -1273,6 +1371,9 @@ export default function TreeCanvas({
         const connectorArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number; color: string }> = [];
         const placedCenters = new Set<number>();
         const tryPlaceBlock = (block: GenusBlock): void => {
+          if (hiddenNodes[block.centerNode]) {
+            return;
+          }
           if (placedCenters.has(block.centerNode)) {
             return;
           }
@@ -1473,6 +1574,7 @@ export default function TreeCanvas({
             labelHitsRef.current.push({
               node,
               kind: "rotated",
+              source: "label",
               x,
               y,
               width: label.width,
@@ -1481,6 +1583,57 @@ export default function TreeCanvas({
               align: onRightSide ? "left" : "right",
             });
           }
+        }
+      }
+      if (visibleCollapsedNodes.length > 0) {
+        ctx.fillStyle = "#cbd5e1";
+        ctx.strokeStyle = "#64748b";
+        ctx.lineWidth = 1.1;
+        for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
+          const node = visibleCollapsedNodes[index];
+          const baseTheta = thetaFor(layout.center, node, tree.leafCount);
+          const theta = baseTheta + rotationAngle;
+          const point = worldToScreenCircular(
+            camera,
+            Math.cos(baseTheta) * tree.buffers.depth[node],
+            Math.sin(baseTheta) * tree.buffers.depth[node],
+          );
+          const spanPx = Math.max(
+            12,
+            Math.min(30, (layout.max[node] - layout.min[node]) * maxRadius * camera.scale * ((Math.PI * 2) / Math.max(1, tree.leafCount))),
+          );
+          const triLength = Math.max(16, Math.min(34, spanPx * 1.1));
+          const triWidth = Math.max(12, Math.min(28, spanPx));
+          const ux = Math.cos(theta);
+          const uy = Math.sin(theta);
+          const px = -uy;
+          const py = ux;
+          const base1x = point.x - (px * triWidth * 0.5);
+          const base1y = point.y - (py * triWidth * 0.5);
+          const base2x = point.x + (px * triWidth * 0.5);
+          const base2y = point.y + (py * triWidth * 0.5);
+          const apexX = point.x + (ux * triLength);
+          const apexY = point.y + (uy * triLength);
+          ctx.beginPath();
+          ctx.moveTo(base1x, base1y);
+          ctx.lineTo(base2x, base2y);
+          ctx.lineTo(apexX, apexY);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          const hitMinX = Math.min(base1x, base2x, apexX);
+          const hitMaxX = Math.max(base1x, base2x, apexX);
+          const hitMinY = Math.min(base1y, base2y, apexY);
+          const hitMaxY = Math.max(base1y, base2y, apexY);
+          labelHitsRef.current.push({
+            node,
+            kind: "rect",
+            source: "collapse",
+            x: hitMinX,
+            y: hitMinY,
+            width: hitMaxX - hitMinX,
+            height: hitMaxY - hitMinY,
+          });
         }
       }
       for (let index = 0; index < circularGenusLabels.length; index += 1) {
@@ -1630,6 +1783,7 @@ export default function TreeCanvas({
   }, [
     activeSearchNode,
     cache,
+    collapsedNodes,
     fitCamera,
     maxLeafLabelCharacters,
     order,
@@ -1907,6 +2061,9 @@ export default function TreeCanvas({
         const threshold = 16;
         for (let index = 0; index < candidates.length; index += 1) {
           const segment = candidates[index];
+          if (hiddenNodesRef.current?.[segment.node] || (segment.kind === "connector" && collapsedNodes.has(segment.node))) {
+            continue;
+          }
           const start = worldToScreenRect(camera, segment.x1, segment.y1);
           const end = worldToScreenRect(camera, segment.x2, segment.y2);
           const minScreenX = Math.min(start.x, end.x) - threshold;
@@ -1945,6 +2102,9 @@ export default function TreeCanvas({
         let bestDistance = Number.POSITIVE_INFINITY;
         for (let index = 0; index < candidates.length; index += 1) {
           const segment = candidates[index];
+          if (hiddenNodesRef.current?.[segment.node] || (segment.kind === "connector" && collapsedNodes.has(segment.node))) {
+            continue;
+          }
           const start = worldToScreenCircular(camera, segment.x1, segment.y1);
           const end = worldToScreenCircular(camera, segment.x2, segment.y2);
           const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
@@ -2023,6 +2183,17 @@ export default function TreeCanvas({
 
     const handlePointerDown = (event: PointerEvent): void => {
       setContextMenu(null);
+      const rect = canvas.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+      for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
+        const hitbox = labelHitsRef.current[index];
+        if (hitbox.source !== "collapse" || !pointInLabelHitbox(localX, localY, hitbox)) {
+          continue;
+        }
+        toggleCollapsedNode(hitbox.node);
+        return;
+      }
       activePointersRef.current.set(event.pointerId, {
         clientX: event.clientX,
         clientY: event.clientY,
@@ -2126,7 +2297,6 @@ export default function TreeCanvas({
       pinchGestureRef.current = null;
       pointerDownRef.current = false;
       lastPointerRef.current = null;
-      setContextMenu(null);
       hoverRef.current = null;
       setOverlayHover(null);
       onHoverChange(null);
@@ -2200,9 +2370,9 @@ export default function TreeCanvas({
       canvas.removeEventListener("gesturestart", preventGestureDefault);
       canvas.removeEventListener("gesturechange", preventGestureDefault);
     };
-  }, [cache, draw, onHoverChange, order, scheduleDraw, size.height, size.width, tree, zoomAxisMode]);
+  }, [cache, collapsedNodes, draw, onHoverChange, order, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
 
-  const handleContextFocusNode = useCallback(() => {
+  const handleContextCenterNode = useCallback(() => {
     if (!contextMenu || !tree) {
       return;
     }
@@ -2218,17 +2388,13 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [contextMenu, zoomToSubtreeTarget]);
 
-  const handleContextCopyLabel = useCallback(() => {
-    if (!contextMenu || !tree) {
+  const handleContextToggleCollapse = useCallback(() => {
+    if (!contextMenu || !tree || tree.buffers.firstChild[contextMenu.node] < 0) {
       return;
     }
-    const rawName = (tree.names[contextMenu.node] || "").trim();
-    const copyText = rawName || contextMenu.name || `node-${contextMenu.node}`;
-    if (navigator.clipboard && copyText) {
-      void navigator.clipboard.writeText(copyText);
-    }
+    toggleCollapsedNode(contextMenu.node);
     setContextMenu(null);
-  }, [contextMenu, tree]);
+  }, [contextMenu, toggleCollapsedNode, tree]);
 
   return (
     <div
@@ -2276,15 +2442,17 @@ export default function TreeCanvas({
           <div className="tree-context-menu-meta">
             Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}
           </div>
-          <button type="button" className="secondary" onClick={handleContextFocusNode}>
-            Focus Node
+          <button type="button" className="tree-context-menu-item" onClick={handleContextCenterNode}>
+            Center On Node
           </button>
-          <button type="button" className="secondary" onClick={handleContextZoomToSubtree}>
+          <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToSubtree}>
             Zoom To Subtree
           </button>
-          <button type="button" className="secondary" onClick={handleContextCopyLabel}>
-            Copy Label
-          </button>
+          {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
+            <button type="button" className="tree-context-menu-item" onClick={handleContextToggleCollapse}>
+              {collapsedNodes.has(contextMenu.node) ? "Expand Subtree" : "Collapse Subtree"}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
