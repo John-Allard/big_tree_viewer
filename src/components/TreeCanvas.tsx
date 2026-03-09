@@ -359,7 +359,13 @@ export default function TreeCanvas({
   const rectClampPadding = useCallback((camera: RectCamera) => {
     const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
     const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
-    const tipBandFontSize = camera.scaleY > 4.2 ? tipFontSize : camera.scaleY > 2.7 ? microTipFontSize : 0;
+    const cueBandProgress = smoothstep01((camera.scaleY - 1.45) / Math.max(1e-6, 2.7 - 1.45));
+    const readableBandProgress = smoothstep01((camera.scaleY - 2.7) / Math.max(1e-6, 4.2 - 2.7));
+    const tipBandFontSize = camera.scaleY <= 1.45
+      ? 0
+      : camera.scaleY < 2.7
+        ? microTipFontSize * cueBandProgress
+        : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
     const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
     const labelFontSize = quantizeFontSize(Math.max(genusFontSize, tipBandFontSize), 4.5, 22, 1.5);
     const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
@@ -374,7 +380,13 @@ export default function TreeCanvas({
     const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree?.leafCount ?? 1));
     const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
     const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
-    const tipBandFontSize = angularSpacingPx > 4.5 ? tipFontSize : angularSpacingPx > 2.9 ? microTipFontSize : 0;
+    const cueBandProgress = smoothstep01((angularSpacingPx - 1.6) / Math.max(1e-6, 2.9 - 1.6));
+    const readableBandProgress = smoothstep01((angularSpacingPx - 2.9) / Math.max(1e-6, 4.5 - 2.9));
+    const tipBandFontSize = angularSpacingPx <= 1.6
+      ? 0
+      : angularSpacingPx < 2.9
+        ? microTipFontSize * cueBandProgress
+        : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
     const genusFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
     const labelFontSize = quantizeFontSize(Math.max(genusFontSize, tipBandFontSize), 4.5, 20, 1.5);
     const labelCharacters = Math.max(tipBandFontSize > 0 ? reservedTipLabelCharacters : 0, maxGenusLabelCharacters);
@@ -715,15 +727,21 @@ export default function TreeCanvas({
       }
 
       let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
-      let tipLabelRightEdge = Number.NEGATIVE_INFINITY;
-      let tipLabelRightX = Number.NEGATIVE_INFINITY;
       const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
       const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
-      const tipBandFontSize = tipLabelsVisible ? tipFontSize : microTipLabelsVisible ? microTipFontSize : 0;
-      const globalTipLabelSpacePx = estimateLabelWidth(
-        quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 22, 1.5),
-        reservedTipLabelCharacters,
-      );
+      const cueBandProgress = smoothstep01((camera.scaleY - 1.45) / Math.max(1e-6, 2.7 - 1.45));
+      const readableBandProgress = smoothstep01((camera.scaleY - 2.7) / Math.max(1e-6, 4.2 - 2.7));
+      const tipBandFontSize = camera.scaleY <= 1.45
+        ? 0
+        : camera.scaleY < 2.7
+          ? microTipFontSize * cueBandProgress
+          : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
+      const globalTipLabelSpacePx = tipBandFontSize > 0
+        ? estimateLabelWidth(
+          quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 22, 1.5),
+          reservedTipLabelCharacters,
+        )
+        : 0;
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
@@ -744,8 +762,6 @@ export default function TreeCanvas({
           const x = screen.x + 8;
           const width = ctx.measureText(text).width;
           measuredLabels.push({ node, text, x, y: screen.y, width });
-          tipLabelRightX = Math.max(tipLabelRightX, x);
-          tipLabelRightEdge = Math.max(tipLabelRightEdge, x + width);
         }
       }
       const maxVisibleLabels = 5200;
@@ -776,14 +792,7 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const stableTipEnvelopeRightEdge = Number.isFinite(tipLabelRightX)
-          ? tipLabelRightX + globalTipLabelSpacePx
-          : tipLabelRightEdge;
-        const outboardMinX = Number.isFinite(stableTipEnvelopeRightEdge)
-          ? stableTipEnvelopeRightEdge + 26
-          : Number.NEGATIVE_INFINITY;
-        const offsetPx = 10;
-        const pullAway = smoothstep01((camera.scaleY - 1.55) / 0.9);
+        const genusGapPx = 24;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -806,9 +815,7 @@ export default function TreeCanvas({
             return;
           }
           const spanPx = Math.abs(y2 - y1) * camera.scaleY;
-          const localX = worldToScreenRect(camera, block.maxDepth, 0).x + offsetPx;
-          const outboardX = Number.isFinite(outboardMinX) ? Math.max(localX, outboardMinX) : localX;
-          const x = localX + ((outboardX - localX) * pullAway);
+          const x = worldToScreenRect(camera, block.maxDepth, 0).x + 8 + globalTipLabelSpacePx + genusGapPx;
           if (x < -80 || x > size.width + 160) {
             return;
           }
@@ -1379,11 +1386,19 @@ export default function TreeCanvas({
       const tipLabelsVisible = angularSpacingPx > 4.5;
       const tipFontSize = Math.max(6.5, Math.min(20, angularSpacingPx * 0.74));
       const microTipFontSize = Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3));
-      const tipBandFontSize = tipLabelsVisible ? tipFontSize : microTipLabelsVisible ? microTipFontSize : 0;
-      const globalTipLabelSpacePx = estimateLabelWidth(
-        quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 20, 1.5),
-        reservedTipLabelCharacters,
-      );
+      const cueBandProgress = smoothstep01((angularSpacingPx - 1.6) / Math.max(1e-6, 2.9 - 1.6));
+      const readableBandProgress = smoothstep01((angularSpacingPx - 2.9) / Math.max(1e-6, 4.5 - 2.9));
+      const tipBandFontSize = angularSpacingPx <= 1.6
+        ? 0
+        : angularSpacingPx < 2.9
+          ? microTipFontSize * cueBandProgress
+          : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
+      const globalTipLabelSpacePx = tipBandFontSize > 0
+        ? estimateLabelWidth(
+          quantizeFontSize(Math.max(tipBandFontSize, 4.5), 4.5, 20, 1.5),
+          reservedTipLabelCharacters,
+        )
+        : 0;
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const circularTipVisibilityMargin = 140;
@@ -1442,13 +1457,9 @@ export default function TreeCanvas({
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
         const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
-        const arcOffsetWorld = 12 / camera.scale;
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
-        const pullAway = smoothstep01((angularSpacingPx - 1.7) / 0.95);
-        const localLineRadius = arcOffsetWorld;
-        const tipOuterRadius = tipLabelRadius + ((globalTipLabelSpacePx + (tipFontSize * 0.8) + 12) / camera.scale);
-        const outboardLineRadius = tipOuterRadius + ((tipFontSize * 2.8 + 48) / camera.scale);
-        const localLabelRadius = arcOffsetWorld + (8 / camera.scale);
+        const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
+        const lineGapPx = 18;
         ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
@@ -1477,16 +1488,12 @@ export default function TreeCanvas({
           }
           const angularSpan = renderEndTheta - renderStartTheta;
           const midTheta = renderStartTheta + (angularSpan * 0.5);
-          const localAbsLineRadius = block.maxDepth + localLineRadius;
-          const localAbsLabelRadius = block.maxDepth + localLabelRadius;
-          const preliminaryLineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
-          const preliminaryArcLengthPx = preliminaryLineRadius * camera.scale * angularSpan;
+          const lineRadius = tipBandAnchorRadius + ((globalTipLabelSpacePx + lineGapPx) / camera.scale);
+          const preliminaryArcLengthPx = lineRadius * camera.scale * angularSpan;
           const fontGrowth = 0.018 - (0.007 * tipLabelPressure);
           const maxFontSize = 22 + (2 * tipLabelPressure);
           const fontSize = Math.max(baseFontSize, Math.min(maxFontSize, baseFontSize + (preliminaryArcLengthPx * fontGrowth)));
-          const adjustedOutboardLabelRadius = outboardLineRadius + ((fontSize * 2.2 + 24) / camera.scale);
-          const lineRadius = (localAbsLineRadius * (1 - pullAway)) + (outboardLineRadius * pullAway);
-          const labelRadius = (localAbsLabelRadius * (1 - pullAway)) + (adjustedOutboardLabelRadius * pullAway);
+          const labelRadius = lineRadius + ((fontSize + 14) / camera.scale);
           const lineRadiusPx = lineRadius * camera.scale;
           const genusOrderIndex = genusOrderByCenter.get(block.centerNode) ?? 0;
           const isActiveGenus = block.centerNode === activeSearchGenusCenterNode;
