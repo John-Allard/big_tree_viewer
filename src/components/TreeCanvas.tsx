@@ -207,6 +207,7 @@ export default function TreeCanvas({
   const frameRequestRef = useRef<number | null>(null);
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
+  const renderDebugRef = useRef<Record<string, unknown> | null>(null);
   const handledFocusRequestRef = useRef(0);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
   const pinchGestureRef = useRef<{ distance: number; centerX: number; centerY: number } | null>(null);
@@ -498,6 +499,12 @@ export default function TreeCanvas({
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(0, 0, size.width, size.height);
     labelHitsRef.current = [];
+    const renderDebug: Record<string, unknown> = {
+      viewMode,
+      order,
+      width: size.width,
+      height: size.height,
+    };
     const hiddenNodes = collapsedView?.hiddenNodes ?? new Uint8Array(tree.nodeCount);
     const visibleCollapsedNodes = collapsedView?.visibleCollapsedNodes ?? [];
     hiddenNodesRef.current = hiddenNodes;
@@ -729,6 +736,8 @@ export default function TreeCanvas({
           reservedTipLabelCharacters,
         )
         : 0;
+      const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
+      const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + 8;
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
@@ -756,6 +765,7 @@ export default function TreeCanvas({
         visibleTipLabels = measuredLabels.map(({ node, text, x, y, width }) => ({ node, text, x, y, width }));
       }
 
+      const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
       if (showGenusLabels) {
         const priorityBlocks = cache.genusBlocksPriority[order];
         const positionalBlocks = cache.genusBlocks[order];
@@ -779,9 +789,7 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
-        const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
-        const genusBandX = worldToScreenRect(camera, tipSideDepth, 0).x + 8 + globalTipLabelSpacePx + genusGapPx;
+        const genusBandX = tipSideX + globalTipLabelSpacePx + genusGapPx;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -887,6 +895,18 @@ export default function TreeCanvas({
           );
         }
         ctx.globalAlpha = 1;
+        renderDebug.rect = {
+          cueVisible: tipLabelCueVisible,
+          microVisible: microTipLabelsVisible,
+          tipVisible: tipLabelsVisible,
+          tipBandFontSize,
+          tipBandWidthPx: globalTipLabelSpacePx,
+          tipSideX,
+          genusGapPx,
+          genusBandX,
+          genusBandOffsetPx: genusBandX - tipSideX,
+          connectorXs: connectorBlocks.slice(0, 12).map((block) => block.x),
+        };
         genusLabelHistoryRef.current = {
           tree,
           viewMode: "rectangular",
@@ -909,6 +929,18 @@ export default function TreeCanvas({
             : [...placedCenters],
         };
       } else {
+        renderDebug.rect = {
+          cueVisible: tipLabelCueVisible,
+          microVisible: microTipLabelsVisible,
+          tipVisible: tipLabelsVisible,
+          tipBandFontSize,
+          tipBandWidthPx: globalTipLabelSpacePx,
+          tipSideX,
+          genusGapPx: null,
+          genusBandX: null,
+          genusBandOffsetPx: null,
+          connectorXs: [],
+        };
         genusLabelHistoryRef.current = {
           tree,
           viewMode: "rectangular",
@@ -1387,6 +1419,7 @@ export default function TreeCanvas({
         : 0;
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
+      const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
       const circularTipVisibilityMargin = 140;
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
       let maxVisibleTipLabelWidth = 0;
@@ -1444,7 +1477,6 @@ export default function TreeCanvas({
         }
         const baseFontSize = Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10)));
         const tipLabelPressure = clamp01((angularSpacingPx - 4) / 4);
-        const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
         const lineGapPx = Math.max(12, tipBandFontSize * 1.9);
         ctx.font = `${baseFontSize}px ${LABEL_FONT}`;
         ctx.fillStyle = GENUS_COLOR;
@@ -1575,6 +1607,16 @@ export default function TreeCanvas({
         circularGenusLabels = placedLabels;
         circularGenusArcs = connectorArcs;
         circularGenusBaseFontSize = baseFontSize;
+        renderDebug.circular = {
+          cueVisible: tipLabelCueVisible,
+          microVisible: microTipLabelsVisible,
+          tipVisible: tipLabelsVisible,
+          tipBandFontSize,
+          tipBandWidthPx: globalTipLabelSpacePx,
+          tipBandAnchorRadiusPx: tipBandAnchorRadius * camera.scale,
+          genusGapPx: lineGapPx,
+          genusLineRadiusPx: connectorArcs[0]?.lineRadiusPx ?? null,
+        };
         genusLabelHistoryRef.current = {
           tree,
           viewMode: "circular",
@@ -1597,6 +1639,16 @@ export default function TreeCanvas({
             : [...placedCenters],
         };
       } else {
+        renderDebug.circular = {
+          cueVisible: tipLabelCueVisible,
+          microVisible: microTipLabelsVisible,
+          tipVisible: tipLabelsVisible,
+          tipBandFontSize,
+          tipBandWidthPx: globalTipLabelSpacePx,
+          tipBandAnchorRadiusPx: tipBandAnchorRadius * camera.scale,
+          genusGapPx: null,
+          genusLineRadiusPx: null,
+        };
         genusLabelHistoryRef.current = {
           tree,
           viewMode: "circular",
@@ -1901,6 +1953,10 @@ export default function TreeCanvas({
           }
         }
       }
+    }
+    renderDebugRef.current = renderDebug;
+    if (typeof window !== "undefined") {
+      window.__BIG_TREE_VIEWER_RENDER_DEBUG__ = renderDebug;
     }
   }, [
     activeSearchNode,
@@ -2495,6 +2551,63 @@ export default function TreeCanvas({
     };
   }, [cache, collapsedNodes, draw, onHoverChange, order, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__ = {
+      getCamera: () => {
+        const camera = cameraRef.current;
+        return camera ? { ...camera } : null;
+      },
+      getRenderDebug: () => renderDebugRef.current,
+      fitView: () => {
+        fitCamera();
+        draw();
+      },
+      setRectCamera: (partial: Record<string, unknown>) => {
+        const camera = cameraRef.current;
+        if (!tree || !camera || camera.kind !== "rect") {
+          return;
+        }
+        if (typeof partial.scaleX === "number") {
+          camera.scaleX = partial.scaleX;
+        }
+        if (typeof partial.scaleY === "number") {
+          camera.scaleY = partial.scaleY;
+        }
+        if (typeof partial.translateX === "number") {
+          camera.translateX = partial.translateX;
+        }
+        if (typeof partial.translateY === "number") {
+          camera.translateY = partial.translateY;
+        }
+        clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
+        draw();
+      },
+      setCircularCamera: (partial: Record<string, unknown>) => {
+        const camera = cameraRef.current;
+        if (!tree || !camera || camera.kind !== "circular") {
+          return;
+        }
+        if (typeof partial.scale === "number") {
+          camera.scale = partial.scale;
+        }
+        if (typeof partial.translateX === "number") {
+          camera.translateX = partial.translateX;
+        }
+        if (typeof partial.translateY === "number") {
+          camera.translateY = partial.translateY;
+        }
+        clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
+        draw();
+      },
+    };
+    return () => {
+      delete window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    };
+  }, [circularClampExtraRadiusPx, draw, fitCamera, rectClampPadding, size.height, size.width, tree]);
+
   const handleContextCenterNode = useCallback(() => {
     if (!contextMenu || !tree) {
       return;
@@ -2530,7 +2643,7 @@ export default function TreeCanvas({
         setContextMenu(null);
       }}
     >
-      <canvas ref={canvasRef} className="tree-canvas" />
+      <canvas ref={canvasRef} className="tree-canvas" data-testid="tree-canvas" />
       {overlayHover ? (
         <div
           className="hover-tooltip"

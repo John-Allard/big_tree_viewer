@@ -395,6 +395,29 @@ export default function App() {
     });
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.__BIG_TREE_VIEWER_APP_TEST__ = {
+      getState: () => ({
+        treeLoaded: tree !== null,
+        loading: loadState.loading,
+        loadError: loadState.error,
+        viewMode,
+        order,
+        showGenusLabels,
+      }),
+      setViewMode,
+      setOrder,
+      setShowGenusLabels,
+      requestFit: () => setFitRequest((value) => value + 1),
+    };
+    return () => {
+      delete window.__BIG_TREE_VIEWER_APP_TEST__;
+    };
+  }, [loadState.error, loadState.loading, order, showGenusLabels, tree, viewMode]);
+
   return (
     <div className={`app-shell${sidebarVisible ? "" : " sidebar-hidden"}`}>
       <button
