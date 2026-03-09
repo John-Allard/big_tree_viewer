@@ -177,6 +177,22 @@ function quantizedSegmentKey(
   ].join(":");
 }
 
+function measureSubtreeMaxDepth(tree: TreeModel, node: number): number {
+  let maxDepth = tree.buffers.depth[node];
+  const stack = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const depth = tree.buffers.depth[current];
+    if (depth > maxDepth) {
+      maxDepth = depth;
+    }
+    for (let child = tree.buffers.firstChild[current]; child >= 0; child = tree.buffers.nextSibling[child]) {
+      stack.push(child);
+    }
+  }
+  return maxDepth;
+}
+
 export default function TreeCanvas({
   tree,
   order,
@@ -219,6 +235,13 @@ export default function TreeCanvas({
   const [size, setSize] = useState({ width: 1200, height: 800 });
   const previousSizeRef = useRef(size);
   const [overlayHover, setOverlayHover] = useState<HoverInfo | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    node: number;
+    name: string;
+    descendantTipCount: number;
+  } | null>(null);
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
@@ -1659,24 +1682,10 @@ export default function TreeCanvas({
     fitCamera();
   }, [cache, convertCameraForViewMode, fitCamera, fitRequest, size, tree, viewMode]);
 
-  useLayoutEffect(() => {
-    const camera = cameraRef.current;
-    if (!camera || camera.kind !== "circular") {
+  const focusNodeTarget = useCallback((targetNode: number, focusTargetKind: "genus" | "tip" | "node") => {
+    if (!tree) {
       return;
     }
-    setCircularCameraRotation(camera, circularRotation);
-    draw();
-  }, [circularRotation, draw]);
-
-  useLayoutEffect(() => {
-    if (!tree || focusNodeRequest === 0 || handledFocusRequestRef.current === focusNodeRequest) {
-      return;
-    }
-    const targetNode = activeSearchGenusCenterNode ?? activeSearchNode;
-    if (targetNode === null) {
-      return;
-    }
-    handledFocusRequestRef.current = focusNodeRequest;
     let camera = cameraRef.current;
     if (!camera || camera.kind !== (viewMode === "rectangular" ? "rect" : "circular")) {
       fitCamera();
@@ -1686,11 +1695,6 @@ export default function TreeCanvas({
       return;
     }
     const layout = tree.layouts[order];
-    const focusTargetKind = activeSearchGenusCenterNode !== null
-      ? "genus"
-      : tree.buffers.firstChild[targetNode] < 0
-        ? "tip"
-        : "node";
     if (camera.kind === "rect") {
       const fit = fitRectCamera(size.width, size.height, tree);
       const minTipScaleY = 10.5;
@@ -1731,17 +1735,118 @@ export default function TreeCanvas({
     }
     draw();
   }, [
-    activeSearchGenusCenterNode,
-    activeSearchNode,
+    circularClampExtraRadiusPx,
     circularRotation,
     draw,
     fitCamera,
-    focusNodeRequest,
     order,
+    rectClampPadding,
     size.height,
     size.width,
     tree,
     viewMode,
+  ]);
+
+  const zoomToSubtreeTarget = useCallback((targetNode: number) => {
+    if (!tree) {
+      return;
+    }
+    if (tree.buffers.firstChild[targetNode] < 0 || tree.buffers.leafCount[targetNode] <= 2) {
+      focusNodeTarget(targetNode, "tip");
+      return;
+    }
+    let camera = cameraRef.current;
+    if (!camera || camera.kind !== (viewMode === "rectangular" ? "rect" : "circular")) {
+      fitCamera();
+      camera = cameraRef.current;
+    }
+    if (!camera) {
+      return;
+    }
+    const layout = tree.layouts[order];
+    const subtreeMaxDepth = measureSubtreeMaxDepth(tree, targetNode);
+    if (camera.kind === "rect") {
+      const padLeft = 52;
+      const padTop = 38;
+      const padding = rectClampPadding(camera);
+      const padRight = Math.max(48, padding.right ?? 0);
+      const padBottom = 52;
+      const usableWidth = Math.max(1, size.width - padLeft - padRight);
+      const usableHeight = Math.max(1, size.height - padTop - padBottom);
+      const minX = tree.buffers.depth[targetNode];
+      const maxX = subtreeMaxDepth;
+      const minY = layout.min[targetNode];
+      const maxY = layout.max[targetNode];
+      camera.scaleX = usableWidth / Math.max(maxX - minX, tree.branchLengthMinPositive);
+      camera.scaleY = usableHeight / Math.max(maxY - minY, 1);
+      camera.translateX = padLeft - (minX * camera.scaleX);
+      camera.translateY = padTop - (minY * camera.scaleY);
+      clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
+    } else {
+      const fit = fitCircularCamera(size.width, size.height, tree, circularRotation);
+      const startTheta = thetaFor(layout.min, targetNode, tree.leafCount);
+      let endTheta = thetaFor(layout.max, targetNode, tree.leafCount);
+      if (endTheta < startTheta) {
+        endTheta += Math.PI * 2;
+      }
+      const midTheta = startTheta + ((endTheta - startTheta) * 0.5);
+      const angularSpan = Math.max((Math.PI * 2) / Math.max(1, tree.leafCount), endTheta - startTheta);
+      const desiredArcPx = Math.min(size.width, size.height) * 0.72;
+      const desiredScale = desiredArcPx / Math.max(subtreeMaxDepth * angularSpan, tree.branchLengthMinPositive);
+      camera.scale = Math.max(fit.scale * 1.2, desiredScale);
+      const radius = (tree.buffers.depth[targetNode] + subtreeMaxDepth) * 0.5;
+      const point = polarToCartesian(radius, midTheta);
+      const screen = worldToScreenCircular(camera, point.x, point.y);
+      camera.translateX += (size.width * 0.5) - screen.x;
+      camera.translateY += (size.height * 0.5) - screen.y;
+      clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
+    }
+    draw();
+  }, [
+    circularClampExtraRadiusPx,
+    circularRotation,
+    draw,
+    fitCamera,
+    focusNodeTarget,
+    order,
+    rectClampPadding,
+    size.height,
+    size.width,
+    tree,
+    viewMode,
+  ]);
+
+  useLayoutEffect(() => {
+    const camera = cameraRef.current;
+    if (!camera || camera.kind !== "circular") {
+      return;
+    }
+    setCircularCameraRotation(camera, circularRotation);
+    draw();
+  }, [circularRotation, draw]);
+
+  useLayoutEffect(() => {
+    if (!tree || focusNodeRequest === 0 || handledFocusRequestRef.current === focusNodeRequest) {
+      return;
+    }
+    const targetNode = activeSearchGenusCenterNode ?? activeSearchNode;
+    if (targetNode === null) {
+      return;
+    }
+    handledFocusRequestRef.current = focusNodeRequest;
+    const focusTargetKind = activeSearchGenusCenterNode !== null
+      ? "genus"
+      : tree.buffers.firstChild[targetNode] < 0
+        ? "tip"
+        : "node";
+    focusNodeTarget(targetNode, focusTargetKind);
+  }, [
+    activeSearchGenusCenterNode,
+    activeSearchNode,
+    focusNodeRequest,
+    focusNodeTarget,
+    order,
+    tree,
   ]);
 
   useLayoutEffect(() => {
@@ -1761,14 +1866,11 @@ export default function TreeCanvas({
       return undefined;
     }
 
-    const updateHover = (event: PointerEvent): void => {
+    const hitTestAt = (localX: number, localY: number): CanvasHoverInfo | null => {
       const camera = cameraRef.current;
       if (!camera) {
-        return;
+        return null;
       }
-      const rect = canvas.getBoundingClientRect();
-      const localX = event.clientX - rect.left;
-      const localY = event.clientY - rect.top;
       let hover: CanvasHoverInfo | null = null;
 
       for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
@@ -1795,17 +1897,7 @@ export default function TreeCanvas({
       }
 
       if (hover) {
-        const prev = hoverRef.current;
-        if (!prev || prev.node !== hover.node || prev.name !== hover.name || prev.targetKind !== hover.targetKind) {
-          hoverRef.current = hover;
-          setOverlayHover(hover);
-          onHoverChange(hover);
-          scheduleDraw();
-        } else if (prev.screenX !== hover.screenX || prev.screenY !== hover.screenY) {
-          hoverRef.current = hover;
-          setOverlayHover(hover);
-        }
-        return;
+        return hover;
       }
 
       if (camera.kind === "rect") {
@@ -1876,7 +1968,14 @@ export default function TreeCanvas({
           }
         }
       }
+      return hover;
+    };
 
+    const updateHover = (event: PointerEvent): void => {
+      const rect = canvas.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+      const hover = hitTestAt(localX, localY);
       const prev = hoverRef.current;
       if (
         prev?.node !== hover?.node ||
@@ -1923,6 +2022,7 @@ export default function TreeCanvas({
     };
 
     const handlePointerDown = (event: PointerEvent): void => {
+      setContextMenu(null);
       activePointersRef.current.set(event.pointerId, {
         clientX: event.clientX,
         clientY: event.clientY,
@@ -2026,6 +2126,7 @@ export default function TreeCanvas({
       pinchGestureRef.current = null;
       pointerDownRef.current = false;
       lastPointerRef.current = null;
+      setContextMenu(null);
       hoverRef.current = null;
       setOverlayHover(null);
       onHoverChange(null);
@@ -2034,6 +2135,7 @@ export default function TreeCanvas({
 
     const handleWheel = (event: WheelEvent): void => {
       event.preventDefault();
+      setContextMenu(null);
       const camera = cameraRef.current;
       if (!camera) {
         return;
@@ -2046,11 +2148,35 @@ export default function TreeCanvas({
       scheduleDraw();
     };
 
+    const handleContextMenu = (event: MouseEvent): void => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+      const hover = hitTestAt(localX, localY);
+      if (!hover) {
+        setContextMenu(null);
+        return;
+      }
+      hoverRef.current = hover;
+      setOverlayHover(hover);
+      onHoverChange(hover);
+      setContextMenu({
+        x: Math.min(size.width - 220, localX + 14),
+        y: Math.min(size.height - 180, localY + 14),
+        node: hover.node,
+        name: hover.name,
+        descendantTipCount: hover.descendantTipCount,
+      });
+      scheduleDraw();
+    };
+
     canvas.addEventListener("pointerdown", handlePointerDown);
     canvas.addEventListener("pointermove", handlePointerMove);
     canvas.addEventListener("pointerup", handlePointerUp);
     canvas.addEventListener("pointerleave", handlePointerLeave);
     canvas.addEventListener("wheel", handleWheel, { passive: false });
+    canvas.addEventListener("contextmenu", handleContextMenu);
     const handleTouchMove = (event: TouchEvent): void => {
       if (event.touches.length > 1) {
         event.preventDefault();
@@ -2069,14 +2195,52 @@ export default function TreeCanvas({
       canvas.removeEventListener("pointerup", handlePointerUp);
       canvas.removeEventListener("pointerleave", handlePointerLeave);
       canvas.removeEventListener("wheel", handleWheel);
+      canvas.removeEventListener("contextmenu", handleContextMenu);
       canvas.removeEventListener("touchmove", handleTouchMove);
       canvas.removeEventListener("gesturestart", preventGestureDefault);
       canvas.removeEventListener("gesturechange", preventGestureDefault);
     };
-  }, [cache, draw, onHoverChange, order, scheduleDraw, tree, zoomAxisMode]);
+  }, [cache, draw, onHoverChange, order, scheduleDraw, size.height, size.width, tree, zoomAxisMode]);
+
+  const handleContextFocusNode = useCallback(() => {
+    if (!contextMenu || !tree) {
+      return;
+    }
+    focusNodeTarget(contextMenu.node, tree.buffers.firstChild[contextMenu.node] < 0 ? "tip" : "node");
+    setContextMenu(null);
+  }, [contextMenu, focusNodeTarget, tree]);
+
+  const handleContextZoomToSubtree = useCallback(() => {
+    if (!contextMenu) {
+      return;
+    }
+    zoomToSubtreeTarget(contextMenu.node);
+    setContextMenu(null);
+  }, [contextMenu, zoomToSubtreeTarget]);
+
+  const handleContextCopyLabel = useCallback(() => {
+    if (!contextMenu || !tree) {
+      return;
+    }
+    const rawName = (tree.names[contextMenu.node] || "").trim();
+    const copyText = rawName || contextMenu.name || `node-${contextMenu.node}`;
+    if (navigator.clipboard && copyText) {
+      void navigator.clipboard.writeText(copyText);
+    }
+    setContextMenu(null);
+  }, [contextMenu, tree]);
 
   return (
-    <div className="tree-canvas-shell" ref={wrapperRef}>
+    <div
+      className="tree-canvas-shell"
+      ref={wrapperRef}
+      onPointerDown={(event) => {
+        if ((event.target as HTMLElement).closest(".tree-context-menu")) {
+          return;
+        }
+        setContextMenu(null);
+      }}
+    >
       <canvas ref={canvasRef} className="tree-canvas" />
       {overlayHover ? (
         <div
@@ -2097,6 +2261,30 @@ export default function TreeCanvas({
           <div>
             Child age: {overlayHover.childAge === null ? "n/a" : overlayHover.childAge.toPrecision(5)}
           </div>
+        </div>
+      ) : null}
+      {contextMenu ? (
+        <div
+          className="tree-context-menu"
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="tree-context-menu-title">{contextMenu.name}</div>
+          <div className="tree-context-menu-meta">
+            Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}
+          </div>
+          <button type="button" className="secondary" onClick={handleContextFocusNode}>
+            Focus Node
+          </button>
+          <button type="button" className="secondary" onClick={handleContextZoomToSubtree}>
+            Zoom To Subtree
+          </button>
+          <button type="button" className="secondary" onClick={handleContextCopyLabel}>
+            Copy Label
+          </button>
         </div>
       ) : null}
     </div>

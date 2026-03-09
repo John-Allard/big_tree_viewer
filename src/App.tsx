@@ -452,14 +452,14 @@ export default function App() {
             </button>
           </div>
           <div className="segmented">
-            <button type="button" className={order === "input" ? "active" : ""} onClick={() => setOrder("input")}>
-              Input Order
-            </button>
             <button type="button" className={order === "asc" ? "active" : ""} onClick={() => setOrder("asc")}>
               Smallest First
             </button>
             <button type="button" className={order === "desc" ? "active" : ""} onClick={() => setOrder("desc")}>
               Largest First
+            </button>
+            <button type="button" className={order === "input" ? "active" : ""} onClick={() => setOrder("input")}>
+              Input Order
             </button>
           </div>
           <div className="segmented">
@@ -477,7 +477,7 @@ export default function App() {
               onClick={() => setZoomAxisMode("x")}
               disabled={viewMode === "circular"}
             >
-              Pin Y
+              Zoom X
             </button>
             <button
               type="button"
@@ -485,7 +485,7 @@ export default function App() {
               onClick={() => setZoomAxisMode("y")}
               disabled={viewMode === "circular"}
             >
-              Pin X
+              Zoom Y
             </button>
           </div>
           <div className="button-row">

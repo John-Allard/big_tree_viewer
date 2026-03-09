@@ -346,6 +346,36 @@ button.secondary {
   font-weight: 700;
 }
 
+.tree-context-menu {
+  position: absolute;
+  z-index: 30;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 190px;
+  padding: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(12px);
+}
+
+.tree-context-menu-title {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tree-context-menu-meta {
+  margin-top: -0.15rem;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.tree-context-menu button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
