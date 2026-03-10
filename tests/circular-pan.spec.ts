@@ -129,3 +129,57 @@ test("circular deep-zoom pan keeps visible tip coverage continuous", async ({ pa
     previousDebug = currentDebug;
   }
 });
+
+test("rectangular fit switches to circular fit without partial zoom", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const switchedCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "circular";
+    scale: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "circular";
+    scale: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  expect(switchedCamera?.kind).toBe("circular");
+  expect(fitCamera?.kind).toBe("circular");
+  expect(Math.abs(Number(switchedCamera?.scale ?? 0) - Number(fitCamera?.scale ?? 0))).toBeLessThanOrEqual(Number(fitCamera?.scale ?? 0) * 0.03);
+  expect(Math.abs(Number(switchedCamera?.translateX ?? 0) - Number(fitCamera?.translateX ?? 0))).toBeLessThanOrEqual(6);
+  expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
+});
+
+test("circular taxonomy fit-view branch render stays cached-fast", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const timing = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.timing as {
+    branchBaseMs?: number;
+    totalMs?: number;
+  } | null);
+
+  expect(Number(timing?.branchBaseMs ?? 999)).toBeLessThan(8);
+  expect(Number(timing?.totalMs ?? 999)).toBeLessThan(24);
+});

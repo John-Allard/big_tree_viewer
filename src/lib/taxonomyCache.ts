@@ -5,8 +5,10 @@ const ARCHIVE_STORE_NAME = "archives";
 const MAPPING_STORE_NAME = "mappings";
 const ARCHIVE_KEY = "ncbi-taxdmp-zip";
 const LATEST_MAPPING_KEY = "latest-tree-mapping";
+const TAXONOMY_MAPPING_CACHE_VERSION = 3;
 
 interface CachedTaxonomyMappingRecord {
+  version: number;
   treeSignature: string;
   payload: TaxonomyMapPayload;
 }
@@ -60,7 +62,7 @@ export async function getCachedTaxonomyMapping(treeSignature: string): Promise<T
     const request = store.get(LATEST_MAPPING_KEY);
     request.onsuccess = () => {
       const record = (request.result as CachedTaxonomyMappingRecord | undefined) ?? null;
-      if (!record || record.treeSignature !== treeSignature) {
+      if (!record || record.version !== TAXONOMY_MAPPING_CACHE_VERSION || record.treeSignature !== treeSignature) {
         resolve(null);
         return;
       }
@@ -76,7 +78,11 @@ export async function putCachedTaxonomyMapping(treeSignature: string, payload: T
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(MAPPING_STORE_NAME, "readwrite");
     const store = transaction.objectStore(MAPPING_STORE_NAME);
-    const request = store.put({ treeSignature, payload } satisfies CachedTaxonomyMappingRecord, LATEST_MAPPING_KEY);
+    const request = store.put({
+      version: TAXONOMY_MAPPING_CACHE_VERSION,
+      treeSignature,
+      payload,
+    } satisfies CachedTaxonomyMappingRecord, LATEST_MAPPING_KEY);
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error ?? new Error("Unable to update taxonomy mapping cache."));
     transaction.oncomplete = () => db.close();

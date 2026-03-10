@@ -17,6 +17,7 @@ export interface TaxonomyTipRanks {
 }
 
 export interface TaxonomyMapPayload {
+  version?: number;
   mappedCount: number;
   totalTips: number;
   activeRanks: TaxonomyRank[];
@@ -29,7 +30,17 @@ export interface TaxonomyBlock {
   firstNode: number;
   lastNode: number;
   centerNode: number;
+  startIndex?: number;
+  endIndex?: number;
+  labelStartIndex?: number;
+  labelEndIndex?: number;
   color: string;
+  segments?: Array<{
+    firstNode: number;
+    lastNode: number;
+    startIndex: number;
+    endIndex: number;
+  }>;
 }
 
 export type TaxonomyBlocksByOrder = Record<LayoutOrder, Record<TaxonomyRank, TaxonomyBlock[]>>;

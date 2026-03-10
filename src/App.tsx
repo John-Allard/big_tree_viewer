@@ -139,6 +139,7 @@ function prefixGroup(value: string, length: number, suffix: string): string {
 
 function buildMockTaxonomyMap(tree: TreeModel): TaxonomyMapPayload {
   return {
+    version: 3,
     mappedCount: tree.leafNodes.length,
     totalTips: tree.leafNodes.length,
     activeRanks: ["genus", "family", "order", "class", "phylum"],
@@ -771,6 +772,19 @@ export default function App() {
       setOrder,
       setShowGenusLabels,
       setTaxonomyEnabled,
+      setCircularRotationDegreesForTest: setCircularRotationDegrees,
+      setTaxonomyMapForTest: (payload: TaxonomyMapPayload | null) => {
+        setTaxonomyMap(payload);
+        setTaxonomyEnabled(Boolean(payload));
+      },
+      runRealTaxonomyMappingForTest: async () => {
+        const archive = await getCachedTaxonomyArchive();
+        if (!archive) {
+          await downloadTaxonomy();
+        }
+        await runTaxonomyMapping();
+      },
+      getTaxonomyMapForTest: () => taxonomyMap,
       setMockTaxonomy: () => {
         if (!tree) {
           return;
@@ -790,10 +804,31 @@ export default function App() {
       },
       requestFit: () => setFitRequest((value) => value + 1),
     };
+    (window as typeof window & {
+      __BIG_TREE_VIEWER_APP_TEST_INTERNAL__?: {
+        leafNodes: number[];
+        parent?: number[];
+        firstChild?: number[];
+        nextSibling?: number[];
+      };
+    }).__BIG_TREE_VIEWER_APP_TEST_INTERNAL__ = {
+      leafNodes: tree ? Array.from(tree.leafNodes) : [],
+      parent: tree ? Array.from(tree.buffers.parent) : [],
+      firstChild: tree ? Array.from(tree.buffers.firstChild) : [],
+      nextSibling: tree ? Array.from(tree.buffers.nextSibling) : [],
+    };
     return () => {
       delete window.__BIG_TREE_VIEWER_APP_TEST__;
+      delete (window as typeof window & {
+        __BIG_TREE_VIEWER_APP_TEST_INTERNAL__?: {
+          leafNodes: number[];
+          parent?: number[];
+          firstChild?: number[];
+          nextSibling?: number[];
+        };
+      }).__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
     };
-  }, [loadState.error, loadState.loading, order, showGenusLabels, taxonomyEnabled, taxonomyMap, tree, treeSignature, viewMode]);
+  }, [downloadTaxonomy, loadState.error, loadState.loading, order, runTaxonomyMapping, showGenusLabels, taxonomyEnabled, taxonomyMap, tree, treeSignature, viewMode]);
 
   return (
     <div

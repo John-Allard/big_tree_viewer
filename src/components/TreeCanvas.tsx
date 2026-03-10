@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { distanceToSegmentSquared } from "../lib/spatialIndex";
-import { TAXONOMY_RANKS, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
+import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 import { buildCache } from "./treeCanvasCache";
 import {
   clampCircularCamera,
@@ -278,22 +278,159 @@ function taxonomyRingMetricsPx(rankCount: number, baseFontSize: number): {
   ringGapPx: number;
   labelGapPx: number;
 } {
-  const ringBaseWidthPx = Math.max(12, Math.min(28, baseFontSize * 1.6));
-  const outerRingWidthPx = ringBaseWidthPx * 1.45;
-  const ringGapPx = Math.max(4, baseFontSize * 0.32);
-  const labelGapPx = Math.max(12, baseFontSize * 1.0);
+  const ringBaseWidthPx = Math.max(24, Math.min(55.2, baseFontSize * 3.24));
+  const outerRingWidthPx = ringBaseWidthPx * 1.82;
+  const ringGapPx = Math.max(6, baseFontSize * 0.42);
+  const labelGapPx = Math.max(14, baseFontSize * 1.05);
   const ringWidthsPx = Array.from({ length: rankCount }, (_, index) => (
     index === rankCount - 1 ? outerRingWidthPx : ringBaseWidthPx
   ));
   return { ringWidthsPx, ringGapPx, labelGapPx };
 }
 
-function visibleLeafRangeCount(ranges: Array<{ startIndex: number; endIndex: number }>): number {
-  let total = 0;
-  for (let index = 0; index < ranges.length; index += 1) {
-    total += Math.max(0, ranges[index].endIndex - ranges[index].startIndex);
+function intersectWrappedAngularIntervals(
+  startA: number,
+  endA: number,
+  startB: number,
+  endB: number,
+): Array<{ start: number; end: number }> {
+  const normalize = (start: number, end: number): Array<{ start: number; end: number }> => {
+    if (end >= start) {
+      return [{ start, end }];
+    }
+    return [
+      { start, end: Math.PI * 2 },
+      { start: 0, end },
+    ];
+  };
+  const aParts = normalize(startA, endA);
+  const bParts = normalize(startB, endB);
+  const intersections: Array<{ start: number; end: number }> = [];
+  for (let aIndex = 0; aIndex < aParts.length; aIndex += 1) {
+    for (let bIndex = 0; bIndex < bParts.length; bIndex += 1) {
+      const start = Math.max(aParts[aIndex].start, bParts[bIndex].start);
+      const end = Math.min(aParts[aIndex].end, bParts[bIndex].end);
+      if (end > start) {
+        intersections.push({ start, end });
+      }
+    }
   }
-  return total;
+  return intersections;
+}
+
+function wrappedAngleWithinInterval(angle: number, start: number, end: number): boolean {
+  const normalizedAngle = wrapPositive(angle);
+  const normalizedStart = wrapPositive(start);
+  const normalizedEnd = wrapPositive(end);
+  if (normalizedEnd >= normalizedStart) {
+    return normalizedAngle >= normalizedStart && normalizedAngle <= normalizedEnd;
+  }
+  return normalizedAngle >= normalizedStart || normalizedAngle <= normalizedEnd;
+}
+
+function isScreenPointVisible(x: number, y: number, width: number, height: number, margin = 12): boolean {
+  return x >= -margin && x <= (width + margin) && y >= -margin && y <= (height + margin);
+}
+
+function bestVisibleTaxonomyLabelSpan(
+  segmentStart: number,
+  segmentEnd: number,
+  visibleSpans: Array<{ start: number; end: number }>,
+): { start: number; end: number } | null {
+  let best: { start: number; end: number } | null = null;
+  for (let index = 0; index < visibleSpans.length; index += 1) {
+    const intersections = intersectWrappedAngularIntervals(segmentStart, segmentEnd, visibleSpans[index].start, visibleSpans[index].end);
+    for (let intersectionIndex = 0; intersectionIndex < intersections.length; intersectionIndex += 1) {
+      const candidate = intersections[intersectionIndex];
+      if (!best || (candidate.end - candidate.start) > (best.end - best.start)) {
+        best = candidate;
+      }
+    }
+  }
+  return best;
+}
+
+function visibleTaxonomyLabelSpans(
+  segmentStart: number,
+  segmentEnd: number,
+  visibleSpans: Array<{ start: number; end: number }>,
+): Array<{ start: number; end: number }> {
+  const intersections: Array<{ start: number; end: number }> = [];
+  for (let index = 0; index < visibleSpans.length; index += 1) {
+    const partial = intersectWrappedAngularIntervals(
+      segmentStart,
+      segmentEnd,
+      visibleSpans[index].start,
+      visibleSpans[index].end,
+    );
+    for (let intersectionIndex = 0; intersectionIndex < partial.length; intersectionIndex += 1) {
+      intersections.push(partial[intersectionIndex]);
+    }
+  }
+  intersections.sort((left, right) => (right.end - right.start) - (left.end - left.start));
+  return intersections;
+}
+
+function chooseVisibleTaxonomyAnchorTheta(
+  cladeMidTheta: number,
+  visibleSpan: { start: number; end: number },
+): number {
+  const tau = Math.PI * 2;
+  const spanStart = visibleSpan.start;
+  const spanEnd = visibleSpan.end >= visibleSpan.start ? visibleSpan.end : visibleSpan.end + tau;
+  const wrappedMid = wrapPositive(cladeMidTheta);
+  const candidates = [wrappedMid, wrappedMid + tau, wrappedMid - tau];
+  let bestTheta = spanStart;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const value = candidates[index];
+    const clamped = Math.max(spanStart, Math.min(spanEnd, value));
+    const distance = Math.abs(clamped - value);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestTheta = clamped;
+    }
+  }
+  return bestTheta;
+}
+
+function splitWrappedAngularInterval(start: number, end: number): Array<{ start: number; end: number }> {
+  const wrappedStart = wrapPositive(start);
+  const wrappedEnd = wrapPositive(end);
+  if (wrappedEnd >= wrappedStart) {
+    return [{ start: wrappedStart, end: wrappedEnd }];
+  }
+  return [
+    { start: wrappedStart, end: Math.PI * 2 },
+    { start: 0, end: wrappedEnd },
+  ];
+}
+
+function angularIntervalsOverlap(
+  left: { start: number; end: number },
+  right: { start: number; end: number },
+): boolean {
+  return left.start < right.end && right.start < left.end;
+}
+
+function canPlaceTaxonomyArcLabel(
+  occupied: Array<{ start: number; end: number }>,
+  theta: number,
+  lineRadiusPx: number,
+  textWidthPx: number,
+  labelArcSpanTheta: number,
+): boolean {
+  const angularHalfSpan = (textWidthPx / Math.max(lineRadiusPx, 1e-6)) * 0.5;
+  const padTheta = Math.max(0, labelArcSpanTheta * 0.06);
+  const intervals = splitWrappedAngularInterval(theta - angularHalfSpan - padTheta, theta + angularHalfSpan + padTheta);
+  for (let intervalIndex = 0; intervalIndex < intervals.length; intervalIndex += 1) {
+    for (let occupiedIndex = 0; occupiedIndex < occupied.length; occupiedIndex += 1) {
+      if (angularIntervalsOverlap(intervals[intervalIndex], occupied[occupiedIndex])) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 type TaxonomyConsensusByRank = Partial<Record<TaxonomyRank, Array<string | null>>>;
@@ -352,32 +489,98 @@ function buildTaxonomyConsensusByRank(
   return consensus;
 }
 
-function taxonomyBranchColor(
-  node: number,
-  parent: number,
-  activeRanks: TaxonomyRank[],
-  consensusByRank: TaxonomyConsensusByRank | null,
+function buildTaxonomyBranchColorArray(
+  tree: TreeModel,
+  taxonomyConsensus: TaxonomyConsensusByRank,
   colorsByRank: TaxonomyColorByRank | null,
-): string | null {
-  if (!consensusByRank || !colorsByRank) {
-    return null;
-  }
-  for (let index = activeRanks.length - 1; index >= 0; index -= 1) {
-    const rank = activeRanks[index];
-    const values = consensusByRank[rank];
-    if (!values) {
+  activeRanks: TaxonomyRank[],
+): string[] {
+  const colors = new Array<string>(tree.nodeCount);
+
+  for (let node = 0; node < tree.nodeCount; node += 1) {
+    const parent = tree.buffers.parent[node];
+    if (parent < 0) {
+      colors[node] = BRANCH_COLOR;
       continue;
     }
-    const nodeLabel = values[node];
-    if (!nodeLabel || values[parent] !== nodeLabel) {
+    let color: string | null = null;
+    for (let rankIndex = 0; rankIndex < activeRanks.length; rankIndex += 1) {
+      const rank = activeRanks[rankIndex];
+      const values = taxonomyConsensus[rank];
+      if (!values) {
+        continue;
+      }
+      const nodeLabel = values[node];
+      if (!nodeLabel || nodeLabel !== values[parent]) {
+        continue;
+      }
+      color = colorForTaxonomy(rank, nodeLabel, colorsByRank);
+      break;
+    }
+    colors[node] = color ?? BRANCH_COLOR;
+  }
+  return colors;
+}
+
+function buildCircularTaxonomyPaths(
+  tree: TreeModel,
+  layout: TreeModel["layouts"][LayoutOrder],
+  orderedChildren: number[][],
+  branchColors: string[],
+): Map<string, Path2D> {
+  const paths = new Map<string, Path2D>();
+  const getPath = (color: string): Path2D => {
+    const existing = paths.get(color);
+    if (existing) {
+      return existing;
+    }
+    const created = new Path2D();
+    paths.set(color, created);
+    return created;
+  };
+
+  for (let node = 0; node < tree.nodeCount; node += 1) {
+    const parent = tree.buffers.parent[node];
+    if (parent < 0) {
       continue;
     }
-    const color = colorsByRank[rank]?.[nodeLabel];
-    if (color) {
-      return color;
+    const color = branchColors[node] ?? BRANCH_COLOR;
+    const theta = thetaFor(layout.center, node, tree.leafCount);
+    const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
+    const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+    const path = getPath(color);
+    path.moveTo(startWorld.x, startWorld.y);
+    path.lineTo(endWorld.x, endWorld.y);
+  }
+
+  for (let ownerNode = 0; ownerNode < tree.nodeCount; ownerNode += 1) {
+    const ordered = orderedChildren[ownerNode];
+    if (ordered.length < 2) {
+      continue;
+    }
+    const ownerTheta = thetaFor(layout.center, ownerNode, tree.leafCount);
+    const ownerArcStart = thetaFor(layout.min, ownerNode, tree.leafCount);
+    const ownerArcEnd = thetaFor(layout.max, ownerNode, tree.leafCount);
+    const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
+    const radius = tree.buffers.depth[ownerNode];
+    if (radius <= 0) {
+      continue;
+    }
+    for (let childIndex = 0; childIndex < ordered.length; childIndex += 1) {
+      const child = ordered[childIndex];
+      const color = branchColors[child] ?? BRANCH_COLOR;
+      const childTheta = thetaFor(layout.center, child, tree.leafCount);
+      const arcSpan = arcSubspanWithinSpan(ownerTheta, childTheta, ownerArcStart, ownerArcLength);
+      if (!arcSpan) {
+        continue;
+      }
+      const path = getPath(color);
+      path.moveTo(Math.cos(arcSpan.start) * radius, Math.sin(arcSpan.start) * radius);
+      path.arc(0, 0, radius, arcSpan.start, arcSpan.end, false);
     }
   }
-  return null;
+
+  return paths;
 }
 
 type RenderTaxonomyBlock = {
@@ -386,8 +589,65 @@ type RenderTaxonomyBlock = {
   firstNode: number;
   lastNode: number;
   centerNode: number;
+  startIndex: number;
+  endIndex: number;
+  labelStartIndex: number;
+  labelEndIndex: number;
   color: string;
+  segments: Array<{
+    firstNode: number;
+    lastNode: number;
+    startIndex: number;
+    endIndex: number;
+  }>;
 };
+
+function orderedLeafSpanThreshold(leafCount: number): number {
+  const minSpan = (Math.PI * 2) / Math.max(1, leafCount);
+  return Math.max(2.5, 0.01 / Math.max(minSpan, 1e-9));
+}
+
+function unwrapCircularIndices(indices: number[], leafCount: number): number[] {
+  if (indices.length === 0) {
+    return [];
+  }
+  const sorted = [...indices].sort((left, right) => left - right);
+  if (sorted.length === 1) {
+    return sorted;
+  }
+  let largestGap = -1;
+  let largestGapIndex = 0;
+  for (let index = 0; index < sorted.length; index += 1) {
+    const current = sorted[index];
+    const next = index + 1 < sorted.length ? sorted[index + 1] : sorted[0] + leafCount;
+    const gap = next - current;
+    if (gap > largestGap) {
+      largestGap = gap;
+      largestGapIndex = index;
+    }
+  }
+  const startIndex = (largestGapIndex + 1) % sorted.length;
+  const base = sorted[startIndex];
+  const unwrapped: number[] = [];
+  for (let offset = 0; offset < sorted.length; offset += 1) {
+    let value = sorted[(startIndex + offset) % sorted.length];
+    if (value < base) {
+      value += leafCount;
+    }
+    unwrapped.push(value);
+  }
+  return unwrapped;
+}
+
+function thetaSpanForLeafRange(leafCount: number, startIndex: number, endIndex: number): { startTheta: number; endTheta: number } {
+  const turns = Math.PI * 2;
+  const startTheta = (startIndex / Math.max(1, leafCount)) * turns;
+  let endTheta = (endIndex / Math.max(1, leafCount)) * turns;
+  if (endTheta <= startTheta) {
+    endTheta += turns;
+  }
+  return { startTheta, endTheta };
+}
 
 function buildTaxonomyBlocks(
   cache: ReturnType<typeof buildCache>,
@@ -400,36 +660,91 @@ function buildTaxonomyBlocks(
     labelByNode.set(taxonomyMap.tipRanks[index].node, taxonomyMap.tipRanks[index].ranks);
   }
   const orderedLeaves = cache.orderedLeaves[order];
+  const labelsByRank = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, Record<string, number[]>>>((accumulator, rank) => {
+    const byLabel: Record<string, number[]> = {};
+    for (let index = 0; index < orderedLeaves.length; index += 1) {
+      const label = labelByNode.get(orderedLeaves[index])?.[rank] ?? null;
+      if (!label) {
+        continue;
+      }
+      if (!byLabel[label]) {
+        byLabel[label] = [];
+      }
+      byLabel[label].push(index);
+    }
+    accumulator[rank] = byLabel;
+    return accumulator;
+  }, {} as Record<TaxonomyRank, Record<string, number[]>>);
   const blocks = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, RenderTaxonomyBlock[]>>((accumulator, rank) => {
     accumulator[rank] = [];
     return accumulator;
   }, {} as Record<TaxonomyRank, RenderTaxonomyBlock[]>);
   for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
     const rank = TAXONOMY_RANKS[rankIndex];
-    let start = 0;
-    while (start < orderedLeaves.length) {
-      const firstNode = orderedLeaves[start];
-      const firstLabel = labelByNode.get(firstNode)?.[rank];
-      if (!firstLabel) {
-        start += 1;
+    const breakThreshold = orderedLeafSpanThreshold(orderedLeaves.length);
+    const entries = Object.entries(labelsByRank[rank]).sort((left, right) => left[1][0] - right[1][0]);
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+      const [label, indices] = entries[entryIndex];
+      const unwrapped = unwrapCircularIndices(indices, orderedLeaves.length);
+      if (unwrapped.length === 0) {
         continue;
       }
-      let end = start + 1;
-      while (end < orderedLeaves.length && labelByNode.get(orderedLeaves[end])?.[rank] === firstLabel) {
-        end += 1;
-      }
-      if ((end - start) >= 2) {
-        const centerIndex = Math.floor((start + end - 1) * 0.5);
-        blocks[rank].push({
-          rank,
-          label: firstLabel,
-          firstNode,
-          lastNode: orderedLeaves[end - 1],
-          centerNode: orderedLeaves[centerIndex],
-          color: colorForTaxonomy(rank, firstLabel, colorsByRank),
+      const segments: Array<{ firstNode: number; lastNode: number; startIndex: number; endIndex: number }> = [];
+      let segmentStart = unwrapped[0];
+      let currentSegmentSize = 1;
+      let bestSegmentStart = unwrapped[0];
+      let bestSegmentEnd = unwrapped[0] + 1;
+      let bestSegmentSize = 1;
+      let bestSpan = 1;
+      for (let index = 1; index <= unwrapped.length; index += 1) {
+        const previous = unwrapped[index - 1];
+        const next = index < unwrapped.length ? unwrapped[index] : Number.POSITIVE_INFINITY;
+        const gap = next - previous;
+        if (index < unwrapped.length && gap <= breakThreshold) {
+          currentSegmentSize += 1;
+          continue;
+        }
+        const segmentEnd = previous + 1;
+        const wrappedStartIndex = ((segmentStart % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
+        const wrappedEndExclusive = ((segmentEnd % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
+        const wrappedEndIndex = wrappedEndExclusive === 0 ? orderedLeaves.length : wrappedEndExclusive;
+        const lastIndex = (wrappedEndIndex - 1 + orderedLeaves.length) % orderedLeaves.length;
+        segments.push({
+          firstNode: orderedLeaves[wrappedStartIndex],
+          lastNode: orderedLeaves[lastIndex],
+          startIndex: wrappedStartIndex,
+          endIndex: wrappedEndIndex,
         });
+        const span = segmentEnd - segmentStart;
+        if (span > bestSpan || (span === bestSpan && currentSegmentSize > bestSegmentSize)) {
+          bestSpan = span;
+          bestSegmentSize = currentSegmentSize;
+          bestSegmentStart = segmentStart;
+          bestSegmentEnd = segmentEnd;
+        }
+        segmentStart = next;
+        currentSegmentSize = 1;
       }
-      start = end;
+      const overallStart = unwrapped[0];
+      const overallEnd = unwrapped[unwrapped.length - 1] + 1;
+      const wrappedOverallStart = ((overallStart % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
+      const wrappedOverallEndExclusive = ((overallEnd % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
+      const wrappedOverallEnd = wrappedOverallEndExclusive === 0 ? orderedLeaves.length : wrappedOverallEndExclusive;
+      const overallLastIndex = (wrappedOverallEnd - 1 + orderedLeaves.length) % orderedLeaves.length;
+      const centerIndex = Math.floor((overallStart + overallEnd - 1) * 0.5) % orderedLeaves.length;
+      blocks[rank].push({
+        rank,
+        label,
+        firstNode: orderedLeaves[wrappedOverallStart],
+        lastNode: orderedLeaves[overallLastIndex],
+        centerNode: orderedLeaves[centerIndex],
+        startIndex: wrappedOverallStart,
+        endIndex: wrappedOverallEnd,
+        labelStartIndex: ((bestSegmentStart % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length,
+        labelEndIndex: (((bestSegmentEnd % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length) || orderedLeaves.length,
+        color: colorForTaxonomy(rank, label, colorsByRank),
+        segments,
+      });
     }
   }
   return blocks;
@@ -747,6 +1062,8 @@ export default function TreeCanvas({
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
+  const taxonomyBranchColorsCacheRef = useRef<Map<string, string[]>>(new Map());
+  const circularTaxonomyPathCacheRef = useRef<Map<string, Map<string, Path2D>>>(new Map());
   const handledFocusRequestRef = useRef(0);
   const handledExportRequestRef = useRef(0);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
@@ -764,8 +1081,19 @@ export default function TreeCanvas({
     peakZoom: number;
     peakVisibleCenters: number[];
   } | null>(null);
+  const taxonomyLabelHistoryRef = useRef<{
+    tree: TreeModel | null;
+    viewMode: ViewMode;
+    order: LayoutOrder;
+    zoom: number;
+    visibleKeys: string[];
+    peakZoom: number;
+    peakVisibleKeys: string[];
+  } | null>(null);
   const [size, setSize] = useState({ width: 1200, height: 800 });
   const previousSizeRef = useRef(size);
+  const previousTreeRef = useRef<TreeModel | null>(tree);
+  const previousFitRequestRef = useRef(fitRequest);
   const [overlayHover, setOverlayHover] = useState<HoverInfo | null>(null);
   const [collapsedNodes, setCollapsedNodes] = useState<Set<number>>(() => new Set());
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
@@ -809,6 +1137,10 @@ export default function TreeCanvas({
     }
     return byNode;
   }, [taxonomyMap]);
+  useEffect(() => {
+    taxonomyBranchColorsCacheRef.current.clear();
+    circularTaxonomyPathCacheRef.current.clear();
+  }, [taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const reservedTipLabelCharacters = useMemo(() => {
     if (!tree) {
@@ -978,11 +1310,11 @@ export default function TreeCanvas({
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120;
   }, [maxGenusLabelCharacters, reservedTipLabelCharacters, taxonomyActiveRanks, taxonomyBlocks, taxonomyEnabled, tree]);
 
-  const fitCamera = useCallback(() => {
+  const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
-      return;
+      return null;
     }
-    let nextCamera = viewMode === "rectangular"
+    let nextCamera = mode === "rectangular"
       ? fitRectCamera(size.width, size.height, tree)
       : fitCircularCamera(size.width, size.height, tree, circularRotation);
     if (nextCamera.kind === "rect") {
@@ -1001,8 +1333,72 @@ export default function TreeCanvas({
       }
       clampCircularCamera(nextCamera, tree, size.width, size.height, circularClampExtraRadiusPx(nextCamera));
     }
-    cameraRef.current = nextCamera;
-  }, [circularClampExtraRadiusPx, circularRotation, rectClampPadding, size.height, size.width, taxonomyBlocks, taxonomyEnabled, tree, viewMode]);
+    return nextCamera;
+  }, [circularClampExtraRadiusPx, circularRotation, rectClampPadding, size.height, size.width, taxonomyBlocks, taxonomyEnabled, tree]);
+
+  const cameraApproximatelyMatchesFit = useCallback((camera: CameraState): boolean => {
+    const fit = fitCameraForMode(camera.kind === "rect" ? "rectangular" : "circular");
+    if (!fit || fit.kind !== camera.kind) {
+      return false;
+    }
+    if (camera.kind === "rect" && fit.kind === "rect") {
+      return (
+        Math.abs(camera.scaleX - fit.scaleX) <= (fit.scaleX * 0.03)
+        && Math.abs(camera.scaleY - fit.scaleY) <= (fit.scaleY * 0.03)
+        && Math.abs(camera.translateX - fit.translateX) <= 4
+        && Math.abs(camera.translateY - fit.translateY) <= 4
+      );
+    }
+    if (camera.kind === "circular" && fit.kind === "circular") {
+      return (
+        Math.abs(camera.scale - fit.scale) <= (fit.scale * 0.03)
+        && Math.abs(camera.translateX - fit.translateX) <= 4
+        && Math.abs(camera.translateY - fit.translateY) <= 4
+        && Math.abs(camera.rotation - fit.rotation) <= 1e-6
+      );
+    }
+    return false;
+  }, [fitCameraForMode]);
+
+  const fitCamera = useCallback(() => {
+    const nextCamera = fitCameraForMode(viewMode);
+    if (nextCamera) {
+      cameraRef.current = nextCamera;
+    }
+  }, [fitCameraForMode, viewMode]);
+
+  const getTaxonomyBranchColors = useCallback((orderKey: LayoutOrder, visibleRanks: TaxonomyRank[]): string[] | null => {
+    if (!tree || !taxonomyConsensus || visibleRanks.length === 0) {
+      return null;
+    }
+    const key = `${orderKey}:${visibleRanks.join("|")}`;
+    const cached = taxonomyBranchColorsCacheRef.current.get(key);
+    if (cached) {
+      return cached;
+    }
+    const built = buildTaxonomyBranchColorArray(tree, taxonomyConsensus, taxonomyColors, visibleRanks);
+    taxonomyBranchColorsCacheRef.current.set(key, built);
+    return built;
+  }, [taxonomyColors, taxonomyConsensus, tree]);
+
+  const getCircularTaxonomyPaths = useCallback((
+    orderKey: LayoutOrder,
+    layout: TreeModel["layouts"][LayoutOrder],
+    visibleRanks: TaxonomyRank[],
+    branchColors: string[] | null,
+  ): Map<string, Path2D> | null => {
+    if (!tree || !cache || !branchColors || visibleRanks.length === 0) {
+      return null;
+    }
+    const key = `${orderKey}:${visibleRanks.join("|")}`;
+    const cached = circularTaxonomyPathCacheRef.current.get(key);
+    if (cached) {
+      return cached;
+    }
+    const built = buildCircularTaxonomyPaths(tree, layout, cache.orderedChildren[orderKey], branchColors);
+    circularTaxonomyPathCacheRef.current.set(key, built);
+    return built;
+  }, [cache, tree]);
 
   const toggleCollapsedNode = useCallback((node: number) => {
     if (!tree || tree.buffers.firstChild[node] < 0) {
@@ -1022,6 +1418,9 @@ export default function TreeCanvas({
   const convertCameraForViewMode = useCallback((fromCamera: CameraState): CameraState => {
     if (!tree) {
       return fromCamera;
+    }
+    if (cameraApproximatelyMatchesFit(fromCamera)) {
+      return fitCameraForMode(viewMode) ?? fromCamera;
     }
     const centerScreenX = size.width * 0.5;
     const centerScreenY = size.height * 0.5;
@@ -1062,7 +1461,7 @@ export default function TreeCanvas({
     }
 
     return fromCamera;
-  }, [circularRotation, size.height, size.width, tree, viewMode]);
+  }, [cameraApproximatelyMatchesFit, circularRotation, fitCameraForMode, size.height, size.width, tree, viewMode]);
 
   useEffect(() => {
     const element = wrapperRef.current;
@@ -1114,11 +1513,16 @@ export default function TreeCanvas({
       width: size.width,
       height: size.height,
     };
+    const timing = {
+      branchBaseMs: 0,
+      taxonomyBranchMs: 0,
+      taxonomyOverlayMs: 0,
+      totalMs: 0,
+    };
+    const drawStartTime = performance.now();
     const hiddenNodes = collapsedView?.hiddenNodes ?? new Uint8Array(tree.nodeCount);
     const visibleCollapsedNodes = collapsedView?.visibleCollapsedNodes ?? [];
     hiddenNodesRef.current = hiddenNodes;
-    const panInteractionActive = pointerDownRef.current && activePointersRef.current.size === 1;
-
     if (viewMode === "rectangular" && camera.kind === "rect") {
       const layout = collapsedView?.layout ?? tree.layouts[order];
       const children = cache.orderedChildren[order];
@@ -1138,13 +1542,11 @@ export default function TreeCanvas({
       const tipLabelCueVisible = camera.scaleY > 1.45;
       const microTipLabelsVisible = camera.scaleY > 2.7;
       const tipLabelsVisible = camera.scaleY > 4.2;
-      let visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
+      const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks)
         : [];
-      if (panInteractionActive && visibleTaxonomyRanks.length > 1) {
-        visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-1);
-      }
-      const renderTaxonomyBands = !panInteractionActive;
+      const useTaxonomyBranchRendering = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
+      const cachedTaxonomyBranchColors = useTaxonomyBranchRendering ? getTaxonomyBranchColors(order, visibleTaxonomyRanks) : null;
 
       if (showTimeStripes) {
         const drawBands = (step: number, alpha: number) => {
@@ -1170,9 +1572,6 @@ export default function TreeCanvas({
         }
       }
 
-      ctx.strokeStyle = BRANCH_COLOR;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
       const useDenseRectLOD = camera.scaleY < 1.25;
       const rectConnectorKeys = useDenseRectLOD ? new Set<string>() : null;
       const rectStemKeys = useDenseRectLOD ? new Set<string>() : null;
@@ -1184,162 +1583,159 @@ export default function TreeCanvas({
           Math.max(1e-6, (maxY - minY) * 0.5) + rectWorldOverscanY,
         )
         : null;
-      if (visibleRectSegments) {
-        for (let index = 0; index < visibleRectSegments.length; index += 1) {
-          const segment = visibleRectSegments[index];
-          const start = worldToScreenRect(camera, segment.x1, segment.y1);
-          const end = worldToScreenRect(camera, segment.x2, segment.y2);
-          if (useDenseRectLOD) {
-            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-            if ((segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.has(key)) {
-              continue;
-            }
-            (segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.add(key);
-          }
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
-        }
-      } else {
-        for (let node = 0; node < tree.nodeCount; node += 1) {
-          if (hiddenNodes[node] || collapsedNodes.has(node)) {
-            continue;
-          }
-          const ordered = children[node];
-          if (ordered.length < 2) {
-            continue;
-          }
-          const x = tree.buffers.depth[node];
-          const firstY = layout.center[ordered[0]];
-          const lastY = layout.center[ordered[ordered.length - 1]];
-          if (!lineIntersectsRect(x, firstY, x, lastY, minX, minY, maxX, maxY)) {
-            continue;
-          }
-          const start = worldToScreenRect(camera, x, firstY);
-          const end = worldToScreenRect(camera, x, lastY);
-          if (useDenseRectLOD) {
-            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-            if (rectConnectorKeys?.has(key)) {
-              continue;
-            }
-            rectConnectorKeys?.add(key);
-          }
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
-        }
-        for (let node = 0; node < tree.nodeCount; node += 1) {
-          if (hiddenNodes[node]) {
-            continue;
-          }
-          const parent = tree.buffers.parent[node];
-          if (parent < 0) {
-            continue;
-          }
-          const x1 = tree.buffers.depth[parent];
-          const x2 = tree.buffers.depth[node];
-          const y = layout.center[node];
-          if (!lineIntersectsRect(x1, y, x2, y, minX, minY, maxX, maxY)) {
-            continue;
-          }
-          const start = worldToScreenRect(camera, x1, y);
-          const end = worldToScreenRect(camera, x2, y);
-          if (useDenseRectLOD) {
-            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-            if (rectStemKeys?.has(key)) {
-              continue;
-            }
-            rectStemKeys?.add(key);
-          }
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
-        }
-      }
-      ctx.stroke();
-
-      if (visibleTaxonomyRanks.length > 0 && taxonomyColors) {
-        const colorPaths = new Map<string, Array<[number, number, number, number]>>();
-        const pushColoredSegment = (color: string | null, x1: number, y1: number, x2: number, y2: number): void => {
-          if (!color) {
-            return;
-          }
-          const segments = colorPaths.get(color) ?? [];
-          segments.push([x1, y1, x2, y2]);
-          colorPaths.set(color, segments);
-        };
-        const connectorOwners = new Set<number>();
+      const baseBranchStartTime = performance.now();
+      if (!useTaxonomyBranchRendering) {
+        ctx.strokeStyle = BRANCH_COLOR;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
         if (visibleRectSegments) {
           for (let index = 0; index < visibleRectSegments.length; index += 1) {
             const segment = visibleRectSegments[index];
-            if (segment.kind === "connector") {
-              connectorOwners.add(segment.node);
-              continue;
-            }
-            const parent = tree.buffers.parent[segment.node];
-            if (parent < 0) {
-              continue;
-            }
-            const color = taxonomyBranchColor(segment.node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
-            if (!color) {
-              continue;
-            }
             const start = worldToScreenRect(camera, segment.x1, segment.y1);
             const end = worldToScreenRect(camera, segment.x2, segment.y2);
-            pushColoredSegment(color, start.x, start.y, end.x, end.y);
+            if (useDenseRectLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if ((segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.has(key)) {
+                continue;
+              }
+              (segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.add(key);
+            }
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
           }
         } else {
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (hiddenNodes[node] || collapsedNodes.has(node)) {
+              continue;
+            }
+            const ordered = children[node];
+            if (ordered.length < 2) {
+              continue;
+            }
+            const x = tree.buffers.depth[node];
+            const firstY = layout.center[ordered[0]];
+            const lastY = layout.center[ordered[ordered.length - 1]];
+            if (!lineIntersectsRect(x, firstY, x, lastY, minX, minY, maxX, maxY)) {
+              continue;
+            }
+            const start = worldToScreenRect(camera, x, firstY);
+            const end = worldToScreenRect(camera, x, lastY);
+            if (useDenseRectLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if (rectConnectorKeys?.has(key)) {
+                continue;
+              }
+              rectConnectorKeys?.add(key);
+            }
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+          }
           for (let node = 0; node < tree.nodeCount; node += 1) {
             if (hiddenNodes[node]) {
               continue;
             }
             const parent = tree.buffers.parent[node];
             if (parent < 0) {
-              if (!collapsedNodes.has(node) && children[node].length >= 2) {
-                connectorOwners.add(node);
-              }
               continue;
             }
-            const color = taxonomyBranchColor(node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
-            if (!color) {
-              continue;
-            }
+            const x1 = tree.buffers.depth[parent];
+            const x2 = tree.buffers.depth[node];
             const y = layout.center[node];
-            if (!lineIntersectsRect(tree.buffers.depth[parent], y, tree.buffers.depth[node], y, minX, minY, maxX, maxY)) {
+            if (!lineIntersectsRect(x1, y, x2, y, minX, minY, maxX, maxY)) {
               continue;
             }
-            const start = worldToScreenRect(camera, tree.buffers.depth[parent], y);
-            const end = worldToScreenRect(camera, tree.buffers.depth[node], y);
-            pushColoredSegment(color, start.x, start.y, end.x, end.y);
-          }
-          for (let node = 0; node < tree.nodeCount; node += 1) {
-            if (!hiddenNodes[node] && !collapsedNodes.has(node) && children[node].length >= 2) {
-              connectorOwners.add(node);
+            const start = worldToScreenRect(camera, x1, y);
+            const end = worldToScreenRect(camera, x2, y);
+            if (useDenseRectLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if (rectStemKeys?.has(key)) {
+                continue;
+              }
+              rectStemKeys?.add(key);
             }
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
           }
         }
-        connectorOwners.forEach((ownerNode) => {
-          if (hiddenNodes[ownerNode] || collapsedNodes.has(ownerNode)) {
-            return;
-          }
-          const ownerY = layout.center[ownerNode];
-          const ownerX = tree.buffers.depth[ownerNode];
-          const orderedChildren = children[ownerNode];
-          for (let childIndex = 0; childIndex < orderedChildren.length; childIndex += 1) {
-            const child = orderedChildren[childIndex];
-            if (hiddenNodes[child]) {
-              continue;
+        ctx.stroke();
+      } else {
+        const colorPaths = new Map<string, Array<[number, number, number, number]>>();
+        const pushColoredSegment = (color: string, x1: number, y1: number, x2: number, y2: number): void => {
+          const segments = colorPaths.get(color) ?? [];
+          segments.push([x1, y1, x2, y2]);
+          colorPaths.set(color, segments);
+        };
+        if (visibleRectSegments) {
+          for (let index = 0; index < visibleRectSegments.length; index += 1) {
+            const segment = visibleRectSegments[index];
+            const start = worldToScreenRect(camera, segment.x1, segment.y1);
+            const end = worldToScreenRect(camera, segment.x2, segment.y2);
+            if (useDenseRectLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if ((segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.has(key)) {
+                continue;
+              }
+              (segment.kind === "connector" ? rectConnectorKeys : rectStemKeys)?.add(key);
             }
-            const color = taxonomyBranchColor(child, ownerNode, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
-            if (!color) {
-              continue;
-            }
-            const childY = layout.center[child];
-            if (!lineIntersectsRect(ownerX, ownerY, ownerX, childY, minX, minY, maxX, maxY)) {
-              continue;
-            }
-            const start = worldToScreenRect(camera, ownerX, ownerY);
-            const end = worldToScreenRect(camera, ownerX, childY);
+            const parent = segment.kind === "connector" ? -1 : tree.buffers.parent[segment.node];
+            const color = segment.kind === "connector" || parent < 0
+              ? BRANCH_COLOR
+              : (cachedTaxonomyBranchColors?.[segment.node] ?? BRANCH_COLOR);
             pushColoredSegment(color, start.x, start.y, end.x, end.y);
           }
-        });
+        } else {
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (hiddenNodes[node] || collapsedNodes.has(node)) {
+              continue;
+            }
+            const ordered = children[node];
+            if (ordered.length < 2) {
+              continue;
+            }
+            const x = tree.buffers.depth[node];
+            const firstY = layout.center[ordered[0]];
+            const lastY = layout.center[ordered[ordered.length - 1]];
+            if (!lineIntersectsRect(x, firstY, x, lastY, minX, minY, maxX, maxY)) {
+              continue;
+            }
+            const start = worldToScreenRect(camera, x, firstY);
+            const end = worldToScreenRect(camera, x, lastY);
+            if (useDenseRectLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if (rectConnectorKeys?.has(key)) {
+                continue;
+              }
+              rectConnectorKeys?.add(key);
+            }
+            pushColoredSegment(BRANCH_COLOR, start.x, start.y, end.x, end.y);
+          }
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (hiddenNodes[node]) {
+              continue;
+            }
+            const parent = tree.buffers.parent[node];
+            if (parent < 0) {
+              continue;
+            }
+            const x1 = tree.buffers.depth[parent];
+            const x2 = tree.buffers.depth[node];
+            const y = layout.center[node];
+            if (!lineIntersectsRect(x1, y, x2, y, minX, minY, maxX, maxY)) {
+              continue;
+            }
+            const start = worldToScreenRect(camera, x1, y);
+            const end = worldToScreenRect(camera, x2, y);
+            if (useDenseRectLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if (rectStemKeys?.has(key)) {
+                continue;
+              }
+              rectStemKeys?.add(key);
+            }
+            const color = cachedTaxonomyBranchColors?.[node] ?? BRANCH_COLOR;
+            pushColoredSegment(color, start.x, start.y, end.x, end.y);
+          }
+        }
         colorPaths.forEach((segments, color) => {
           ctx.beginPath();
           for (let index = 0; index < segments.length; index += 1) {
@@ -1348,12 +1744,12 @@ export default function TreeCanvas({
             ctx.lineTo(x2, y2);
           }
           ctx.strokeStyle = color;
-          ctx.lineWidth = 1.15;
-          ctx.globalAlpha = 0.95;
+          ctx.lineWidth = 1;
+          ctx.globalAlpha = 1;
           ctx.stroke();
         });
-        ctx.globalAlpha = 1;
       }
+      timing.branchBaseMs += performance.now() - baseBranchStartTime;
 
       if (searchMatches.length > 0) {
         const drawSearchBranches = (
@@ -1510,7 +1906,8 @@ export default function TreeCanvas({
       }
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
-      if (taxonomyEnabled && taxonomyBlocks && renderTaxonomyBands) {
+      const taxonomyOverlayStartTime = performance.now();
+      if (taxonomyEnabled && taxonomyBlocks) {
         const visibleRanks = visibleTaxonomyRanks;
         const columnBaseX = tipSideX + globalTipLabelSpacePx + 18;
         const columnWidth = 13;
@@ -1568,7 +1965,7 @@ export default function TreeCanvas({
           peakZoom: camera.scaleY,
           peakVisibleCenters: [],
         };
-      } else if (showGenusLabels) {
+      } else if (!taxonomyEnabled && showGenusLabels) {
         const priorityBlocks = cache.genusBlocksPriority[order];
         const positionalBlocks = cache.genusBlocks[order];
         const previousGenusState = genusLabelHistoryRef.current;
@@ -1753,6 +2150,7 @@ export default function TreeCanvas({
           peakVisibleCenters: [],
         };
       }
+      timing.taxonomyOverlayMs += performance.now() - taxonomyOverlayStartTime;
 
       if (visibleTipLabels.length > 0) {
         const renderTipFontSize = tipLabelsVisible ? tipFontSize : microTipFontSize;
@@ -1964,16 +2362,23 @@ export default function TreeCanvas({
       let visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
         : [];
-      if (panInteractionActive && visibleTaxonomyRanks.length > 1) {
-        visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-1);
-      }
       const visibleCircleFraction = tree.isUltrametric
         ? fullyVisibleRadiusPx / Math.max(1e-9, tree.rootAge * camera.scale)
         : 0;
+      const fitLikeCircular = fitCameraForMode("circular");
+      const nearCircularFit = fitLikeCircular?.kind === "circular"
+        ? camera.scale <= (fitLikeCircular.scale * 1.35)
+        : false;
+      const lockTaxonomyLabelsToClade = nearCircularFit || visibleCircleFraction >= 0.5;
       if (visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 2) {
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
-      const renderTaxonomyBands = !panInteractionActive;
+      const useTaxonomyBranchRendering = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
+      const cachedTaxonomyBranchColors = useTaxonomyBranchRendering ? getTaxonomyBranchColors(order, visibleTaxonomyRanks) : null;
+      const useCachedCircularTaxonomyPaths = useTaxonomyBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 0.12;
+      const cachedCircularTaxonomyPaths = useCachedCircularTaxonomyPaths
+        ? getCircularTaxonomyPaths(order, layout, visibleTaxonomyRanks, cachedTaxonomyBranchColors)
+        : null;
       const showCentralTimeLabels = tree.isUltrametric && showScaleBars && visibleCircleFraction >= 0.58;
       const circularScaleBar = tree.isUltrametric && showScaleBars && !showCentralTimeLabels
         ? buildCircularScaleBar(
@@ -2012,9 +2417,6 @@ export default function TreeCanvas({
         }
       }
 
-      ctx.strokeStyle = BRANCH_COLOR;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
       const useDenseCircularLOD = angularSpacingPx < 1.1;
       const circularConnectorKeys = useDenseCircularLOD ? new Set<string>() : null;
       const circularStemKeys = useDenseCircularLOD ? new Set<string>() : null;
@@ -2043,142 +2445,178 @@ export default function TreeCanvas({
           Math.max(1e-6, (circularMaxY - circularMinY) * 0.5) + circularWorldOverscan,
         )
         : null;
-      if (visibleCircularSegments) {
-        for (let index = 0; index < visibleCircularSegments.length; index += 1) {
-          const segment = visibleCircularSegments[index];
-          const start = worldToScreenCircular(camera, segment.x1, segment.y1);
-          const end = worldToScreenCircular(camera, segment.x2, segment.y2);
-          if (useDenseCircularLOD) {
-            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-            if ((segment.kind === "connector" ? circularConnectorKeys : circularStemKeys)?.has(key)) {
+      const circularBranchStartTime = performance.now();
+      if (useCachedCircularTaxonomyPaths && cachedCircularTaxonomyPaths) {
+        ctx.save();
+        ctx.translate(camera.translateX, camera.translateY);
+        ctx.scale(camera.scale, camera.scale);
+        ctx.rotate(rotationAngle);
+        ctx.lineCap = "butt";
+        cachedCircularTaxonomyPaths.forEach((path, color) => {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.2 / Math.max(camera.scale, 1e-6);
+          ctx.globalAlpha = 0.95;
+          ctx.stroke(path);
+        });
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      } else if (!useTaxonomyBranchRendering) {
+        ctx.strokeStyle = BRANCH_COLOR;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (visibleCircularSegments) {
+          for (let index = 0; index < visibleCircularSegments.length; index += 1) {
+            const segment = visibleCircularSegments[index];
+            const start = worldToScreenCircular(camera, segment.x1, segment.y1);
+            const end = worldToScreenCircular(camera, segment.x2, segment.y2);
+            if (useDenseCircularLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if ((segment.kind === "connector" ? circularConnectorKeys : circularStemKeys)?.has(key)) {
+                continue;
+              }
+              (segment.kind === "connector" ? circularConnectorKeys : circularStemKeys)?.add(key);
+            }
+            if (segment.kind === "connector") {
+              const node = segment.node;
+              const ordered = children[node];
+              if (ordered.length < 2) {
+                continue;
+              }
+              const radiusPx = tree.buffers.depth[node] * camera.scale;
+              if (radiusPx < 0.25) {
+                continue;
+              }
+              const startTheta = thetaFor(layout.center, ordered[0], tree.leafCount);
+              const endTheta = thetaFor(layout.center, ordered[ordered.length - 1], tree.leafCount);
+              const arcStart = thetaFor(layout.min, node, tree.leafCount);
+              const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+              const arcLength = Math.max(0, arcEnd - arcStart);
+              const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+              ctx.moveTo(
+                centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx,
+                centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx,
+              );
+              ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
+            } else {
+              ctx.moveTo(start.x, start.y);
+              ctx.lineTo(end.x, end.y);
+            }
+          }
+        } else {
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (hiddenNodes[node] || collapsedNodes.has(node)) {
               continue;
             }
-            (segment.kind === "connector" ? circularConnectorKeys : circularStemKeys)?.add(key);
-          }
-          if (segment.kind === "connector") {
-            const node = segment.node;
             const ordered = children[node];
             if (ordered.length < 2) {
               continue;
             }
-            const radiusPx = tree.buffers.depth[node] * camera.scale;
-            if (radiusPx < 0.25) {
-              continue;
-            }
+            const radius = tree.buffers.depth[node];
             const startTheta = thetaFor(layout.center, ordered[0], tree.leafCount);
             const endTheta = thetaFor(layout.center, ordered[ordered.length - 1], tree.leafCount);
             const arcStart = thetaFor(layout.min, node, tree.leafCount);
             const arcEnd = thetaFor(layout.max, node, tree.leafCount);
             const arcLength = Math.max(0, arcEnd - arcStart);
             const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-            ctx.moveTo(
-              centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx,
-              centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx,
-            );
+            const radiusPx = radius * camera.scale;
+            if (radiusPx < 0.25) {
+              continue;
+            }
+            const startX = centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx;
+            const startY = centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx;
+            const endX = centerPoint.x + Math.cos(arcAngles.end + rotationAngle) * radiusPx;
+            const endY = centerPoint.y + Math.sin(arcAngles.end + rotationAngle) * radiusPx;
+            if (useDenseCircularLOD) {
+              const key = quantizedSegmentKey(startX, startY, endX, endY);
+              if (circularConnectorKeys?.has(key)) {
+                continue;
+              }
+              circularConnectorKeys?.add(key);
+            }
+            ctx.moveTo(startX, startY);
             ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
-          } else {
+          }
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (hiddenNodes[node]) {
+              continue;
+            }
+            const parent = tree.buffers.parent[node];
+            if (parent < 0) {
+              continue;
+            }
+            const theta = thetaFor(layout.center, node, tree.leafCount);
+            const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
+            const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+            const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+            const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+            if (!lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, size.width, size.height)) {
+              continue;
+            }
+            if (useDenseCircularLOD) {
+              const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
+              if (circularStemKeys?.has(key)) {
+                continue;
+              }
+              circularStemKeys?.add(key);
+            }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
           }
         }
+        ctx.stroke();
       } else {
-        for (let node = 0; node < tree.nodeCount; node += 1) {
-          if (hiddenNodes[node] || collapsedNodes.has(node)) {
-            continue;
-          }
-          const ordered = children[node];
-          if (ordered.length < 2) {
-            continue;
-          }
-          const radius = tree.buffers.depth[node];
-          const startTheta = thetaFor(layout.center, ordered[0], tree.leafCount);
-          const endTheta = thetaFor(layout.center, ordered[ordered.length - 1], tree.leafCount);
-          const arcStart = thetaFor(layout.min, node, tree.leafCount);
-          const arcEnd = thetaFor(layout.max, node, tree.leafCount);
-          const arcLength = Math.max(0, arcEnd - arcStart);
-          const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-          const radiusPx = radius * camera.scale;
-          if (radiusPx < 0.25) {
-            continue;
-          }
-          const startX = centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx;
-          const startY = centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx;
-          const endX = centerPoint.x + Math.cos(arcAngles.end + rotationAngle) * radiusPx;
-          const endY = centerPoint.y + Math.sin(arcAngles.end + rotationAngle) * radiusPx;
-          if (useDenseCircularLOD) {
-            const key = quantizedSegmentKey(startX, startY, endX, endY);
-            if (circularConnectorKeys?.has(key)) {
-              continue;
-            }
-            circularConnectorKeys?.add(key);
-          }
-          ctx.moveTo(startX, startY);
-          ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
-        }
-        for (let node = 0; node < tree.nodeCount; node += 1) {
-          if (hiddenNodes[node]) {
-            continue;
-          }
-          const parent = tree.buffers.parent[node];
-          if (parent < 0) {
-            continue;
-          }
-          const theta = thetaFor(layout.center, node, tree.leafCount);
-          const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
-          const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
-          const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
-          const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
-          if (!lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, size.width, size.height)) {
-            continue;
-          }
-          if (useDenseCircularLOD) {
-            const key = quantizedSegmentKey(start.x, start.y, end.x, end.y);
-            if (circularStemKeys?.has(key)) {
-              continue;
-            }
-            circularStemKeys?.add(key);
-          }
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
-        }
-      }
-      ctx.stroke();
-
-      if (visibleTaxonomyRanks.length > 0 && taxonomyColors) {
         const colorStemPaths = new Map<string, Array<[number, number, number, number]>>();
         const colorArcPaths = new Map<string, Array<{ radiusPx: number; start: number; end: number }>>();
-        const pushStem = (color: string | null, x1: number, y1: number, x2: number, y2: number): void => {
-          if (!color) {
-            return;
-          }
+        const pushStem = (color: string, x1: number, y1: number, x2: number, y2: number): void => {
           const segments = colorStemPaths.get(color) ?? [];
           segments.push([x1, y1, x2, y2]);
           colorStemPaths.set(color, segments);
         };
-        const pushArc = (color: string | null, radiusPx: number, start: number, end: number): void => {
-          if (!color || radiusPx < 0.25 || end <= start) {
+        const pushArc = (color: string, radiusPx: number, start: number, end: number): void => {
+          if (radiusPx < 0.25 || end <= start) {
             return;
           }
           const arcs = colorArcPaths.get(color) ?? [];
           arcs.push({ radiusPx, start, end });
           colorArcPaths.set(color, arcs);
         };
-        const connectorOwners = new Set<number>();
         if (visibleCircularSegments) {
           for (let index = 0; index < visibleCircularSegments.length; index += 1) {
             const segment = visibleCircularSegments[index];
             if (segment.kind === "connector") {
-              connectorOwners.add(segment.node);
+              const node = segment.node;
+              const ordered = children[node];
+              if (ordered.length < 2) {
+                continue;
+              }
+              const radiusPx = tree.buffers.depth[node] * camera.scale;
+              if (radiusPx < 0.25) {
+                continue;
+              }
+              const ownerTheta = thetaFor(layout.center, node, tree.leafCount);
+              const ownerArcStart = thetaFor(layout.min, node, tree.leafCount);
+              const ownerArcEnd = thetaFor(layout.max, node, tree.leafCount);
+              const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
+              for (let childIndex = 0; childIndex < ordered.length; childIndex += 1) {
+                const child = ordered[childIndex];
+                if (hiddenNodes[child]) {
+                  continue;
+                }
+                const color = cachedTaxonomyBranchColors?.[child] ?? BRANCH_COLOR;
+                const childTheta = thetaFor(layout.center, child, tree.leafCount);
+                const arcSpan = arcSubspanWithinSpan(ownerTheta, childTheta, ownerArcStart, ownerArcLength);
+                if (!arcSpan) {
+                  continue;
+                }
+                pushArc(color, radiusPx, arcSpan.start + rotationAngle, arcSpan.end + rotationAngle);
+              }
               continue;
             }
             const parent = tree.buffers.parent[segment.node];
             if (parent < 0) {
               continue;
             }
-            const color = taxonomyBranchColor(segment.node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
-            if (!color) {
-              continue;
-            }
+            const color = cachedTaxonomyBranchColors?.[segment.node] ?? BRANCH_COLOR;
             const start = worldToScreenCircular(camera, segment.x1, segment.y1);
             const end = worldToScreenCircular(camera, segment.x2, segment.y2);
             pushStem(color, start.x, start.y, end.x, end.y);
@@ -2191,14 +2629,18 @@ export default function TreeCanvas({
             const parent = tree.buffers.parent[node];
             if (parent < 0) {
               if (!collapsedNodes.has(node) && children[node].length >= 2) {
-                connectorOwners.add(node);
+                const startTheta = thetaFor(layout.center, children[node][0], tree.leafCount);
+                const endTheta = thetaFor(layout.center, children[node][children[node].length - 1], tree.leafCount);
+                const arcStart = thetaFor(layout.min, node, tree.leafCount);
+                const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+                const arcLength = Math.max(0, arcEnd - arcStart);
+                const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+                const radiusPx = tree.buffers.depth[node] * camera.scale;
+                pushArc(BRANCH_COLOR, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle);
               }
               continue;
             }
-            const color = taxonomyBranchColor(node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
-            if (!color) {
-              continue;
-            }
+            const color = cachedTaxonomyBranchColors?.[node] ?? BRANCH_COLOR;
             const theta = thetaFor(layout.center, node, tree.leafCount);
             const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
             const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
@@ -2208,39 +2650,7 @@ export default function TreeCanvas({
               pushStem(color, start.x, start.y, end.x, end.y);
             }
           }
-          for (let node = 0; node < tree.nodeCount; node += 1) {
-            if (!hiddenNodes[node] && !collapsedNodes.has(node) && children[node].length >= 2) {
-              connectorOwners.add(node);
-            }
-          }
         }
-        connectorOwners.forEach((ownerNode) => {
-          if (hiddenNodes[ownerNode] || collapsedNodes.has(ownerNode)) {
-            return;
-          }
-          const ownerTheta = thetaFor(layout.center, ownerNode, tree.leafCount);
-          const ownerArcStart = thetaFor(layout.min, ownerNode, tree.leafCount);
-          const ownerArcEnd = thetaFor(layout.max, ownerNode, tree.leafCount);
-          const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
-          const radiusPx = tree.buffers.depth[ownerNode] * camera.scale;
-          const orderedChildren = children[ownerNode];
-          for (let childIndex = 0; childIndex < orderedChildren.length; childIndex += 1) {
-            const child = orderedChildren[childIndex];
-            if (hiddenNodes[child]) {
-              continue;
-            }
-            const color = taxonomyBranchColor(child, ownerNode, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
-            if (!color) {
-              continue;
-            }
-            const childTheta = thetaFor(layout.center, child, tree.leafCount);
-            const arcSpan = arcSubspanWithinSpan(ownerTheta, childTheta, ownerArcStart, ownerArcLength);
-            if (!arcSpan) {
-              continue;
-            }
-            pushArc(color, radiusPx, arcSpan.start + rotationAngle, arcSpan.end + rotationAngle);
-          }
-        });
         colorArcPaths.forEach((arcs, color) => {
           ctx.beginPath();
           for (let index = 0; index < arcs.length; index += 1) {
@@ -2268,8 +2678,8 @@ export default function TreeCanvas({
           ctx.globalAlpha = 0.95;
           ctx.stroke();
         });
-        ctx.globalAlpha = 1;
       }
+      timing.branchBaseMs += performance.now() - circularBranchStartTime;
 
       if (searchMatches.length > 0) {
         const drawSearchBranches = (
@@ -2490,109 +2900,370 @@ export default function TreeCanvas({
         | { mode: "band"; innerRadiusPx: number; outerRadiusPx: number; startTheta: number; endTheta: number; color: string }
       > = [];
       let circularGenusBaseFontSize = 0;
-      if (taxonomyEnabled && taxonomyBlocks && renderTaxonomyBands) {
-        let visibleRanks = visibleTaxonomyRanks;
-        const visibleLeafCount = visibleLeafRangeCount(visibleLeafRanges);
-        if (visibleLeafCount > 0 && visibleLeafCount < Math.max(1, tree.leafCount - 16)) {
-          while (visibleRanks.length > 1) {
-            const candidateRank = visibleRanks[visibleRanks.length - 1];
-            let sharedLabel: string | null = null;
-            let mixed = false;
-            for (let rangeIndex = 0; rangeIndex < visibleLeafRanges.length && !mixed; rangeIndex += 1) {
-              const range = visibleLeafRanges[rangeIndex];
-              for (let leafIndex = range.startIndex; leafIndex < range.endIndex; leafIndex += 1) {
-                const node = orderedLeaves[leafIndex];
-                const label = taxonomyTipRanksByNode.get(node)?.[candidateRank] ?? null;
-                if (!label) {
-                  mixed = true;
-                  break;
-                }
-                if (sharedLabel === null) {
-                  sharedLabel = label;
-                } else if (sharedLabel !== label) {
-                  mixed = true;
-                  break;
-                }
-              }
-            }
-            if (!mixed && sharedLabel) {
-              visibleRanks = visibleRanks.slice(0, -1);
-              continue;
-            }
-            break;
-          }
-        }
+      const circularTaxonomyOverlayStartTime = performance.now();
+      if (taxonomyEnabled && taxonomyBlocks) {
+        const visibleRanks = visibleTaxonomyRanks;
         const baseFontSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
         circularGenusBaseFontSize = baseFontSize;
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, baseFontSize);
         const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx;
+        const viewportCenterRenderedTheta = wrapPositive(Math.atan2((size.height * 0.5) - centerPoint.y, (size.width * 0.5) - centerPoint.x));
         let ringCursorOuterPx = tipBandOuterRadiusPx + 18;
         const placedLabels: ScreenLabel[] = [];
+        const placedKeys: string[] = [];
+        const arcKeys: string[] = [];
+        const taxonomyCandidateDebug: Array<Record<string, unknown>> = [];
+        const previousTaxonomyState = taxonomyLabelHistoryRef.current;
+        const preservedKeys = previousTaxonomyState
+          && previousTaxonomyState.tree === tree
+          && previousTaxonomyState.viewMode === "circular"
+          && previousTaxonomyState.order === order
+          && camera.scale > previousTaxonomyState.zoom + 1e-6
+          ? previousTaxonomyState.peakVisibleKeys
+          : [];
+        const preservedKeySet = new Set(preservedKeys);
         const connectorArcs: Array<
-          { mode: "band"; innerRadiusPx: number; outerRadiusPx: number; startTheta: number; endTheta: number; color: string }
+          { mode: "stroke"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; color: string }
         > = [];
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
-          const blocks = taxonomyBlocks[order][rank];
+          const rankKeyPrefix = `${rank}:`;
+          const blocksForRank: TaxonomyBlock[] = taxonomyBlocks[order][rank];
+          const blockByKey = new Map<string, TaxonomyBlock>();
+          for (let blockIndex = 0; blockIndex < blocksForRank.length; blockIndex += 1) {
+            blockByKey.set(`${rank}:${blocksForRank[blockIndex].label}:${blocksForRank[blockIndex].centerNode}`, blocksForRank[blockIndex]);
+          }
+          const orderedBlocks: TaxonomyBlock[] = [];
+          for (let preservedIndex = 0; preservedIndex < preservedKeys.length; preservedIndex += 1) {
+            const key = preservedKeys[preservedIndex];
+            if (!key.startsWith(rankKeyPrefix)) {
+              continue;
+            }
+            const preservedBlock = blockByKey.get(key);
+            if (preservedBlock) {
+              orderedBlocks.push(preservedBlock);
+              blockByKey.delete(key);
+            }
+          }
+          orderedBlocks.push(...blockByKey.values());
+          orderedBlocks.sort((left, right) => {
+            const leftTips = (left.segments ?? []).reduce((total, segment) => {
+              const end = segment.endIndex >= segment.startIndex ? segment.endIndex : segment.endIndex + tree.leafCount;
+              return total + Math.max(0, end - segment.startIndex);
+            }, 0);
+            const rightTips = (right.segments ?? []).reduce((total, segment) => {
+              const end = segment.endIndex >= segment.startIndex ? segment.endIndex : segment.endIndex + tree.leafCount;
+              return total + Math.max(0, end - segment.startIndex);
+            }, 0);
+            if (rightTips !== leftTips) {
+              return rightTips - leftTips;
+            }
+            return (left.startIndex ?? 0) - (right.startIndex ?? 0);
+          });
           const ringWidthPx = metrics.ringWidthsPx[rankIndex];
           const ringInnerPx = ringCursorOuterPx;
           ringCursorOuterPx += ringWidthPx;
-          const ringOuterPx = ringCursorOuterPx;
           const lineRadiusPx = ringInnerPx + (ringWidthPx * 0.5);
           const lineRadius = lineRadiusPx / camera.scale;
-          for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
-            const block = blocks[blockIndex];
+          const ringVisibleSpans = computeVisibleCircularAngleSpans(
+            centerPoint.x,
+            centerPoint.y,
+            lineRadiusPx,
+            size.width,
+            size.height,
+            120,
+          );
+          const occupiedIntervalsForRank: Array<{ start: number; end: number }> = [];
+          for (let blockIndex = 0; blockIndex < orderedBlocks.length; blockIndex += 1) {
+            const block = orderedBlocks[blockIndex];
             if (hiddenNodes[block.centerNode]) {
               continue;
             }
-            const startTheta = thetaFor(layout.center, block.firstNode, tree.leafCount);
-            const endTheta = thetaFor(layout.center, block.lastNode, tree.leafCount);
-            let renderStartTheta = startTheta;
-            let renderEndTheta = endTheta;
-            if (renderEndTheta < renderStartTheta) {
-              renderEndTheta += Math.PI * 2;
+            const blockKey = `${rank}:${block.label}:${block.centerNode}`;
+            const isPreservedLabel = preservedKeySet.has(blockKey);
+            const blockSegments = block.segments && block.segments.length > 0
+              ? block.segments
+              : [{ firstNode: block.firstNode, lastNode: block.lastNode, startIndex: 0, endIndex: 0 }];
+            const totalTipCount = blockSegments.reduce((total, segment) => {
+              const start = segment.startIndex;
+              const end = segment.endIndex >= start ? segment.endIndex : segment.endIndex + tree.leafCount;
+              return total + Math.max(0, end - start);
+            }, 0);
+            for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
+              const segment = blockSegments[segmentIndex];
+              const { startTheta, endTheta } = thetaSpanForLeafRange(tree.leafCount, segment.startIndex, segment.endIndex);
+              const renderedWrappedStart = wrapPositive(startTheta + rotationAngle);
+              const renderedWrappedEnd = wrapPositive(endTheta + rotationAngle);
+              const visibleSpan = bestVisibleTaxonomyLabelSpan(renderedWrappedStart, renderedWrappedEnd, ringVisibleSpans);
+              const candidateStart = visibleSpan?.start ?? renderedWrappedStart;
+              const candidateEnd = visibleSpan?.end ?? renderedWrappedEnd;
+              const candidateArcLengthPx = ((candidateEnd >= candidateStart ? candidateEnd - candidateStart : (candidateEnd + (Math.PI * 2)) - candidateStart)) * lineRadiusPx;
+              if (candidateArcLengthPx >= 0.25) {
+                const angularGapPx = candidateArcLengthPx < 8
+                  ? 0
+                  : Math.max(0.2, Math.min(2.2, Math.min(candidateArcLengthPx * 0.04, ringWidthPx * 0.08)));
+                const gapTheta = Math.min(
+                  ((angularGapPx / Math.max(lineRadiusPx, 1e-6)) * 0.5),
+                  Math.max(0, (endTheta - startTheta) * 0.26),
+                );
+                const insetStartTheta = startTheta + gapTheta;
+                const insetEndTheta = endTheta - gapTheta;
+                if (insetEndTheta <= insetStartTheta) {
+                  continue;
+                }
+                arcKeys.push(`${rank}:${block.label}:${segment.startIndex}:${segment.endIndex}`);
+                connectorArcs.push({
+                  mode: "stroke",
+                  lineRadiusPx,
+                  lineWidthPx: ringWidthPx * 0.92,
+                  startTheta: insetStartTheta,
+                  endTheta: insetEndTheta,
+                  color: block.color,
+                });
+              }
             }
-            connectorArcs.push({
-              mode: "band",
-              innerRadiusPx: ringInnerPx,
-              outerRadiusPx: ringOuterPx,
-              startTheta: renderStartTheta,
-              endTheta: renderEndTheta,
-              color: block.color,
-            });
-            const arcLengthPx = (renderEndTheta - renderStartTheta) * lineRadiusPx;
-            if (arcLengthPx < 36) {
+            let bestLabelCandidate: {
+              theta: number;
+              visibleStart: number;
+              visibleEnd: number;
+              arcLengthPx: number;
+              spanTheta: number;
+            } | null = null;
+            const primaryLabelSegment = {
+              firstNode: orderedLeaves[block.labelStartIndex ?? block.startIndex ?? blockSegments[0].startIndex],
+              lastNode: orderedLeaves[((block.labelEndIndex ?? block.endIndex ?? blockSegments[0].endIndex) - 1 + orderedLeaves.length) % orderedLeaves.length],
+              startIndex: block.labelStartIndex ?? block.startIndex ?? blockSegments[0].startIndex,
+              endIndex: block.labelEndIndex ?? block.endIndex ?? blockSegments[0].endIndex,
+            };
+            const labelSegments = [primaryLabelSegment];
+            for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
+              const segment = blockSegments[segmentIndex];
+              if (segment.startIndex === primaryLabelSegment.startIndex && segment.endIndex === primaryLabelSegment.endIndex) {
+                continue;
+              }
+              labelSegments.push(segment);
+            }
+            for (let segmentIndex = 0; segmentIndex < labelSegments.length; segmentIndex += 1) {
+              const segment = labelSegments[segmentIndex];
+              const { startTheta, endTheta } = thetaSpanForLeafRange(tree.leafCount, segment.startIndex, segment.endIndex);
+              let renderStartTheta = startTheta;
+              let renderEndTheta = endTheta;
+              if (renderEndTheta < renderStartTheta) {
+                renderEndTheta += Math.PI * 2;
+              }
+              const renderedWrappedStart = wrapPositive(renderStartTheta + rotationAngle);
+              const renderedWrappedEnd = wrapPositive(renderEndTheta + rotationAngle);
+              const visibleSpans = lockTaxonomyLabelsToClade
+                ? []
+                : visibleTaxonomyLabelSpans(renderedWrappedStart, renderedWrappedEnd, ringVisibleSpans);
+              const fallbackViewportSpan = !lockTaxonomyLabelsToClade && blockSegments.length === 1
+                && wrappedAngleWithinInterval(viewportCenterRenderedTheta, renderedWrappedStart, renderedWrappedEnd)
+                ? ringVisibleSpans.reduce<{ start: number; end: number } | null>((best, span) => {
+                  if (!best || (span.end - span.start) > (best.end - best.start)) {
+                    return span;
+                  }
+                  return best;
+                }, null)
+                : null;
+              const totalRenderedSpan = renderEndTheta - renderStartTheta;
+              const totalMidTheta = renderStartTheta + (totalRenderedSpan * 0.5);
+              const renderedMidWrapped = wrapPositive(totalMidTheta + rotationAngle);
+              const fullLabelPoint = worldToScreenCircular(
+                camera,
+                Math.cos(totalMidTheta) * lineRadius,
+                Math.sin(totalMidTheta) * lineRadius,
+              );
+              const fullMidVisible = isScreenPointVisible(fullLabelPoint.x, fullLabelPoint.y, size.width, size.height, 24);
+              if (fullMidVisible) {
+                const candidateArcLengthPx = totalRenderedSpan * lineRadiusPx;
+                if (!bestLabelCandidate || candidateArcLengthPx > bestLabelCandidate.arcLengthPx) {
+                  bestLabelCandidate = {
+                    theta: totalMidTheta,
+                    visibleStart: renderedWrappedStart,
+                    visibleEnd: renderedWrappedEnd >= renderedWrappedStart ? renderedWrappedEnd : renderedWrappedEnd + (Math.PI * 2),
+                    arcLengthPx: candidateArcLengthPx,
+                    spanTheta: totalRenderedSpan,
+                  };
+                }
+              } else {
+                const visibleCandidates = visibleSpans.length > 0 ? visibleSpans : (fallbackViewportSpan ? [fallbackViewportSpan] : []);
+                for (let visibleIndex = 0; visibleIndex < visibleCandidates.length; visibleIndex += 1) {
+                  const candidateStart = visibleCandidates[visibleIndex].start;
+                  const candidateEnd = visibleCandidates[visibleIndex].end;
+                  const candidateSpan = candidateEnd >= candidateStart
+                    ? candidateEnd - candidateStart
+                    : (candidateEnd + (Math.PI * 2)) - candidateStart;
+                  const renderedMidTheta = chooseVisibleTaxonomyAnchorTheta(renderedMidWrapped, {
+                    start: candidateStart,
+                    end: candidateEnd,
+                  });
+                  const candidatePoint = worldToScreenCircular(
+                    camera,
+                    Math.cos(renderedMidTheta - rotationAngle) * lineRadius,
+                    Math.sin(renderedMidTheta - rotationAngle) * lineRadius,
+                  );
+                  if (!isScreenPointVisible(candidatePoint.x, candidatePoint.y, size.width, size.height, 24)) {
+                    continue;
+                  }
+                  const candidateArcLengthPx = candidateSpan * lineRadiusPx;
+                  if (!bestLabelCandidate || candidateArcLengthPx > bestLabelCandidate.arcLengthPx) {
+                    bestLabelCandidate = {
+                      theta: renderedMidTheta - rotationAngle,
+                      visibleStart: candidateStart,
+                      visibleEnd: candidateEnd >= candidateStart ? candidateEnd : candidateEnd + (Math.PI * 2),
+                      arcLengthPx: candidateArcLengthPx,
+                      spanTheta: candidateSpan,
+                    };
+                  }
+                }
+              }
+            }
+            if (!bestLabelCandidate || bestLabelCandidate.arcLengthPx < (isPreservedLabel ? 12 : 24)) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "arc-too-short",
+                arcLengthPx: bestLabelCandidate?.arcLengthPx ?? 0,
+              });
               continue;
             }
-            const midTheta = renderStartTheta + ((renderEndTheta - renderStartTheta) * 0.5);
-            const labelRadius = lineRadius;
-            const fontSize = Math.max(baseFontSize, Math.min(22, baseFontSize + Math.min(8, arcLengthPx * 0.012)));
+            if (totalTipCount <= 1) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "single-tip-block",
+                arcLengthPx: bestLabelCandidate.arcLengthPx,
+              });
+              continue;
+            }
+            const minFontSize = isPreservedLabel ? 6 : 7.5;
+            const paddingFraction = 0.12;
+            ctx.font = `1px ${LABEL_FONT}`;
+            let textMetrics = ctx.measureText(block.label);
+            const widthAtOnePx = Math.max(textMetrics.width, 1e-6);
+            const heightAtOnePx = Math.max(
+              (textMetrics.actualBoundingBoxAscent || 0.72) + (textMetrics.actualBoundingBoxDescent || 0.28),
+              1e-6,
+            );
+            const availableArcPx = Math.max(0, bestLabelCandidate.arcLengthPx * (1 - paddingFraction));
+            const availableRadialPx = Math.max(0, ringWidthPx * (1 - paddingFraction));
+            const fitFontSize = Math.min(30, Math.min(
+              availableArcPx / widthAtOnePx,
+              availableRadialPx / heightAtOnePx,
+            ) * 0.94);
+            if (!Number.isFinite(fitFontSize) || fitFontSize < minFontSize) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "font-too-small",
+                arcLengthPx: bestLabelCandidate.arcLengthPx,
+                fitFontSize,
+              });
+              continue;
+            }
+            const fontSize = Math.max(minFontSize, Math.min(30, fitFontSize));
+            ctx.font = `${fontSize}px ${LABEL_FONT}`;
+            textMetrics = ctx.measureText(block.label);
+            const radialHeightPx = (textMetrics.actualBoundingBoxAscent || (fontSize * 0.72))
+              + (textMetrics.actualBoundingBoxDescent || (fontSize * 0.28));
+            const finalFontSize = fontSize;
+            const overflowTolerancePx = isPreservedLabel ? 1.6 : 1.1;
+            if (textMetrics.width > (availableArcPx + 0.5) || radialHeightPx > (availableRadialPx + overflowTolerancePx)) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "text-overflow",
+                arcLengthPx: bestLabelCandidate.arcLengthPx,
+                fontSize: finalFontSize,
+                textWidth: textMetrics.width,
+                availableArcPx,
+                radialHeightPx,
+                availableRadialPx,
+              });
+              continue;
+            }
+            const ascent = textMetrics.actualBoundingBoxAscent || (fontSize * 0.72);
+            const descent = textMetrics.actualBoundingBoxDescent || (fontSize * 0.28);
+            const radialTextOffsetPx = ((ascent - descent) * 0.5)
+              + ((Math.sin(bestLabelCandidate.theta) >= 0 ? -1 : 1) * Math.max(0.5, ringWidthPx * 0.04));
             const labelPoint = worldToScreenCircular(
               camera,
-              Math.cos(midTheta) * labelRadius,
-              Math.sin(midTheta) * labelRadius,
+              Math.cos(bestLabelCandidate.theta) * lineRadius,
+              Math.sin(bestLabelCandidate.theta) * lineRadius,
             );
-            if (
-              labelPoint.x < -120 || labelPoint.x > size.width + 120 ||
-              labelPoint.y < -120 || labelPoint.y > size.height + 120
-            ) {
-              continue;
-            }
-            const tangentDegrees = ((midTheta + rotationAngle) * 180 / Math.PI) + 90;
-            const onRightSide = Math.cos(midTheta + rotationAngle) >= 0;
+            const renderedTheta = bestLabelCandidate.theta + rotationAngle;
+            const tangentDegrees = (renderedTheta * 180 / Math.PI) + 90;
+            const onRightSide = Math.cos(renderedTheta) >= 0;
             const rotation = normalizeRotation(onRightSide ? tangentDegrees : tangentDegrees + 180);
-            if (!canPlaceLinearLabel(placedLabels, labelPoint.x, labelPoint.y, Math.max(ringWidthPx * 0.9, fontSize * 1.1), fontSize * 6.2)) {
+            const labelPointVisible = isScreenPointVisible(labelPoint.x, labelPoint.y, size.width, size.height, Math.max(fontSize * 1.5, 18));
+            if (!labelPointVisible) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "offscreen",
+                arcLengthPx: bestLabelCandidate.arcLengthPx,
+                fontSize: finalFontSize,
+                x: labelPoint.x,
+                y: labelPoint.y,
+              });
               continue;
             }
-            placedLabels.push({
+            const labelRecord: ScreenLabel = {
               x: labelPoint.x,
               y: labelPoint.y,
               text: block.label,
+              key: blockKey,
+              rank,
+              theta: wrapPositive(renderedTheta),
               alpha: 1,
-              fontSize,
+              fontSize: finalFontSize,
               rotation: rotation * Math.PI / 180,
               align: "center",
               color: taxonomyTextColor(block.color),
+              offsetY: radialTextOffsetPx,
+              clipArc: {
+                innerRadiusPx: ringInnerPx,
+                outerRadiusPx: ringInnerPx + ringWidthPx,
+                startTheta: bestLabelCandidate.visibleStart - rotationAngle,
+                endTheta: bestLabelCandidate.visibleEnd - rotationAngle,
+              },
+            };
+            if (!isPreservedLabel && !canPlaceTaxonomyArcLabel(
+              occupiedIntervalsForRank,
+              wrapPositive(renderedTheta),
+              lineRadiusPx,
+              textMetrics.width,
+              bestLabelCandidate.spanTheta,
+            )) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "label-collision",
+                arcLengthPx: bestLabelCandidate.arcLengthPx,
+                fontSize: finalFontSize,
+              });
+              continue;
+            }
+            placedLabels.push(labelRecord);
+            for (const interval of splitWrappedAngularInterval(
+              wrapPositive(renderedTheta) - ((textMetrics.width / Math.max(lineRadiusPx, 1e-6)) * 0.5) - Math.max(0, bestLabelCandidate.spanTheta * 0.06),
+              wrapPositive(renderedTheta) + ((textMetrics.width / Math.max(lineRadiusPx, 1e-6)) * 0.5) + Math.max(0, bestLabelCandidate.spanTheta * 0.06),
+            )) {
+              occupiedIntervalsForRank.push(interval);
+            }
+            placedKeys.push(blockKey);
+            taxonomyCandidateDebug.push({
+              rank,
+              label: block.label,
+              accepted: true,
+              arcLengthPx: bestLabelCandidate.arcLengthPx,
+              fontSize: finalFontSize,
             });
           }
           ringCursorOuterPx += metrics.ringGapPx;
@@ -2600,6 +3271,7 @@ export default function TreeCanvas({
         circularGenusLabels = placedLabels;
         circularGenusArcs = connectorArcs;
         renderDebug.circular = {
+          visibleCircleFraction,
           cueVisible: tipLabelCueVisible,
           microVisible: microTipLabelsVisible,
           tipVisible: tipLabelsVisible,
@@ -2608,14 +3280,29 @@ export default function TreeCanvas({
           tipBandAnchorRadiusPx: tipBandAnchorRadius * camera.scale,
           visibleTipLabelCount: circularVisibleTipLabels.length,
           genusGapPx: null,
-          genusLineRadiusPx: connectorArcs[0]
-            ? (connectorArcs[0].innerRadiusPx + connectorArcs[0].outerRadiusPx) * 0.5
-            : null,
+          genusLineRadiusPx: connectorArcs[0]?.lineRadiusPx ?? null,
           visibleLeafRanges: visibleLeafRanges.map((range) => [range.startIndex, range.endIndex]),
           taxonomyVisibleRanks: visibleRanks,
+          taxonomyBlockCounts: Object.fromEntries(
+            TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[order][rank]?.length ?? 0]),
+          ),
+          taxonomyArcKeys: arcKeys,
+          taxonomyLabelKeys: placedKeys,
+          taxonomyPlacedLabels: placedLabels.map((label) => ({
+            key: label.key ?? null,
+            rank: label.rank ?? null,
+            theta: label.theta ?? null,
+            text: label.text,
+            x: label.x,
+            y: label.y,
+            fontSize: label.fontSize ?? 0,
+            rotation: label.rotation ?? 0,
+            clipArc: label.clipArc ?? null,
+          })),
+          taxonomyCandidateDebug,
           taxonomyTipBandOuterRadiusPx: tipBandOuterRadiusPx,
           taxonomyFirstRingInnerRadiusPx: connectorArcs.length > 0
-            ? connectorArcs[0].innerRadiusPx
+            ? connectorArcs[0].lineRadiusPx - (connectorArcs[0].lineWidthPx * 0.5)
             : null,
         };
         genusLabelHistoryRef.current = {
@@ -2627,7 +3314,20 @@ export default function TreeCanvas({
           peakZoom: camera.scale,
           peakVisibleCenters: [],
         };
-      } else if (showGenusLabels) {
+        taxonomyLabelHistoryRef.current = {
+          tree,
+          viewMode: "circular",
+          order,
+          zoom: camera.scale,
+          visibleKeys: placedKeys,
+          peakZoom: previousTaxonomyState && previousTaxonomyState.tree === tree && previousTaxonomyState.viewMode === "circular" && previousTaxonomyState.order === order
+            ? Math.max(previousTaxonomyState.peakZoom, camera.scale)
+            : camera.scale,
+          peakVisibleKeys: previousTaxonomyState && previousTaxonomyState.tree === tree && previousTaxonomyState.viewMode === "circular" && previousTaxonomyState.order === order && camera.scale > previousTaxonomyState.zoom + 1e-6
+            ? Array.from(new Set([...previousTaxonomyState.peakVisibleKeys, ...placedKeys]))
+            : placedKeys,
+        };
+      } else if (!taxonomyEnabled && showGenusLabels) {
         const priorityBlocks = cache.genusBlocksPriority[order];
         const positionalBlocks = cache.genusBlocks[order];
         const previousGenusState = genusLabelHistoryRef.current;
@@ -2841,6 +3541,7 @@ export default function TreeCanvas({
           peakVisibleCenters: [],
         };
       }
+      timing.taxonomyOverlayMs += performance.now() - circularTaxonomyOverlayStartTime;
       if (circularGenusArcs.length > 0) {
         for (let index = 0; index < circularGenusArcs.length; index += 1) {
           const arc = circularGenusArcs[index];
@@ -2855,10 +3556,6 @@ export default function TreeCanvas({
           } else {
             ctx.lineWidth = arc.lineWidthPx;
             ctx.beginPath();
-            ctx.moveTo(
-              centerPoint.x + Math.cos(arc.startTheta + rotationAngle) * arc.lineRadiusPx,
-              centerPoint.y + Math.sin(arc.startTheta + rotationAngle) * arc.lineRadiusPx,
-            );
             ctx.arc(centerPoint.x, centerPoint.y, arc.lineRadiusPx, arc.startTheta + rotationAngle, arc.endTheta + rotationAngle, false);
             ctx.strokeStyle = arc.color;
             ctx.stroke();
@@ -3027,6 +3724,15 @@ export default function TreeCanvas({
         const label = circularGenusLabels[index];
         ctx.font = `${label.fontSize ?? circularGenusBaseFontSize}px ${LABEL_FONT}`;
         ctx.save();
+        if (label.clipArc) {
+          const clipStart = label.clipArc.startTheta + rotationAngle;
+          const clipEnd = label.clipArc.endTheta + rotationAngle;
+          ctx.beginPath();
+          ctx.arc(centerPoint.x, centerPoint.y, label.clipArc.outerRadiusPx, clipStart, clipEnd, false);
+          ctx.arc(centerPoint.x, centerPoint.y, label.clipArc.innerRadiusPx, clipEnd, clipStart, true);
+          ctx.closePath();
+          ctx.clip();
+        }
         ctx.translate(label.x, label.y);
         ctx.rotate(label.rotation ?? 0);
         ctx.textAlign = label.align ?? "left";
@@ -3034,10 +3740,10 @@ export default function TreeCanvas({
           ctx,
           label.text,
           0,
-          0,
+          label.offsetY ?? 0,
           label.align ?? "left",
-          GENUS_COLOR,
-          label.color ?? null,
+          label.color ?? GENUS_COLOR,
+          searchQuery ? "#2563eb" : null,
           findSearchMatchRange(label.text, searchQuery),
         );
         ctx.restore();
@@ -3168,6 +3874,8 @@ export default function TreeCanvas({
       }
     }
     renderDebugRef.current = renderDebug;
+    timing.totalMs = performance.now() - drawStartTime;
+    renderDebug.timing = timing;
     if (typeof window !== "undefined") {
       window.__BIG_TREE_VIEWER_RENDER_DEBUG__ = renderDebug;
     }
@@ -3178,6 +3886,8 @@ export default function TreeCanvas({
     collapsedView,
     collapsedNodes,
     fitCamera,
+    getCircularTaxonomyPaths,
+    getTaxonomyBranchColors,
     order,
     reservedTipLabelCharacters,
     searchQuery,
@@ -3217,8 +3927,14 @@ export default function TreeCanvas({
     previousViewModeRef.current = viewMode;
     const previousSize = previousSizeRef.current;
     previousSizeRef.current = size;
+    const previousTree = previousTreeRef.current;
+    previousTreeRef.current = tree;
+    const previousFitRequest = previousFitRequestRef.current;
+    previousFitRequestRef.current = fitRequest;
     const currentCamera = cameraRef.current;
     const sizeChanged = previousSize.width !== size.width || previousSize.height !== size.height;
+    const treeChanged = previousTree !== tree;
+    const fitRequested = previousFitRequest !== fitRequest;
     if (currentCamera && sizeChanged && previousViewMode === viewMode) {
       if (currentCamera.kind === "rect") {
         clampRectCamera(currentCamera, tree, size.width, size.height, rectClampPadding(currentCamera));
@@ -3233,7 +3949,11 @@ export default function TreeCanvas({
       draw();
       return;
     }
-    fitCamera();
+    if (!currentCamera || treeChanged || fitRequested) {
+      fitCamera();
+      return;
+    }
+    draw();
   }, [cache, convertCameraForViewMode, fitCamera, fitRequest, size, tree, viewMode]);
 
   const focusNodeTarget = useCallback((targetNode: number, focusTargetKind: "genus" | "tip" | "node") => {
@@ -3862,6 +4582,18 @@ export default function TreeCanvas({
         return camera ? { ...camera } : null;
       },
       getRenderDebug: () => renderDebugRef.current,
+      getCurrentBranchColors: () => {
+        if (!tree || !taxonomyEnabled) {
+          return null;
+        }
+        const debug = renderDebugRef.current;
+        const visibleRanks = (
+          viewMode === "circular"
+            ? (debug?.circular as { taxonomyVisibleRanks?: TaxonomyRank[] } | undefined)?.taxonomyVisibleRanks
+            : (debug?.rect as { taxonomyVisibleRanks?: TaxonomyRank[] } | undefined)?.taxonomyVisibleRanks
+        ) ?? [];
+        return getTaxonomyBranchColors(order, visibleRanks);
+      },
       fitView: () => {
         fitCamera();
         draw();
@@ -3903,11 +4635,22 @@ export default function TreeCanvas({
         clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
         draw();
       },
+      getLeafIndexMap: () => {
+        if (!cache) {
+          return null;
+        }
+        const result: Record<number, number> = {};
+        const leaves = cache.orderedLeaves[order];
+        for (let index = 0; index < leaves.length; index += 1) {
+          result[leaves[index]] = index;
+        }
+        return result;
+      },
     };
     return () => {
       delete window.__BIG_TREE_VIEWER_CANVAS_TEST__;
     };
-  }, [circularClampExtraRadiusPx, draw, fitCamera, rectClampPadding, size.height, size.width, tree]);
+  }, [circularClampExtraRadiusPx, draw, fitCamera, getTaxonomyBranchColors, order, rectClampPadding, size.height, size.width, taxonomyEnabled, tree, viewMode]);
 
   const handleContextZoomToSubtree = useCallback(() => {
     if (!contextMenu) {

@@ -69,10 +69,20 @@ export interface ScreenLabel {
   y: number;
   text: string;
   alpha: number;
+  key?: string;
+  rank?: string;
+  theta?: number;
   fontSize?: number;
   rotation?: number;
   align?: CanvasTextAlign;
   color?: string;
+  offsetY?: number;
+  clipArc?: {
+    innerRadiusPx: number;
+    outerRadiusPx: number;
+    startTheta: number;
+    endTheta: number;
+  };
 }
 
 export interface LabelHitbox {
