@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
+import { getCachedTaxonomyArchive, putCachedTaxonomyArchive } from "./lib/taxonomyCache";
 import type { WorkerResponse } from "./types/messages";
+import type { TaxonomyMapPayload } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 
@@ -109,6 +111,13 @@ interface SearchResult {
   kind: "node" | "genus";
   node: number;
   displayName: string;
+}
+
+interface TaxonomyWorkerResponse {
+  type: "taxonomy-progress" | "taxonomy-downloaded" | "taxonomy-mapped" | "taxonomy-error";
+  message?: string;
+  archive?: ArrayBuffer;
+  payload?: TaxonomyMapPayload;
 }
 
 function buildTreeModel(payload: WorkerTreePayload): TreeModel {
@@ -253,6 +262,7 @@ export default function App() {
   const [dataOpen, setDataOpen] = useSessionDisclosure("section-data", true);
   const [viewOpen, setViewOpen] = useSessionDisclosure("section-view", true);
   const [visualOpen, setVisualOpen] = useSessionDisclosure("section-visual", false);
+  const [taxonomyOpen, setTaxonomyOpen] = useSessionDisclosure("section-taxonomy", false);
   const [searchOpen, setSearchOpen] = useSessionDisclosure("section-search", false);
   const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
@@ -260,6 +270,12 @@ export default function App() {
   const [showPasteInput, setShowPasteInput] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
+  const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
+  const [taxonomyLoading, setTaxonomyLoading] = useState(false);
+  const [taxonomyStatus, setTaxonomyStatus] = useState("");
+  const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+  const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
+  const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
   const handleHoverChange = useCallback(() => {}, []);
 
   const searchResults = useMemo(() => {
@@ -448,6 +464,39 @@ export default function App() {
     });
   }, [ensureWorker]);
 
+  const runTaxonomyWorker = useCallback((request: { type: "download-taxonomy" } | { type: "map-taxonomy"; archive: ArrayBuffer; tips: Array<{ node: number; name: string }> }): Promise<TaxonomyWorkerResponse> => {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(new URL("./workers/taxonomyWorker.ts", import.meta.url), { type: "module" });
+      const cleanup = (): void => {
+        worker.terminate();
+      };
+      worker.addEventListener("message", (event: MessageEvent<TaxonomyWorkerResponse>) => {
+        const data = event.data;
+        if (data.type === "taxonomy-progress") {
+          setTaxonomyStatus(data.message ?? "");
+          return;
+        }
+        cleanup();
+        resolve(data);
+      });
+      worker.addEventListener("error", (event) => {
+        cleanup();
+        reject(event.error ?? new Error(event.message || "Taxonomy worker failed."));
+      });
+      worker.postMessage(
+        request,
+        request.type === "map-taxonomy" ? [request.archive] : [],
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const cached = await getCachedTaxonomyArchive();
+      setTaxonomyCached(cached !== null);
+    })();
+  }, []);
+
   const loadSubtreeFromUrl = useCallback(async (): Promise<boolean> => {
     if (typeof window === "undefined") {
       return false;
@@ -509,6 +558,8 @@ export default function App() {
     if (!tree) {
       return;
     }
+    setTaxonomyMap(null);
+    setTaxonomyEnabled(false);
     setFitRequest((value) => value + 1);
   }, [tree]);
 
@@ -556,6 +607,59 @@ export default function App() {
       await parseText(plainText, "dropped tree text");
     }
   }, [parseText]);
+
+  const downloadTaxonomy = useCallback(async (): Promise<void> => {
+    setTaxonomyLoading(true);
+    setTaxonomyError(null);
+    setTaxonomyStatus("Preparing taxonomy download...");
+    try {
+      const response = await runTaxonomyWorker({ type: "download-taxonomy" });
+      if (response.type !== "taxonomy-downloaded" || !response.archive) {
+        throw new Error(response.message || "Taxonomy download did not complete.");
+      }
+      await putCachedTaxonomyArchive(new Blob([response.archive], { type: "application/zip" }));
+      setTaxonomyCached(true);
+      setTaxonomyStatus("Taxonomy download cached locally.");
+    } catch (error) {
+      setTaxonomyError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaxonomyLoading(false);
+    }
+  }, [runTaxonomyWorker]);
+
+  const runTaxonomyMapping = useCallback(async (): Promise<void> => {
+    if (!tree) {
+      return;
+    }
+    setTaxonomyLoading(true);
+    setTaxonomyError(null);
+    setTaxonomyStatus("Loading taxonomy cache...");
+    try {
+      const archive = await getCachedTaxonomyArchive();
+      if (!archive) {
+        throw new Error("Taxonomy cache not found. Download the taxonomy first.");
+      }
+      const tips = Array.from(tree.leafNodes, (node) => ({
+        node,
+        name: tree.names[node] || "",
+      }));
+      const response = await runTaxonomyWorker({
+        type: "map-taxonomy",
+        archive: await archive.arrayBuffer(),
+        tips,
+      });
+      if (response.type !== "taxonomy-mapped" || !response.payload) {
+        throw new Error(response.message || "Taxonomy mapping did not complete.");
+      }
+      setTaxonomyMap(response.payload);
+      setTaxonomyEnabled(true);
+      setTaxonomyStatus(`Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips.`);
+    } catch (error) {
+      setTaxonomyError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaxonomyLoading(false);
+    }
+  }, [runTaxonomyWorker, tree]);
 
   const stepSearch = (direction: -1 | 1): void => {
     if (searchResults.length === 0) {
@@ -828,6 +932,39 @@ export default function App() {
           </div>
         </PanelSection>
 
+        <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)}>
+          <div className="search-controls">
+            {taxonomyCached ? (
+              <p className="status-line">Taxonomy cache found.</p>
+            ) : (
+              <div className="button-row">
+                <button type="button" className="secondary" disabled={taxonomyLoading} onClick={() => void downloadTaxonomy()}>
+                  Download Taxonomy
+                </button>
+              </div>
+            )}
+            {taxonomyCached ? (
+              <div className="button-row">
+                <button type="button" className="secondary" disabled={taxonomyLoading || !tree} onClick={() => void runTaxonomyMapping()}>
+                  Run Taxonomy Mapping
+                </button>
+              </div>
+            ) : null}
+            {taxonomyMap ? (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={taxonomyEnabled}
+                  onChange={(event) => setTaxonomyEnabled(event.target.checked)}
+                />
+                Show taxonomy overlays
+              </label>
+            ) : null}
+            {taxonomyStatus ? <p className="status-line">{taxonomyStatus}</p> : null}
+            {taxonomyError ? <p className="status-error">{taxonomyError}</p> : null}
+          </div>
+        </PanelSection>
+
         <PanelSection title="Search" isOpen={searchOpen} onToggle={() => setSearchOpen(!searchOpen)}>
           <div className="search-controls">
             <div className="search-input-wrap">
@@ -933,6 +1070,8 @@ export default function App() {
           showTimeStripes={showTimeStripes}
           showScaleBars={showScaleBars}
           showGenusLabels={showGenusLabels}
+          taxonomyEnabled={taxonomyEnabled}
+          taxonomyMap={taxonomyMap}
           showNodeHeightLabels={showNodeHeightLabels}
           searchQuery={searchQuery}
           searchMatches={searchMatches}

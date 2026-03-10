@@ -1,4 +1,5 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
+import type { TaxonomyMapPayload } from "../types/taxonomy";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
 
 export interface TreeCanvasProps {
@@ -10,6 +11,8 @@ export interface TreeCanvasProps {
   showTimeStripes: boolean;
   showScaleBars: boolean;
   showGenusLabels: boolean;
+  taxonomyEnabled: boolean;
+  taxonomyMap: TaxonomyMapPayload | null;
   showNodeHeightLabels: boolean;
   searchQuery: string;
   searchMatches: number[];

@@ -17,6 +17,8 @@ These are in place and do not need to stay on the active backlog:
 - drag-and-drop tree loading
 - basic current-view SVG export
 - basic NEXUS import support
+- local taxonomy cache download and taxonomy-to-tip mapping
+- taxonomy overlays in rectangular columns and circular rings
 
 ## Active Feature Areas
 
@@ -85,17 +87,11 @@ These are in place and do not need to stay on the active backlog:
 
 ### 8. Taxonomy Integration
 
-- Add an optional mode that downloads the NCBI taxonomy dump locally.
-- Parse and index taxonomy data for local lookup.
-- Map taxonomic groups to tree tips.
-- Use taxonomy group membership to color branches, tips, or subtrees.
-- Keep taxonomy support optional so the base viewer remains lightweight.
-
-### 9. Deployment Targets
-
-- Keep supporting the web app as the primary deployment target.
-- Add possible future support for distributing the app as a Tauri desktop application.
-- Keep new feature logic platform-neutral where possible.
+- Refine taxonomy-ring color assignment to better mirror the original `auto-tree` hierarchical color behavior.
+- Add clearer controls for which taxonomy ranks are shown.
+- Add legends or rank headers for taxonomy overlays.
+- Extend taxonomy overlays to interact cleanly with future branch-color and metadata overlays.
+- Consider optional nearest-neighbor / inherited mapping behavior for unmapped tips if needed.
 
 ## Design and Architecture Work That Still Matters
 
