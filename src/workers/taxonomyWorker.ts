@@ -14,7 +14,7 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-error"; message: string };
 
 const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
-const TARGET_RANKS: TaxonomyRank[] = ["superkingdom", "phylum", "class", "order", "family", "genus"];
+const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };
 type ParsedTaxonomy = {
@@ -151,9 +151,11 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
   let mappedCount = 0;
   const rankToLabels = new Map<TaxonomyRank, Set<string>>();
   const rankToHits = new Map<TaxonomyRank, number>();
+  const rankToCounts = new Map<TaxonomyRank, Map<string, number>>();
   for (let index = 0; index < TARGET_RANKS.length; index += 1) {
     rankToLabels.set(TARGET_RANKS[index], new Set());
     rankToHits.set(TARGET_RANKS[index], 0);
+    rankToCounts.set(TARGET_RANKS[index], new Map());
   }
   for (let index = 0; index < tips.length; index += 1) {
     const tip = tips[index];
@@ -187,6 +189,10 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
       ranks[rank] = label;
       rankToLabels.get(rank)?.add(label);
       rankToHits.set(rank, (rankToHits.get(rank) ?? 0) + 1);
+      const counts = rankToCounts.get(rank);
+      if (counts) {
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+      }
       anyRank = true;
     }
     if (!anyRank) {
@@ -197,11 +203,20 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
   }
   const activeRanks = TARGET_RANKS.filter((rank) => (rankToLabels.get(rank)?.size ?? 0) > 1);
   while (activeRanks.length > 1) {
-    const topRank = activeRanks[0];
-    const uniqueCount = rankToLabels.get(topRank)?.size ?? 0;
-    const coverage = mappedCount > 0 ? (rankToHits.get(topRank) ?? 0) / mappedCount : 0;
-    if (uniqueCount <= 1 || coverage >= 0.985) {
-      activeRanks.shift();
+    const topRank = activeRanks[activeRanks.length - 1];
+    const counts = rankToCounts.get(topRank);
+    const total = rankToHits.get(topRank) ?? 0;
+    if (!counts || total <= 0) {
+      break;
+    }
+    let dominant = 0;
+    counts.forEach((count) => {
+      if (count > dominant) {
+        dominant = count;
+      }
+    });
+    if ((dominant / total) > 0.8) {
+      activeRanks.pop();
       continue;
     }
     break;

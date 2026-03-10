@@ -136,7 +136,7 @@ function buildMockTaxonomyMap(tree: TreeModel): TaxonomyMapPayload {
   return {
     mappedCount: tree.leafNodes.length,
     totalTips: tree.leafNodes.length,
-    activeRanks: ["phylum", "class", "order", "family", "genus"],
+    activeRanks: ["genus", "family", "order", "class", "phylum"],
     tipRanks: Array.from(tree.leafNodes, (node) => {
       const genus = taxonomyToken(tree.names[node] || "");
       return {
