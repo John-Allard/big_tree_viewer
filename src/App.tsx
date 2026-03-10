@@ -120,6 +120,39 @@ interface TaxonomyWorkerResponse {
   payload?: TaxonomyMapPayload;
 }
 
+function taxonomyToken(name: string): string {
+  return normalizeSearchTarget(name).split(/ +/).filter(Boolean)[0] ?? "unknown";
+}
+
+function prefixGroup(value: string, length: number, suffix: string): string {
+  const base = value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  if (!base) {
+    return `unknown-${suffix}`;
+  }
+  return `${base.slice(0, Math.max(1, Math.min(length, base.length)))}${suffix}`;
+}
+
+function buildMockTaxonomyMap(tree: TreeModel): TaxonomyMapPayload {
+  return {
+    mappedCount: tree.leafNodes.length,
+    totalTips: tree.leafNodes.length,
+    tipRanks: Array.from(tree.leafNodes, (node) => {
+      const genus = taxonomyToken(tree.names[node] || "");
+      return {
+        node,
+        ranks: {
+          superkingdom: "cellular organisms",
+          phylum: prefixGroup(genus, 1, "-phy"),
+          class: prefixGroup(genus, 2, "-cls"),
+          order: prefixGroup(genus, 3, "-ord"),
+          family: prefixGroup(genus, 4, "-fam"),
+          genus,
+        },
+      };
+    }),
+  };
+}
+
 function buildTreeModel(payload: WorkerTreePayload): TreeModel {
   let minPositive = Number.POSITIVE_INFINITY;
   for (let node = 0; node < payload.nodeCount; node += 1) {
@@ -689,6 +722,8 @@ export default function App() {
         viewMode,
         order,
         showGenusLabels,
+        taxonomyEnabled,
+        taxonomyMappedCount: taxonomyMap?.mappedCount ?? 0,
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
         isUltrametric: tree?.isUltrametric ?? false,
@@ -696,12 +731,24 @@ export default function App() {
       setViewMode,
       setOrder,
       setShowGenusLabels,
+      setTaxonomyEnabled,
+      setMockTaxonomy: () => {
+        if (!tree) {
+          return;
+        }
+        setTaxonomyMap(buildMockTaxonomyMap(tree));
+        setTaxonomyEnabled(true);
+      },
+      clearTaxonomy: () => {
+        setTaxonomyMap(null);
+        setTaxonomyEnabled(false);
+      },
       requestFit: () => setFitRequest((value) => value + 1),
     };
     return () => {
       delete window.__BIG_TREE_VIEWER_APP_TEST__;
     };
-  }, [loadState.error, loadState.loading, order, showGenusLabels, tree, viewMode]);
+  }, [loadState.error, loadState.loading, order, showGenusLabels, taxonomyEnabled, taxonomyMap, tree, viewMode]);
 
   return (
     <div

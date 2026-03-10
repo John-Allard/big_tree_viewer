@@ -7,6 +7,9 @@ declare global {
       setViewMode: (mode: "rectangular" | "circular") => void;
       setOrder: (order: "input" | "desc" | "asc") => void;
       setShowGenusLabels: (visible: boolean) => void;
+      setTaxonomyEnabled: (visible: boolean) => void;
+      setMockTaxonomy: () => void;
+      clearTaxonomy: () => void;
       requestFit: () => void;
     };
     __BIG_TREE_VIEWER_RENDER_DEBUG__?: Record<string, unknown> | null;

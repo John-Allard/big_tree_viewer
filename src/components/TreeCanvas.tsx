@@ -115,6 +115,34 @@ function colorForTaxonomy(rank: TaxonomyRank, label: string): string {
   return `hsl(${hue}deg ${saturation}% ${lightness}%)`;
 }
 
+function taxonomyVisibleRanksForZoom(zoom: number): TaxonomyRank[] {
+  return TAXONOMY_RANKS.filter((rank) => zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+}
+
+function taxonomyTextColor(fill: string): string {
+  const match = /hsl\((\d+(?:\.\d+)?)deg\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%\)/i.exec(fill);
+  if (!match) {
+    return "#0f172a";
+  }
+  const lightness = Number.parseFloat(match[3]);
+  return lightness >= 64 ? "#0f172a" : "#f8fafc";
+}
+
+function taxonomyRingMetricsPx(rankCount: number, baseFontSize: number): {
+  ringWidthsPx: number[];
+  ringGapPx: number;
+  labelGapPx: number;
+} {
+  const ringBaseWidthPx = Math.max(12, baseFontSize * 1.45);
+  const outerRingWidthPx = ringBaseWidthPx * 1.45;
+  const ringGapPx = Math.max(4, baseFontSize * 0.32);
+  const labelGapPx = Math.max(12, baseFontSize * 1.0);
+  const ringWidthsPx = Array.from({ length: rankCount }, (_, index) => (
+    index === rankCount - 1 ? outerRingWidthPx : ringBaseWidthPx
+  ));
+  return { ringWidthsPx, ringGapPx, labelGapPx };
+}
+
 type RenderTaxonomyBlock = {
   rank: TaxonomyRank;
   label: string;
@@ -206,7 +234,11 @@ function drawHighlightedText(
   matchRange: { start: number; end: number } | null,
 ): void {
   const fullWidth = ctx.measureText(text).width;
-  const baseX = align === "right" ? x - fullWidth : x;
+  const baseX = align === "right"
+    ? x - fullWidth
+    : align === "center"
+      ? x - (fullWidth * 0.5)
+      : x;
   const previousAlign = ctx.textAlign;
   ctx.textAlign = "left";
   ctx.fillStyle = baseColor;
@@ -647,9 +679,9 @@ export default function TreeCanvas({
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
     const tipBandWidthPx = interpolateTipBandWidthPx(camera.scaleY, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx);
     if (taxonomyEnabled && taxonomyBlocks) {
-      const visibleRanks = TAXONOMY_RANKS.filter((rank) => camera.scaleY >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+      const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY);
       return {
-        right: tipBandWidthPx + 48 + (visibleRanks.length * 18) + 72,
+        right: tipBandWidthPx + 34 + (visibleRanks.length * 16) + 96,
       };
     }
     const labelFontSize = Math.max(4.5, Math.min(22, Math.max(genusFontSize, tipBandFontSize)));
@@ -673,8 +705,14 @@ export default function TreeCanvas({
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
     const tipBandWidthPx = interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx);
     if (taxonomyEnabled && taxonomyBlocks) {
-      const visibleRanks = TAXONOMY_RANKS.filter((rank) => angularSpacingPx >= TAXONOMY_LAYER_THRESHOLDS[rank]);
-      return tipBandWidthPx + 70 + (visibleRanks.length * 18);
+      const visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx);
+      const baseFontSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
+      const metrics = taxonomyRingMetricsPx(visibleRanks.length, baseFontSize);
+      const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
+        + (Math.max(0, visibleRanks.length - 1) * metrics.ringGapPx)
+        + metrics.labelGapPx
+        + 26;
+      return tipBandWidthPx + taxonomyWidthPx;
     }
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
@@ -1088,10 +1126,10 @@ export default function TreeCanvas({
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
       if (taxonomyEnabled && taxonomyBlocks) {
-        const visibleRanks = TAXONOMY_RANKS.filter((rank) => camera.scaleY >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+        const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY);
         const columnBaseX = tipSideX + globalTipLabelSpacePx + 18;
-        const columnWidth = 12;
-        const columnGap = 6;
+        const columnWidth = 13;
+        const columnGap = 5;
         ctx.textBaseline = "middle";
         ctx.textAlign = "left";
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
@@ -1116,9 +1154,9 @@ export default function TreeCanvas({
             ctx.fillRect(columnX, top, columnWidth, Math.max(2, bottom - top));
             const spanPx = bottom - top;
             if (spanPx >= 18) {
-              const fontSize = Math.max(9, Math.min(12, 9 + (spanPx * 0.03)));
+              const fontSize = Math.max(9, Math.min(12, 9 + (spanPx * 0.025)));
               ctx.font = `${fontSize}px ${LABEL_FONT}`;
-              ctx.fillStyle = "#334155";
+              ctx.fillStyle = taxonomyTextColor(block.color);
               ctx.fillText(block.label, columnX + columnWidth + 5, (top + bottom) * 0.5);
             }
           }
@@ -1134,6 +1172,7 @@ export default function TreeCanvas({
           genusBandX: columnBaseX,
           genusBandOffsetPx: columnBaseX - tipSideX,
           connectorXs: [],
+          taxonomyVisibleRanks: visibleRanks,
         };
         genusLabelHistoryRef.current = {
           tree,
@@ -1924,19 +1963,31 @@ export default function TreeCanvas({
         }
       }
       let circularGenusLabels: ScreenLabel[] = [];
-      let circularGenusArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number; color: string }> = [];
+      let circularGenusArcs: Array<
+        | { mode: "stroke"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; color: string }
+        | { mode: "band"; innerRadiusPx: number; outerRadiusPx: number; startTheta: number; endTheta: number; color: string }
+      > = [];
       let circularGenusBaseFontSize = 0;
       if (taxonomyEnabled && taxonomyBlocks) {
-        const visibleRanks = TAXONOMY_RANKS.filter((rank) => angularSpacingPx >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+        const visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx);
         const baseFontSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
         circularGenusBaseFontSize = baseFontSize;
+        const metrics = taxonomyRingMetricsPx(visibleRanks.length, baseFontSize);
+        const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx;
+        let ringCursorOuterPx = tipBandOuterRadiusPx + 18;
         const placedLabels: ScreenLabel[] = [];
-        const connectorArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number; color: string }> = [];
+        const connectorArcs: Array<
+          { mode: "band"; innerRadiusPx: number; outerRadiusPx: number; startTheta: number; endTheta: number; color: string }
+        > = [];
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
           const blocks = taxonomyBlocks[order][rank];
-          const lineRadius = tipBandAnchorRadius + ((16 + (rankIndex * 18)) / camera.scale);
-          const lineRadiusPx = lineRadius * camera.scale;
+          const ringWidthPx = metrics.ringWidthsPx[rankIndex];
+          const ringInnerPx = ringCursorOuterPx;
+          ringCursorOuterPx += ringWidthPx;
+          const ringOuterPx = ringCursorOuterPx;
+          const lineRadiusPx = ringInnerPx + (ringWidthPx * 0.5);
+          const lineRadius = lineRadiusPx / camera.scale;
           for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
             const block = blocks[blockIndex];
             if (hiddenNodes[block.centerNode]) {
@@ -1950,17 +2001,19 @@ export default function TreeCanvas({
               renderEndTheta += Math.PI * 2;
             }
             connectorArcs.push({
-              lineRadiusPx,
+              mode: "band",
+              innerRadiusPx: ringInnerPx,
+              outerRadiusPx: ringOuterPx,
               startTheta: renderStartTheta,
               endTheta: renderEndTheta,
               color: block.color,
             });
             const arcLengthPx = (renderEndTheta - renderStartTheta) * lineRadiusPx;
-            if (arcLengthPx < 44) {
+            if (arcLengthPx < 36) {
               continue;
             }
             const midTheta = renderStartTheta + ((renderEndTheta - renderStartTheta) * 0.5);
-            const labelRadius = lineRadius + ((baseFontSize + 8) / camera.scale);
+            const labelRadius = lineRadius;
             const labelPoint = worldToScreenCircular(
               camera,
               Math.cos(midTheta) * labelRadius,
@@ -1972,10 +2025,10 @@ export default function TreeCanvas({
             ) {
               continue;
             }
-            const deg = (midTheta + rotationAngle) * 180 / Math.PI;
+            const tangentDegrees = ((midTheta + rotationAngle) * 180 / Math.PI) + 90;
             const onRightSide = Math.cos(midTheta + rotationAngle) >= 0;
-            const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
-            if (!canPlaceLinearLabel(placedLabels, labelPoint.x, labelPoint.y, baseFontSize * 0.95, baseFontSize * 4)) {
+            const rotation = normalizeRotation(onRightSide ? tangentDegrees : tangentDegrees + 180);
+            if (!canPlaceLinearLabel(placedLabels, labelPoint.x, labelPoint.y, ringWidthPx * 0.82, baseFontSize * 5.5)) {
               continue;
             }
             placedLabels.push({
@@ -1985,10 +2038,11 @@ export default function TreeCanvas({
               alpha: 1,
               fontSize: baseFontSize,
               rotation: rotation * Math.PI / 180,
-              align: onRightSide ? "left" : "right",
-              color: undefined,
+              align: "center",
+              color: taxonomyTextColor(block.color),
             });
           }
+          ringCursorOuterPx += metrics.ringGapPx;
         }
         circularGenusLabels = placedLabels;
         circularGenusArcs = connectorArcs;
@@ -2001,8 +2055,15 @@ export default function TreeCanvas({
           tipBandAnchorRadiusPx: tipBandAnchorRadius * camera.scale,
           visibleTipLabelCount: circularVisibleTipLabels.length,
           genusGapPx: null,
-          genusLineRadiusPx: connectorArcs[0]?.lineRadiusPx ?? null,
+          genusLineRadiusPx: connectorArcs[0]
+            ? (connectorArcs[0].innerRadiusPx + connectorArcs[0].outerRadiusPx) * 0.5
+            : null,
           visibleLeafRanges: visibleLeafRanges.map((range) => [range.startIndex, range.endIndex]),
+          taxonomyVisibleRanks: visibleRanks,
+          taxonomyTipBandOuterRadiusPx: tipBandOuterRadiusPx,
+          taxonomyFirstRingInnerRadiusPx: connectorArcs.length > 0
+            ? connectorArcs[0].innerRadiusPx
+            : null,
         };
         genusLabelHistoryRef.current = {
           tree,
@@ -2048,7 +2109,9 @@ export default function TreeCanvas({
           Math.ceil((Math.PI * Math.min(size.width, size.height)) / 34),
         );
         const placedLabels: ScreenLabel[] = [];
-        const connectorArcs: Array<{ lineRadiusPx: number; startTheta: number; endTheta: number; color: string }> = [];
+        const connectorArcs: Array<
+          { mode: "stroke"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; color: string }
+        > = [];
         const placedCenters = new Set<number>();
         const tryPlaceBlock = (block: GenusBlock): void => {
           if (hiddenNodes[block.centerNode]) {
@@ -2088,7 +2151,9 @@ export default function TreeCanvas({
           );
           const pushArc = (): void => {
             connectorArcs.push({
+              mode: "stroke",
               lineRadiusPx,
+              lineWidthPx: 1.1,
               startTheta: renderStartTheta,
               endTheta: renderEndTheta,
               color: arcColor,
@@ -2224,18 +2289,27 @@ export default function TreeCanvas({
         };
       }
       if (circularGenusArcs.length > 0) {
-        ctx.lineWidth = 1.1;
         for (let index = 0; index < circularGenusArcs.length; index += 1) {
           const arc = circularGenusArcs[index];
-          ctx.beginPath();
-          ctx.moveTo(
-            centerPoint.x + Math.cos(arc.startTheta + rotationAngle) * arc.lineRadiusPx,
-            centerPoint.y + Math.sin(arc.startTheta + rotationAngle) * arc.lineRadiusPx,
-          );
-          ctx.arc(centerPoint.x, centerPoint.y, arc.lineRadiusPx, arc.startTheta + rotationAngle, arc.endTheta + rotationAngle, false);
-          ctx.strokeStyle = arc.color;
           ctx.globalAlpha = 0.76;
-          ctx.stroke();
+          if (arc.mode === "band") {
+            ctx.beginPath();
+            ctx.arc(centerPoint.x, centerPoint.y, arc.outerRadiusPx, arc.startTheta + rotationAngle, arc.endTheta + rotationAngle, false);
+            ctx.arc(centerPoint.x, centerPoint.y, arc.innerRadiusPx, arc.endTheta + rotationAngle, arc.startTheta + rotationAngle, true);
+            ctx.closePath();
+            ctx.fillStyle = arc.color;
+            ctx.fill();
+          } else {
+            ctx.lineWidth = arc.lineWidthPx;
+            ctx.beginPath();
+            ctx.moveTo(
+              centerPoint.x + Math.cos(arc.startTheta + rotationAngle) * arc.lineRadiusPx,
+              centerPoint.y + Math.sin(arc.startTheta + rotationAngle) * arc.lineRadiusPx,
+            );
+            ctx.arc(centerPoint.x, centerPoint.y, arc.lineRadiusPx, arc.startTheta + rotationAngle, arc.endTheta + rotationAngle, false);
+            ctx.strokeStyle = arc.color;
+            ctx.stroke();
+          }
         }
         ctx.globalAlpha = 1;
       }
@@ -2545,12 +2619,15 @@ export default function TreeCanvas({
       window.__BIG_TREE_VIEWER_RENDER_DEBUG__ = renderDebug;
     }
   }, [
+    activeSearchGenusCenterNode,
     activeSearchNode,
     cache,
+    collapsedView,
     collapsedNodes,
     fitCamera,
     order,
     reservedTipLabelCharacters,
+    searchQuery,
     searchMatches,
     searchMatchSet,
     showGenusLabels,
@@ -2559,6 +2636,8 @@ export default function TreeCanvas({
     showTimeStripes,
     size.height,
     size.width,
+    taxonomyBlocks,
+    taxonomyEnabled,
     tree,
     viewMode,
   ]);
