@@ -82,3 +82,19 @@ test("circular taxonomy rings stay outside the tip-label band", async ({ page })
     Number(circularDebug.taxonomyTipBandOuterRadiusPx ?? 0) + 6,
   );
 });
+
+test("circular full-view taxonomy keeps multiple ranks visible", async ({ page }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const circularDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+    taxonomyVisibleRanks?: string[];
+  });
+
+  expect((circularDebug.taxonomyVisibleRanks ?? []).length).toBeGreaterThanOrEqual(3);
+});

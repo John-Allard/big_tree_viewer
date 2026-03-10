@@ -94,7 +94,7 @@ function arcIntersectsViewport(
 }
 
 const GENUS_CONNECTOR_COLORS = ["#111111", "#7a7a7a"] as const;
-const TAXONOMY_LAYER_BASE_THRESHOLDS = [0, 0, 0.35, 0.85, 1.6, 2.9] as const;
+const TAXONOMY_LAYER_BASE_THRESHOLDS = [0, 0, 0.03, 0.09, 0.24, 0.75] as const;
 
 type TaxonomyColorByRank = Partial<Record<TaxonomyRank, Record<string, string>>>;
 
