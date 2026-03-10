@@ -744,22 +744,9 @@ export default function TreeCanvas({
   const cameraRef = useRef<CameraState | null>(null);
   const previousViewModeRef = useRef<ViewMode>(viewMode);
   const frameRequestRef = useRef<number | null>(null);
-  const dragRenderTimeoutRef = useRef<number | null>(null);
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
-  const dragSnapshotRef = useRef<{
-    canvas: HTMLCanvasElement;
-    width: number;
-    height: number;
-    kind: "rect" | "circular";
-    scaleX?: number;
-    scaleY?: number;
-    scale?: number;
-    rotation?: number;
-    translateX: number;
-    translateY: number;
-  } | null>(null);
   const handledFocusRequestRef = useRef(0);
   const handledExportRequestRef = useRef(0);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
@@ -789,89 +776,6 @@ export default function TreeCanvas({
     name: string;
     descendantTipCount: number;
   } | null>(null);
-
-  const clearDragRenderTimeout = useCallback(() => {
-    if (dragRenderTimeoutRef.current !== null) {
-      window.clearTimeout(dragRenderTimeoutRef.current);
-      dragRenderTimeoutRef.current = null;
-    }
-  }, []);
-
-  const cacheDragSnapshot = useCallback(() => {
-    const canvas = canvasRef.current;
-    const camera = cameraRef.current;
-    if (!canvas || !camera || typeof document === "undefined") {
-      return;
-    }
-    let snapshot = dragSnapshotRef.current?.canvas;
-    if (!snapshot) {
-      snapshot = document.createElement("canvas");
-    }
-    if (snapshot.width !== canvas.width || snapshot.height !== canvas.height) {
-      snapshot.width = canvas.width;
-      snapshot.height = canvas.height;
-    }
-    const snapshotContext = snapshot.getContext("2d");
-    if (!snapshotContext) {
-      return;
-    }
-    snapshotContext.setTransform(1, 0, 0, 1, 0, 0);
-    snapshotContext.clearRect(0, 0, snapshot.width, snapshot.height);
-    snapshotContext.drawImage(canvas, 0, 0);
-    dragSnapshotRef.current = camera.kind === "rect"
-      ? {
-        canvas: snapshot,
-        width: canvas.width,
-        height: canvas.height,
-        kind: "rect",
-        scaleX: camera.scaleX,
-        scaleY: camera.scaleY,
-        translateX: camera.translateX,
-        translateY: camera.translateY,
-      }
-      : {
-        canvas: snapshot,
-        width: canvas.width,
-        height: canvas.height,
-        kind: "circular",
-        scale: camera.scale,
-        rotation: camera.rotation,
-        translateX: camera.translateX,
-        translateY: camera.translateY,
-      };
-  }, []);
-
-  const renderPanPreview = useCallback((): boolean => {
-    const canvas = canvasRef.current;
-    const camera = cameraRef.current;
-    const snapshot = dragSnapshotRef.current;
-    if (!canvas || !camera || !snapshot || snapshot.width !== canvas.width || snapshot.height !== canvas.height) {
-      return false;
-    }
-    if (camera.kind !== snapshot.kind) {
-      return false;
-    }
-    if (camera.kind === "rect") {
-      if (snapshot.scaleX !== camera.scaleX || snapshot.scaleY !== camera.scaleY) {
-        return false;
-      }
-    } else if (snapshot.scale !== camera.scale || snapshot.rotation !== camera.rotation) {
-      return false;
-    }
-    const dpr = window.devicePixelRatio || 1;
-    const dx = Math.round((camera.translateX - snapshot.translateX) * dpr);
-    const dy = Math.round((camera.translateY - snapshot.translateY) * dpr);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      return false;
-    }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#fbfcfe";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(snapshot.canvas, dx, dy);
-    return true;
-  }, []);
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
   const taxonomyColors = useMemo(() => (
@@ -1213,6 +1117,7 @@ export default function TreeCanvas({
     const hiddenNodes = collapsedView?.hiddenNodes ?? new Uint8Array(tree.nodeCount);
     const visibleCollapsedNodes = collapsedView?.visibleCollapsedNodes ?? [];
     hiddenNodesRef.current = hiddenNodes;
+    const panInteractionActive = pointerDownRef.current && activePointersRef.current.size === 1;
 
     if (viewMode === "rectangular" && camera.kind === "rect") {
       const layout = collapsedView?.layout ?? tree.layouts[order];
@@ -1223,6 +1128,8 @@ export default function TreeCanvas({
       const maxX = Math.max(worldMin.x, worldMax.x);
       const minY = Math.min(worldMin.y, worldMax.y);
       const maxY = Math.max(worldMin.y, worldMax.y);
+      const rectWorldOverscanX = Math.max(tree.branchLengthMinPositive * 2, 48 / Math.max(camera.scaleX, 1e-6));
+      const rectWorldOverscanY = Math.max(2, 48 / Math.max(camera.scaleY, 1e-6));
       const axisBarHeight = tree.isUltrametric && showScaleBars ? 44 : 0;
       const treeDrawBottom = size.height - axisBarHeight;
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
@@ -1231,9 +1138,13 @@ export default function TreeCanvas({
       const tipLabelCueVisible = camera.scaleY > 1.45;
       const microTipLabelsVisible = camera.scaleY > 2.7;
       const tipLabelsVisible = camera.scaleY > 4.2;
-      const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
+      let visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks)
         : [];
+      if (panInteractionActive && visibleTaxonomyRanks.length > 1) {
+        visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-1);
+      }
+      const renderTaxonomyBands = !panInteractionActive;
 
       if (showTimeStripes) {
         const drawBands = (step: number, alpha: number) => {
@@ -1269,8 +1180,8 @@ export default function TreeCanvas({
         ? cache.rectIndices[order].query(
           (minX + maxX) * 0.5,
           (minY + maxY) * 0.5,
-          Math.max(1e-6, (maxX - minX) * 0.5),
-          Math.max(1e-6, (maxY - minY) * 0.5),
+          Math.max(1e-6, (maxX - minX) * 0.5) + rectWorldOverscanX,
+          Math.max(1e-6, (maxY - minY) * 0.5) + rectWorldOverscanY,
         )
         : null;
       if (visibleRectSegments) {
@@ -1599,7 +1510,7 @@ export default function TreeCanvas({
       }
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
-      if (taxonomyEnabled && taxonomyBlocks) {
+      if (taxonomyEnabled && taxonomyBlocks && renderTaxonomyBands) {
         const visibleRanks = visibleTaxonomyRanks;
         const columnBaseX = tipSideX + globalTipLabelSpacePx + 18;
         const columnWidth = 13;
@@ -2053,12 +1964,16 @@ export default function TreeCanvas({
       let visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
         : [];
+      if (panInteractionActive && visibleTaxonomyRanks.length > 1) {
+        visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-1);
+      }
       const visibleCircleFraction = tree.isUltrametric
         ? fullyVisibleRadiusPx / Math.max(1e-9, tree.rootAge * camera.scale)
         : 0;
       if (visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 2) {
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
+      const renderTaxonomyBands = !panInteractionActive;
       const showCentralTimeLabels = tree.isUltrametric && showScaleBars && visibleCircleFraction >= 0.58;
       const circularScaleBar = tree.isUltrametric && showScaleBars && !showCentralTimeLabels
         ? buildCircularScaleBar(
@@ -2575,7 +2490,7 @@ export default function TreeCanvas({
         | { mode: "band"; innerRadiusPx: number; outerRadiusPx: number; startTheta: number; endTheta: number; color: string }
       > = [];
       let circularGenusBaseFontSize = 0;
-      if (taxonomyEnabled && taxonomyBlocks) {
+      if (taxonomyEnabled && taxonomyBlocks && renderTaxonomyBands) {
         let visibleRanks = visibleTaxonomyRanks;
         const visibleLeafCount = visibleLeafRangeCount(visibleLeafRanges);
         if (visibleLeafCount > 0 && visibleLeafCount < Math.max(1, tree.leafCount - 16)) {
@@ -3256,11 +3171,9 @@ export default function TreeCanvas({
     if (typeof window !== "undefined") {
       window.__BIG_TREE_VIEWER_RENDER_DEBUG__ = renderDebug;
     }
-    cacheDragSnapshot();
   }, [
     activeSearchGenusCenterNode,
     activeSearchNode,
-    cacheDragSnapshot,
     cache,
     collapsedView,
     collapsedNodes,
@@ -3294,16 +3207,6 @@ export default function TreeCanvas({
       frameRequestRef.current = null;
       draw();
     });
-  }, [draw]);
-
-  const scheduleDeferredFullDraw = useCallback(() => {
-    if (dragRenderTimeoutRef.current !== null) {
-      return;
-    }
-    dragRenderTimeoutRef.current = window.setTimeout(() => {
-      dragRenderTimeoutRef.current = null;
-      draw();
-    }, 80);
   }, [draw]);
 
   useLayoutEffect(() => {
@@ -3738,7 +3641,6 @@ export default function TreeCanvas({
         pointerDownRef.current = true;
         lastPointerRef.current = { x: event.clientX, y: event.clientY };
         pinchGestureRef.current = null;
-        cacheDragSnapshot();
         if (event.pointerType === "touch") {
           longPressRef.current = {
             pointerId: event.pointerId,
@@ -3834,11 +3736,7 @@ export default function TreeCanvas({
           camera.translateY += dy;
           clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
         }
-        if (!renderPanPreview()) {
-          scheduleDraw();
-        } else {
-          scheduleDeferredFullDraw();
-        }
+        scheduleDraw();
         return;
       }
       updateHover(event);
@@ -3851,14 +3749,12 @@ export default function TreeCanvas({
         pointerDownRef.current = false;
         lastPointerRef.current = null;
         pinchGestureRef.current = null;
-        clearDragRenderTimeout();
         scheduleDraw();
       } else if (activePointersRef.current.size === 1) {
         const remaining = [...activePointersRef.current.values()][0];
         pointerDownRef.current = true;
         lastPointerRef.current = { x: remaining.clientX, y: remaining.clientY };
         pinchGestureRef.current = null;
-        cacheDragSnapshot();
       }
       canvas.releasePointerCapture(event.pointerId);
     };
@@ -3869,7 +3765,6 @@ export default function TreeCanvas({
       pinchGestureRef.current = null;
       pointerDownRef.current = false;
       lastPointerRef.current = null;
-      clearDragRenderTimeout();
       hoverRef.current = null;
       setOverlayHover(null);
       onHoverChange(null);
@@ -3955,7 +3850,7 @@ export default function TreeCanvas({
       canvas.removeEventListener("gesturestart", preventGestureDefault);
       canvas.removeEventListener("gesturechange", preventGestureDefault);
     };
-  }, [cache, cacheDragSnapshot, clearDragRenderTimeout, collapsedNodes, collapsedView, draw, onHoverChange, order, renderPanPreview, scheduleDeferredFullDraw, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
+  }, [cache, collapsedNodes, collapsedView, draw, onHoverChange, order, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
