@@ -9,6 +9,7 @@ declare global {
       setShowGenusLabels: (visible: boolean) => void;
       setTaxonomyEnabled: (visible: boolean) => void;
       setMockTaxonomy: () => void;
+      cacheMockTaxonomy: () => Promise<void>;
       clearTaxonomy: () => void;
       requestFit: () => void;
     };

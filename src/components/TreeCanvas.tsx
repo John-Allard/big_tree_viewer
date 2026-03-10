@@ -153,7 +153,14 @@ function sortTaxonomyRanksForDisplay(activeRanks: TaxonomyRank[]): TaxonomyRank[
 }
 
 function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]): TaxonomyRank[] {
-  return activeRanks.filter((rank) => zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+  const visible = activeRanks.filter((rank) => zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+  if (zoom < 0.035 && visible.length > 1) {
+    return visible.slice(-1);
+  }
+  if (zoom < 0.12 && visible.length > 2) {
+    return visible.slice(-2);
+  }
+  return visible;
 }
 
 function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorByRank {
@@ -1128,6 +1135,9 @@ export default function TreeCanvas({
       const tipLabelCueVisible = camera.scaleY > 1.45;
       const microTipLabelsVisible = camera.scaleY > 2.7;
       const tipLabelsVisible = camera.scaleY > 4.2;
+      const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
+        ? taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks)
+        : [];
 
       if (showTimeStripes) {
         const drawBands = (step: number, alpha: number) => {
@@ -1238,7 +1248,7 @@ export default function TreeCanvas({
       }
       ctx.stroke();
 
-      if (taxonomyEnabled && taxonomyConsensus && taxonomyColors) {
+      if (visibleTaxonomyRanks.length > 0 && taxonomyColors) {
         const colorPaths = new Map<string, Array<[number, number, number, number]>>();
         const pushColoredSegment = (color: string | null, x1: number, y1: number, x2: number, y2: number): void => {
           if (!color) {
@@ -1260,7 +1270,7 @@ export default function TreeCanvas({
             if (parent < 0) {
               continue;
             }
-            const color = taxonomyBranchColor(segment.node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            const color = taxonomyBranchColor(segment.node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
             if (!color) {
               continue;
             }
@@ -1280,7 +1290,7 @@ export default function TreeCanvas({
               }
               continue;
             }
-            const color = taxonomyBranchColor(node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            const color = taxonomyBranchColor(node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
             if (!color) {
               continue;
             }
@@ -1310,7 +1320,7 @@ export default function TreeCanvas({
             if (hiddenNodes[child]) {
               continue;
             }
-            const color = taxonomyBranchColor(child, ownerNode, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            const color = taxonomyBranchColor(child, ownerNode, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
             if (!color) {
               continue;
             }
@@ -1494,7 +1504,7 @@ export default function TreeCanvas({
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
       if (taxonomyEnabled && taxonomyBlocks) {
-        const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks);
+        const visibleRanks = visibleTaxonomyRanks;
         const columnBaseX = tipSideX + globalTipLabelSpacePx + 18;
         const columnWidth = 13;
         const columnGap = 5;
@@ -1944,9 +1954,15 @@ export default function TreeCanvas({
         centerPoint.y,
         size.height - centerPoint.y,
       );
+      let visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
+        ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
+        : [];
       const visibleCircleFraction = tree.isUltrametric
         ? fullyVisibleRadiusPx / Math.max(1e-9, tree.rootAge * camera.scale)
         : 0;
+      if (visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 2) {
+        visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
+      }
       const showCentralTimeLabels = tree.isUltrametric && showScaleBars && visibleCircleFraction >= 0.58;
       const circularScaleBar = tree.isUltrametric && showScaleBars && !showCentralTimeLabels
         ? buildCircularScaleBar(
@@ -2117,7 +2133,7 @@ export default function TreeCanvas({
       }
       ctx.stroke();
 
-      if (taxonomyEnabled && taxonomyConsensus && taxonomyColors) {
+      if (visibleTaxonomyRanks.length > 0 && taxonomyColors) {
         const colorStemPaths = new Map<string, Array<[number, number, number, number]>>();
         const colorArcPaths = new Map<string, Array<{ radiusPx: number; start: number; end: number }>>();
         const pushStem = (color: string | null, x1: number, y1: number, x2: number, y2: number): void => {
@@ -2148,7 +2164,7 @@ export default function TreeCanvas({
             if (parent < 0) {
               continue;
             }
-            const color = taxonomyBranchColor(segment.node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            const color = taxonomyBranchColor(segment.node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
             if (!color) {
               continue;
             }
@@ -2168,7 +2184,7 @@ export default function TreeCanvas({
               }
               continue;
             }
-            const color = taxonomyBranchColor(node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            const color = taxonomyBranchColor(node, parent, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
             if (!color) {
               continue;
             }
@@ -2202,7 +2218,7 @@ export default function TreeCanvas({
             if (hiddenNodes[child]) {
               continue;
             }
-            const color = taxonomyBranchColor(child, ownerNode, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            const color = taxonomyBranchColor(child, ownerNode, visibleTaxonomyRanks, taxonomyConsensus, taxonomyColors);
             if (!color) {
               continue;
             }
@@ -2464,7 +2480,7 @@ export default function TreeCanvas({
       > = [];
       let circularGenusBaseFontSize = 0;
       if (taxonomyEnabled && taxonomyBlocks) {
-        let visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks);
+        let visibleRanks = visibleTaxonomyRanks;
         const visibleLeafCount = visibleLeafRangeCount(visibleLeafRanges);
         if (visibleLeafCount > 0 && visibleLeafCount < Math.max(1, tree.leafCount - 16)) {
           while (visibleRanks.length > 1) {

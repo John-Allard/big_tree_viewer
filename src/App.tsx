@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
-import { getCachedTaxonomyArchive, putCachedTaxonomyArchive } from "./lib/taxonomyCache";
+import {
+  getCachedTaxonomyArchive,
+  getCachedTaxonomyMapping,
+  putCachedTaxonomyArchive,
+  putCachedTaxonomyMapping,
+} from "./lib/taxonomyCache";
 import type { WorkerResponse } from "./types/messages";
 import type { TaxonomyMapPayload } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
@@ -269,13 +274,21 @@ function normalizeImportedTreeText(text: string): string {
   return applyNexusTranslate(treeMatch[1].trim(), translate);
 }
 
+async function computeTreeSignature(text: string): Promise<string> {
+  const encoded = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export default function App() {
   const workerRef = useRef<Worker | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoloadRef = useRef(false);
   const dragCounterRef = useRef(0);
   const pendingPasteHideRef = useRef(false);
+  const pendingTreeSignatureRef = useRef<string | null>(null);
   const [tree, setTree] = useState<TreeModel | null>(null);
+  const [treeSignature, setTreeSignature] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>({
     loading: false,
     message: "Load a Newick tree to begin.",
@@ -418,6 +431,7 @@ export default function App() {
     }
     if (data.type === "parse-error") {
       pendingPasteHideRef.current = false;
+      pendingTreeSignatureRef.current = null;
       setLoadState({
         loading: false,
         message: "Failed to parse tree.",
@@ -427,6 +441,8 @@ export default function App() {
     }
     const nextTree = buildTreeModel(data.payload);
     setTree(nextTree);
+    setTreeSignature(pendingTreeSignatureRef.current);
+    pendingTreeSignatureRef.current = null;
     setLoadState({
       loading: false,
       message: "",
@@ -442,6 +458,7 @@ export default function App() {
 
   const handleWorkerError = useCallback((event: ErrorEvent): void => {
     pendingPasteHideRef.current = false;
+    pendingTreeSignatureRef.current = null;
     setLoadState({
       loading: false,
       message: "Tree worker failed.",
@@ -451,6 +468,7 @@ export default function App() {
 
   const handleWorkerMessageError = useCallback((): void => {
     pendingPasteHideRef.current = false;
+    pendingTreeSignatureRef.current = null;
     setLoadState({
       loading: false,
       message: "Tree worker message transfer failed.",
@@ -481,6 +499,7 @@ export default function App() {
 
   const parseText = useCallback(async (text: string, label: string): Promise<void> => {
     const normalizedText = normalizeImportedTreeText(text);
+    pendingTreeSignatureRef.current = await computeTreeSignature(normalizedText);
     setLoadState({
       loading: true,
       message: `Starting worker for ${label}...`,
@@ -589,13 +608,29 @@ export default function App() {
   }, [loadExample, loadSubtreeFromUrl]);
 
   useEffect(() => {
-    if (!tree) {
+    if (!tree || !treeSignature) {
+      setTaxonomyMap(null);
+      setTaxonomyEnabled(false);
       return;
     }
     setTaxonomyMap(null);
     setTaxonomyEnabled(false);
     setFitRequest((value) => value + 1);
-  }, [tree]);
+    let cancelled = false;
+    void (async () => {
+      const cached = await getCachedTaxonomyMapping(treeSignature);
+      if (cancelled || !cached) {
+        return;
+      }
+      setTaxonomyMap(cached);
+      setTaxonomyEnabled(true);
+      setTaxonomyStatus(`Loaded cached taxonomy mapping for this tree (${cached.mappedCount.toLocaleString()} mapped tips).`);
+      setTaxonomyError(null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tree, treeSignature]);
 
   const onFileChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -685,6 +720,9 @@ export default function App() {
       if (response.type !== "taxonomy-mapped" || !response.payload) {
         throw new Error(response.message || "Taxonomy mapping did not complete.");
       }
+      if (treeSignature) {
+        await putCachedTaxonomyMapping(treeSignature, response.payload);
+      }
       setTaxonomyMap(response.payload);
       setTaxonomyEnabled(true);
       setTaxonomyStatus(`Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips.`);
@@ -693,7 +731,7 @@ export default function App() {
     } finally {
       setTaxonomyLoading(false);
     }
-  }, [runTaxonomyWorker, tree]);
+  }, [runTaxonomyWorker, tree, treeSignature]);
 
   const stepSearch = (direction: -1 | 1): void => {
     if (searchResults.length === 0) {
@@ -740,6 +778,12 @@ export default function App() {
         setTaxonomyMap(buildMockTaxonomyMap(tree));
         setTaxonomyEnabled(true);
       },
+      cacheMockTaxonomy: async () => {
+        if (!tree || !treeSignature) {
+          return;
+        }
+        await putCachedTaxonomyMapping(treeSignature, buildMockTaxonomyMap(tree));
+      },
       clearTaxonomy: () => {
         setTaxonomyMap(null);
         setTaxonomyEnabled(false);
@@ -749,7 +793,7 @@ export default function App() {
     return () => {
       delete window.__BIG_TREE_VIEWER_APP_TEST__;
     };
-  }, [loadState.error, loadState.loading, order, showGenusLabels, taxonomyEnabled, taxonomyMap, tree, viewMode]);
+  }, [loadState.error, loadState.loading, order, showGenusLabels, taxonomyEnabled, taxonomyMap, tree, treeSignature, viewMode]);
 
   return (
     <div

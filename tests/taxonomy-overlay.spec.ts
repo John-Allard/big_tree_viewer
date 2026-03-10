@@ -83,7 +83,7 @@ test("circular taxonomy rings stay outside the tip-label band", async ({ page })
   );
 });
 
-test("circular full-view taxonomy keeps multiple ranks visible", async ({ page }) => {
+test("circular full-view taxonomy keeps only coarse ranks visible", async ({ page }) => {
   await waitForViewer(page);
   await enableMockTaxonomy(page);
   await page.evaluate(async () => {
@@ -96,5 +96,19 @@ test("circular full-view taxonomy keeps multiple ranks visible", async ({ page }
     taxonomyVisibleRanks?: string[];
   });
 
-  expect((circularDebug.taxonomyVisibleRanks ?? []).length).toBeGreaterThanOrEqual(3);
+  expect((circularDebug.taxonomyVisibleRanks ?? []).length).toBeGreaterThanOrEqual(1);
+  expect((circularDebug.taxonomyVisibleRanks ?? []).length).toBeLessThanOrEqual(2);
+});
+
+test("cached taxonomy mapping restores across reload for the same tree", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.cacheMockTaxonomy();
+  });
+
+  await page.reload();
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.treeLoaded) && Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
 });
