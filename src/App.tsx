@@ -231,6 +231,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoloadRef = useRef(false);
   const dragCounterRef = useRef(0);
+  const pendingPasteHideRef = useRef(false);
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [loadState, setLoadState] = useState<LoadState>({
     loading: false,
@@ -256,6 +257,7 @@ export default function App() {
   const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
   const [pastedTreeText, setPastedTreeText] = useState("");
+  const [showPasteInput, setShowPasteInput] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const handleHoverChange = useCallback(() => {}, []);
@@ -365,6 +367,7 @@ export default function App() {
       return;
     }
     if (data.type === "parse-error") {
+      pendingPasteHideRef.current = false;
       setLoadState({
         loading: false,
         message: "Failed to parse tree.",
@@ -379,10 +382,16 @@ export default function App() {
       message: "",
       error: null,
     });
+    if (pendingPasteHideRef.current) {
+      pendingPasteHideRef.current = false;
+      setShowPasteInput(false);
+      setPastedTreeText("");
+    }
     setFitRequest((value) => value + 1);
   }, []);
 
   const handleWorkerError = useCallback((event: ErrorEvent): void => {
+    pendingPasteHideRef.current = false;
     setLoadState({
       loading: false,
       message: "Tree worker failed.",
@@ -391,6 +400,7 @@ export default function App() {
   }, []);
 
   const handleWorkerMessageError = useCallback((): void => {
+    pendingPasteHideRef.current = false;
     setLoadState({
       loading: false,
       message: "Tree worker message transfer failed.",
@@ -522,6 +532,7 @@ export default function App() {
       });
       return;
     }
+    pendingPasteHideRef.current = true;
     await parseText(text, "pasted tree");
   }, [parseText, pastedTreeText]);
 
@@ -630,7 +641,14 @@ export default function App() {
               className="secondary"
               onClick={() => fileInputRef.current?.click()}
             >
-              Open Tree File
+              Open Newick
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setShowPasteInput((value) => !value)}
+            >
+              Paste Newick
             </button>
             <input
               ref={fileInputRef}
@@ -640,22 +658,31 @@ export default function App() {
               onChange={(event) => void onFileChange(event)}
             />
           </div>
-          <div className="paste-tree">
-            <textarea
-              value={pastedTreeText}
-              onChange={(event) => setPastedTreeText(event.target.value)}
-              placeholder="Paste a Newick or NEXUS tree string here"
-              spellCheck={false}
-            />
-            <div className="button-row">
-              <button type="button" className="secondary" onClick={() => void loadPastedTree()}>
-                Load Pasted Tree
-              </button>
-              <button type="button" className="secondary" onClick={() => setPastedTreeText("")}>
-                Clear
-              </button>
+          {showPasteInput ? (
+            <div className="paste-tree">
+              <textarea
+                value={pastedTreeText}
+                onChange={(event) => setPastedTreeText(event.target.value)}
+                placeholder="Paste a Newick or NEXUS tree string here"
+                spellCheck={false}
+              />
+              <div className="button-row">
+                <button type="button" className="secondary" onClick={() => void loadPastedTree()}>
+                  Load Pasted Tree
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    setPastedTreeText("");
+                    setShowPasteInput(false);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
-          </div>
+          ) : null}
           <div className="button-row">
             <button
               type="button"
