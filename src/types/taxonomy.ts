@@ -19,6 +19,7 @@ export interface TaxonomyTipRanks {
 export interface TaxonomyMapPayload {
   mappedCount: number;
   totalTips: number;
+  activeRanks: TaxonomyRank[];
   tipRanks: TaxonomyTipRanks[];
 }
 

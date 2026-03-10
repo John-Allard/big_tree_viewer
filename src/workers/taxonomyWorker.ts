@@ -149,6 +149,12 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
   const ancestorMemo = new Map<string, number | null>();
   const tipRanks: TaxonomyMapPayload["tipRanks"] = [];
   let mappedCount = 0;
+  const rankToLabels = new Map<TaxonomyRank, Set<string>>();
+  const rankToHits = new Map<TaxonomyRank, number>();
+  for (let index = 0; index < TARGET_RANKS.length; index += 1) {
+    rankToLabels.set(TARGET_RANKS[index], new Set());
+    rankToHits.set(TARGET_RANKS[index], 0);
+  }
   for (let index = 0; index < tips.length; index += 1) {
     const tip = tips[index];
     let taxId: number | undefined;
@@ -179,6 +185,8 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
         continue;
       }
       ranks[rank] = label;
+      rankToLabels.get(rank)?.add(label);
+      rankToHits.set(rank, (rankToHits.get(rank) ?? 0) + 1);
       anyRank = true;
     }
     if (!anyRank) {
@@ -187,9 +195,21 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
     mappedCount += 1;
     tipRanks.push({ node: tip.node, ranks });
   }
+  const activeRanks = TARGET_RANKS.filter((rank) => (rankToLabels.get(rank)?.size ?? 0) > 1);
+  while (activeRanks.length > 1) {
+    const topRank = activeRanks[0];
+    const uniqueCount = rankToLabels.get(topRank)?.size ?? 0;
+    const coverage = mappedCount > 0 ? (rankToHits.get(topRank) ?? 0) / mappedCount : 0;
+    if (uniqueCount <= 1 || coverage >= 0.985) {
+      activeRanks.shift();
+      continue;
+    }
+    break;
+  }
   return {
     mappedCount,
     totalTips: tips.length,
+    activeRanks,
     tipRanks,
   };
 }

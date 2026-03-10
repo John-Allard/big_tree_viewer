@@ -103,7 +103,30 @@ const TAXONOMY_LAYER_THRESHOLDS: Record<TaxonomyRank, number> = {
   genus: 3.8,
 };
 
-function colorForTaxonomy(rank: TaxonomyRank, label: string): string {
+type TaxonomyColorByRank = Partial<Record<TaxonomyRank, Record<string, string>>>;
+
+function hslColor(hue: number, saturation: number, lightness: number): string {
+  const normalizedHue = ((hue % 360) + 360) % 360;
+  return `hsl(${normalizedHue.toFixed(2)}deg ${saturation.toFixed(1)}% ${lightness.toFixed(1)}%)`;
+}
+
+function parseHslColor(fill: string): { h: number; s: number; l: number } | null {
+  const match = /hsl\(([-\d.]+)deg\s+([-\d.]+)%\s+([-\d.]+)%\)/i.exec(fill);
+  if (!match) {
+    return null;
+  }
+  return {
+    h: Number.parseFloat(match[1]),
+    s: Number.parseFloat(match[2]),
+    l: Number.parseFloat(match[3]),
+  };
+}
+
+function colorForTaxonomy(rank: TaxonomyRank, label: string, colorsByRank: TaxonomyColorByRank | null): string {
+  const mapped = colorsByRank?.[rank]?.[label];
+  if (mapped) {
+    return mapped;
+  }
   let hash = 0;
   const key = `${rank}:${label}`;
   for (let index = 0; index < key.length; index += 1) {
@@ -112,20 +135,119 @@ function colorForTaxonomy(rank: TaxonomyRank, label: string): string {
   const hue = hash % 360;
   const saturation = rank === "genus" ? 58 : 52;
   const lightness = rank === "superkingdom" ? 72 : rank === "phylum" ? 66 : 60;
-  return `hsl(${hue}deg ${saturation}% ${lightness}%)`;
+  return hslColor(hue, saturation, lightness);
 }
 
-function taxonomyVisibleRanksForZoom(zoom: number): TaxonomyRank[] {
-  return TAXONOMY_RANKS.filter((rank) => zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]): TaxonomyRank[] {
+  return activeRanks.filter((rank) => zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+}
+
+function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorByRank {
+  const activeRanks = taxonomyMap.activeRanks.length > 0 ? taxonomyMap.activeRanks : TAXONOMY_RANKS.slice(-4);
+  const firstSeen = new Map<TaxonomyRank, Map<string, number>>();
+  for (let rankIndex = 0; rankIndex < activeRanks.length; rankIndex += 1) {
+    firstSeen.set(activeRanks[rankIndex], new Map());
+  }
+  for (let tipIndex = 0; tipIndex < taxonomyMap.tipRanks.length; tipIndex += 1) {
+    const tip = taxonomyMap.tipRanks[tipIndex];
+    for (let rankIndex = 0; rankIndex < activeRanks.length; rankIndex += 1) {
+      const rank = activeRanks[rankIndex];
+      const label = tip.ranks[rank];
+      if (!label) {
+        continue;
+      }
+      const map = firstSeen.get(rank);
+      if (map && !map.has(label)) {
+        map.set(label, tipIndex);
+      }
+    }
+  }
+
+  const colorsByRank: TaxonomyColorByRank = {};
+  const outerRank = activeRanks[activeRanks.length - 1];
+  const outerEntries = [...(firstSeen.get(outerRank)?.entries() ?? [])].sort((left, right) => left[1] - right[1]);
+  const outerColors: Record<string, string> = {};
+  const phi = 0.618033988749895;
+  for (let index = 0; index < outerEntries.length; index += 1) {
+    const hue = (index * phi * 360) % 360;
+    outerColors[outerEntries[index][0]] = hslColor(hue, 70, 64);
+  }
+  colorsByRank[outerRank] = outerColors;
+
+  for (let rankIndex = activeRanks.length - 2; rankIndex >= 0; rankIndex -= 1) {
+    const childRank = activeRanks[rankIndex];
+    const childSeen = firstSeen.get(childRank) ?? new Map<string, number>();
+    const parentAssignments = new Map<string, { parentRank: TaxonomyRank; parentLabel: string; firstSeen: number }>();
+    for (let tipIndex = 0; tipIndex < taxonomyMap.tipRanks.length; tipIndex += 1) {
+      const tip = taxonomyMap.tipRanks[tipIndex];
+      const childLabel = tip.ranks[childRank];
+      if (!childLabel) {
+        continue;
+      }
+      for (let parentRankIndex = rankIndex + 1; parentRankIndex < activeRanks.length; parentRankIndex += 1) {
+        const parentRank = activeRanks[parentRankIndex];
+        const parentLabel = tip.ranks[parentRank];
+        if (!parentLabel) {
+          continue;
+        }
+        if (!parentAssignments.has(childLabel)) {
+          parentAssignments.set(childLabel, { parentRank, parentLabel, firstSeen: tipIndex });
+        }
+        break;
+      }
+    }
+
+    const grouped = new Map<string, Array<{ childLabel: string; firstSeen: number }>>();
+    parentAssignments.forEach((assignment, childLabel) => {
+      const key = `${assignment.parentRank}:${assignment.parentLabel}`;
+      const group = grouped.get(key) ?? [];
+      group.push({ childLabel, firstSeen: assignment.firstSeen });
+      grouped.set(key, group);
+    });
+
+    const childColors: Record<string, string> = {};
+    grouped.forEach((children, key) => {
+      const [parentRankText, ...parentParts] = key.split(":");
+      const parentRank = parentRankText as TaxonomyRank;
+      const parentLabel = parentParts.join(":");
+      const parentColor = colorsByRank[parentRank]?.[parentLabel] ?? hslColor(0, 0, 55);
+      const parsed = parseHslColor(parentColor) ?? { h: 0, s: 0, l: 55 };
+      children.sort((left, right) => left.firstSeen - right.firstSeen);
+      const half = Math.max(1, Math.floor((children.length - 1) / 2));
+      const hueStep = half > 0 ? 18 / half : 0;
+      const positions: number[] = [0];
+      for (let value = 1; positions.length < children.length; value += 1) {
+        positions.push(value);
+        if (positions.length < children.length) {
+          positions.push(-value);
+        }
+      }
+      for (let childIndex = 0; childIndex < children.length; childIndex += 1) {
+        const position = positions[childIndex] ?? 0;
+        const hue = parsed.h + (position * hueStep);
+        const lightness = parsed.l + (position > 0 ? 4 : position < 0 ? -4 : 0);
+        childColors[children[childIndex].childLabel] = hslColor(hue, parsed.s, Math.max(42, Math.min(76, lightness)));
+      }
+    });
+
+    [...childSeen.keys()].forEach((childLabel, index) => {
+      if (!childColors[childLabel]) {
+        const hue = ((outerEntries.length + index) * phi * 360) % 360;
+        childColors[childLabel] = hslColor(hue, 65, 62);
+      }
+    });
+    colorsByRank[childRank] = childColors;
+  }
+
+  return colorsByRank;
 }
 
 function taxonomyTextColor(fill: string): string {
-  const match = /hsl\((\d+(?:\.\d+)?)deg\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%\)/i.exec(fill);
-  if (!match) {
+  const parsed = parseHslColor(fill);
+  if (!parsed) {
     return "#0f172a";
   }
-  const lightness = Number.parseFloat(match[3]);
-  return lightness >= 64 ? "#0f172a" : "#f8fafc";
+  return parsed.l >= 64 ? "#0f172a" : "#f8fafc";
 }
 
 function taxonomyRingMetricsPx(rankCount: number, baseFontSize: number): {
@@ -156,6 +278,7 @@ function buildTaxonomyBlocks(
   cache: ReturnType<typeof buildCache>,
   order: LayoutOrder,
   taxonomyMap: TaxonomyMapPayload,
+  colorsByRank: TaxonomyColorByRank | null,
 ): Record<TaxonomyRank, RenderTaxonomyBlock[]> {
   const labelByNode = new Map<number, Partial<Record<TaxonomyRank, string>>>();
   for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
@@ -188,7 +311,7 @@ function buildTaxonomyBlocks(
           firstNode,
           lastNode: orderedLeaves[end - 1],
           centerNode: orderedLeaves[centerIndex],
-          color: colorForTaxonomy(rank, firstLabel),
+          color: colorForTaxonomy(rank, firstLabel, colorsByRank),
         });
       }
       start = end;
@@ -540,16 +663,23 @@ export default function TreeCanvas({
   } | null>(null);
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
+  const taxonomyColors = useMemo(() => (
+    taxonomyMap ? buildTaxonomyColorMap(taxonomyMap) : null
+  ), [taxonomyMap]);
+  const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(
+    () => (taxonomyMap?.activeRanks.length ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]),
+    [taxonomyMap],
+  );
   const taxonomyBlocks = useMemo<TaxonomyBlocksByOrder | null>(() => {
     if (!cache || !taxonomyMap) {
       return null;
     }
     return {
-      input: buildTaxonomyBlocks(cache, "input", taxonomyMap),
-      desc: buildTaxonomyBlocks(cache, "desc", taxonomyMap),
-      asc: buildTaxonomyBlocks(cache, "asc", taxonomyMap),
+      input: buildTaxonomyBlocks(cache, "input", taxonomyMap, taxonomyColors),
+      desc: buildTaxonomyBlocks(cache, "desc", taxonomyMap, taxonomyColors),
+      asc: buildTaxonomyBlocks(cache, "asc", taxonomyMap, taxonomyColors),
     };
-  }, [cache, taxonomyMap]);
+  }, [cache, taxonomyColors, taxonomyMap]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const reservedTipLabelCharacters = useMemo(() => {
     if (!tree) {
@@ -679,7 +809,7 @@ export default function TreeCanvas({
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
     const tipBandWidthPx = interpolateTipBandWidthPx(camera.scaleY, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx);
     if (taxonomyEnabled && taxonomyBlocks) {
-      const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY);
+      const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks);
       return {
         right: tipBandWidthPx + 34 + (visibleRanks.length * 16) + 96,
       };
@@ -689,7 +819,7 @@ export default function TreeCanvas({
     return {
       right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140,
     };
-  }, [maxGenusLabelCharacters, reservedTipLabelCharacters, taxonomyBlocks, taxonomyEnabled]);
+  }, [maxGenusLabelCharacters, reservedTipLabelCharacters, taxonomyActiveRanks, taxonomyBlocks, taxonomyEnabled]);
 
   const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
     const maxRadius = Math.max(tree?.maxDepth ?? 0, tree?.branchLengthMinPositive ?? 1);
@@ -705,7 +835,7 @@ export default function TreeCanvas({
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
     const tipBandWidthPx = interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx);
     if (taxonomyEnabled && taxonomyBlocks) {
-      const visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx);
+      const visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks);
       const baseFontSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
       const metrics = taxonomyRingMetricsPx(visibleRanks.length, baseFontSize);
       const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
@@ -717,7 +847,7 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120;
-  }, [maxGenusLabelCharacters, reservedTipLabelCharacters, taxonomyBlocks, taxonomyEnabled, tree]);
+  }, [maxGenusLabelCharacters, reservedTipLabelCharacters, taxonomyActiveRanks, taxonomyBlocks, taxonomyEnabled, tree]);
 
   const fitCamera = useCallback(() => {
     if (!tree) {
@@ -1126,7 +1256,7 @@ export default function TreeCanvas({
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
       if (taxonomyEnabled && taxonomyBlocks) {
-        const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY);
+        const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks);
         const columnBaseX = tipSideX + globalTipLabelSpacePx + 18;
         const columnWidth = 13;
         const columnGap = 5;
@@ -1969,7 +2099,7 @@ export default function TreeCanvas({
       > = [];
       let circularGenusBaseFontSize = 0;
       if (taxonomyEnabled && taxonomyBlocks) {
-        const visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx);
+        const visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks);
         const baseFontSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
         circularGenusBaseFontSize = baseFontSize;
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, baseFontSize);
@@ -2636,6 +2766,7 @@ export default function TreeCanvas({
     showTimeStripes,
     size.height,
     size.width,
+    taxonomyActiveRanks,
     taxonomyBlocks,
     taxonomyEnabled,
     tree,
