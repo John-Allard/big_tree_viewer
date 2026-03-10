@@ -1,27 +1,83 @@
 # Features To Add
 
-## Current Status
+## Already Implemented
 
-These items are already in place and do not need to stay on the near-term list:
+These are in place and do not need to stay on the active backlog:
 
-- web deployment via GitHub Pages
-- circular rotation with label/hover support
-- descendant tip counts in tooltips
+- web deployment via GitHub Pages and custom domain deployment
+- rectangular and circular viewing modes
+- circular rotation with hover and label support
 - search, stepping between matches, and focus-to-match navigation
+- collapse / expand subtree
+- zoom to subtree
+- zoom to parent subtree
+- open subtree in a new browser tab
+- basic node / branch context menu
 
-## Remaining Feature Areas
+## Active Feature Areas
 
-### Context menu and node actions
+### 1. Context Menu and Manual Branch Styling
 
-- Add a context menu for nodes and possibly branches.
-- Support actions on a node or subtree such as:
-  - color subtree
-  - collapse subtree to a triangle
-  - zoom to subtree extent
-  - open subtree as a standalone tree
-- Support opening a subtree in a new browser tab, and later possibly a new standalone window.
+- Add subtree branch coloring from the context menu.
+- Add single-branch coloring from the context menu.
+- Present branch-color actions as a swatch submenu rather than a flat list.
+- Add a way to clear branch / subtree color assignments.
 
-### Taxonomy integration
+### 2. Input and Format Support
+
+- Support paste-in Newick text.
+- Support drag-and-drop tree loading anywhere on the viewer window.
+- Expand parser support beyond current Newick assumptions to cover more real-world variants.
+- Add NEXUS support.
+
+### 3. External Metadata and Data-Driven Annotation
+
+- Load a CSV file keyed by tip names and/or internal node labels.
+- Map categorical CSV data to branch coloring.
+- Map continuous numerical CSV data to branch coloring with a color scale.
+- Add legends and scale controls for data-driven coloring.
+- Plan for additional annotation channels from external tabular data beyond color alone.
+
+### 4. Labels and Text Styling
+
+- Add visual controls for font family selection.
+- Add visual controls for font size by label class.
+- Add visual controls for label offset by label class.
+- Support separate controls for:
+  - tip labels
+  - internal node labels
+  - bootstrap values
+  - node height labels
+  - future extra metadata labels
+- Improve support for bootstrap values and other extra values when they are present in the input tree.
+
+### 5. Node Uncertainty / Error Bars
+
+- Support node-associated error bars when that data is available, similar to FigTree.
+- Add controls for whether error bars are shown.
+- Add controls for error-bar appearance for figure generation.
+- Define how error-bar data is represented in parsed tree input and/or external metadata files.
+
+### 6. Scale Bar and Figure Controls
+
+- Add circular scale bar customization.
+- Add rectangular scale bar customization.
+- Support explicit tick interval control.
+- Support scale label font-size control.
+- Support scale line / tick styling controls for figure generation.
+- Keep time stripes and scale bars independently configurable.
+
+### 7. Export
+
+- Export the current tree view as SVG.
+- Preserve annotations in SVG export, including:
+  - labels
+  - subtree colors
+  - scale bars
+  - time stripes where appropriate
+  - future metadata overlays
+
+### 8. Taxonomy Integration
 
 - Add an optional mode that downloads the NCBI taxonomy dump locally.
 - Parse and index taxonomy data for local lookup.
@@ -29,28 +85,19 @@ These items are already in place and do not need to stay on the near-term list:
 - Use taxonomy group membership to color branches, tips, or subtrees.
 - Keep taxonomy support optional so the base viewer remains lightweight.
 
-### Visual options
+### 9. Deployment Targets
 
-- Add more visual controls, including options commonly found in tools like FigTree.
-- Expand styling and annotation controls without making the control panel unmanageable.
-
-### Tooltip and metadata improvements
-
-- Continue expanding tooltip content with useful per-node metadata.
-
-### Deployment targets
-
-- Keep supporting the web app.
+- Keep supporting the web app as the primary deployment target.
 - Add possible future support for distributing the app as a Tauri desktop application.
-- Prefer architecture that does not hard-wire browser-only assumptions into core tree logic.
+- Keep new feature logic platform-neutral where possible.
 
-## Organizational Concerns
+## Design and Architecture Work That Still Matters
 
-The main architectural pressure point is still that too much behavior lives in one large canvas component. That was acceptable for initial iteration, but it will become harder to maintain as more interaction modes, render layers, and feature-specific state accumulate.
+The main architectural pressure point is still that too much behavior lives in one large canvas component. That was acceptable for initial iteration, but it will become harder to maintain as more interaction modes, render layers, annotation systems, and export features accumulate.
 
-## Suggested Refactoring Direction
+### Suggested Refactoring Direction
 
-### 1. Split rendering from interaction and app state
+#### Split rendering from interaction and app state
 
 Keep extracting smaller modules for:
 
@@ -59,9 +106,9 @@ Keep extracting smaller modules for:
 - rectangular rendering
 - circular rendering
 - label placement
-- tooltip/context-menu interaction state
+- tooltip and context-menu interaction state
 
-### 2. Introduce a view model / controller layer
+#### Introduce a view model / controller layer
 
 It would be useful to have a single place that represents the current tree view state:
 
@@ -75,10 +122,11 @@ It would be useful to have a single place that represents the current tree view 
 - collapsed subtrees
 - subtree colors
 - rotation angle for circular mode
+- future metadata display options
 
 That state should stay separate from the raw drawing code.
 
-### 3. Separate tree data from overlay/stateful annotations
+#### Separate tree data from overlay / annotation state
 
 The parsed tree should remain the immutable core dataset.
 
@@ -88,95 +136,41 @@ Feature-specific state should live separately, for example:
 - collapsed nodes
 - search matches
 - temporary UI highlights
-- future taxonomy mappings
+- taxonomy mappings
+- CSV-derived annotations
+- future error-bar data and label visibility settings
 
-This will make undo/redo, context-menu actions, and opening subtrees in new tabs much easier later.
+#### Add a command / action layer for node operations
 
-### 4. Plan for multiple tabs / tree sessions
+Context-menu actions will continue to multiply.
 
-If we want “open subtree as standalone tree in a new tab” or in a new window, we should eventually move toward a session model:
+Useful actions already emerging or likely to arrive:
 
-- one app shell
-- multiple tree sessions or tabs
-- each session has its own tree, camera, annotations, search state, and options
-
-This does not need to be implemented yet, but future code should avoid assuming there is only one global tree view forever.
-
-### 5. Add a command/action layer for node operations
-
-Context-menu actions will multiply quickly.
-
-It would help to centralize actions like:
-
+- color branch
 - color subtree
 - collapse subtree
 - expand subtree
-- focus subtree
+- zoom to subtree
+- zoom to parent subtree
 - open subtree in new tab
-- copy node data
+- clear annotation from subtree
 
-That can start as a simple action registry rather than a full command framework, but the important thing is to avoid scattering per-action logic throughout rendering code.
+Centralizing these actions will reduce renderer-specific logic leaks.
 
-### 6. Abstract data providers for optional local resources
-
-The optional taxonomy dump is a good reason to avoid mixing data acquisition with rendering.
+#### Keep optional data providers separate
 
 Useful direction:
 
 - core tree logic remains platform-agnostic
-- taxonomy loading/indexing lives in a separate service or module
-- platform-specific file or local-storage behavior is abstracted behind adapters
+- taxonomy loading / indexing lives in separate modules
+- CSV metadata loading / validation lives in separate modules
+- file / browser storage behavior is abstracted behind small interfaces
 
-### 7. Prepare for Tauri without adding it prematurely
+## Near-Term Priorities
 
-What is worth doing now:
-
-- keep core logic in plain TypeScript modules
-- avoid baking browser-only storage/file APIs directly into feature logic
-- keep optional local-file workflows behind small interfaces
-- think of “open in new tab/window” as a session/window abstraction, not a browser-specific trick
-
-What can wait:
-
-- `src-tauri/`
-- Rust commands
-- desktop packaging config
-- desktop updater and installer work
-
-### 8. Consider render layers explicitly
-
-The canvas already has multiple logical layers, even if they are not formalized yet:
-
-- tree geometry
-- hover highlights
-- tip labels
-- genus labels
-- node height labels
-- time stripes and scales
-- future subtree coloring
-- future collapsed-subtree glyphs
-
-Making these layers explicit in code would reduce regressions when new features are added.
-
-## Suggested Near-Term Scaffolding
-
-1. Keep breaking `TreeCanvas.tsx` into smaller modules for:
-   - hover and hit-testing
-   - rectangular draw
-   - circular draw
-   - label placement
-   - context-menu interaction
-
-2. Introduce a `TreeViewState` shape that is independent from the raw parsed tree.
-
-3. Introduce an annotation/state layer for:
-   - subtree colors
-   - collapsed nodes
-   - search matches
-   - future taxonomy-derived groups
-
-4. Add a simple node-action abstraction as the context menu grows.
-
-5. Keep taxonomy loading/indexing in separate modules or services, not inside the renderer.
-
-6. Delay Tauri scaffolding until we are ready to actually test desktop packaging, but keep new feature logic platform-neutral.
+1. Add manual subtree / branch coloring with context-menu swatches.
+2. Add paste-in text and drag-and-drop loading.
+3. Add CSV metadata loading with branch-color mapping.
+4. Add label / font / offset controls for figure generation.
+5. Add SVG export with current annotations.
+6. Add broader Newick-variant support, including NEXUS.
