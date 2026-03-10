@@ -744,9 +744,22 @@ export default function TreeCanvas({
   const cameraRef = useRef<CameraState | null>(null);
   const previousViewModeRef = useRef<ViewMode>(viewMode);
   const frameRequestRef = useRef<number | null>(null);
+  const dragRenderTimeoutRef = useRef<number | null>(null);
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
+  const dragSnapshotRef = useRef<{
+    canvas: HTMLCanvasElement;
+    width: number;
+    height: number;
+    kind: "rect" | "circular";
+    scaleX?: number;
+    scaleY?: number;
+    scale?: number;
+    rotation?: number;
+    translateX: number;
+    translateY: number;
+  } | null>(null);
   const handledFocusRequestRef = useRef(0);
   const handledExportRequestRef = useRef(0);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
@@ -776,6 +789,89 @@ export default function TreeCanvas({
     name: string;
     descendantTipCount: number;
   } | null>(null);
+
+  const clearDragRenderTimeout = useCallback(() => {
+    if (dragRenderTimeoutRef.current !== null) {
+      window.clearTimeout(dragRenderTimeoutRef.current);
+      dragRenderTimeoutRef.current = null;
+    }
+  }, []);
+
+  const cacheDragSnapshot = useCallback(() => {
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    if (!canvas || !camera || typeof document === "undefined") {
+      return;
+    }
+    let snapshot = dragSnapshotRef.current?.canvas;
+    if (!snapshot) {
+      snapshot = document.createElement("canvas");
+    }
+    if (snapshot.width !== canvas.width || snapshot.height !== canvas.height) {
+      snapshot.width = canvas.width;
+      snapshot.height = canvas.height;
+    }
+    const snapshotContext = snapshot.getContext("2d");
+    if (!snapshotContext) {
+      return;
+    }
+    snapshotContext.setTransform(1, 0, 0, 1, 0, 0);
+    snapshotContext.clearRect(0, 0, snapshot.width, snapshot.height);
+    snapshotContext.drawImage(canvas, 0, 0);
+    dragSnapshotRef.current = camera.kind === "rect"
+      ? {
+        canvas: snapshot,
+        width: canvas.width,
+        height: canvas.height,
+        kind: "rect",
+        scaleX: camera.scaleX,
+        scaleY: camera.scaleY,
+        translateX: camera.translateX,
+        translateY: camera.translateY,
+      }
+      : {
+        canvas: snapshot,
+        width: canvas.width,
+        height: canvas.height,
+        kind: "circular",
+        scale: camera.scale,
+        rotation: camera.rotation,
+        translateX: camera.translateX,
+        translateY: camera.translateY,
+      };
+  }, []);
+
+  const renderPanPreview = useCallback((): boolean => {
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    const snapshot = dragSnapshotRef.current;
+    if (!canvas || !camera || !snapshot || snapshot.width !== canvas.width || snapshot.height !== canvas.height) {
+      return false;
+    }
+    if (camera.kind !== snapshot.kind) {
+      return false;
+    }
+    if (camera.kind === "rect") {
+      if (snapshot.scaleX !== camera.scaleX || snapshot.scaleY !== camera.scaleY) {
+        return false;
+      }
+    } else if (snapshot.scale !== camera.scale || snapshot.rotation !== camera.rotation) {
+      return false;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const dx = Math.round((camera.translateX - snapshot.translateX) * dpr);
+    const dy = Math.round((camera.translateY - snapshot.translateY) * dpr);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return false;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#fbfcfe";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(snapshot.canvas, dx, dy);
+    return true;
+  }, []);
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
   const taxonomyColors = useMemo(() => (
@@ -3160,9 +3256,11 @@ export default function TreeCanvas({
     if (typeof window !== "undefined") {
       window.__BIG_TREE_VIEWER_RENDER_DEBUG__ = renderDebug;
     }
+    cacheDragSnapshot();
   }, [
     activeSearchGenusCenterNode,
     activeSearchNode,
+    cacheDragSnapshot,
     cache,
     collapsedView,
     collapsedNodes,
@@ -3196,6 +3294,16 @@ export default function TreeCanvas({
       frameRequestRef.current = null;
       draw();
     });
+  }, [draw]);
+
+  const scheduleDeferredFullDraw = useCallback(() => {
+    if (dragRenderTimeoutRef.current !== null) {
+      return;
+    }
+    dragRenderTimeoutRef.current = window.setTimeout(() => {
+      dragRenderTimeoutRef.current = null;
+      draw();
+    }, 80);
   }, [draw]);
 
   useLayoutEffect(() => {
@@ -3630,6 +3738,7 @@ export default function TreeCanvas({
         pointerDownRef.current = true;
         lastPointerRef.current = { x: event.clientX, y: event.clientY };
         pinchGestureRef.current = null;
+        cacheDragSnapshot();
         if (event.pointerType === "touch") {
           longPressRef.current = {
             pointerId: event.pointerId,
@@ -3725,7 +3834,11 @@ export default function TreeCanvas({
           camera.translateY += dy;
           clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
         }
-        scheduleDraw();
+        if (!renderPanPreview()) {
+          scheduleDraw();
+        } else {
+          scheduleDeferredFullDraw();
+        }
         return;
       }
       updateHover(event);
@@ -3738,11 +3851,14 @@ export default function TreeCanvas({
         pointerDownRef.current = false;
         lastPointerRef.current = null;
         pinchGestureRef.current = null;
+        clearDragRenderTimeout();
+        scheduleDraw();
       } else if (activePointersRef.current.size === 1) {
         const remaining = [...activePointersRef.current.values()][0];
         pointerDownRef.current = true;
         lastPointerRef.current = { x: remaining.clientX, y: remaining.clientY };
         pinchGestureRef.current = null;
+        cacheDragSnapshot();
       }
       canvas.releasePointerCapture(event.pointerId);
     };
@@ -3753,6 +3869,7 @@ export default function TreeCanvas({
       pinchGestureRef.current = null;
       pointerDownRef.current = false;
       lastPointerRef.current = null;
+      clearDragRenderTimeout();
       hoverRef.current = null;
       setOverlayHover(null);
       onHoverChange(null);
@@ -3838,7 +3955,7 @@ export default function TreeCanvas({
       canvas.removeEventListener("gesturestart", preventGestureDefault);
       canvas.removeEventListener("gesturechange", preventGestureDefault);
     };
-  }, [cache, collapsedNodes, collapsedView, draw, onHoverChange, order, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
+  }, [cache, cacheDragSnapshot, clearDragRenderTimeout, collapsedNodes, collapsedView, draw, onHoverChange, order, renderPanPreview, scheduleDeferredFullDraw, scheduleDraw, size.height, size.width, toggleCollapsedNode, tree, zoomAxisMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
