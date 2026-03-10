@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import type { WorkerResponse } from "./types/messages";
@@ -125,10 +125,112 @@ function buildTreeModel(payload: WorkerTreePayload): TreeModel {
   };
 }
 
+function splitOutsideQuotes(value: string, delimiter: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "'" || character === "\"") {
+      if (quote === character) {
+        quote = null;
+      } else if (quote === null) {
+        quote = character;
+      }
+      current += character;
+      continue;
+    }
+    if (character === delimiter && quote === null) {
+      if (current.trim()) {
+        parts.push(current.trim());
+      }
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+  return parts;
+}
+
+function stripWrappingQuotes(value: string): string {
+  return value.trim().replace(/^['"]+|['"]+$/g, "");
+}
+
+function applyNexusTranslate(newick: string, translate: Map<string, string>): string {
+  if (translate.size === 0) {
+    return newick;
+  }
+  let output = "";
+  let token = "";
+  let quote: "'" | "\"" | null = null;
+  const flushToken = (): void => {
+    if (!token) {
+      return;
+    }
+    output += translate.get(token) ?? token;
+    token = "";
+  };
+  for (let index = 0; index < newick.length; index += 1) {
+    const character = newick[index];
+    if (character === "'" || character === "\"") {
+      flushToken();
+      if (quote === character) {
+        quote = null;
+      } else if (quote === null) {
+        quote = character;
+      }
+      output += character;
+      continue;
+    }
+    if (quote !== null) {
+      output += character;
+      continue;
+    }
+    if (/[\s(),:;[\]]/.test(character)) {
+      flushToken();
+      output += character;
+      continue;
+    }
+    token += character;
+  }
+  flushToken();
+  return output;
+}
+
+function normalizeImportedTreeText(text: string): string {
+  const trimmed = text.trim();
+  if (!/^#?nexus/i.test(trimmed) && !/begin\s+trees\s*;/i.test(trimmed)) {
+    return text;
+  }
+  const treeBlockMatch = /begin\s+trees\s*;([\s\S]*?)end\s*;/i.exec(trimmed);
+  const treeBlock = treeBlockMatch?.[1] ?? trimmed;
+  const translate = new Map<string, string>();
+  const translateMatch = /translate\s+([\s\S]*?);/i.exec(treeBlock);
+  if (translateMatch) {
+    const entries = splitOutsideQuotes(translateMatch[1], ",");
+    for (let index = 0; index < entries.length; index += 1) {
+      const match = /^(\S+)\s+(.+)$/.exec(entries[index].trim());
+      if (!match) {
+        continue;
+      }
+      translate.set(match[1], stripWrappingQuotes(match[2]));
+    }
+  }
+  const treeMatch = /tree\s+[^=]+=\s*(?:\[[^\]]*\]\s*)*([\s\S]*?;)/i.exec(treeBlock);
+  if (!treeMatch) {
+    return text;
+  }
+  return applyNexusTranslate(treeMatch[1].trim(), translate);
+}
+
 export default function App() {
   const workerRef = useRef<Worker | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoloadRef = useRef(false);
+  const dragCounterRef = useRef(0);
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [loadState, setLoadState] = useState<LoadState>({
     loading: false,
@@ -153,6 +255,9 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useSessionDisclosure("section-search", false);
   const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
+  const [pastedTreeText, setPastedTreeText] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const handleHoverChange = useCallback(() => {}, []);
 
   const searchResults = useMemo(() => {
@@ -315,6 +420,7 @@ export default function App() {
   }, []);
 
   const parseText = useCallback(async (text: string, label: string): Promise<void> => {
+    const normalizedText = normalizeImportedTreeText(text);
     setLoadState({
       loading: true,
       message: `Starting worker for ${label}...`,
@@ -328,7 +434,7 @@ export default function App() {
     });
     worker.postMessage({
       type: "parse-tree",
-      text,
+      text: normalizedText,
     });
   }, [ensureWorker]);
 
@@ -406,6 +512,40 @@ export default function App() {
     event.target.value = "";
   };
 
+  const loadPastedTree = useCallback(async (): Promise<void> => {
+    const text = pastedTreeText.trim();
+    if (!text) {
+      setLoadState({
+        loading: false,
+        message: "Paste a tree string first.",
+        error: "No pasted tree text was provided.",
+      });
+      return;
+    }
+    await parseText(text, "pasted tree");
+  }, [parseText, pastedTreeText]);
+
+  const handleDrop = useCallback(async (event: DragEvent<HTMLDivElement>): Promise<void> => {
+    event.preventDefault();
+    dragCounterRef.current = 0;
+    setDragActive(false);
+    const dataTransfer = "dataTransfer" in event ? event.dataTransfer : null;
+    if (!dataTransfer) {
+      return;
+    }
+    const file = dataTransfer.files?.[0];
+    if (file) {
+      const text = await file.text();
+      await parseText(text, file.name);
+      return;
+    }
+    const plainText = dataTransfer.getData("text/plain");
+    if (plainText.trim()) {
+      setPastedTreeText(plainText);
+      await parseText(plainText, "dropped tree text");
+    }
+  }, [parseText]);
+
   const stepSearch = (direction: -1 | 1): void => {
     if (searchResults.length === 0) {
       return;
@@ -449,7 +589,24 @@ export default function App() {
   }, [loadState.error, loadState.loading, order, showGenusLabels, tree, viewMode]);
 
   return (
-    <div className={`app-shell${sidebarVisible ? "" : " sidebar-hidden"}`}>
+    <div
+      className={`app-shell${sidebarVisible ? "" : " sidebar-hidden"}${dragActive ? " drag-active" : ""}`}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        dragCounterRef.current += 1;
+        setDragActive(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => {
+        event.preventDefault();
+        dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+        if (dragCounterRef.current === 0) {
+          setDragActive(false);
+        }
+      }}
+      onDrop={(event) => void handleDrop(event)}
+    >
+      {dragActive ? <div className="drag-overlay">Drop a tree file or Newick / NEXUS text to load it</div> : null}
       <button
         type="button"
         className="mobile-sidebar-toggle"
@@ -473,15 +630,41 @@ export default function App() {
               className="secondary"
               onClick={() => fileInputRef.current?.click()}
             >
-              Open Newick
+              Open Tree File
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".nwk,.newick,.tree,.txt"
+              accept=".nwk,.newick,.tree,.tre,.txt,.nex,.nexus"
               hidden
               onChange={(event) => void onFileChange(event)}
             />
+          </div>
+          <div className="paste-tree">
+            <textarea
+              value={pastedTreeText}
+              onChange={(event) => setPastedTreeText(event.target.value)}
+              placeholder="Paste a Newick or NEXUS tree string here"
+              spellCheck={false}
+            />
+            <div className="button-row">
+              <button type="button" className="secondary" onClick={() => void loadPastedTree()}>
+                Load Pasted Tree
+              </button>
+              <button type="button" className="secondary" onClick={() => setPastedTreeText("")}>
+                Clear
+              </button>
+            </div>
+          </div>
+          <div className="button-row">
+            <button
+              type="button"
+              className="secondary"
+              disabled={!tree}
+              onClick={() => setExportSvgRequest((value) => value + 1)}
+            >
+              Export View SVG
+            </button>
           </div>
           {loadState.loading && loadState.message ? <p className="status-line">{loadState.message}</p> : null}
           {loadState.error ? <p className="status-error">{loadState.error}</p> : null}
@@ -730,6 +913,7 @@ export default function App() {
           activeSearchGenusCenterNode={activeSearchGenusCenterNode}
           focusNodeRequest={focusNodeRequest}
           fitRequest={fitRequest}
+          exportSvgRequest={exportSvgRequest}
           onHoverChange={handleHoverChange}
         />
       </main>

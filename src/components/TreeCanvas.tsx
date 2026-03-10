@@ -389,6 +389,7 @@ export default function TreeCanvas({
   activeSearchGenusCenterNode,
   focusNodeRequest,
   fitRequest,
+  exportSvgRequest,
   onHoverChange,
 }: TreeCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -400,6 +401,7 @@ export default function TreeCanvas({
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
   const handledFocusRequestRef = useRef(0);
+  const handledExportRequestRef = useRef(0);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
   const pinchGestureRef = useRef<{ distance: number; centerX: number; centerY: number } | null>(null);
   const pointerDownRef = useRef(false);
@@ -2524,6 +2526,34 @@ export default function TreeCanvas({
   useLayoutEffect(() => {
     draw();
   }, [draw, fitRequest]);
+
+  useEffect(() => {
+    if (exportSvgRequest === 0 || handledExportRequestRef.current === exportSvgRequest) {
+      return;
+    }
+    handledExportRequestRef.current = exportSvgRequest;
+    const canvas = canvasRef.current;
+    if (!canvas || typeof window === "undefined") {
+      return;
+    }
+    const width = size.width;
+    const height = size.height;
+    const pngDataUrl = canvas.toDataURL("image/png");
+    const svg = [
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+      `<desc>Big Tree Viewer current-view export. This SVG intentionally embeds the rendered viewport as an image to keep large-tree exports tractable.</desc>`,
+      `<rect width="100%" height="100%" fill="#ffffff"/>`,
+      `<image href="${pngDataUrl}" width="${width}" height="${height}" preserveAspectRatio="none"/>`,
+      "</svg>",
+    ].join("");
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `big-tree-view-${viewMode}.svg`;
+    link.click();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+  }, [exportSvgRequest, size.height, size.width, viewMode]);
 
   useEffect(() => () => {
     if (frameRequestRef.current !== null) {

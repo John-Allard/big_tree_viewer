@@ -17,6 +17,7 @@ export interface TreeCanvasProps {
   activeSearchGenusCenterNode: number | null;
   focusNodeRequest: number;
   fitRequest: number;
+  exportSvgRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
 }
 

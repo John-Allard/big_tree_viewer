@@ -13,6 +13,10 @@ These are in place and do not need to stay on the active backlog:
 - zoom to parent subtree
 - open subtree in a new browser tab
 - basic node / branch context menu
+- paste-in Newick / NEXUS text loading
+- drag-and-drop tree loading
+- basic current-view SVG export
+- basic NEXUS import support
 
 ## Active Feature Areas
 
@@ -25,10 +29,8 @@ These are in place and do not need to stay on the active backlog:
 
 ### 2. Input and Format Support
 
-- Support paste-in Newick text.
-- Support drag-and-drop tree loading anywhere on the viewer window.
 - Expand parser support beyond current Newick assumptions to cover more real-world variants.
-- Add NEXUS support.
+- Expand NEXUS support beyond the current basic tree extraction workflow.
 
 ### 3. External Metadata and Data-Driven Annotation
 
@@ -69,13 +71,17 @@ These are in place and do not need to stay on the active backlog:
 
 ### 7. Export
 
-- Export the current tree view as SVG.
+- Add true vector SVG export for the current view rather than the current embedded-raster SVG wrapper.
 - Preserve annotations in SVG export, including:
   - labels
   - subtree colors
   - scale bars
   - time stripes where appropriate
   - future metadata overlays
+- Add a strategy for large-tree export that avoids pathological SVG sizes, for example:
+  - vector export for modest visible complexity
+  - hybrid raster/vector export for dense branch layers
+  - subtree-focused export workflows for publication figures
 
 ### 8. Taxonomy Integration
 
@@ -169,8 +175,7 @@ Useful direction:
 ## Near-Term Priorities
 
 1. Add manual subtree / branch coloring with context-menu swatches.
-2. Add paste-in text and drag-and-drop loading.
-3. Add CSV metadata loading with branch-color mapping.
-4. Add label / font / offset controls for figure generation.
-5. Add SVG export with current annotations.
-6. Add broader Newick-variant support, including NEXUS.
+2. Add CSV metadata loading with branch-color mapping.
+3. Add label / font / offset controls for figure generation.
+4. Add true vector / annotation-aware SVG export.
+5. Add broader Newick-variant support, including deeper NEXUS coverage.
