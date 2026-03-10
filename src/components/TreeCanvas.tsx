@@ -94,14 +94,7 @@ function arcIntersectsViewport(
 }
 
 const GENUS_CONNECTOR_COLORS = ["#111111", "#7a7a7a"] as const;
-const TAXONOMY_LAYER_THRESHOLDS: Record<TaxonomyRank, number> = {
-  superkingdom: 0,
-  phylum: 0,
-  class: 0,
-  order: 1.2,
-  family: 2.2,
-  genus: 3.8,
-};
+const TAXONOMY_LAYER_BASE_THRESHOLDS = [0, 0, 0.35, 0.85, 1.6, 2.9] as const;
 
 type TaxonomyColorByRank = Partial<Record<TaxonomyRank, Record<string, string>>>;
 
@@ -139,7 +132,7 @@ function colorForTaxonomy(rank: TaxonomyRank, label: string, colorsByRank: Taxon
 }
 
 function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]): TaxonomyRank[] {
-  return activeRanks.filter((rank) => zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+  return activeRanks.filter((_, index) => zoom >= TAXONOMY_LAYER_BASE_THRESHOLDS[Math.min(index, TAXONOMY_LAYER_BASE_THRESHOLDS.length - 1)]);
 }
 
 function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorByRank {
@@ -263,6 +256,90 @@ function taxonomyRingMetricsPx(rankCount: number, baseFontSize: number): {
     index === rankCount - 1 ? outerRingWidthPx : ringBaseWidthPx
   ));
   return { ringWidthsPx, ringGapPx, labelGapPx };
+}
+
+type TaxonomyConsensusByRank = Partial<Record<TaxonomyRank, Array<string | null>>>;
+
+function buildTaxonomyConsensusByRank(
+  tree: TreeModel,
+  taxonomyMap: TaxonomyMapPayload,
+  activeRanks: TaxonomyRank[],
+): TaxonomyConsensusByRank {
+  const tipRanksByNode = new Map<number, Partial<Record<TaxonomyRank, string>>>();
+  for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
+    tipRanksByNode.set(taxonomyMap.tipRanks[index].node, taxonomyMap.tipRanks[index].ranks);
+  }
+  const postorder: number[] = [];
+  const stack = [tree.root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    postorder.push(node);
+    for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+      stack.push(child);
+    }
+  }
+  const consensus: TaxonomyConsensusByRank = {};
+  const mixed = "__mixed__";
+  for (let rankIndex = 0; rankIndex < activeRanks.length; rankIndex += 1) {
+    const rank = activeRanks[rankIndex];
+    const values = new Array<string | null>(tree.nodeCount).fill(null);
+    for (let index = postorder.length - 1; index >= 0; index -= 1) {
+      const node = postorder[index];
+      if (tree.buffers.firstChild[node] < 0) {
+        values[node] = tipRanksByNode.get(node)?.[rank] ?? null;
+        continue;
+      }
+      let current: string | null = null;
+      let isMixed = false;
+      for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+        const childValue = values[child];
+        if (!childValue) {
+          continue;
+        }
+        if (childValue === mixed) {
+          isMixed = true;
+          break;
+        }
+        if (current === null) {
+          current = childValue;
+        } else if (current !== childValue) {
+          isMixed = true;
+          break;
+        }
+      }
+      values[node] = isMixed ? mixed : current;
+    }
+    consensus[rank] = values.map((value) => (value === mixed ? null : value));
+  }
+  return consensus;
+}
+
+function taxonomyBranchColor(
+  node: number,
+  parent: number,
+  activeRanks: TaxonomyRank[],
+  consensusByRank: TaxonomyConsensusByRank | null,
+  colorsByRank: TaxonomyColorByRank | null,
+): string | null {
+  if (!consensusByRank || !colorsByRank) {
+    return null;
+  }
+  for (let index = activeRanks.length - 1; index >= 0; index -= 1) {
+    const rank = activeRanks[index];
+    const values = consensusByRank[rank];
+    if (!values) {
+      continue;
+    }
+    const nodeLabel = values[node];
+    if (!nodeLabel || values[parent] !== nodeLabel) {
+      continue;
+    }
+    const color = colorsByRank[rank]?.[nodeLabel];
+    if (color) {
+      return color;
+    }
+  }
+  return null;
 }
 
 type RenderTaxonomyBlock = {
@@ -680,6 +757,10 @@ export default function TreeCanvas({
       asc: buildTaxonomyBlocks(cache, "asc", taxonomyMap, taxonomyColors),
     };
   }, [cache, taxonomyColors, taxonomyMap]);
+  const taxonomyConsensus = useMemo(
+    () => (tree && taxonomyMap ? buildTaxonomyConsensusByRank(tree, taxonomyMap, taxonomyActiveRanks) : null),
+    [taxonomyActiveRanks, taxonomyMap, tree],
+  );
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const reservedTipLabelCharacters = useMemo(() => {
     if (!tree) {
@@ -853,11 +934,27 @@ export default function TreeCanvas({
     if (!tree) {
       return;
     }
-    const nextCamera = viewMode === "rectangular"
+    let nextCamera = viewMode === "rectangular"
       ? fitRectCamera(size.width, size.height, tree)
       : fitCircularCamera(size.width, size.height, tree, circularRotation);
+    if (nextCamera.kind === "rect") {
+      const padding = rectClampPadding(nextCamera);
+      const usableWidth = Math.max(1, size.width - 32 - (padding.right ?? 0));
+      nextCamera.scaleX = Math.min(nextCamera.scaleX, usableWidth / Math.max(tree.maxDepth, tree.branchLengthMinPositive));
+      nextCamera.translateX = 32;
+      nextCamera.translateY = 24;
+      clampRectCamera(nextCamera, tree, size.width, size.height, padding);
+    } else if (taxonomyEnabled && taxonomyBlocks) {
+      const radius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+      for (let iteration = 0; iteration < 2; iteration += 1) {
+        const extra = circularClampExtraRadiusPx(nextCamera);
+        const availableRadiusPx = Math.max(120, (Math.min(size.width, size.height) * 0.44) - extra);
+        nextCamera.scale = availableRadiusPx / radius;
+      }
+      clampCircularCamera(nextCamera, tree, size.width, size.height, circularClampExtraRadiusPx(nextCamera));
+    }
     cameraRef.current = nextCamera;
-  }, [circularRotation, size.height, size.width, tree, viewMode]);
+  }, [circularClampExtraRadiusPx, circularRotation, rectClampPadding, size.height, size.width, taxonomyBlocks, taxonomyEnabled, tree, viewMode]);
 
   const toggleCollapsedNode = useCallback((node: number) => {
     if (!tree || tree.buffers.firstChild[node] < 0) {
@@ -1099,6 +1196,106 @@ export default function TreeCanvas({
         }
       }
       ctx.stroke();
+
+      if (taxonomyEnabled && taxonomyConsensus && taxonomyColors) {
+        const colorPaths = new Map<string, Array<[number, number, number, number]>>();
+        const pushColoredSegment = (color: string | null, x1: number, y1: number, x2: number, y2: number): void => {
+          if (!color) {
+            return;
+          }
+          const segments = colorPaths.get(color) ?? [];
+          segments.push([x1, y1, x2, y2]);
+          colorPaths.set(color, segments);
+        };
+        const connectorOwners = new Set<number>();
+        if (visibleRectSegments) {
+          for (let index = 0; index < visibleRectSegments.length; index += 1) {
+            const segment = visibleRectSegments[index];
+            if (segment.kind === "connector") {
+              connectorOwners.add(segment.node);
+              continue;
+            }
+            const parent = tree.buffers.parent[segment.node];
+            if (parent < 0) {
+              continue;
+            }
+            const color = taxonomyBranchColor(segment.node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            if (!color) {
+              continue;
+            }
+            const start = worldToScreenRect(camera, segment.x1, segment.y1);
+            const end = worldToScreenRect(camera, segment.x2, segment.y2);
+            pushColoredSegment(color, start.x, start.y, end.x, end.y);
+          }
+        } else {
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (hiddenNodes[node]) {
+              continue;
+            }
+            const parent = tree.buffers.parent[node];
+            if (parent < 0) {
+              if (!collapsedNodes.has(node) && children[node].length >= 2) {
+                connectorOwners.add(node);
+              }
+              continue;
+            }
+            const color = taxonomyBranchColor(node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            if (!color) {
+              continue;
+            }
+            const y = layout.center[node];
+            if (!lineIntersectsRect(tree.buffers.depth[parent], y, tree.buffers.depth[node], y, minX, minY, maxX, maxY)) {
+              continue;
+            }
+            const start = worldToScreenRect(camera, tree.buffers.depth[parent], y);
+            const end = worldToScreenRect(camera, tree.buffers.depth[node], y);
+            pushColoredSegment(color, start.x, start.y, end.x, end.y);
+          }
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (!hiddenNodes[node] && !collapsedNodes.has(node) && children[node].length >= 2) {
+              connectorOwners.add(node);
+            }
+          }
+        }
+        connectorOwners.forEach((ownerNode) => {
+          if (hiddenNodes[ownerNode] || collapsedNodes.has(ownerNode)) {
+            return;
+          }
+          const ownerY = layout.center[ownerNode];
+          const ownerX = tree.buffers.depth[ownerNode];
+          const orderedChildren = children[ownerNode];
+          for (let childIndex = 0; childIndex < orderedChildren.length; childIndex += 1) {
+            const child = orderedChildren[childIndex];
+            if (hiddenNodes[child]) {
+              continue;
+            }
+            const color = taxonomyBranchColor(child, ownerNode, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            if (!color) {
+              continue;
+            }
+            const childY = layout.center[child];
+            if (!lineIntersectsRect(ownerX, ownerY, ownerX, childY, minX, minY, maxX, maxY)) {
+              continue;
+            }
+            const start = worldToScreenRect(camera, ownerX, ownerY);
+            const end = worldToScreenRect(camera, ownerX, childY);
+            pushColoredSegment(color, start.x, start.y, end.x, end.y);
+          }
+        });
+        colorPaths.forEach((segments, color) => {
+          ctx.beginPath();
+          for (let index = 0; index < segments.length; index += 1) {
+            const [x1, y1, x2, y2] = segments[index];
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+          }
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.15;
+          ctx.globalAlpha = 0.95;
+          ctx.stroke();
+        });
+        ctx.globalAlpha = 1;
+      }
 
       if (searchMatches.length > 0) {
         const drawSearchBranches = (
@@ -1878,6 +2075,133 @@ export default function TreeCanvas({
         }
       }
       ctx.stroke();
+
+      if (taxonomyEnabled && taxonomyConsensus && taxonomyColors) {
+        const colorStemPaths = new Map<string, Array<[number, number, number, number]>>();
+        const colorArcPaths = new Map<string, Array<{ radiusPx: number; start: number; end: number }>>();
+        const pushStem = (color: string | null, x1: number, y1: number, x2: number, y2: number): void => {
+          if (!color) {
+            return;
+          }
+          const segments = colorStemPaths.get(color) ?? [];
+          segments.push([x1, y1, x2, y2]);
+          colorStemPaths.set(color, segments);
+        };
+        const pushArc = (color: string | null, radiusPx: number, start: number, end: number): void => {
+          if (!color || radiusPx < 0.25 || end <= start) {
+            return;
+          }
+          const arcs = colorArcPaths.get(color) ?? [];
+          arcs.push({ radiusPx, start, end });
+          colorArcPaths.set(color, arcs);
+        };
+        const connectorOwners = new Set<number>();
+        if (visibleCircularSegments) {
+          for (let index = 0; index < visibleCircularSegments.length; index += 1) {
+            const segment = visibleCircularSegments[index];
+            if (segment.kind === "connector") {
+              connectorOwners.add(segment.node);
+              continue;
+            }
+            const parent = tree.buffers.parent[segment.node];
+            if (parent < 0) {
+              continue;
+            }
+            const color = taxonomyBranchColor(segment.node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            if (!color) {
+              continue;
+            }
+            const start = worldToScreenCircular(camera, segment.x1, segment.y1);
+            const end = worldToScreenCircular(camera, segment.x2, segment.y2);
+            pushStem(color, start.x, start.y, end.x, end.y);
+          }
+        } else {
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (hiddenNodes[node]) {
+              continue;
+            }
+            const parent = tree.buffers.parent[node];
+            if (parent < 0) {
+              if (!collapsedNodes.has(node) && children[node].length >= 2) {
+                connectorOwners.add(node);
+              }
+              continue;
+            }
+            const color = taxonomyBranchColor(node, parent, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            if (!color) {
+              continue;
+            }
+            const theta = thetaFor(layout.center, node, tree.leafCount);
+            const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
+            const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+            const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+            const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+            if (lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, size.width, size.height)) {
+              pushStem(color, start.x, start.y, end.x, end.y);
+            }
+          }
+          for (let node = 0; node < tree.nodeCount; node += 1) {
+            if (!hiddenNodes[node] && !collapsedNodes.has(node) && children[node].length >= 2) {
+              connectorOwners.add(node);
+            }
+          }
+        }
+        connectorOwners.forEach((ownerNode) => {
+          if (hiddenNodes[ownerNode] || collapsedNodes.has(ownerNode)) {
+            return;
+          }
+          const ownerTheta = thetaFor(layout.center, ownerNode, tree.leafCount);
+          const ownerArcStart = thetaFor(layout.min, ownerNode, tree.leafCount);
+          const ownerArcEnd = thetaFor(layout.max, ownerNode, tree.leafCount);
+          const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
+          const radiusPx = tree.buffers.depth[ownerNode] * camera.scale;
+          const orderedChildren = children[ownerNode];
+          for (let childIndex = 0; childIndex < orderedChildren.length; childIndex += 1) {
+            const child = orderedChildren[childIndex];
+            if (hiddenNodes[child]) {
+              continue;
+            }
+            const color = taxonomyBranchColor(child, ownerNode, taxonomyActiveRanks, taxonomyConsensus, taxonomyColors);
+            if (!color) {
+              continue;
+            }
+            const childTheta = thetaFor(layout.center, child, tree.leafCount);
+            const arcSpan = arcSubspanWithinSpan(ownerTheta, childTheta, ownerArcStart, ownerArcLength);
+            if (!arcSpan) {
+              continue;
+            }
+            pushArc(color, radiusPx, arcSpan.start + rotationAngle, arcSpan.end + rotationAngle);
+          }
+        });
+        colorArcPaths.forEach((arcs, color) => {
+          ctx.beginPath();
+          for (let index = 0; index < arcs.length; index += 1) {
+            const arc = arcs[index];
+            ctx.moveTo(
+              centerPoint.x + Math.cos(arc.start) * arc.radiusPx,
+              centerPoint.y + Math.sin(arc.start) * arc.radiusPx,
+            );
+            ctx.arc(centerPoint.x, centerPoint.y, arc.radiusPx, arc.start, arc.end, false);
+          }
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.2;
+          ctx.globalAlpha = 0.95;
+          ctx.stroke();
+        });
+        colorStemPaths.forEach((segments, color) => {
+          ctx.beginPath();
+          for (let index = 0; index < segments.length; index += 1) {
+            const [x1, y1, x2, y2] = segments[index];
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+          }
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.2;
+          ctx.globalAlpha = 0.95;
+          ctx.stroke();
+        });
+        ctx.globalAlpha = 1;
+      }
 
       if (searchMatches.length > 0) {
         const drawSearchBranches = (
@@ -2768,6 +3092,8 @@ export default function TreeCanvas({
     size.width,
     taxonomyActiveRanks,
     taxonomyBlocks,
+    taxonomyColors,
+    taxonomyConsensus,
     taxonomyEnabled,
     tree,
     viewMode,
