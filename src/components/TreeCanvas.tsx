@@ -108,7 +108,7 @@ const TAXONOMY_LAYER_THRESHOLDS: Record<TaxonomyRank, number> = {
   class: 0.03,
   order: 0.018,
   family: 0.04,
-  genus: 0.18,
+  genus: 0.35,
 };
 
 type TaxonomyColorByRank = Partial<Record<TaxonomyRank, Record<string, string>>>;
@@ -406,11 +406,64 @@ function splitWrappedAngularInterval(start: number, end: number): Array<{ start:
   ];
 }
 
+function splitWrappedLeafInterval(
+  start: number,
+  end: number,
+  leafCount: number,
+): Array<{ start: number; end: number }> {
+  if (end > start) {
+    return [{ start, end }];
+  }
+  return [
+    { start, end: leafCount },
+    { start: 0, end },
+  ];
+}
+
 function angularIntervalsOverlap(
   left: { start: number; end: number },
   right: { start: number; end: number },
 ): boolean {
   return left.start < right.end && right.start < left.end;
+}
+
+function leafIntervalsOverlap(
+  left: { start: number; end: number },
+  right: { start: number; end: number },
+): boolean {
+  return left.start < right.end && right.start < left.end;
+}
+
+function taxonomyBlockIntersectsVisibleLeafRanges(
+  blockSegments: Array<{ startIndex: number; endIndex: number }>,
+  visibleLeafRanges: Array<{ startIndex: number; endIndex: number }>,
+  leafCount: number,
+): boolean {
+  if (visibleLeafRanges.length === 0) {
+    return true;
+  }
+  for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
+    const segmentIntervals = splitWrappedLeafInterval(
+      blockSegments[segmentIndex].startIndex,
+      blockSegments[segmentIndex].endIndex,
+      leafCount,
+    );
+    for (let rangeIndex = 0; rangeIndex < visibleLeafRanges.length; rangeIndex += 1) {
+      const rangeIntervals = splitWrappedLeafInterval(
+        visibleLeafRanges[rangeIndex].startIndex,
+        visibleLeafRanges[rangeIndex].endIndex,
+        leafCount,
+      );
+      for (let segmentPartIndex = 0; segmentPartIndex < segmentIntervals.length; segmentPartIndex += 1) {
+        for (let rangePartIndex = 0; rangePartIndex < rangeIntervals.length; rangePartIndex += 1) {
+          if (leafIntervalsOverlap(segmentIntervals[segmentPartIndex], rangeIntervals[rangePartIndex])) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
 }
 
 function canPlaceTaxonomyArcLabel(
@@ -2375,7 +2428,7 @@ export default function TreeCanvas({
       }
       const useTaxonomyBranchRendering = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
       const cachedTaxonomyBranchColors = useTaxonomyBranchRendering ? getTaxonomyBranchColors(order, visibleTaxonomyRanks) : null;
-      const useCachedCircularTaxonomyPaths = useTaxonomyBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 0.12;
+      const useCachedCircularTaxonomyPaths = useTaxonomyBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 0.8;
       const cachedCircularTaxonomyPaths = useCachedCircularTaxonomyPaths
         ? getCircularTaxonomyPaths(order, layout, visibleTaxonomyRanks, cachedTaxonomyBranchColors)
         : null;
@@ -2984,6 +3037,15 @@ export default function TreeCanvas({
             const blockSegments = block.segments && block.segments.length > 0
               ? block.segments
               : [{ firstNode: block.firstNode, lastNode: block.lastNode, startIndex: 0, endIndex: 0 }];
+            if (!taxonomyBlockIntersectsVisibleLeafRanges(blockSegments, visibleLeafRanges, tree.leafCount)) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "outside-visible-ranges",
+              });
+              continue;
+            }
             const totalTipCount = blockSegments.reduce((total, segment) => {
               const start = segment.startIndex;
               const end = segment.endIndex >= start ? segment.endIndex : segment.endIndex + tree.leafCount;
@@ -2998,7 +3060,7 @@ export default function TreeCanvas({
               const candidateStart = visibleSpan?.start ?? renderedWrappedStart;
               const candidateEnd = visibleSpan?.end ?? renderedWrappedEnd;
               const candidateArcLengthPx = ((candidateEnd >= candidateStart ? candidateEnd - candidateStart : (candidateEnd + (Math.PI * 2)) - candidateStart)) * lineRadiusPx;
-              if (candidateArcLengthPx >= 0.25) {
+              if (candidateArcLengthPx >= 0.8) {
                 const angularGapPx = candidateArcLengthPx < 8
                   ? 0
                   : Math.max(0.2, Math.min(2.2, Math.min(candidateArcLengthPx * 0.04, ringWidthPx * 0.08)));
@@ -3149,9 +3211,16 @@ export default function TreeCanvas({
             );
             const availableArcPx = Math.max(0, bestLabelCandidate.arcLengthPx * (1 - paddingFraction));
             const availableRadialPx = Math.max(0, ringWidthPx * (1 - paddingFraction));
+            const curvatureCoeff = (widthAtOnePx * widthAtOnePx) / Math.max(8 * lineRadiusPx, 1e-6);
+            const radialFontLimit = curvatureCoeff > 1e-9
+              ? Math.max(0, (-heightAtOnePx + Math.sqrt(Math.max(
+                0,
+                (heightAtOnePx * heightAtOnePx) + (4 * curvatureCoeff * availableRadialPx),
+              ))) / (2 * curvatureCoeff))
+              : (availableRadialPx / heightAtOnePx);
             const fitFontSize = Math.min(30, Math.min(
               availableArcPx / widthAtOnePx,
-              availableRadialPx / heightAtOnePx,
+              radialFontLimit,
             ) * 0.94);
             if (!Number.isFinite(fitFontSize) || fitFontSize < minFontSize) {
               taxonomyCandidateDebug.push({
@@ -3169,9 +3238,16 @@ export default function TreeCanvas({
             textMetrics = ctx.measureText(block.label);
             const radialHeightPx = (textMetrics.actualBoundingBoxAscent || (fontSize * 0.72))
               + (textMetrics.actualBoundingBoxDescent || (fontSize * 0.28));
+            const halfWidthPx = textMetrics.width * 0.5;
+            const curvaturePenaltyPx = halfWidthPx < lineRadiusPx
+              ? lineRadiusPx - Math.sqrt(Math.max(0, (lineRadiusPx * lineRadiusPx) - (halfWidthPx * halfWidthPx)))
+              : availableRadialPx + 1;
             const finalFontSize = fontSize;
             const overflowTolerancePx = isPreservedLabel ? 1.6 : 1.1;
-            if (textMetrics.width > (availableArcPx + 0.5) || radialHeightPx > (availableRadialPx + overflowTolerancePx)) {
+            if (
+              textMetrics.width > (availableArcPx + 0.5)
+              || (radialHeightPx + curvaturePenaltyPx) > (availableRadialPx + overflowTolerancePx)
+            ) {
               taxonomyCandidateDebug.push({
                 rank,
                 label: block.label,
@@ -3182,6 +3258,7 @@ export default function TreeCanvas({
                 textWidth: textMetrics.width,
                 availableArcPx,
                 radialHeightPx,
+                curvaturePenaltyPx,
                 availableRadialPx,
               });
               continue;
