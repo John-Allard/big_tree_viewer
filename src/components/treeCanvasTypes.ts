@@ -82,6 +82,7 @@ export interface ScreenLabel {
     outerRadiusPx: number;
     startTheta: number;
     endTheta: number;
+    skipClip?: boolean;
   };
 }
 

@@ -130,6 +130,51 @@ test("circular deep-zoom pan keeps visible tip coverage continuous", async ({ pa
   }
 });
 
+test("circular zoom clamps before the visible window drops below two tips", async ({ page }) => {
+  await waitForViewer(page);
+  await configureCircularDeepZoom(page);
+
+  const initialScale = await page.evaluate(() => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable.");
+    }
+    return Number(camera.scale);
+  });
+
+  await page.evaluate(async () => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale: camera.scale * 40,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const clamped = await page.evaluate(() => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      visibleLeafRanges: Array<[number, number]>;
+    } | undefined;
+    if (!camera || camera.kind !== "circular" || !debug) {
+      throw new Error("Circular render debug unavailable.");
+    }
+    const visibleTipEstimate = (debug.visibleLeafRanges ?? []).reduce(
+      (total, [start, end]) => total + Math.max(0, end - start),
+      0,
+    );
+    return {
+      scale: Number(camera.scale),
+      visibleTipEstimate,
+    };
+  });
+
+  expect(clamped.scale).toBeLessThan(initialScale * 40);
+  expect(clamped.visibleTipEstimate).toBeGreaterThanOrEqual(2);
+});
+
 test("rectangular fit switches to circular fit without partial zoom", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

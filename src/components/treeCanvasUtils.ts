@@ -118,6 +118,7 @@ export function buildStripeBoundaries(extent: number, levels: StripeLevel[]): St
     return [];
   }
   const byValue = new Map<string, StripeBoundary>();
+  const maxBoundariesPerLevel = 20000;
   for (let levelIndex = 0; levelIndex < levels.length; levelIndex += 1) {
     const level = levels[levelIndex];
     if (!Number.isFinite(level.step) || level.step <= 0) {
@@ -128,6 +129,9 @@ export function buildStripeBoundaries(extent: number, levels: StripeLevel[]): St
       continue;
     }
     const count = Math.floor(extent / level.step);
+    if (count > maxBoundariesPerLevel) {
+      continue;
+    }
     for (let index = 1; index < count; index += 1) {
       const value = Number((index * level.step).toPrecision(12));
       if (!(value > 0) || !(value < extent)) {

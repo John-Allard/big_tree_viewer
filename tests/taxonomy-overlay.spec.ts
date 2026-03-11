@@ -440,9 +440,17 @@ test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape
   });
 
   const circularDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
-    taxonomyPlacedLabels?: Array<{ text: string; key?: string | null; clipArc?: unknown }>;
+    taxonomyArcDebug?: Array<{ key?: string | null; mode?: string | null; lineWidthPx?: number | null }>;
+    taxonomyPlacedLabels?: Array<{ text: string; key?: string | null; clipArc?: { skipClip?: boolean | null } | null }>;
   });
 
-  expect((circularDebug.taxonomyPlacedLabels ?? []).some((label) => label.text === "Pongo" && !String(label.key ?? "").endsWith(":outer") && Boolean(label.clipArc))).toBeTruthy();
-  expect((circularDebug.taxonomyPlacedLabels ?? []).every((label) => Boolean(label.clipArc))).toBeTruthy();
+  const apeLabels = (circularDebug.taxonomyPlacedLabels ?? []).filter((label) => ["Pongo", "Gorilla", "Homo", "Pan"].includes(label.text));
+  expect(apeLabels.map((label) => label.text).sort()).toEqual(["Gorilla", "Homo", "Pan", "Pongo"]);
+  expect(apeLabels.every((label) => Boolean(label.clipArc))).toBeTruthy();
+  expect(apeLabels.every((label) => label.clipArc?.skipClip === true)).toBeTruthy();
+
+  const apeArcDebug = (circularDebug.taxonomyArcDebug ?? []).filter((arc) => /:(Pongo|Gorilla|Homo|Pan):/.test(String(arc.key ?? "")));
+  expect(apeArcDebug).toHaveLength(4);
+  expect(apeArcDebug.every((arc) => arc.mode === "stroke" || arc.mode === "quad")).toBeTruthy();
+  expect(apeArcDebug.every((arc) => Number(arc.lineWidthPx ?? 0) > 0)).toBeTruthy();
 });
