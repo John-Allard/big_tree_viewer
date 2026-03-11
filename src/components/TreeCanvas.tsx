@@ -795,6 +795,31 @@ function buildCircularBranchPath(
   return path;
 }
 
+function buildRectBranchPaths(
+  tree: TreeModel,
+  layout: TreeModel["layouts"][LayoutOrder],
+  orderedChildren: number[][],
+): { stems: Path2D; connectors: Path2D } {
+  const stems = new Path2D();
+  const connectors = new Path2D();
+  for (let node = 0; node < tree.nodeCount; node += 1) {
+    const parent = tree.buffers.parent[node];
+    if (parent >= 0) {
+      const y = layout.center[node];
+      stems.moveTo(tree.buffers.depth[parent], y);
+      stems.lineTo(tree.buffers.depth[node], y);
+    }
+    const ordered = orderedChildren[node];
+    if (ordered.length < 2) {
+      continue;
+    }
+    const x = tree.buffers.depth[node];
+    connectors.moveTo(x, layout.center[ordered[0]]);
+    connectors.lineTo(x, layout.center[ordered[ordered.length - 1]]);
+  }
+  return { stems, connectors };
+}
+
 type RenderTaxonomyBlock = {
   rank: TaxonomyRank;
   label: string;
@@ -835,6 +860,11 @@ type CircularTaxonomyBitmapCache = {
   sourceOffsetY: number;
   viewportWidth: number;
   viewportHeight: number;
+};
+
+type RectBranchPathCache = {
+  stems: Path2D;
+  connectors: Path2D;
 };
 
 function average(values: number[]): number | null {
@@ -1386,6 +1416,7 @@ export default function TreeCanvas({
   const taxonomyBranchColorsCacheRef = useRef<Map<string, string[]>>(new Map());
   const circularTaxonomyPathCacheRef = useRef<Map<string, Map<string, Path2D>>>(new Map());
   const circularBasePathCacheRef = useRef<Map<LayoutOrder, Path2D>>(new Map());
+  const rectBasePathCacheRef = useRef<Map<LayoutOrder, RectBranchPathCache>>(new Map());
   const circularTaxonomyBitmapCacheRef = useRef<CircularTaxonomyBitmapCache | null>(null);
   const canvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const detailedRenderDebugEnabledRef = useRef(
@@ -1477,10 +1508,11 @@ export default function TreeCanvas({
     }
     return byNode;
   }, [taxonomyMap]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     taxonomyBranchColorsCacheRef.current.clear();
     circularTaxonomyPathCacheRef.current.clear();
     circularBasePathCacheRef.current.clear();
+    rectBasePathCacheRef.current.clear();
     circularTaxonomyBitmapCacheRef.current = null;
   }, [taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
@@ -1652,79 +1684,13 @@ export default function TreeCanvas({
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120;
   }, [maxGenusLabelCharacters, reservedTipLabelCharacters, taxonomyActiveRanks, taxonomyBlocks, taxonomyEnabled, tree]);
 
-  const countVisibleCircularTips = useCallback((camera: CircularCamera) => {
-    if (!tree || !cache) {
-      return 0;
-    }
-    const layout = collapsedView?.layout ?? tree.layouts[order];
-    const orderedLeaves = cache.orderedLeaves[order];
-    const centerPoint = worldToScreenCircular(camera, 0, 0);
-    const radiusPx = Math.max(tree.maxDepth, tree.branchLengthMinPositive) * camera.scale;
-    const visibleAngleSpans = computeVisibleCircularAngleSpans(
-      centerPoint.x,
-      centerPoint.y,
-      radiusPx,
-      size.width,
-      size.height,
-      24,
-    );
-    if (visibleAngleSpans.length === 0) {
-      return 0;
-    }
-    const visibleLeafRanges = circularSpansToLeafRanges(
-      visibleAngleSpans,
-      camera.rotation,
-      orderedLeaves,
-      layout.center,
-      tree.leafCount,
-      0,
-    );
-    return visibleLeafRanges.reduce((total, range) => total + Math.max(0, range.endIndex - range.startIndex), 0);
-  }, [cache, collapsedView, order, size.height, size.width, tree]);
-
-  const clampCircularTipZoom = useCallback((camera: CircularCamera, anchorX = size.width * 0.5, anchorY = size.height * 0.5) => {
-    if (!tree) {
-      return;
-    }
-    const minimumVisibleTips = Math.min(2, tree.leafCount);
-    if (countVisibleCircularTips(camera) >= minimumVisibleTips) {
-      return;
-    }
-    const fit = fitCircularCamera(size.width, size.height, tree, camera.rotation);
-    const minScale = fit.scale * 0.55;
-    const anchorWorld = screenToWorldCircular(camera, anchorX, anchorY);
-    let low = minScale;
-    let high = camera.scale;
-    for (let iteration = 0; iteration < 20; iteration += 1) {
-      const mid = (low + high) * 0.5;
-      const testCamera: CircularCamera = {
-        ...camera,
-        scale: mid,
-      };
-      const rotated = rotateCircularWorldPoint(testCamera, anchorWorld.x, anchorWorld.y);
-      testCamera.translateX = anchorX - (rotated.x * mid);
-      testCamera.translateY = anchorY - (rotated.y * mid);
-      clampCircularCamera(testCamera, tree, size.width, size.height, circularClampExtraRadiusPx(testCamera));
-      if (countVisibleCircularTips(testCamera) >= minimumVisibleTips) {
-        low = mid;
-      } else {
-        high = mid;
-      }
-    }
-    camera.scale = low;
-    const rotated = rotateCircularWorldPoint(camera, anchorWorld.x, anchorWorld.y);
-    camera.translateX = anchorX - (rotated.x * low);
-    camera.translateY = anchorY - (rotated.y * low);
-  }, [circularClampExtraRadiusPx, countVisibleCircularTips, size.height, size.width, tree]);
-
-  const finalizeCircularCamera = useCallback((camera: CircularCamera, anchorX = size.width * 0.5, anchorY = size.height * 0.5) => {
+  const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {
       return;
     }
     clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
-    clampCircularTipZoom(camera, anchorX, anchorY);
     clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
-  }, [circularClampExtraRadiusPx, clampCircularTipZoom, size.height, size.width, tree]);
+  }, [circularClampExtraRadiusPx, size.height, size.width, tree]);
 
   const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
@@ -1832,11 +1798,26 @@ export default function TreeCanvas({
     return built;
   }, [cache, tree]);
 
+  const getRectBasePaths = useCallback((
+    orderKey: LayoutOrder,
+    layout: TreeModel["layouts"][LayoutOrder],
+  ): RectBranchPathCache | null => {
+    if (!tree || !cache) {
+      return null;
+    }
+    const cached = rectBasePathCacheRef.current.get(orderKey);
+    if (cached) {
+      return cached;
+    }
+    const built = buildRectBranchPaths(tree, layout, cache.orderedChildren[orderKey]);
+    rectBasePathCacheRef.current.set(orderKey, built);
+    return built;
+  }, [cache, tree]);
+
   const getCircularTaxonomyBitmapCache = useCallback((
     orderKey: LayoutOrder,
     paths: Map<string, Path2D>,
     camera: CircularCamera,
-    fitCamera: CircularCamera,
   ): CircularTaxonomyBitmapCache | null => {
     if (typeof document === "undefined" || !tree) {
       return null;
@@ -1852,7 +1833,6 @@ export default function TreeCanvas({
       size.height,
       camera.scale.toFixed(6),
       camera.rotation.toFixed(6),
-      fitCamera.scale.toFixed(6),
     ].join(":");
     const cached = circularTaxonomyBitmapCacheRef.current;
     if (cached?.signature === signature && Math.abs(cached.rotation - camera.rotation) <= 1e-6) {
@@ -1956,7 +1936,7 @@ export default function TreeCanvas({
       const rotatedPoint = rotateCircularWorldPoint(nextCamera, point.x, point.y);
       nextCamera.translateX = centerScreenX - (rotatedPoint.x * nextCamera.scale);
       nextCamera.translateY = centerScreenY - (rotatedPoint.y * nextCamera.scale);
-      finalizeCircularCamera(nextCamera, centerScreenX, centerScreenY);
+      finalizeCircularCamera(nextCamera);
       return nextCamera;
     }
 
@@ -2041,6 +2021,9 @@ export default function TreeCanvas({
       branchBaseMs: 0,
       taxonomyBranchMs: 0,
       taxonomyOverlayMs: 0,
+      circularCachePrepMs: 0,
+      circularTaxonomyCacheMs: 0,
+      circularVisibilityPrepMs: 0,
       totalMs: 0,
     };
     const drawStartTime = performance.now();
@@ -2071,6 +2054,14 @@ export default function TreeCanvas({
         : [];
       const useTaxonomyBranchRendering = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
       const cachedTaxonomyBranchColors = useTaxonomyBranchRendering ? getTaxonomyBranchColors(order, visibleTaxonomyRanks) : null;
+      const fitLikeRect = fitCameraForMode("rectangular");
+      const nearRectFit = fitLikeRect?.kind === "rect"
+        ? camera.scaleY <= (fitLikeRect.scaleY * 3.2)
+        : false;
+      const useCachedRectBasePath = !useTaxonomyBranchRendering && collapsedNodes.size === 0 && nearRectFit;
+      const cachedRectBasePaths = useCachedRectBasePath
+        ? getRectBasePaths(order, layout)
+        : null;
 
       if (showTimeStripes) {
         const drawBands = (step: number, alpha: number) => {
@@ -2107,8 +2098,28 @@ export default function TreeCanvas({
           Math.max(1e-6, (maxY - minY) * 0.5) + rectWorldOverscanY,
         )
         : null;
+      const rectBranchRenderMode = cachedRectBasePaths
+        ? "cached-path"
+        : useTaxonomyBranchRendering
+          ? visibleRectSegments
+            ? "taxonomy-visible-segments"
+            : "taxonomy-full-tree"
+          : visibleRectSegments
+            ? "visible-segments"
+            : "full-tree";
       const baseBranchStartTime = performance.now();
-      if (!useTaxonomyBranchRendering) {
+      if (cachedRectBasePaths) {
+        ctx.save();
+        ctx.translate(camera.translateX, camera.translateY);
+        ctx.scale(camera.scaleX, camera.scaleY);
+        ctx.strokeStyle = BRANCH_COLOR;
+        ctx.lineCap = "butt";
+        ctx.lineWidth = 1 / Math.max(camera.scaleX, 1e-6);
+        ctx.stroke(cachedRectBasePaths.connectors);
+        ctx.lineWidth = 1 / Math.max(camera.scaleY, 1e-6);
+        ctx.stroke(cachedRectBasePaths.stems);
+        ctx.restore();
+      } else if (!useTaxonomyBranchRendering) {
         ctx.strokeStyle = BRANCH_COLOR;
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -2468,6 +2479,7 @@ export default function TreeCanvas({
           }
         }
         renderDebug.rect = {
+          branchRenderMode: rectBranchRenderMode,
           cueVisible: tipLabelCueVisible,
           microVisible: microTipLabelsVisible,
           tipVisible: tipLabelsVisible,
@@ -2619,6 +2631,7 @@ export default function TreeCanvas({
         }
         ctx.globalAlpha = 1;
         renderDebug.rect = {
+          branchRenderMode: rectBranchRenderMode,
           cueVisible: tipLabelCueVisible,
           microVisible: microTipLabelsVisible,
           tipVisible: tipLabelsVisible,
@@ -2653,6 +2666,7 @@ export default function TreeCanvas({
         };
       } else {
         renderDebug.rect = {
+          branchRenderMode: rectBranchRenderMode,
           cueVisible: tipLabelCueVisible,
           microVisible: microTipLabelsVisible,
           tipVisible: tipLabelsVisible,
@@ -2883,6 +2897,7 @@ export default function TreeCanvas({
         centerPoint.y,
         size.height - centerPoint.y,
       );
+      const circularCachePrepStartTime = performance.now();
       let visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
         : [];
@@ -2898,6 +2913,7 @@ export default function TreeCanvas({
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
       const useTaxonomyBranchRendering = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
+      const circularTaxonomyCacheStartTime = performance.now();
       const cachedTaxonomyBranchColors = useTaxonomyBranchRendering ? getTaxonomyBranchColors(order, visibleTaxonomyRanks) : null;
       const useCachedCircularTaxonomyPaths = useTaxonomyBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 0.8;
       const cachedCircularTaxonomyPaths = useCachedCircularTaxonomyPaths
@@ -2906,13 +2922,14 @@ export default function TreeCanvas({
       const useCachedCircularTaxonomyBitmap = useCachedCircularTaxonomyPaths
         && cachedCircularTaxonomyPaths !== null
         && nearCircularFit;
-      const cachedCircularTaxonomyBitmap = useCachedCircularTaxonomyBitmap && fitLikeCircular?.kind === "circular"
-        ? getCircularTaxonomyBitmapCache(order, cachedCircularTaxonomyPaths, camera, fitLikeCircular)
+      const cachedCircularTaxonomyBitmap = useCachedCircularTaxonomyBitmap
+        ? getCircularTaxonomyBitmapCache(order, cachedCircularTaxonomyPaths, camera)
         : null;
       const useCachedCircularBasePath = !useTaxonomyBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 1.1;
       const cachedCircularBasePath = useCachedCircularBasePath
         ? getCircularBasePath(order, layout)
         : null;
+      timing.circularTaxonomyCacheMs += performance.now() - circularTaxonomyCacheStartTime;
       const circularBranchRenderMode = cachedCircularTaxonomyBitmap
         ? "taxonomy-cached-bitmap"
         : useCachedCircularTaxonomyPaths
@@ -2934,6 +2951,7 @@ export default function TreeCanvas({
           camera.scale,
         )
         : null;
+      timing.circularCachePrepMs += performance.now() - circularCachePrepStartTime;
 
       if (showTimeStripes) {
         const center = { x: camera.translateX, y: camera.translateY };
@@ -2960,34 +2978,39 @@ export default function TreeCanvas({
         }
       }
 
-      const useDenseCircularLOD = angularSpacingPx < 1.1;
+      const circularVisibilityPrepStartTime = performance.now();
+      const needsVisibleCircularSegments = !cachedCircularTaxonomyBitmap
+        && !(useCachedCircularTaxonomyPaths && cachedCircularTaxonomyPaths)
+        && !cachedCircularBasePath;
+      const useDenseCircularLOD = needsVisibleCircularSegments && angularSpacingPx < 1.1;
       const circularConnectorKeys = useDenseCircularLOD ? new Set<string>() : null;
       const circularStemKeys = useDenseCircularLOD ? new Set<string>() : null;
-      const cornerWorldPoints = [
-        screenToWorldCircular(camera, 0, 0),
-        screenToWorldCircular(camera, size.width, 0),
-        screenToWorldCircular(camera, 0, size.height),
-        screenToWorldCircular(camera, size.width, size.height),
-      ];
-      let circularMinX = Number.POSITIVE_INFINITY;
-      let circularMaxX = Number.NEGATIVE_INFINITY;
-      let circularMinY = Number.POSITIVE_INFINITY;
-      let circularMaxY = Number.NEGATIVE_INFINITY;
-      const circularWorldOverscan = Math.max(tree.branchLengthMinPositive * 2, 24 / camera.scale);
-      for (let index = 0; index < cornerWorldPoints.length; index += 1) {
-        circularMinX = Math.min(circularMinX, cornerWorldPoints[index].x);
-        circularMaxX = Math.max(circularMaxX, cornerWorldPoints[index].x);
-        circularMinY = Math.min(circularMinY, cornerWorldPoints[index].y);
-        circularMaxY = Math.max(circularMaxY, cornerWorldPoints[index].y);
-      }
-      const visibleCircularSegments = collapsedNodes.size === 0
-        ? cache.circularIndices[order].query(
+      let visibleCircularSegments: ReturnType<typeof cache.circularIndices[typeof order]["query"]> | null = null;
+      if (needsVisibleCircularSegments && collapsedNodes.size === 0) {
+        const cornerWorldPoints = [
+          screenToWorldCircular(camera, 0, 0),
+          screenToWorldCircular(camera, size.width, 0),
+          screenToWorldCircular(camera, 0, size.height),
+          screenToWorldCircular(camera, size.width, size.height),
+        ];
+        let circularMinX = Number.POSITIVE_INFINITY;
+        let circularMaxX = Number.NEGATIVE_INFINITY;
+        let circularMinY = Number.POSITIVE_INFINITY;
+        let circularMaxY = Number.NEGATIVE_INFINITY;
+        const circularWorldOverscan = Math.max(tree.branchLengthMinPositive * 2, 24 / camera.scale);
+        for (let index = 0; index < cornerWorldPoints.length; index += 1) {
+          circularMinX = Math.min(circularMinX, cornerWorldPoints[index].x);
+          circularMaxX = Math.max(circularMaxX, cornerWorldPoints[index].x);
+          circularMinY = Math.min(circularMinY, cornerWorldPoints[index].y);
+          circularMaxY = Math.max(circularMaxY, cornerWorldPoints[index].y);
+        }
+        visibleCircularSegments = cache.circularIndices[order].query(
           (circularMinX + circularMaxX) * 0.5,
           (circularMinY + circularMaxY) * 0.5,
           Math.max(1e-6, (circularMaxX - circularMinX) * 0.5) + circularWorldOverscan,
           Math.max(1e-6, (circularMaxY - circularMinY) * 0.5) + circularWorldOverscan,
-        )
-        : null;
+        );
+      }
       const circularBranchStartTime = performance.now();
       if (cachedCircularTaxonomyBitmap) {
         const sourceX = Math.max(
@@ -3431,16 +3454,23 @@ export default function TreeCanvas({
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
       const circularTipVisibilityMargin = 140;
-      const visibleLeafOverscan = Math.max(12, Math.min(1600, Math.ceil((circularTipVisibilityMargin + 120) / Math.max(0.5, angularSpacingPx))));
-      const leafVisibilityRadiusPx = Math.max(maxRadius * camera.scale, tipBandAnchorRadius * camera.scale * 0.82);
-      const visibleAngleSpans = computeVisibleCircularAngleSpans(
-        centerPoint.x,
-        centerPoint.y,
-        leafVisibilityRadiusPx,
-        size.width,
-        size.height,
-        circularTipVisibilityMargin + 80,
-      );
+      const needsVisibleLeafRanges = tipLabelCueVisible || (taxonomyEnabled && taxonomyBlocks !== null);
+      const visibleLeafOverscan = needsVisibleLeafRanges
+        ? Math.max(12, Math.min(1600, Math.ceil((circularTipVisibilityMargin + 120) / Math.max(0.5, angularSpacingPx))))
+        : 0;
+      const leafVisibilityRadiusPx = needsVisibleLeafRanges
+        ? Math.max(maxRadius * camera.scale, tipBandAnchorRadius * camera.scale * 0.82)
+        : 0;
+      const visibleAngleSpans = needsVisibleLeafRanges
+        ? computeVisibleCircularAngleSpans(
+          centerPoint.x,
+          centerPoint.y,
+          leafVisibilityRadiusPx,
+          size.width,
+          size.height,
+          circularTipVisibilityMargin + 80,
+        )
+        : [];
       const visibleLeafRanges = visibleAngleSpans.length > 0
         ? circularSpansToLeafRanges(
           visibleAngleSpans,
@@ -3451,6 +3481,7 @@ export default function TreeCanvas({
           visibleLeafOverscan,
         )
         : [];
+      timing.circularVisibilityPrepMs += performance.now() - circularVisibilityPrepStartTime;
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
       let maxVisibleTipLabelWidth = 0;
       if (tipLabelCueVisible) {
@@ -4618,6 +4649,7 @@ export default function TreeCanvas({
     getCircularTaxonomyBitmapCache,
     getCircularTaxonomyPaths,
     getCircularBasePath,
+    getRectBasePaths,
     getTaxonomyBranchColors,
     order,
     reservedTipLabelCharacters,
@@ -5141,7 +5173,7 @@ export default function TreeCanvas({
         const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
         camera.translateX = localX - (rotated.x * camera.scale);
         camera.translateY = localY - (rotated.y * camera.scale);
-        finalizeCircularCamera(camera, localX, localY);
+        finalizeCircularCamera(camera);
       }
     };
 
