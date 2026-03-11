@@ -3212,7 +3212,12 @@ export default function TreeCanvas({
                 }
               }
             }
-            if (!bestLabelCandidate || bestLabelCandidate.arcLengthPx < (isPreservedLabel ? 12 : 24)) {
+            const minimumArcLengthPx = rank === "genus"
+              ? (isPreservedLabel ? 2.5 : 4.5)
+              : rank === "family"
+                ? (isPreservedLabel ? 4 : 7)
+                : (isPreservedLabel ? 8 : 16);
+            if (!bestLabelCandidate || bestLabelCandidate.arcLengthPx < minimumArcLengthPx) {
               taxonomyCandidateDebug.push({
                 rank,
                 label: block.label,
@@ -3232,7 +3237,11 @@ export default function TreeCanvas({
               });
               continue;
             }
-            const minFontSize = isPreservedLabel ? 6 : 7.5;
+            const minFontSize = rank === "genus"
+              ? (isPreservedLabel ? 4.5 : 5.2)
+              : rank === "family"
+                ? (isPreservedLabel ? 5.5 : 6.2)
+                : (isPreservedLabel ? 6 : 7.5);
             const paddingFraction = 0.12;
             ctx.font = `1px ${LABEL_FONT}`;
             let textMetrics = ctx.measureText(block.label);
