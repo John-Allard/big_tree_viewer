@@ -31,6 +31,8 @@ declare global {
       getCamera: () => Record<string, unknown> | null;
       getRenderDebug: () => Record<string, unknown> | null;
       getCurrentBranchColors: () => string[] | null;
+      startPanBenchmark: (label?: string) => { label: string; startedAtMs: number };
+      stopPanBenchmark: () => Record<string, unknown> | null;
       fitView: () => void;
       setRectCamera: (partial: Record<string, unknown>) => void;
       setCircularCamera: (partial: Record<string, unknown>) => void;

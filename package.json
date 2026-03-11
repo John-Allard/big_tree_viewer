@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "build:pages": "BIG_TREE_VIEWER_BASE=/ npm run build",
     "preview": "vite preview",
+    "bench:pan": "node scripts/benchmark-circular-pan.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
   },

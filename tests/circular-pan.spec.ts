@@ -1,4 +1,8 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 async function waitForViewer(page: Page): Promise<void> {
   await page.goto("/");
@@ -10,6 +14,19 @@ async function waitForViewer(page: Page): Promise<void> {
       && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded,
     );
   });
+}
+
+async function loadTreeFile(page: Page, treePath: string): Promise<void> {
+  await page.setInputFiles('input[type="file"]', treePath);
+  await page.waitForFunction(() => {
+    return Boolean(
+      window.__BIG_TREE_VIEWER_APP_TEST__
+      && window.__BIG_TREE_VIEWER_CANVAS_TEST__
+      && window.__BIG_TREE_VIEWER_RENDER_DEBUG__
+      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded
+      && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
+    );
+  }, { timeout: 180000 });
 }
 
 async function configureCircularDeepZoom(page: Page): Promise<void> {
@@ -227,4 +244,20 @@ test("circular taxonomy fit-view branch render stays cached-fast", async ({ page
 
   expect(Number(timing?.branchBaseMs ?? 999)).toBeLessThan(8);
   expect(Number(timing?.totalMs ?? 999)).toBeLessThan(24);
+});
+
+test("large circular fit-view falls back to the cached base path", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFile(page, path.resolve(TEST_DIR, "..", "backbone_hang_supertree.nwk"));
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const debug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+    branchRenderMode?: string;
+  } | null);
+
+  expect(debug?.branchRenderMode).toBe("cached-path");
 });
