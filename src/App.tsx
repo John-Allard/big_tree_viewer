@@ -807,12 +807,14 @@ export default function App() {
     (window as typeof window & {
       __BIG_TREE_VIEWER_APP_TEST_INTERNAL__?: {
         leafNodes: number[];
+        names?: string[];
         parent?: number[];
         firstChild?: number[];
         nextSibling?: number[];
       };
     }).__BIG_TREE_VIEWER_APP_TEST_INTERNAL__ = {
       leafNodes: tree ? Array.from(tree.leafNodes) : [],
+      names: tree ? Array.from(tree.names) : [],
       parent: tree ? Array.from(tree.buffers.parent) : [],
       firstChild: tree ? Array.from(tree.buffers.firstChild) : [],
       nextSibling: tree ? Array.from(tree.buffers.nextSibling) : [],
@@ -822,6 +824,7 @@ export default function App() {
       delete (window as typeof window & {
         __BIG_TREE_VIEWER_APP_TEST_INTERNAL__?: {
           leafNodes: number[];
+          names?: string[];
           parent?: number[];
           firstChild?: number[];
           nextSibling?: number[];

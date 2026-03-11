@@ -22,6 +22,7 @@ declare global {
     __BIG_TREE_VIEWER_RENDER_DEBUG__?: Record<string, unknown> | null;
     __BIG_TREE_VIEWER_APP_TEST_INTERNAL__?: {
       leafNodes: number[];
+      names?: string[];
       parent?: number[];
       firstChild?: number[];
       nextSibling?: number[];

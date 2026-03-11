@@ -3458,7 +3458,8 @@ export default function TreeCanvas({
           }
           ringCursorOuterPx += metrics.ringGapPx;
         }
-        circularGenusLabels = [...placedLabels, ...tinyOuterGenusLabels];
+        const allTaxonomyLabels = [...placedLabels, ...tinyOuterGenusLabels];
+        circularGenusLabels = allTaxonomyLabels;
         circularGenusArcs = connectorArcs;
         renderDebug.circular = {
           visibleCircleFraction,
@@ -3478,7 +3479,7 @@ export default function TreeCanvas({
           ),
           taxonomyArcKeys: arcKeys,
           taxonomyLabelKeys: placedKeys,
-          taxonomyPlacedLabels: placedLabels.map((label) => ({
+          taxonomyPlacedLabels: allTaxonomyLabels.map((label) => ({
             key: label.key ?? null,
             rank: label.rank ?? null,
             theta: label.theta ?? null,
