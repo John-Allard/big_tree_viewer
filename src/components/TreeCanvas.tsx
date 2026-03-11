@@ -371,29 +371,6 @@ function visibleTaxonomyLabelSpans(
   return intersections;
 }
 
-function chooseVisibleTaxonomyAnchorTheta(
-  cladeMidTheta: number,
-  visibleSpan: { start: number; end: number },
-): number {
-  const tau = Math.PI * 2;
-  const spanStart = visibleSpan.start;
-  const spanEnd = visibleSpan.end >= visibleSpan.start ? visibleSpan.end : visibleSpan.end + tau;
-  const wrappedMid = wrapPositive(cladeMidTheta);
-  const candidates = [wrappedMid, wrappedMid + tau, wrappedMid - tau];
-  let bestTheta = spanStart;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let index = 0; index < candidates.length; index += 1) {
-    const value = candidates[index];
-    const clamped = Math.max(spanStart, Math.min(spanEnd, value));
-    const distance = Math.abs(clamped - value);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestTheta = clamped;
-    }
-  }
-  return bestTheta;
-}
-
 function splitWrappedAngularInterval(start: number, end: number): Array<{ start: number; end: number }> {
   const wrappedStart = wrapPositive(start);
   const wrappedEnd = wrapPositive(end);
@@ -545,10 +522,67 @@ function buildTaxonomyConsensusByRank(
 function buildTaxonomyBranchColorArray(
   tree: TreeModel,
   taxonomyConsensus: TaxonomyConsensusByRank,
+  blocksByRank: Record<TaxonomyRank, TaxonomyBlock[]>,
   colorsByRank: TaxonomyColorByRank | null,
   activeRanks: TaxonomyRank[],
 ): string[] {
   const colors = new Array<string>(tree.nodeCount);
+  const nodeDepth = new Int32Array(tree.nodeCount);
+  const tin = new Int32Array(tree.nodeCount);
+  const tout = new Int32Array(tree.nodeCount);
+  let dfsTime = 0;
+  const traversalStack: Array<{ node: number; expanded: boolean }> = [{ node: tree.root, expanded: false }];
+  while (traversalStack.length > 0) {
+    const entry = traversalStack.pop()!;
+    const node = entry.node;
+    if (!entry.expanded) {
+      tin[node] = dfsTime;
+      dfsTime += 1;
+      traversalStack.push({ node, expanded: true });
+      for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+        nodeDepth[child] = nodeDepth[node] + 1;
+        traversalStack.push({ node: child, expanded: false });
+      }
+    } else {
+      tout[node] = dfsTime;
+    }
+  }
+  const isDescendantOf = (node: number, ancestor: number): boolean => tin[node] >= tin[ancestor] && tout[node] <= tout[ancestor];
+  const lca = (leftNode: number, rightNode: number): number => {
+    let left = leftNode;
+    let right = rightNode;
+    while (nodeDepth[left] > nodeDepth[right]) {
+      left = tree.buffers.parent[left];
+    }
+    while (nodeDepth[right] > nodeDepth[left]) {
+      right = tree.buffers.parent[right];
+    }
+    while (left !== right) {
+      left = tree.buffers.parent[left];
+      right = tree.buffers.parent[right];
+    }
+    return left;
+  };
+  const rootsByRankLabel = new Map<TaxonomyRank, Map<string, Array<{ rootNode: number; color: string }>>>();
+  for (let rankIndex = 0; rankIndex < activeRanks.length; rankIndex += 1) {
+    const rank = activeRanks[rankIndex];
+    const byLabel = new Map<string, Array<{ rootNode: number; color: string }>>();
+    const blocks = blocksByRank[rank] ?? [];
+    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+      const block = blocks[blockIndex];
+      const segments = block.segments ?? [];
+      for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+        const segment = segments[segmentIndex];
+        const rootNode = lca(segment.firstNode, segment.lastNode);
+        const roots = byLabel.get(block.label) ?? [];
+        if (!roots.some((entry) => entry.rootNode === rootNode)) {
+          roots.push({ rootNode, color: block.color || colorForTaxonomy(rank, block.label, colorsByRank) });
+          byLabel.set(block.label, roots);
+        }
+      }
+    }
+    rootsByRankLabel.set(rank, byLabel);
+  }
 
   for (let node = 0; node < tree.nodeCount; node += 1) {
     const parent = tree.buffers.parent[node];
@@ -567,8 +601,16 @@ function buildTaxonomyBranchColorArray(
       if (!nodeLabel || nodeLabel !== values[parent]) {
         continue;
       }
-      color = colorForTaxonomy(rank, nodeLabel, colorsByRank);
-      break;
+      const roots = rootsByRankLabel.get(rank)?.get(nodeLabel) ?? [];
+      for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+        if (isDescendantOf(node, roots[rootIndex].rootNode) && isDescendantOf(parent, roots[rootIndex].rootNode)) {
+          color = roots[rootIndex].color;
+          break;
+        }
+      }
+      if (color) {
+        break;
+      }
     }
     colors[node] = color ?? BRANCH_COLOR;
   }
@@ -694,8 +736,9 @@ function unwrapCircularIndices(indices: number[], leafCount: number): number[] {
 
 function thetaSpanForLeafRange(leafCount: number, startIndex: number, endIndex: number): { startTheta: number; endTheta: number } {
   const turns = Math.PI * 2;
-  const startTheta = (startIndex / Math.max(1, leafCount)) * turns;
-  let endTheta = (endIndex / Math.max(1, leafCount)) * turns;
+  const safeLeafCount = Math.max(1, leafCount);
+  const startTheta = (((startIndex - 0.5) / safeLeafCount) * turns);
+  let endTheta = (((endIndex - 0.5) / safeLeafCount) * turns);
   if (endTheta <= startTheta) {
     endTheta += turns;
   }
@@ -1421,7 +1464,7 @@ export default function TreeCanvas({
   }, [fitCameraForMode, viewMode]);
 
   const getTaxonomyBranchColors = useCallback((orderKey: LayoutOrder, visibleRanks: TaxonomyRank[]): string[] | null => {
-    if (!tree || !taxonomyConsensus || visibleRanks.length === 0) {
+    if (!tree || !taxonomyConsensus || !taxonomyBlocks || visibleRanks.length === 0) {
       return null;
     }
     const key = `${orderKey}:${visibleRanks.join("|")}`;
@@ -1429,10 +1472,10 @@ export default function TreeCanvas({
     if (cached) {
       return cached;
     }
-    const built = buildTaxonomyBranchColorArray(tree, taxonomyConsensus, taxonomyColors, visibleRanks);
+    const built = buildTaxonomyBranchColorArray(tree, taxonomyConsensus, taxonomyBlocks[orderKey], taxonomyColors, visibleRanks);
     taxonomyBranchColorsCacheRef.current.set(key, built);
     return built;
-  }, [taxonomyColors, taxonomyConsensus, tree]);
+  }, [taxonomyBlocks, taxonomyColors, taxonomyConsensus, tree]);
 
   const getCircularTaxonomyPaths = useCallback((
     orderKey: LayoutOrder,
@@ -3098,13 +3141,6 @@ export default function TreeCanvas({
               endIndex: block.labelEndIndex ?? block.endIndex ?? blockSegments[0].endIndex,
             };
             const labelSegments = [primaryLabelSegment];
-            for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
-              const segment = blockSegments[segmentIndex];
-              if (segment.startIndex === primaryLabelSegment.startIndex && segment.endIndex === primaryLabelSegment.endIndex) {
-                continue;
-              }
-              labelSegments.push(segment);
-            }
             for (let segmentIndex = 0; segmentIndex < labelSegments.length; segmentIndex += 1) {
               const segment = labelSegments[segmentIndex];
               const { startTheta, endTheta } = thetaSpanForLeafRange(tree.leafCount, segment.startIndex, segment.endIndex);
@@ -3129,7 +3165,6 @@ export default function TreeCanvas({
                 : null;
               const totalRenderedSpan = renderEndTheta - renderStartTheta;
               const totalMidTheta = renderStartTheta + (totalRenderedSpan * 0.5);
-              const renderedMidWrapped = wrapPositive(totalMidTheta + rotationAngle);
               const fullLabelPoint = worldToScreenCircular(
                 camera,
                 Math.cos(totalMidTheta) * lineRadius,
@@ -3155,10 +3190,7 @@ export default function TreeCanvas({
                   const candidateSpan = candidateEnd >= candidateStart
                     ? candidateEnd - candidateStart
                     : (candidateEnd + (Math.PI * 2)) - candidateStart;
-                  const renderedMidTheta = chooseVisibleTaxonomyAnchorTheta(renderedMidWrapped, {
-                    start: candidateStart,
-                    end: candidateEnd,
-                  });
+                  const renderedMidTheta = candidateStart + (candidateSpan * 0.5);
                   const candidatePoint = worldToScreenCircular(
                     camera,
                     Math.cos(renderedMidTheta - rotationAngle) * lineRadius,
