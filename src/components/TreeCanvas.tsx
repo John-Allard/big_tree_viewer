@@ -288,6 +288,48 @@ function taxonomyRingMetricsPx(rankCount: number, baseFontSize: number): {
   return { ringWidthsPx, ringGapPx, labelGapPx };
 }
 
+function buildCircularRibbonPoints(
+  centerX: number,
+  centerY: number,
+  innerRadiusPx: number,
+  outerRadiusPx: number,
+  startTheta: number,
+  endTheta: number,
+): Array<{ x: number; y: number }> {
+  const avgRadiusPx = (innerRadiusPx + outerRadiusPx) * 0.5;
+  const arcSpanPx = Math.max(0, (endTheta - startTheta) * avgRadiusPx);
+  const maxSagittaPx = 0.75;
+  const curvatureAngleStep = outerRadiusPx > maxSagittaPx
+    ? Math.max(1e-5, 2 * Math.acos(Math.max(-1, Math.min(1, 1 - (maxSagittaPx / outerRadiusPx)))))
+    : Math.PI * 0.25;
+  const sampleCount = Math.max(
+    2,
+    Math.min(
+      256,
+      Math.max(
+        Math.ceil(arcSpanPx / 18),
+        Math.ceil((endTheta - startTheta) / curvatureAngleStep),
+      ),
+    ),
+  );
+  const points: Array<{ x: number; y: number }> = [];
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const theta = startTheta + (((endTheta - startTheta) * index) / sampleCount);
+    points.push({
+      x: centerX + (Math.cos(theta) * outerRadiusPx),
+      y: centerY + (Math.sin(theta) * outerRadiusPx),
+    });
+  }
+  for (let index = sampleCount; index >= 0; index -= 1) {
+    const theta = startTheta + (((endTheta - startTheta) * index) / sampleCount);
+    points.push({
+      x: centerX + (Math.cos(theta) * innerRadiusPx),
+      y: centerY + (Math.sin(theta) * innerRadiusPx),
+    });
+  }
+  return points;
+}
+
 function intersectWrappedAngularIntervals(
   startA: number,
   endA: number,
@@ -3067,7 +3109,7 @@ export default function TreeCanvas({
       let circularGenusLabels: ScreenLabel[] = [];
       let circularGenusArcs: Array<
         | { mode: "stroke"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; color: string }
-        | { mode: "quad"; lineRadiusPx: number; lineWidthPx: number; points: Array<{ x: number; y: number }>; color: string }
+        | { mode: "ribbon"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; innerRadiusPx: number; outerRadiusPx: number; points: Array<{ x: number; y: number }>; color: string }
         | { mode: "band"; innerRadiusPx: number; outerRadiusPx: number; startTheta: number; endTheta: number; color: string }
       > = [];
       let circularGenusBaseFontSize = 0;
@@ -3094,8 +3136,7 @@ export default function TreeCanvas({
           : [];
         const preservedKeySet = new Set(preservedKeys);
         const connectorArcs: Array<
-          { mode: "stroke"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; color: string }
-          | { mode: "quad"; lineRadiusPx: number; lineWidthPx: number; points: Array<{ x: number; y: number }>; color: string }
+          { mode: "ribbon"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; innerRadiusPx: number; outerRadiusPx: number; points: Array<{ x: number; y: number }>; color: string }
         > = [];
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
@@ -3193,47 +3234,29 @@ export default function TreeCanvas({
                   continue;
                 }
                 const lineWidthPx = ringWidthPx * 0.92;
-                const arcSpanPx = (insetEndTheta - insetStartTheta) * lineRadiusPx;
+                const drawStartTheta = insetStartTheta + rotationAngle;
+                const drawEndTheta = insetEndTheta + rotationAngle;
+                const innerRadiusPx = lineRadiusPx - (lineWidthPx * 0.5);
+                const outerRadiusPx = lineRadiusPx + (lineWidthPx * 0.5);
                 arcKeys.push(`${rank}:${block.label}:${segment.startIndex}:${segment.endIndex}`);
-                if (arcSpanPx <= (lineWidthPx * 1.02)) {
-                  const drawStartTheta = insetStartTheta + rotationAngle;
-                  const drawEndTheta = insetEndTheta + rotationAngle;
-                  const innerRadiusPx = lineRadiusPx - (lineWidthPx * 0.5);
-                  const outerRadiusPx = lineRadiusPx + (lineWidthPx * 0.5);
-                  connectorArcs.push({
-                    mode: "quad",
-                    lineRadiusPx,
-                    lineWidthPx,
-                    points: [
-                      {
-                        x: centerPoint.x + (Math.cos(drawStartTheta) * outerRadiusPx),
-                        y: centerPoint.y + (Math.sin(drawStartTheta) * outerRadiusPx),
-                      },
-                      {
-                        x: centerPoint.x + (Math.cos(drawEndTheta) * outerRadiusPx),
-                        y: centerPoint.y + (Math.sin(drawEndTheta) * outerRadiusPx),
-                      },
-                      {
-                        x: centerPoint.x + (Math.cos(drawEndTheta) * innerRadiusPx),
-                        y: centerPoint.y + (Math.sin(drawEndTheta) * innerRadiusPx),
-                      },
-                      {
-                        x: centerPoint.x + (Math.cos(drawStartTheta) * innerRadiusPx),
-                        y: centerPoint.y + (Math.sin(drawStartTheta) * innerRadiusPx),
-                      },
-                    ],
-                    color: block.color,
-                  });
-                } else {
-                  connectorArcs.push({
-                    mode: "stroke",
-                    lineRadiusPx,
-                    lineWidthPx,
-                    startTheta: insetStartTheta,
-                    endTheta: insetEndTheta,
-                    color: block.color,
-                  });
-                }
+                connectorArcs.push({
+                  mode: "ribbon",
+                  lineRadiusPx,
+                  lineWidthPx,
+                  startTheta: insetStartTheta,
+                  endTheta: insetEndTheta,
+                  innerRadiusPx,
+                  outerRadiusPx,
+                  points: buildCircularRibbonPoints(
+                    centerPoint.x,
+                    centerPoint.y,
+                    innerRadiusPx,
+                    outerRadiusPx,
+                    drawStartTheta,
+                    drawEndTheta,
+                  ),
+                  color: block.color,
+                });
               }
             }
             let bestLabelCandidate: {
@@ -3522,16 +3545,14 @@ export default function TreeCanvas({
           taxonomyArcDebug: connectorArcs.map((arc, index) => ({
             key: arcKeys[index] ?? null,
             mode: arc.mode,
-            startTheta: arc.mode === "stroke" ? arc.startTheta : null,
-            endTheta: arc.mode === "stroke" ? arc.endTheta : null,
+            startTheta: arc.startTheta,
+            endTheta: arc.endTheta,
             lineWidthPx: arc.lineWidthPx,
             lineRadiusPx: arc.lineRadiusPx,
-            innerRadiusPx: arc.mode === "quad" ? arc.lineRadiusPx - (arc.lineWidthPx * 0.5) : null,
-            outerRadiusPx: arc.mode === "quad" ? arc.lineRadiusPx + (arc.lineWidthPx * 0.5) : null,
-            spanTheta: arc.mode === "stroke" ? arc.endTheta - arc.startTheta : null,
-            spanPx: arc.mode === "stroke"
-              ? (arc.endTheta - arc.startTheta) * arc.lineRadiusPx
-              : arc.lineWidthPx,
+            innerRadiusPx: arc.innerRadiusPx,
+            outerRadiusPx: arc.outerRadiusPx,
+            spanTheta: arc.endTheta - arc.startTheta,
+            spanPx: (arc.endTheta - arc.startTheta) * arc.lineRadiusPx,
           })),
           taxonomyLabelKeys: placedKeys,
           taxonomyPlacedLabels: allTaxonomyLabels.map((label) => ({
@@ -3793,19 +3814,19 @@ export default function TreeCanvas({
         for (let index = 0; index < circularGenusArcs.length; index += 1) {
           const arc = circularGenusArcs[index];
           ctx.globalAlpha = 0.76;
-          if (arc.mode === "band") {
-            ctx.beginPath();
-            ctx.arc(centerPoint.x, centerPoint.y, arc.outerRadiusPx, arc.startTheta + rotationAngle, arc.endTheta + rotationAngle, false);
-            ctx.arc(centerPoint.x, centerPoint.y, arc.innerRadiusPx, arc.endTheta + rotationAngle, arc.startTheta + rotationAngle, true);
-            ctx.closePath();
-            ctx.fillStyle = arc.color;
-            ctx.fill();
-          } else if (arc.mode === "quad") {
+          if (arc.mode === "ribbon") {
             ctx.beginPath();
             ctx.moveTo(arc.points[0].x, arc.points[0].y);
             for (let pointIndex = 1; pointIndex < arc.points.length; pointIndex += 1) {
               ctx.lineTo(arc.points[pointIndex].x, arc.points[pointIndex].y);
             }
+            ctx.closePath();
+            ctx.fillStyle = arc.color;
+            ctx.fill();
+          } else if (arc.mode === "band") {
+            ctx.beginPath();
+            ctx.arc(centerPoint.x, centerPoint.y, arc.outerRadiusPx, arc.startTheta + rotationAngle, arc.endTheta + rotationAngle, false);
+            ctx.arc(centerPoint.x, centerPoint.y, arc.innerRadiusPx, arc.endTheta + rotationAngle, arc.startTheta + rotationAngle, true);
             ctx.closePath();
             ctx.fillStyle = arc.color;
             ctx.fill();

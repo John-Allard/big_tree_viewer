@@ -451,6 +451,45 @@ test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape
 
   const apeArcDebug = (circularDebug.taxonomyArcDebug ?? []).filter((arc) => /:(Pongo|Gorilla|Homo|Pan):/.test(String(arc.key ?? "")));
   expect(apeArcDebug).toHaveLength(4);
-  expect(apeArcDebug.every((arc) => arc.mode === "stroke" || arc.mode === "quad")).toBeTruthy();
+  expect(apeArcDebug.every((arc) => arc.mode === "ribbon")).toBeTruthy();
   expect(apeArcDebug.every((arc) => Number(arc.lineWidthPx ?? 0) > 0)).toBeTruthy();
+
+  const apeArcPixels = await page.evaluate(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyArcDebug?: Array<{ key?: string | null; startTheta?: number | null; endTheta?: number | null; lineRadiusPx?: number | null }>;
+    } | undefined;
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const canvas = document.querySelector("canvas");
+    if (!debug || !camera || camera.kind !== "circular" || !(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Circular arc pixel probe unavailable.");
+    }
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) {
+      throw new Error("2D context unavailable.");
+    }
+    const background = [251, 252, 254, 255];
+    const distance = (rgba: number[]) => Math.hypot(
+      rgba[0] - background[0],
+      rgba[1] - background[1],
+      rgba[2] - background[2],
+      rgba[3] - background[3],
+    );
+    return (debug.taxonomyArcDebug ?? [])
+      .filter((arc) => /:(Pongo|Gorilla|Homo|Pan):/.test(String(arc.key ?? "")))
+      .map((arc) => {
+        const midTheta = ((Number(arc.startTheta ?? 0) + Number(arc.endTheta ?? 0)) * 0.5) + camera.rotation;
+        const radiusPx = Number(arc.lineRadiusPx ?? 0);
+        const distances = [-10, -5, 0, 5, 10].map((radialOffset) => {
+          const x = Math.round(camera.translateX + (Math.cos(midTheta) * (radiusPx + radialOffset)));
+          const y = Math.round(camera.translateY + (Math.sin(midTheta) * (radiusPx + radialOffset)));
+          return distance(Array.from(ctx.getImageData(x, y, 1, 1).data));
+        });
+        return {
+          key: arc.key ?? null,
+          maxDistance: Math.max(...distances),
+        };
+      });
+  });
+
+  expect(apeArcPixels.every((arc) => arc.maxDistance > 20)).toBeTruthy();
 });
