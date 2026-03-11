@@ -384,3 +384,65 @@ test("circular taxonomy labels on the same ring do not overlap after zooming int
   expect(Math.max(0, ...Object.values(overlapResult.denseRankCounts))).toBeGreaterThanOrEqual(8);
   expect(overlapResult.overlapCount).toBe(0);
 });
+
+test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape zoom", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.viewMode === "circular" && Boolean(state?.taxonomyEnabled);
+  });
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  await page.evaluate(async () => {
+    const names = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names ?? [];
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    const leafIndexMap = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLeafIndexMap() ?? {};
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    if (!camera || camera.kind !== "circular" || !state) {
+      throw new Error("Circular camera unavailable for Pongo test.");
+    }
+    const pongoIndices = leafNodes
+      .filter((node) => {
+        const name = String(names[node] ?? "");
+        return name.startsWith("Pongo_") || name.startsWith("Pongo ");
+      })
+      .map((node) => Number(leafIndexMap[node]))
+      .sort((left, right) => left - right);
+    if (pongoIndices.length === 0) {
+      throw new Error("Pongo tips unavailable for real taxonomy test.");
+    }
+    const leafCount = leafNodes.length;
+    const startIndex = pongoIndices[0];
+    const endIndex = pongoIndices[pongoIndices.length - 1] + 1;
+    const turns = Math.PI * 2;
+    const startTheta = ((startIndex - 0.5) / leafCount) * turns;
+    const endTheta = ((endIndex - 0.5) / leafCount) * turns;
+    const midTheta = (startTheta + endTheta) * 0.5;
+    const radiusWorld = Number(state.rootAge);
+    const scale = Number(camera.scale) * 384;
+    const rotatedX = ((Math.cos(midTheta) * radiusWorld) * camera.rotationCos) - ((Math.sin(midTheta) * radiusWorld) * camera.rotationSin);
+    const rotatedY = ((Math.cos(midTheta) * radiusWorld) * camera.rotationSin) + ((Math.sin(midTheta) * radiusWorld) * camera.rotationCos);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale,
+      translateX: (1400 * 0.56) - (rotatedX * scale),
+      translateY: (900 * 0.50) - (rotatedY * scale),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const circularDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+    taxonomyPlacedLabels?: Array<{ text: string; key?: string | null; clipArc?: unknown }>;
+  });
+
+  expect((circularDebug.taxonomyPlacedLabels ?? []).some((label) => label.text === "Pongo" && !String(label.key ?? "").endsWith(":outer") && Boolean(label.clipArc))).toBeTruthy();
+  expect((circularDebug.taxonomyPlacedLabels ?? []).every((label) => Boolean(label.clipArc))).toBeTruthy();
+});

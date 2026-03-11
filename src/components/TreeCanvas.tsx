@@ -3006,7 +3006,6 @@ export default function TreeCanvas({
         const viewportCenterRenderedTheta = wrapPositive(Math.atan2((size.height * 0.5) - centerPoint.y, (size.width * 0.5) - centerPoint.x));
         let ringCursorOuterPx = tipBandOuterRadiusPx + 18;
         const placedLabels: ScreenLabel[] = [];
-        const tinyOuterGenusLabels: ScreenLabel[] = [];
         const placedKeys: string[] = [];
         const arcKeys: string[] = [];
         const taxonomyCandidateDebug: Array<Record<string, unknown>> = [];
@@ -3022,7 +3021,6 @@ export default function TreeCanvas({
         const connectorArcs: Array<
           { mode: "stroke"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; color: string }
         > = [];
-        const outerGenusOccupiedIntervals: Array<{ start: number; end: number }> = [];
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
           const rankKeyPrefix = `${rank}:`;
@@ -3096,67 +3094,6 @@ export default function TreeCanvas({
               const end = segment.endIndex >= start ? segment.endIndex : segment.endIndex + tree.leafCount;
               return total + Math.max(0, end - start);
             }, 0);
-            const maybePlaceOuterGenusLabel = (reason: string): boolean => {
-              if (rank !== "genus" || !bestLabelCandidate || totalTipCount <= 1 || bestLabelCandidate.arcLengthPx < 0.8) {
-                return false;
-              }
-              const onRingPoint = worldToScreenCircular(
-                camera,
-                Math.cos(bestLabelCandidate.theta) * lineRadius,
-                Math.sin(bestLabelCandidate.theta) * lineRadius,
-              );
-              const radialDx = onRingPoint.x - centerPoint.x;
-              const radialDy = onRingPoint.y - centerPoint.y;
-              const radialDistance = Math.max(1, Math.hypot(radialDx, radialDy));
-              const fallbackRadiusPx = Math.max(
-                tipBandOuterRadiusPx + 10,
-                lineRadiusPx - Math.max(metrics.ringGapPx + 8, ringWidthPx * 0.7),
-              );
-              const outerFontSize = Math.max(6.2, Math.min(11, 6.2 + (bestLabelCandidate.arcLengthPx * 0.18)));
-              ctx.font = `${outerFontSize}px ${LABEL_FONT}`;
-              const outerMetrics = ctx.measureText(block.label);
-              const renderedTheta = bestLabelCandidate.theta + rotationAngle;
-              const inwardShiftPx = lineRadiusPx - fallbackRadiusPx;
-              const point = {
-                x: onRingPoint.x - ((radialDx / radialDistance) * inwardShiftPx),
-                y: onRingPoint.y - ((radialDy / radialDistance) * inwardShiftPx),
-              };
-              if (!isScreenPointVisible(onRingPoint.x, onRingPoint.y, size.width, size.height, 18)) {
-                return false;
-              }
-              const tangentDegrees = (renderedTheta * 180 / Math.PI) + 90;
-              const onRightSide = Math.cos(renderedTheta) >= 0;
-              const rotation = normalizeRotation(onRightSide ? tangentDegrees : tangentDegrees + 180);
-              tinyOuterGenusLabels.push({
-                x: point.x,
-                y: point.y,
-                text: block.label,
-                key: `${blockKey}:outer`,
-                rank,
-                theta: wrapPositive(renderedTheta),
-                alpha: 1,
-                fontSize: outerFontSize,
-                rotation: rotation * Math.PI / 180,
-                align: "center",
-                color: block.color,
-              });
-              for (const interval of splitWrappedAngularInterval(
-                wrapPositive(renderedTheta) - ((outerMetrics.width / Math.max(fallbackRadiusPx, 1e-6)) * 0.5) - 0.01,
-                wrapPositive(renderedTheta) + ((outerMetrics.width / Math.max(fallbackRadiusPx, 1e-6)) * 0.5) + 0.01,
-              )) {
-                outerGenusOccupiedIntervals.push(interval);
-              }
-              taxonomyCandidateDebug.push({
-                rank,
-                label: block.label,
-                accepted: true,
-                reason: `${reason}-outer-fallback`,
-                arcLengthPx: bestLabelCandidate.arcLengthPx,
-                fontSize: outerFontSize,
-              });
-              placedKeys.push(`${blockKey}:outer`);
-              return true;
-            };
             for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
               const segment = blockSegments[segmentIndex];
               const { startTheta, endTheta } = thetaSpanForLeafRange(tree.leafCount, segment.startIndex, segment.endIndex);
@@ -3281,9 +3218,6 @@ export default function TreeCanvas({
                 ? (isPreservedLabel ? 4 : 7)
                 : (isPreservedLabel ? 8 : 16);
             if (!bestLabelCandidate || bestLabelCandidate.arcLengthPx < minimumArcLengthPx) {
-              if (maybePlaceOuterGenusLabel("arc-too-short")) {
-                continue;
-              }
               taxonomyCandidateDebug.push({
                 rank,
                 label: block.label,
@@ -3330,9 +3264,6 @@ export default function TreeCanvas({
               radialFontLimit,
             ) * 0.94);
             if (!Number.isFinite(fitFontSize) || fitFontSize < minFontSize) {
-              if (maybePlaceOuterGenusLabel("font-too-small")) {
-                continue;
-              }
               taxonomyCandidateDebug.push({
                 rank,
                 label: block.label,
@@ -3358,9 +3289,6 @@ export default function TreeCanvas({
               textMetrics.width > (availableArcPx + 0.5)
               || (radialHeightPx + curvaturePenaltyPx) > (availableRadialPx + overflowTolerancePx)
             ) {
-              if (maybePlaceOuterGenusLabel("text-overflow")) {
-                continue;
-              }
               taxonomyCandidateDebug.push({
                 rank,
                 label: block.label,
@@ -3458,7 +3386,7 @@ export default function TreeCanvas({
           }
           ringCursorOuterPx += metrics.ringGapPx;
         }
-        const allTaxonomyLabels = [...placedLabels, ...tinyOuterGenusLabels];
+        const allTaxonomyLabels = placedLabels;
         circularGenusLabels = allTaxonomyLabels;
         circularGenusArcs = connectorArcs;
         renderDebug.circular = {
