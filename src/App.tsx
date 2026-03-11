@@ -518,7 +518,7 @@ export default function App() {
     });
   }, [ensureWorker]);
 
-  const runTaxonomyWorker = useCallback((request: { type: "download-taxonomy" } | { type: "map-taxonomy"; archive: ArrayBuffer; tips: Array<{ node: number; name: string }> }): Promise<TaxonomyWorkerResponse> => {
+  const runTaxonomyWorker = useCallback((request: { type: "download-taxonomy" } | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }> }): Promise<TaxonomyWorkerResponse> => {
     return new Promise((resolve, reject) => {
       const worker = new Worker(new URL("./workers/taxonomyWorker.ts", import.meta.url), { type: "module" });
       const cleanup = (): void => {
@@ -539,7 +539,7 @@ export default function App() {
       });
       worker.postMessage(
         request,
-        request.type === "map-taxonomy" ? [request.archive] : [],
+        request.type === "map-taxonomy" && request.archive instanceof ArrayBuffer ? [request.archive] : [],
       );
     });
   }, []);
@@ -715,7 +715,7 @@ export default function App() {
       }));
       const response = await runTaxonomyWorker({
         type: "map-taxonomy",
-        archive: await archive.arrayBuffer(),
+        archive,
         tips,
       });
       if (response.type !== "taxonomy-mapped" || !response.payload) {

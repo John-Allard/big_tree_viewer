@@ -1,11 +1,11 @@
 /// <reference lib="webworker" />
 
-import { strFromU8, unzipSync } from "fflate";
+import { DecodeUTF8, Unzip, UnzipInflate } from "fflate";
 import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
 type TaxonomyWorkerRequest =
   | { type: "download-taxonomy" }
-  | { type: "map-taxonomy"; archive: ArrayBuffer; tips: Array<{ node: number; name: string }> };
+  | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }> };
 
 type TaxonomyWorkerResponse =
   | { type: "taxonomy-progress"; message: string }
@@ -20,7 +20,7 @@ const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phyl
 type NodeInfo = { parentId: number; rank: string };
 type ParsedTaxonomy = {
   nodes: Map<number, NodeInfo>;
-  names: Map<number, string>;
+  rankNames: Map<number, string>;
   speciesIndex: Map<string, number>;
   genusIndex: Map<string, number>;
 };
@@ -58,68 +58,161 @@ function extractGenus(name: string): string {
   return parts[0] ?? "";
 }
 
-function parseNodes(nodesText: string): Map<number, NodeInfo> {
-  const nodes = new Map<number, NodeInfo>();
-  const lines = nodesText.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const parts = lines[index].split("|").map((part) => part.trim());
-    if (parts.length < 3) {
-      continue;
-    }
-    const taxId = Number.parseInt(parts[0], 10);
-    const parentId = Number.parseInt(parts[1], 10);
-    if (!Number.isFinite(taxId) || !Number.isFinite(parentId)) {
-      continue;
-    }
-    nodes.set(taxId, { parentId, rank: parts[2] });
+function parseNodeLine(line: string, nodes: Map<number, NodeInfo>): void {
+  const parts = line.split("|").map((part) => part.trim());
+  if (parts.length < 3) {
+    return;
   }
-  return nodes;
+  const taxId = Number.parseInt(parts[0], 10);
+  const parentId = Number.parseInt(parts[1], 10);
+  if (!Number.isFinite(taxId) || !Number.isFinite(parentId)) {
+    return;
+  }
+  nodes.set(taxId, { parentId, rank: parts[2] });
 }
 
-function parseNames(namesText: string, nodes: Map<number, NodeInfo>): ParsedTaxonomy {
-  const names = new Map<number, string>();
-  const speciesIndex = new Map<string, number>();
-  const genusIndex = new Map<string, number>();
-  const lines = namesText.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const parts = lines[index].split("|").map((part) => part.trim());
-    if (parts.length < 4 || parts[3] !== "scientific name") {
-      continue;
-    }
-    const taxId = Number.parseInt(parts[0], 10);
-    if (!Number.isFinite(taxId)) {
-      continue;
-    }
-    const scientificName = parts[1];
-    names.set(taxId, scientificName);
-    const rank = nodes.get(taxId)?.rank ?? "";
-    const normalized = normalizeName(scientificName);
-    if (rank === "species") {
-      speciesIndex.set(normalized, taxId);
-      speciesIndex.set(normalized.replaceAll(" ", "_"), taxId);
-    } else if (rank === "genus") {
-      genusIndex.set(normalized, taxId);
-      genusIndex.set(normalized.replaceAll(" ", "_"), taxId);
-    }
+function parseScientificNameLine(line: string, names: Map<number, string>): void {
+  const parts = line.split("|").map((part) => part.trim());
+  if (parts.length < 4 || parts[3] !== "scientific name") {
+    return;
   }
-  return { nodes, names, speciesIndex, genusIndex };
+  const taxId = Number.parseInt(parts[0], 10);
+  if (!Number.isFinite(taxId)) {
+    return;
+  }
+  names.set(taxId, parts[1]);
 }
 
-function parseArchive(archive: ArrayBuffer): ParsedTaxonomy {
+function createLineStreamParser(onLine: (line: string) => void): (chunk: Uint8Array, final: boolean) => void {
+  let remainder = "";
+  const decoder = new DecodeUTF8((text, final) => {
+    const merged = remainder + text;
+    const lines = merged.split("\n");
+    remainder = lines.pop() ?? "";
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (line) {
+        onLine(line);
+      }
+    }
+    if (final && remainder) {
+      onLine(remainder);
+      remainder = "";
+    }
+  });
+  return (chunk: Uint8Array, final: boolean) => {
+    decoder.push(chunk, final);
+  };
+}
+
+async function streamBlobChunks(blob: Blob, onChunk: (chunk: Uint8Array, final: boolean) => void): Promise<void> {
+  if (typeof blob.stream === "function") {
+    const reader = blob.stream().getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value ?? 0);
+      onChunk(chunk, done);
+      if (done) {
+        break;
+      }
+    }
+    return;
+  }
+  const buffer = await blob.arrayBuffer();
+  const chunkSize = 1024 * 1024;
+  for (let offset = 0; offset < buffer.byteLength; offset += chunkSize) {
+    const end = Math.min(buffer.byteLength, offset + chunkSize);
+    onChunk(new Uint8Array(buffer.slice(offset, end)), end >= buffer.byteLength);
+  }
+}
+
+async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy> {
   if (parsedCache) {
     return parsedCache;
   }
   post({ type: "taxonomy-progress", message: "Extracting taxonomy archive..." });
-  const files = unzipSync(new Uint8Array(archive));
-  const nodesFile = files["nodes.dmp"];
-  const namesFile = files["names.dmp"];
-  if (!nodesFile || !namesFile) {
-    throw new Error("Taxonomy archive did not contain nodes.dmp and names.dmp.");
-  }
-  post({ type: "taxonomy-progress", message: "Parsing taxonomy nodes..." });
-  const nodes = parseNodes(strFromU8(nodesFile));
-  post({ type: "taxonomy-progress", message: "Parsing taxonomy names..." });
-  parsedCache = parseNames(strFromU8(namesFile), nodes);
+  const archiveBlob = archive instanceof Blob ? archive : new Blob([archive], { type: "application/zip" });
+  const nodes = new Map<number, NodeInfo>();
+  const scientificNames = new Map<number, string>();
+  let namesDone = false;
+  let nodesDone = false;
+  let sawNames = false;
+  let sawNodes = false;
+
+  await new Promise<void>((resolve, reject) => {
+    const maybeResolve = (): void => {
+      if (namesDone && nodesDone) {
+        resolve();
+      }
+    };
+    const unzipper = new Unzip((file) => {
+      if (file.name === "names.dmp") {
+        sawNames = true;
+        post({ type: "taxonomy-progress", message: "Parsing taxonomy names..." });
+        const parseChunk = createLineStreamParser((line) => parseScientificNameLine(line, scientificNames));
+        file.ondata = (error, data, final) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          parseChunk(data, final);
+          if (final) {
+            namesDone = true;
+            maybeResolve();
+          }
+        };
+        file.start();
+        return;
+      }
+      if (file.name === "nodes.dmp") {
+        sawNodes = true;
+        post({ type: "taxonomy-progress", message: "Parsing taxonomy nodes..." });
+        const parseChunk = createLineStreamParser((line) => parseNodeLine(line, nodes));
+        file.ondata = (error, data, final) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          parseChunk(data, final);
+          if (final) {
+            nodesDone = true;
+            maybeResolve();
+          }
+        };
+        file.start();
+      }
+    });
+    unzipper.register(UnzipInflate);
+    void streamBlobChunks(archiveBlob, (chunk, final) => {
+      unzipper.push(chunk, final);
+    }).then(() => {
+      if (!sawNames || !sawNodes) {
+        reject(new Error("Taxonomy archive did not contain nodes.dmp and names.dmp."));
+      }
+    }).catch(reject);
+  });
+
+  post({ type: "taxonomy-progress", message: "Building taxonomy lookup tables..." });
+  const rankNames = new Map<number, string>();
+  const speciesIndex = new Map<string, number>();
+  const genusIndex = new Map<string, number>();
+  scientificNames.forEach((scientificName, taxId) => {
+    const rank = nodes.get(taxId)?.rank ?? "";
+    if (rank === "species") {
+      const normalized = normalizeName(scientificName);
+      speciesIndex.set(normalized, taxId);
+      speciesIndex.set(normalized.replaceAll(" ", "_"), taxId);
+    } else if (rank === "genus") {
+      const normalized = normalizeName(scientificName);
+      genusIndex.set(normalized, taxId);
+      genusIndex.set(normalized.replaceAll(" ", "_"), taxId);
+    }
+    if ((TARGET_RANKS as string[]).includes(rank)) {
+      rankNames.set(taxId, scientificName);
+    }
+  });
+  scientificNames.clear();
+  parsedCache = { nodes, rankNames, speciesIndex, genusIndex };
   return parsedCache;
 }
 
@@ -183,7 +276,7 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
       if (!ancestor) {
         continue;
       }
-      const label = taxonomy.names.get(ancestor);
+      const label = taxonomy.rankNames.get(ancestor);
       if (!label) {
         continue;
       }
@@ -244,7 +337,7 @@ self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerReques
       post({ type: "taxonomy-downloaded", archive }, [archive]);
       return;
     }
-    const taxonomy = parseArchive(request.archive);
+    const taxonomy = await parseArchive(request.archive);
     post({ type: "taxonomy-progress", message: "Mapping taxonomy to tree tips..." });
     const payload = mapTips(request.tips, taxonomy);
     post({ type: "taxonomy-mapped", payload });
