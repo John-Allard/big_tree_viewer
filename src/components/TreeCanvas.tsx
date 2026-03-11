@@ -330,6 +330,46 @@ function buildCircularRibbonPoints(
   return points;
 }
 
+function measureNormalizedLabelMetrics(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+): { widthAtOnePx: number; heightAtOnePx: number } {
+  const sampleFontSize = 100;
+  ctx.font = `${sampleFontSize}px ${LABEL_FONT}`;
+  const metrics = ctx.measureText(text);
+  const ascent = metrics.actualBoundingBoxAscent || (sampleFontSize * 0.72);
+  const descent = metrics.actualBoundingBoxDescent || (sampleFontSize * 0.28);
+  return {
+    widthAtOnePx: Math.max(metrics.width / sampleFontSize, 1e-6),
+    heightAtOnePx: Math.max((ascent + descent) / sampleFontSize, 1e-6),
+  };
+}
+
+function viewportScaleForCenteredRotatedLabel(
+  x: number,
+  y: number,
+  widthPx: number,
+  heightPx: number,
+  rotation: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  marginPx: number,
+): number {
+  const halfWidth = widthPx * 0.5;
+  const halfHeight = heightPx * 0.5;
+  const cos = Math.abs(Math.cos(rotation));
+  const sin = Math.abs(Math.sin(rotation));
+  const extentX = (cos * halfWidth) + (sin * halfHeight);
+  const extentY = (sin * halfWidth) + (cos * halfHeight);
+  const availableLeft = Math.max(0, x - marginPx);
+  const availableRight = Math.max(0, (viewportWidth - marginPx) - x);
+  const availableTop = Math.max(0, y - marginPx);
+  const availableBottom = Math.max(0, (viewportHeight - marginPx) - y);
+  const scaleX = extentX > 1e-6 ? Math.min(availableLeft / extentX, availableRight / extentX) : 1;
+  const scaleY = extentY > 1e-6 ? Math.min(availableTop / extentY, availableBottom / extentY) : 1;
+  return Math.max(0, Math.min(1, scaleX, scaleY));
+}
+
 function intersectWrappedAngularIntervals(
   startA: number,
   endA: number,
@@ -3375,13 +3415,10 @@ export default function TreeCanvas({
                 ? (isPreservedLabel ? 5.5 : 6.2)
                 : (isPreservedLabel ? 6 : 7.5);
             const paddingFraction = 0.12;
-            ctx.font = `1px ${LABEL_FONT}`;
+            const normalizedMetrics = measureNormalizedLabelMetrics(ctx, block.label);
             let textMetrics = ctx.measureText(block.label);
-            const widthAtOnePx = Math.max(textMetrics.width, 1e-6);
-            const heightAtOnePx = Math.max(
-              (textMetrics.actualBoundingBoxAscent || 0.72) + (textMetrics.actualBoundingBoxDescent || 0.28),
-              1e-6,
-            );
+            const widthAtOnePx = normalizedMetrics.widthAtOnePx;
+            const heightAtOnePx = normalizedMetrics.heightAtOnePx;
             const availableArcPx = Math.max(0, bestLabelCandidate.arcLengthPx * (1 - paddingFraction));
             const availableRadialPx = Math.max(0, ringWidthPx * (1 - paddingFraction));
             const curvatureCoeff = (widthAtOnePx * widthAtOnePx) / Math.max(8 * lineRadiusPx, 1e-6);
@@ -3406,40 +3443,7 @@ export default function TreeCanvas({
               });
               continue;
             }
-            const fontSize = Math.max(minFontSize, Math.min(30, fitFontSize));
-            ctx.font = `${fontSize}px ${LABEL_FONT}`;
-            textMetrics = ctx.measureText(block.label);
-            const radialHeightPx = (textMetrics.actualBoundingBoxAscent || (fontSize * 0.72))
-              + (textMetrics.actualBoundingBoxDescent || (fontSize * 0.28));
-            const halfWidthPx = textMetrics.width * 0.5;
-            const curvaturePenaltyPx = halfWidthPx < lineRadiusPx
-              ? lineRadiusPx - Math.sqrt(Math.max(0, (lineRadiusPx * lineRadiusPx) - (halfWidthPx * halfWidthPx)))
-              : availableRadialPx + 1;
-            const finalFontSize = fontSize;
             const overflowTolerancePx = isPreservedLabel ? 1.6 : 1.1;
-            if (
-              textMetrics.width > (availableArcPx + 0.5)
-              || (radialHeightPx + curvaturePenaltyPx) > (availableRadialPx + overflowTolerancePx)
-            ) {
-              taxonomyCandidateDebug.push({
-                rank,
-                label: block.label,
-                accepted: false,
-                reason: "text-overflow",
-                arcLengthPx: bestLabelCandidate.arcLengthPx,
-                fontSize: finalFontSize,
-                textWidth: textMetrics.width,
-                availableArcPx,
-                radialHeightPx,
-                curvaturePenaltyPx,
-                availableRadialPx,
-              });
-              continue;
-            }
-            const ascent = textMetrics.actualBoundingBoxAscent || (fontSize * 0.72);
-            const descent = textMetrics.actualBoundingBoxDescent || (fontSize * 0.28);
-            const radialTextOffsetPx = ((ascent - descent) * 0.5)
-              + ((Math.sin(bestLabelCandidate.theta) >= 0 ? -1 : 1) * Math.max(0.5, ringWidthPx * 0.04));
             const labelPoint = worldToScreenCircular(
               camera,
               Math.cos(bestLabelCandidate.theta) * lineRadius,
@@ -3449,7 +3453,7 @@ export default function TreeCanvas({
             const tangentDegrees = (renderedTheta * 180 / Math.PI) + 90;
             const onRightSide = Math.cos(renderedTheta) >= 0;
             const rotation = normalizeRotation(onRightSide ? tangentDegrees : tangentDegrees + 180);
-            const labelPointVisible = isScreenPointVisible(labelPoint.x, labelPoint.y, size.width, size.height, Math.max(fontSize * 1.5, 18));
+            const labelPointVisible = isScreenPointVisible(labelPoint.x, labelPoint.y, size.width, size.height, 18);
             if (!labelPointVisible) {
               taxonomyCandidateDebug.push({
                 rank,
@@ -3457,12 +3461,76 @@ export default function TreeCanvas({
                 accepted: false,
                 reason: "offscreen",
                 arcLengthPx: bestLabelCandidate.arcLengthPx,
-                fontSize: finalFontSize,
+                fontSize: fitFontSize,
                 x: labelPoint.x,
                 y: labelPoint.y,
               });
               continue;
             }
+            const rotationRadians = rotation * Math.PI / 180;
+            let low = minFontSize;
+            let high = Math.min(30, fitFontSize);
+            let bestFitFontSize = minFontSize;
+            let bestTextWidthPx = 0;
+            let bestRadialHeightPx = 0;
+            let bestCurvaturePenaltyPx = 0;
+            for (let iteration = 0; iteration < 12; iteration += 1) {
+              const candidateFontSize = iteration === 0 ? low : ((low + high) * 0.5);
+              ctx.font = `${candidateFontSize}px ${LABEL_FONT}`;
+              const candidateMetrics = ctx.measureText(block.label);
+              const candidateAscentPx = candidateMetrics.actualBoundingBoxAscent || (candidateFontSize * 0.72);
+              const candidateDescentPx = candidateMetrics.actualBoundingBoxDescent || (candidateFontSize * 0.28);
+              const candidateRadialHeightPx = candidateAscentPx + candidateDescentPx;
+              const candidateHalfWidthPx = candidateMetrics.width * 0.5;
+              const candidateCurvaturePenaltyPx = candidateHalfWidthPx < lineRadiusPx
+                ? lineRadiusPx - Math.sqrt(Math.max(0, (lineRadiusPx * lineRadiusPx) - (candidateHalfWidthPx * candidateHalfWidthPx)))
+                : availableRadialPx + 1;
+              const viewportScale = viewportScaleForCenteredRotatedLabel(
+                labelPoint.x,
+                labelPoint.y,
+                candidateMetrics.width,
+                candidateRadialHeightPx,
+                rotationRadians,
+                size.width,
+                size.height,
+                2,
+              );
+              const fits = candidateMetrics.width <= (availableArcPx + 0.5)
+                && (candidateRadialHeightPx + candidateCurvaturePenaltyPx) <= (availableRadialPx + overflowTolerancePx)
+                && viewportScale >= 0.999;
+              if (fits) {
+                bestFitFontSize = candidateFontSize;
+                bestTextWidthPx = candidateMetrics.width;
+                bestRadialHeightPx = candidateRadialHeightPx;
+                bestCurvaturePenaltyPx = candidateCurvaturePenaltyPx;
+                low = candidateFontSize;
+              } else {
+                high = candidateFontSize;
+              }
+            }
+            if (!(bestFitFontSize >= minFontSize)) {
+              taxonomyCandidateDebug.push({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "text-overflow",
+                arcLengthPx: bestLabelCandidate.arcLengthPx,
+                fontSize: fitFontSize,
+                textWidth: 0,
+                availableArcPx,
+                radialHeightPx: 0,
+                curvaturePenaltyPx: 0,
+                availableRadialPx,
+              });
+              continue;
+            }
+            const finalFontSize = Math.max(minFontSize, bestFitFontSize * 0.92);
+            ctx.font = `${finalFontSize}px ${LABEL_FONT}`;
+            textMetrics = ctx.measureText(block.label);
+            const ascent = textMetrics.actualBoundingBoxAscent || (finalFontSize * 0.72);
+            const descent = textMetrics.actualBoundingBoxDescent || (finalFontSize * 0.28);
+            const radialTextOffsetPx = ((ascent - descent) * 0.5)
+              + ((Math.sin(bestLabelCandidate.theta) >= 0 ? -1 : 1) * Math.max(0.5, ringWidthPx * 0.04));
             const labelRecord: ScreenLabel = {
               x: labelPoint.x,
               y: labelPoint.y,
@@ -3472,7 +3540,7 @@ export default function TreeCanvas({
               theta: wrapPositive(renderedTheta),
               alpha: 1,
               fontSize: finalFontSize,
-              rotation: rotation * Math.PI / 180,
+              rotation: rotationRadians,
               align: "center",
               color: taxonomyTextColor(block.color),
               offsetY: radialTextOffsetPx,
@@ -3518,6 +3586,12 @@ export default function TreeCanvas({
               accepted: true,
               arcLengthPx: bestLabelCandidate.arcLengthPx,
               fontSize: finalFontSize,
+              fitFontSize: bestFitFontSize,
+              textWidth: bestTextWidthPx,
+              availableArcPx,
+              radialHeightPx: bestRadialHeightPx,
+              curvaturePenaltyPx: bestCurvaturePenaltyPx,
+              availableRadialPx,
             });
           }
           ringCursorOuterPx += metrics.ringGapPx;
