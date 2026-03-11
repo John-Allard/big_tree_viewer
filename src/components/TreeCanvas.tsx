@@ -2904,9 +2904,10 @@ export default function TreeCanvas({
         ? getCircularTaxonomyPaths(order, layout, visibleTaxonomyRanks, cachedTaxonomyBranchColors)
         : null;
       const useCachedCircularTaxonomyBitmap = useCachedCircularTaxonomyPaths
-        && cachedCircularTaxonomyPaths !== null;
-      const cachedCircularTaxonomyBitmap = useCachedCircularTaxonomyBitmap
-        ? getCircularTaxonomyBitmapCache(order, cachedCircularTaxonomyPaths, camera, camera)
+        && cachedCircularTaxonomyPaths !== null
+        && nearCircularFit;
+      const cachedCircularTaxonomyBitmap = useCachedCircularTaxonomyBitmap && fitLikeCircular?.kind === "circular"
+        ? getCircularTaxonomyBitmapCache(order, cachedCircularTaxonomyPaths, camera, fitLikeCircular)
         : null;
       const useCachedCircularBasePath = !useTaxonomyBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 1.1;
       const cachedCircularBasePath = useCachedCircularBasePath
