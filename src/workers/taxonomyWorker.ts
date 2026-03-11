@@ -71,7 +71,13 @@ function parseNodeLine(line: string, nodes: Map<number, NodeInfo>): void {
   nodes.set(taxId, { parentId, rank: parts[2] });
 }
 
-function parseScientificNameLine(line: string, names: Map<number, string>): void {
+function parseScientificNameLine(
+  line: string,
+  nodes: Map<number, NodeInfo>,
+  rankNames: Map<number, string>,
+  speciesIndex: Map<string, number>,
+  genusIndex: Map<string, number>,
+): void {
   const parts = line.split("|").map((part) => part.trim());
   if (parts.length < 4 || parts[3] !== "scientific name") {
     return;
@@ -80,7 +86,20 @@ function parseScientificNameLine(line: string, names: Map<number, string>): void
   if (!Number.isFinite(taxId)) {
     return;
   }
-  names.set(taxId, parts[1]);
+  const scientificName = parts[1];
+  const rank = nodes.get(taxId)?.rank ?? "";
+  if (rank === "species") {
+    const normalized = normalizeName(scientificName);
+    speciesIndex.set(normalized, taxId);
+    speciesIndex.set(normalized.replaceAll(" ", "_"), taxId);
+  } else if (rank === "genus") {
+    const normalized = normalizeName(scientificName);
+    genusIndex.set(normalized, taxId);
+    genusIndex.set(normalized.replaceAll(" ", "_"), taxId);
+  }
+  if ((TARGET_RANKS as string[]).includes(rank)) {
+    rankNames.set(taxId, scientificName);
+  }
 }
 
 function createLineStreamParser(onLine: (line: string) => void): (chunk: Uint8Array, final: boolean) => void {
@@ -126,6 +145,53 @@ async function streamBlobChunks(blob: Blob, onChunk: (chunk: Uint8Array, final: 
   }
 }
 
+async function parseZipFileLines(
+  archiveBlob: Blob,
+  targetFileName: "nodes.dmp" | "names.dmp",
+  progressMessage: string,
+  onLine: (line: string) => void,
+): Promise<void> {
+  let fileFound = false;
+  let fileDone = false;
+  await new Promise<void>((resolve, reject) => {
+    const maybeResolve = (): void => {
+      if (fileFound && fileDone) {
+        resolve();
+      }
+    };
+    const unzipper = new Unzip((file) => {
+      if (file.name !== targetFileName) {
+        return;
+      }
+      fileFound = true;
+      post({ type: "taxonomy-progress", message: progressMessage });
+      const parseChunk = createLineStreamParser(onLine);
+      file.ondata = (error, data, final) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        parseChunk(data, final);
+        if (final) {
+          fileDone = true;
+          maybeResolve();
+        }
+      };
+      file.start();
+    });
+    unzipper.register(UnzipInflate);
+    void streamBlobChunks(archiveBlob, (chunk, final) => {
+      unzipper.push(chunk, final);
+    }).then(() => {
+      if (!fileFound) {
+        reject(new Error(`Taxonomy archive did not contain ${targetFileName}.`));
+        return;
+      }
+      maybeResolve();
+    }).catch(reject);
+  });
+}
+
 async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy> {
   if (parsedCache) {
     return parsedCache;
@@ -133,85 +199,17 @@ async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy
   post({ type: "taxonomy-progress", message: "Extracting taxonomy archive..." });
   const archiveBlob = archive instanceof Blob ? archive : new Blob([archive], { type: "application/zip" });
   const nodes = new Map<number, NodeInfo>();
-  const scientificNames = new Map<number, string>();
-  let namesDone = false;
-  let nodesDone = false;
-  let sawNames = false;
-  let sawNodes = false;
-
-  await new Promise<void>((resolve, reject) => {
-    const maybeResolve = (): void => {
-      if (namesDone && nodesDone) {
-        resolve();
-      }
-    };
-    const unzipper = new Unzip((file) => {
-      if (file.name === "names.dmp") {
-        sawNames = true;
-        post({ type: "taxonomy-progress", message: "Parsing taxonomy names..." });
-        const parseChunk = createLineStreamParser((line) => parseScientificNameLine(line, scientificNames));
-        file.ondata = (error, data, final) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          parseChunk(data, final);
-          if (final) {
-            namesDone = true;
-            maybeResolve();
-          }
-        };
-        file.start();
-        return;
-      }
-      if (file.name === "nodes.dmp") {
-        sawNodes = true;
-        post({ type: "taxonomy-progress", message: "Parsing taxonomy nodes..." });
-        const parseChunk = createLineStreamParser((line) => parseNodeLine(line, nodes));
-        file.ondata = (error, data, final) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          parseChunk(data, final);
-          if (final) {
-            nodesDone = true;
-            maybeResolve();
-          }
-        };
-        file.start();
-      }
-    });
-    unzipper.register(UnzipInflate);
-    void streamBlobChunks(archiveBlob, (chunk, final) => {
-      unzipper.push(chunk, final);
-    }).then(() => {
-      if (!sawNames || !sawNodes) {
-        reject(new Error("Taxonomy archive did not contain nodes.dmp and names.dmp."));
-      }
-    }).catch(reject);
-  });
-
-  post({ type: "taxonomy-progress", message: "Building taxonomy lookup tables..." });
   const rankNames = new Map<number, string>();
   const speciesIndex = new Map<string, number>();
   const genusIndex = new Map<string, number>();
-  scientificNames.forEach((scientificName, taxId) => {
-    const rank = nodes.get(taxId)?.rank ?? "";
-    if (rank === "species") {
-      const normalized = normalizeName(scientificName);
-      speciesIndex.set(normalized, taxId);
-      speciesIndex.set(normalized.replaceAll(" ", "_"), taxId);
-    } else if (rank === "genus") {
-      const normalized = normalizeName(scientificName);
-      genusIndex.set(normalized, taxId);
-      genusIndex.set(normalized.replaceAll(" ", "_"), taxId);
-    }
-    if ((TARGET_RANKS as string[]).includes(rank)) {
-      rankNames.set(taxId, scientificName);
-    }
+
+  await parseZipFileLines(archiveBlob, "nodes.dmp", "Parsing taxonomy nodes...", (line) => {
+    parseNodeLine(line, nodes);
   });
-  scientificNames.clear();
+  await parseZipFileLines(archiveBlob, "names.dmp", "Parsing taxonomy names...", (line) => {
+    parseScientificNameLine(line, nodes, rankNames, speciesIndex, genusIndex);
+  });
+
   parsedCache = { nodes, rankNames, speciesIndex, genusIndex };
   return parsedCache;
 }
