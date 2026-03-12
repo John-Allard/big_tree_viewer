@@ -1212,6 +1212,7 @@ export default function App() {
           fitRequest={fitRequest}
           exportSvgRequest={exportSvgRequest}
           onHoverChange={handleHoverChange}
+          onViewModeChange={setViewMode}
         />
       </main>
     </div>

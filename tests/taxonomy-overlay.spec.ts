@@ -193,6 +193,136 @@ test("rectangular taxonomy bands use outer-weighted widths and in-band vertical 
   }
 });
 
+test("rectangular bottom-most taxonomy bands stop at the last tip center", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for rectangular bottom-band test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        class: index >= 40 ? "Aves" : "Mammalia",
+        order: index >= 60 ? "Passeriformes" : index >= 40 ? "Falconiformes" : "Primates",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 4,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["order", "class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 10, 8),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const rectDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+    taxonomyVisibleRanks?: string[];
+    leafEdgeCenters?: { topY?: number; bottomY?: number } | null;
+    taxonomyRenderedBlocks?: Array<{ rank: string; label: string; topY: number; bottomY: number }>;
+  });
+
+  expect(rectDebug.taxonomyVisibleRanks ?? []).toEqual(expect.arrayContaining(["class", "order"]));
+  const bottomLeafY = Number(rectDebug.leafEdgeCenters?.bottomY ?? Number.NaN);
+  const avesBottom = Math.max(...(rectDebug.taxonomyRenderedBlocks ?? [])
+    .filter((block) => block.rank === "class" && block.label === "Aves")
+    .map((block) => block.bottomY));
+  const passeriformesBottom = Math.max(...(rectDebug.taxonomyRenderedBlocks ?? [])
+    .filter((block) => block.rank === "order" && block.label === "Passeriformes")
+    .map((block) => block.bottomY));
+
+  expect(avesBottom).toBeGreaterThan(bottomLeafY - 1);
+  expect(avesBottom).toBeLessThanOrEqual(bottomLeafY + 0.5);
+  expect(passeriformesBottom).toBeGreaterThan(bottomLeafY - 1);
+  expect(passeriformesBottom).toBeLessThanOrEqual(bottomLeafY + 0.5);
+});
+
+test("rectangular full-height taxonomy bands keep labels centered in the viewport", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 40) {
+      throw new Error("Leaf nodes unavailable for rectangular centered-label test.");
+    }
+    const blockStart = Math.max(1, Math.floor(leafNodes.length * 0.18));
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        class: index >= blockStart ? "Aves" : "Mammalia",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 5,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    const leafIndexMap = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLeafIndexMap();
+    const canvas = document.querySelector("canvas");
+    if (!camera || camera.kind !== "rect" || !leafNodes || !leafIndexMap || !(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Rectangular centered-label setup unavailable.");
+    }
+    const blockStart = Math.max(1, Math.floor(leafNodes.length * 0.18));
+    const blockSpan = leafNodes.length - blockStart;
+    const targetLeaf = leafNodes[Math.min(leafNodes.length - 1, blockStart + Math.floor(blockSpan * 0.78))];
+    const targetY = Number(leafIndexMap[targetLeaf]);
+    const scaleY = Math.max(canvas.height / Math.max(8, Math.floor(blockSpan * 0.28)), Number(camera.scaleY) * 5);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY,
+      translateY: (canvas.height * 0.5) - (targetY * scaleY),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const rectState = await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    return {
+      debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+        taxonomyPlacedLabels?: Array<{ text: string; y: number }>;
+      },
+      canvasCenterY: canvas instanceof HTMLCanvasElement ? canvas.getBoundingClientRect().height * 0.5 : null,
+    };
+  });
+
+  const avesLabel = (rectState.debug.taxonomyPlacedLabels ?? []).find((label) => label.text === "Aves");
+  const viewportCenterY = Number(rectState.canvasCenterY ?? 0);
+  expect(avesLabel).toBeTruthy();
+  expect(Math.abs(Number(avesLabel?.y ?? 0) - viewportCenterY)).toBeLessThanOrEqual(3);
+});
+
 test("circular taxonomy rings stay outside the tip-label band", async ({ page }) => {
   await waitForViewer(page);
   await enableMockTaxonomy(page);

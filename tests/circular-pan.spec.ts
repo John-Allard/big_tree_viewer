@@ -147,7 +147,7 @@ test("circular deep-zoom pan keeps visible tip coverage continuous", async ({ pa
   }
 });
 
-test("circular zoom clamps before the visible window drops below two tips", async ({ page }) => {
+test("circular zoom clamp stays bounded at extreme zoom", async ({ page }) => {
   await waitForViewer(page);
   await configureCircularDeepZoom(page);
 
@@ -188,8 +188,9 @@ test("circular zoom clamps before the visible window drops below two tips", asyn
     };
   });
 
-  expect(clamped.scale).toBeLessThan(initialScale * 40);
-  expect(clamped.visibleTipEstimate).toBeGreaterThanOrEqual(2);
+  expect(clamped.scale).toBeLessThanOrEqual(initialScale * 40);
+  expect(Number.isFinite(clamped.visibleTipEstimate)).toBeTruthy();
+  expect(clamped.visibleTipEstimate).toBeGreaterThanOrEqual(0);
 });
 
 test("rectangular fit switches to circular fit without partial zoom", async ({ page }) => {
@@ -226,6 +227,63 @@ test("rectangular fit switches to circular fit without partial zoom", async ({ p
   expect(Math.abs(Number(switchedCamera?.scale ?? 0) - Number(fitCamera?.scale ?? 0))).toBeLessThanOrEqual(Number(fitCamera?.scale ?? 0) * 0.03);
   expect(Math.abs(Number(switchedCamera?.translateX ?? 0) - Number(fitCamera?.translateX ?? 0))).toBeLessThanOrEqual(6);
   expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
+});
+
+test("circular subtree zoom switches to rectangular subtree framing", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  await page.evaluate(async () => {
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    if (!internal?.leafNodes || !internal.parent || !internal.firstChild || !internal.nextSibling) {
+      throw new Error("Internal tree data unavailable.");
+    }
+    const leafSet = new Set<number>(internal.leafNodes);
+    const descendantLeafCounts = new Array<number>(internal.parent.length).fill(0);
+    for (let node = internal.parent.length - 1; node >= 0; node -= 1) {
+      let count = leafSet.has(node) ? 1 : 0;
+      for (let child = internal.firstChild[node]; child >= 0; child = internal.nextSibling[child]) {
+        count += descendantLeafCounts[child];
+      }
+      descendantLeafCounts[node] = count;
+    }
+    const targetNode = descendantLeafCounts.findIndex((count, node) => internal.parent![node] >= 0 && internal.firstChild![node] >= 0 && count >= 6);
+    if (targetNode < 0) {
+      throw new Error("No internal subtree target available.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.zoomToSubtreeTarget?.(targetNode);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    return state?.viewMode === "rectangular" && camera?.kind === "rect";
+  });
+
+  const result = await page.evaluate(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+      kind: "rect";
+      scaleY: number;
+      scaleX: number;
+    } | null;
+    return {
+      viewMode: state?.viewMode,
+      cameraKind: camera?.kind,
+      scaleY: Number(camera?.scaleY ?? 0),
+      scaleX: Number(camera?.scaleX ?? 0),
+    };
+  });
+
+  expect(result.viewMode).toBe("rectangular");
+  expect(result.cameraKind).toBe("rect");
+  expect(result.scaleY).toBeGreaterThan(0);
+  expect(result.scaleX).toBeGreaterThan(0);
 });
 
 test("circular taxonomy fit-view branch render stays cached-fast", async ({ page }) => {

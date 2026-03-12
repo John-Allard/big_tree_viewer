@@ -915,10 +915,10 @@ function rectLeafRangeBounds(
     : center[orderedLeaves[Math.max(0, clampedEndExclusive - 2)]];
   const topY = clampedStart > 0
     ? (previousCenter + firstCenter) * 0.5
-    : firstCenter - ((nextCenter - firstCenter) * 0.5);
+    : firstCenter;
   const bottomY = clampedEndExclusive < orderedLeaves.length
     ? (lastCenter + nextCenter) * 0.5
-    : lastCenter + ((lastCenter - previousCenter) * 0.5);
+    : lastCenter;
   return {
     topY: Math.min(topY, bottomY),
     bottomY: Math.max(topY, bottomY),
@@ -1511,12 +1511,14 @@ export default function TreeCanvas({
   fitRequest,
   exportSvgRequest,
   onHoverChange,
+  onViewModeChange,
 }: TreeCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraRef = useRef<CameraState | null>(null);
   const previousViewModeRef = useRef<ViewMode>(viewMode);
   const frameRequestRef = useRef<number | null>(null);
+  const pendingRectSubtreeZoomTargetRef = useRef<number | null>(null);
   const hoverRef = useRef<CanvasHoverInfo | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
@@ -2673,6 +2675,7 @@ export default function TreeCanvas({
         const bandWidthsPx: number[] = [];
         const placedLabels: ScreenLabel[] = [];
         const placedKeys: string[] = [];
+        const renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }> = [];
         let taxonomyConnectorSegmentCount = 0;
         let bandCursorX = tipSideX + globalTipLabelSpacePx + 18;
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
@@ -2757,6 +2760,14 @@ export default function TreeCanvas({
               }
               ctx.fillStyle = block.color;
               ctx.fillRect(bandX, top, bandWidthPx, Math.max(2, bottom - top));
+              if (renderedBlocksDebug.length < 240) {
+                renderedBlocksDebug.push({
+                  rank,
+                  label: block.label,
+                  topY: Math.min(top, bottom),
+                  bottomY: Math.max(top, bottom),
+                });
+              }
               taxonomyConnectorSegmentCount += 1;
             }
 
@@ -2808,8 +2819,13 @@ export default function TreeCanvas({
             if (!Number.isFinite(fitFontSize) || fitFontSize < minFontSize) {
               continue;
             }
+            const visibleTop = Math.max(0, top);
+            const visibleBottom = Math.min(size.height, bottom);
+            const blockSpansViewport = top <= 0 && bottom >= size.height;
             const labelX = bandX + (bandWidthPx * 0.5);
-            const labelY = (top + bottom) * 0.5;
+            const labelY = blockSpansViewport
+              ? size.height * 0.5
+              : Math.max(visibleTop, Math.min((top + bottom) * 0.5, visibleBottom));
             const rotation = Math.PI * 0.5;
             ctx.font = `${fitFontSize}px ${LABEL_FONT}`;
             let textMetrics = ctx.measureText(block.label);
@@ -2909,11 +2925,18 @@ export default function TreeCanvas({
           genusBandX: bandXs[0] ?? null,
           genusBandOffsetPx: bandXs.length > 0 ? bandXs[0] - tipSideX : null,
           connectorXs: bandXs.slice(0, 12),
+          leafEdgeCenters: orderedLeaves.length > 0
+            ? {
+              topY: worldToScreenRect(camera, 0, layout.center[orderedLeaves[0]]).y,
+              bottomY: worldToScreenRect(camera, 0, layout.center[orderedLeaves[orderedLeaves.length - 1]]).y,
+            }
+            : null,
           taxonomyVisibleRanks: visibleRanks,
           taxonomyBandXs: bandXs,
           taxonomyBandWidthsPx: bandWidthsPx,
           taxonomyConnectorSegmentCount,
           taxonomyPlacedLabelCount: placedLabels.length,
+          taxonomyRenderedBlocks: renderedBlocksDebug,
           taxonomyBlockCounts: Object.fromEntries(
             TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[order][rank]?.length ?? 0]),
           ),
@@ -5342,6 +5365,11 @@ export default function TreeCanvas({
       focusNodeTarget(targetNode, "tip");
       return;
     }
+    if (viewMode === "circular") {
+      pendingRectSubtreeZoomTargetRef.current = targetNode;
+      onViewModeChange?.("rectangular");
+      return;
+    }
     let camera = cameraRef.current;
     if (!camera || camera.kind !== (viewMode === "rectangular" ? "rect" : "circular")) {
       fitCamera();
@@ -5396,8 +5424,21 @@ export default function TreeCanvas({
     size.height,
     size.width,
     tree,
+    onViewModeChange,
     viewMode,
   ]);
+
+  useLayoutEffect(() => {
+    if (viewMode !== "rectangular") {
+      return;
+    }
+    const targetNode = pendingRectSubtreeZoomTargetRef.current;
+    if (targetNode === null) {
+      return;
+    }
+    pendingRectSubtreeZoomTargetRef.current = null;
+    zoomToSubtreeTarget(targetNode);
+  }, [viewMode, zoomToSubtreeTarget]);
 
   useLayoutEffect(() => {
     const camera = cameraRef.current;
@@ -5979,6 +6020,7 @@ export default function TreeCanvas({
         }
         return result;
       },
+      zoomToSubtreeTarget,
     };
     return () => {
       delete window.__BIG_TREE_VIEWER_CANVAS_TEST__;
@@ -5997,6 +6039,7 @@ export default function TreeCanvas({
     taxonomyEnabled,
     tree,
     viewMode,
+    zoomToSubtreeTarget,
   ]);
 
   const handleContextZoomToSubtree = useCallback(() => {

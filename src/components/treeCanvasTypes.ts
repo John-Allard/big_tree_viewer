@@ -22,6 +22,7 @@ export interface TreeCanvasProps {
   fitRequest: number;
   exportSvgRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
+  onViewModeChange?: (mode: ViewMode) => void;
 }
 
 export interface RectCamera {
