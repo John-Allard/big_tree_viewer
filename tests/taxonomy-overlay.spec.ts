@@ -379,7 +379,7 @@ test("taxonomy label context menu exposes MRCA zoom, copy name, and NCBI open", 
     if (!leafNodes || leafNodes.length < 60) {
       throw new Error("Leaf nodes unavailable for taxonomy context-menu test.");
     }
-    const split = Math.floor(leafNodes.length * 0.5);
+    const split = Math.max(8, Math.floor(leafNodes.length * 0.2));
     const tipRanks = leafNodes.map((node, index) => ({
       node,
       ranks: {
@@ -431,6 +431,222 @@ test("taxonomy label context menu exposes MRCA zoom, copy name, and NCBI open", 
 
   const openedUrl = await page.evaluate(() => (window as typeof window & { __openedUrl?: string }).__openedUrl ?? null);
   expect(openedUrl).toContain("id=8782");
+});
+
+test("taxonomy search ranks exact matches before higher-rank substring matches", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for taxonomy search ranking test.");
+    }
+    const split = Math.floor(leafNodes.length * 0.5);
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: index < split
+        ? {
+          class: "Aves",
+          order: "Avesiformes",
+          family: "Avesidae",
+          genus: "Avesella",
+        }
+        : {
+          class: "Mammalia",
+          order: "Primates",
+          family: "Hominidae",
+          genus: "Homo",
+        },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 7,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["genus", "family", "order", "class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setSearchQuery("aves");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      searchResults?: Array<unknown>;
+    } | undefined;
+    return Array.isArray(state?.searchResults) && state.searchResults.length >= 4;
+  });
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState()) as {
+    searchResults?: Array<{ kind?: string; displayName?: string; rank?: string | null }>;
+    activeSearchResult?: { kind?: string; displayName?: string; rank?: string | null } | null;
+  };
+
+  expect(state.activeSearchResult?.kind).toBe("taxonomy");
+  expect(state.activeSearchResult?.displayName).toBe("Aves");
+  expect(state.searchResults?.slice(0, 4)).toEqual([
+    expect.objectContaining({ kind: "taxonomy", rank: "class", displayName: "Aves" }),
+    expect.objectContaining({ kind: "taxonomy", rank: "order", displayName: "Avesiformes" }),
+    expect.objectContaining({ kind: "taxonomy", rank: "family", displayName: "Avesidae" }),
+    expect.objectContaining({ kind: "taxonomy", rank: "genus", displayName: "Avesella" }),
+  ]);
+});
+
+test("taxonomy search highlights the active taxonomy label and focuses its subtree", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    const parent = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.parent;
+    const firstChild = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.firstChild;
+    const nextSibling = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.nextSibling;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for taxonomy search focus test.");
+    }
+    if (!parent || !firstChild || !nextSibling) {
+      throw new Error("Tree topology unavailable for taxonomy search focus test.");
+    }
+    const root = parent.findIndex((value) => value < 0);
+    if (root < 0) {
+      throw new Error("Root node unavailable for taxonomy search focus test.");
+    }
+    const postorder: number[] = [];
+    const stack: Array<{ node: number; expanded: boolean }> = [{ node: root, expanded: false }];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) {
+        continue;
+      }
+      if (current.expanded) {
+        postorder.push(current.node);
+        continue;
+      }
+      stack.push({ node: current.node, expanded: true });
+      for (let child = firstChild[current.node]; child >= 0; child = nextSibling[child]) {
+        stack.push({ node: child, expanded: false });
+      }
+    }
+    const leafCountByNode = new Array(parent.length).fill(0);
+    for (const node of postorder) {
+      if (firstChild[node] < 0) {
+        leafCountByNode[node] = 1;
+        continue;
+      }
+      let total = 0;
+      for (let child = firstChild[node]; child >= 0; child = nextSibling[child]) {
+        total += leafCountByNode[child];
+      }
+      leafCountByNode[node] = total;
+    }
+    const minLeafCount = Math.max(8, Math.floor(leafNodes.length * 0.06));
+    const maxLeafCount = Math.max(minLeafCount + 1, Math.floor(leafNodes.length * 0.22));
+    const targetNode = postorder.find((node) => (
+      firstChild[node] >= 0
+      && leafCountByNode[node] >= minLeafCount
+      && leafCountByNode[node] <= maxLeafCount
+    ));
+    if (targetNode === undefined) {
+      throw new Error("No suitable subtree found for taxonomy search focus test.");
+    }
+    const targetLeaves = new Set<number>();
+    const subtreeStack = [targetNode];
+    while (subtreeStack.length > 0) {
+      const node = subtreeStack.pop();
+      if (node === undefined) {
+        continue;
+      }
+      if (firstChild[node] < 0) {
+        targetLeaves.add(node);
+        continue;
+      }
+      for (let child = firstChild[node]; child >= 0; child = nextSibling[child]) {
+        subtreeStack.push(child);
+      }
+    }
+    const tipRanks = leafNodes.map((node) => ({
+      node,
+      ranks: {
+        class: targetLeaves.has(node) ? "Aves" : "Mammalia",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 8,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setSearchQuery("Aves");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyPlacedLabels?: Array<{ text?: string; searchHighlightColor?: string | null }>;
+    } | undefined;
+    return Boolean(
+      debug?.taxonomyPlacedLabels?.some((label) => label.text === "Aves" && label.searchHighlightColor === "#c2410c"),
+    );
+  });
+
+  const beforeCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()) as {
+    kind?: string;
+    scaleY?: number;
+  } | null;
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestSearchFocus();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const afterCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()) as {
+    kind?: string;
+    scaleY?: number;
+  } | null;
+
+  expect(beforeCamera?.kind).toBe("rect");
+  expect(afterCamera?.kind).toBe("rect");
+  expect(Number(afterCamera?.scaleY ?? 0)).toBeGreaterThan(Number(beforeCamera?.scaleY ?? 0) * 1.4);
+});
+
+test("search still returns genus matches first without a taxonomy mapping", async ({ page }) => {
+  await waitForViewer(page);
+  const query = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.clearTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowGenusLabels(false);
+    const names = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names;
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!names || !leafNodes) {
+      throw new Error("Example tree names unavailable for genus fallback search test.");
+    }
+    const counts = new Map<string, number>();
+    for (const node of leafNodes) {
+      const genus = String(names[node] ?? "").trim().split(/[_ ]+/).filter(Boolean)[0] ?? "";
+      if (genus.length <= 4) {
+        continue;
+      }
+      counts.set(genus, (counts.get(genus) ?? 0) + 1);
+    }
+    const candidate = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0];
+    if (!candidate) {
+      throw new Error("No suitable genus candidate found in example tree.");
+    }
+    const partialQuery = candidate.slice(0, Math.max(3, Math.min(5, candidate.length - 1)));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setSearchQuery(partialQuery);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return partialQuery;
+  });
+  await page.waitForFunction((expectedQuery) => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      searchQuery?: string;
+      searchResults?: Array<{ kind?: string }>;
+    } | undefined;
+    return state?.searchQuery === expectedQuery
+      && Array.isArray(state.searchResults)
+      && state.searchResults.length > 0;
+  }, query);
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState()) as {
+    searchResults?: Array<{ kind?: string; displayName?: string }>;
+  };
+
+  expect(state.searchResults?.[0]?.kind).toBe("genus");
 });
 
 test("circular taxonomy rings stay outside the tip-label band", async ({ page }) => {
@@ -577,7 +793,7 @@ test("circular taxonomy labels persist once a visible arc can fit them", async (
     taxonomyLabelKeys?: string[];
   });
 
-  expect(firstDebug.taxonomyLabelKeys ?? []).toContainEqual(expect.stringContaining("class:ArcLabelTarget:"));
+  expect(firstDebug.taxonomyLabelKeys ?? []).toContain("class:ArcLabelTarget");
 
   await setScale(1.5);
 
@@ -585,7 +801,7 @@ test("circular taxonomy labels persist once a visible arc can fit them", async (
     taxonomyLabelKeys?: string[];
   });
 
-  expect(secondDebug.taxonomyLabelKeys ?? []).toContainEqual(expect.stringContaining("class:ArcLabelTarget:"));
+  expect(secondDebug.taxonomyLabelKeys ?? []).toContain("class:ArcLabelTarget");
 });
 
 test("single unmapped interlopers do not split taxonomy continuity", async ({ page }) => {

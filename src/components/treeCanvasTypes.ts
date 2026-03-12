@@ -18,6 +18,8 @@ export interface TreeCanvasProps {
   searchMatches: number[];
   activeSearchNode: number | null;
   activeSearchGenusCenterNode: number | null;
+  activeSearchTaxonomyNode: number | null;
+  activeSearchTaxonomyKey: string | null;
   focusNodeRequest: number;
   fitRequest: number;
   exportSvgRequest: number;
@@ -77,6 +79,11 @@ export interface ScreenLabel {
   rotation?: number;
   align?: CanvasTextAlign;
   color?: string;
+  searchHighlightColor?: string;
+  searchMatchRange?: {
+    start: number;
+    end: number;
+  } | null;
   offsetY?: number;
   taxId?: number | null;
   firstNode?: number;

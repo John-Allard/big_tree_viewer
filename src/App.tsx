@@ -8,7 +8,7 @@ import {
   putCachedTaxonomyMapping,
 } from "./lib/taxonomyCache";
 import type { WorkerResponse } from "./types/messages";
-import type { TaxonomyMapPayload } from "./types/taxonomy";
+import type { TaxonomyMapPayload, TaxonomyRank } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 
@@ -113,9 +113,51 @@ function PanelSection({
 }
 
 interface SearchResult {
-  kind: "node" | "genus";
+  kind: "node" | "genus" | "taxonomy";
   node: number;
   displayName: string;
+  rank?: TaxonomyRank;
+  key?: string;
+}
+
+const SEARCH_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
+  "superkingdom",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+];
+
+function taxonomySearchRankPriority(rank: TaxonomyRank): number {
+  return SEARCH_TAXONOMY_RANK_ORDER.indexOf(rank);
+}
+
+function lowestCommonAncestor(tree: TreeModel, leftNode: number, rightNode: number): number {
+  const ancestors = new Set<number>();
+  let current = leftNode;
+  while (current >= 0 && !ancestors.has(current)) {
+    ancestors.add(current);
+    current = tree.buffers.parent[current];
+  }
+  current = rightNode;
+  while (current >= 0) {
+    if (ancestors.has(current)) {
+      return current;
+    }
+    current = tree.buffers.parent[current];
+  }
+  return 0;
+}
+
+function searchResultLabel(result: SearchResult): string {
+  if (result.kind === "taxonomy") {
+    return `${result.rank ?? "taxonomy"}: ${result.displayName}`;
+  }
+  if (result.kind === "genus") {
+    return `genus: ${result.displayName}`;
+  }
+  return `match: ${result.displayName}`;
 }
 
 interface TaxonomyWorkerResponse {
@@ -332,9 +374,95 @@ export default function App() {
     if (!tree || !searchQuery.trim()) {
       return [] as SearchResult[];
     }
-    const exactGenusResults: SearchResult[] = [];
-    const partialGenusResults: SearchResult[] = [];
-    if (showGenusLabels) {
+    const exactTaxonomyResults: SearchResult[] = [];
+    const partialTaxonomyResults: Array<SearchResult & { rankOrder: number; orderIndex: number }> = [];
+    const pushTaxonomyResult = (
+      rank: TaxonomyRank,
+      label: string,
+      firstNode: number,
+      lastNode: number,
+      orderIndex: number,
+    ): void => {
+      if (!matchesSearchQuery(label, query)) {
+        return;
+      }
+      const result = {
+        kind: "taxonomy",
+        node: lowestCommonAncestor(tree, firstNode, lastNode),
+        displayName: label,
+        rank,
+        key: `${rank}:${label}`,
+      } satisfies SearchResult;
+      if (canonicalSearchKey(label) === queryKey) {
+        exactTaxonomyResults.push(result);
+        return;
+      }
+      partialTaxonomyResults.push({
+        ...result,
+        rankOrder: taxonomySearchRankPriority(rank),
+        orderIndex,
+      });
+    };
+
+    if (taxonomyEnabled && taxonomyMap) {
+      const orderedLeaves = computeOrderedLeaves(tree, order);
+      const orderIndexByNode = new Map<number, number>();
+      for (let index = 0; index < orderedLeaves.length; index += 1) {
+        orderIndexByNode.set(orderedLeaves[index], index);
+      }
+      const grouped = new Map<TaxonomyRank, Map<string, { firstNode: number; lastNode: number; orderIndex: number; minIndex: number; maxIndex: number }>>();
+      for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
+        grouped.set(SEARCH_TAXONOMY_RANK_ORDER[rankIndex], new Map());
+      }
+      for (let tipIndex = 0; tipIndex < taxonomyMap.tipRanks.length; tipIndex += 1) {
+        const tip = taxonomyMap.tipRanks[tipIndex];
+        const orderIndex = orderIndexByNode.get(tip.node);
+        if (orderIndex === undefined) {
+          continue;
+        }
+        for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
+          const rank = SEARCH_TAXONOMY_RANK_ORDER[rankIndex];
+          const label = tip.ranks[rank];
+          if (!label) {
+            continue;
+          }
+          const bucket = grouped.get(rank);
+          if (!bucket) {
+            continue;
+          }
+          const existing = bucket.get(label);
+          if (!existing) {
+            bucket.set(label, {
+              firstNode: tip.node,
+              lastNode: tip.node,
+              orderIndex,
+              minIndex: orderIndex,
+              maxIndex: orderIndex,
+            });
+            continue;
+          }
+          if (orderIndex < existing.minIndex) {
+            existing.minIndex = orderIndex;
+            existing.firstNode = tip.node;
+            existing.orderIndex = orderIndex;
+          }
+          if (orderIndex > existing.maxIndex) {
+            existing.maxIndex = orderIndex;
+            existing.lastNode = tip.node;
+          }
+        }
+      }
+      for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
+        const rank = SEARCH_TAXONOMY_RANK_ORDER[rankIndex];
+        const entries = [...(grouped.get(rank)?.entries() ?? [])].sort((left, right) => left[1].orderIndex - right[1].orderIndex);
+        for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+          const [label, group] = entries[entryIndex];
+          pushTaxonomyResult(rank, label, group.firstNode, group.lastNode, group.orderIndex);
+        }
+      }
+    } else {
+      const exactGenusResults: SearchResult[] = [];
+      const partialGenusResults: Array<SearchResult & { rankOrder: number; orderIndex: number }> = [];
       const orderedLeaves = computeOrderedLeaves(tree, order);
       const genusBlocks = computeGenusBlocks(tree, orderedLeaves);
       for (let index = 0; index < genusBlocks.length; index += 1) {
@@ -350,9 +478,15 @@ export default function App() {
         if (canonicalSearchKey(block.label) === queryKey) {
           exactGenusResults.push(result);
         } else {
-          partialGenusResults.push(result);
+          partialGenusResults.push({
+            ...result,
+            rankOrder: taxonomySearchRankPriority("genus"),
+            orderIndex: index,
+          });
         }
       }
+      exactTaxonomyResults.push(...exactGenusResults);
+      partialTaxonomyResults.push(...partialGenusResults);
     }
 
     const exactLeafMatches: number[] = [];
@@ -388,8 +522,22 @@ export default function App() {
     sortNodes(exactLeafMatches);
     sortNodes(exactInternalMatches);
     sortNodes(partialNodeMatches);
+    exactTaxonomyResults.sort((left, right) => (
+      taxonomySearchRankPriority(left.rank ?? "genus") - taxonomySearchRankPriority(right.rank ?? "genus")
+      || left.displayName.localeCompare(right.displayName)
+      || left.node - right.node
+    ));
+    partialTaxonomyResults.sort((left, right) => (
+      left.rankOrder - right.rankOrder
+      || left.orderIndex - right.orderIndex
+      || left.displayName.localeCompare(right.displayName)
+      || left.node - right.node
+    ));
     const nodeResults = [...exactLeafMatches, ...exactInternalMatches, ...partialNodeMatches];
-    const results = [...exactGenusResults, ...partialGenusResults];
+    const results = [
+      ...exactTaxonomyResults,
+      ...partialTaxonomyResults.map(({ rankOrder: _rankOrder, orderIndex: _orderIndex, ...result }) => result),
+    ];
     for (let index = 0; index < nodeResults.length; index += 1) {
       const node = nodeResults[index];
       results.push({
@@ -399,7 +547,7 @@ export default function App() {
       });
     }
     return results;
-  }, [order, searchQuery, showGenusLabels, tree]);
+  }, [order, searchQuery, taxonomyEnabled, taxonomyMap, tree]);
 
   const searchMatches = useMemo(
     () => searchResults.filter((result) => result.kind === "node").map((result) => result.node),
@@ -411,6 +559,8 @@ export default function App() {
     : null;
   const activeSearchNode = activeSearchResult?.kind === "node" ? activeSearchResult.node : null;
   const activeSearchGenusCenterNode = activeSearchResult?.kind === "genus" ? activeSearchResult.node : null;
+  const activeSearchTaxonomyNode = activeSearchResult?.kind === "taxonomy" ? activeSearchResult.node : null;
+  const activeSearchTaxonomyKey = activeSearchResult?.kind === "taxonomy" ? (activeSearchResult.key ?? null) : null;
 
   useEffect(() => {
     if (searchResults.length === 0) {
@@ -768,11 +918,30 @@ export default function App() {
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
         isUltrametric: tree?.isUltrametric ?? false,
+        searchQuery,
+        activeSearchIndex,
+        activeSearchResult: activeSearchResult
+          ? {
+            kind: activeSearchResult.kind,
+            displayName: activeSearchResult.displayName,
+            rank: activeSearchResult.rank ?? null,
+            key: activeSearchResult.key ?? null,
+            node: activeSearchResult.node,
+          }
+          : null,
+        searchResults: searchResults.map((result) => ({
+          kind: result.kind,
+          displayName: result.displayName,
+          rank: result.rank ?? null,
+          key: result.key ?? null,
+          node: result.node,
+        })),
       }),
       setViewMode,
       setOrder,
       setShowGenusLabels,
       setTaxonomyEnabled,
+      setSearchQuery,
       setCircularRotationDegreesForTest: setCircularRotationDegrees,
       setTaxonomyMapForTest: (payload: TaxonomyMapPayload | null) => {
         setTaxonomyMap(payload);
@@ -803,6 +972,7 @@ export default function App() {
         setTaxonomyMap(null);
         setTaxonomyEnabled(false);
       },
+      requestSearchFocus: () => setFocusNodeRequest((value) => value + 1),
       requestFit: () => setFitRequest((value) => value + 1),
     };
     (window as typeof window & {
@@ -832,7 +1002,23 @@ export default function App() {
         };
       }).__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
     };
-  }, [downloadTaxonomy, loadState.error, loadState.loading, order, runTaxonomyMapping, showGenusLabels, taxonomyEnabled, taxonomyMap, tree, treeSignature, viewMode]);
+  }, [
+    activeSearchIndex,
+    activeSearchResult,
+    downloadTaxonomy,
+    loadState.error,
+    loadState.loading,
+    order,
+    runTaxonomyMapping,
+    searchQuery,
+    searchResults,
+    showGenusLabels,
+    taxonomyEnabled,
+    taxonomyMap,
+    tree,
+    treeSignature,
+    viewMode,
+  ]);
 
   return (
     <div
@@ -1102,7 +1288,7 @@ export default function App() {
               <input
                 type="search"
                 value={searchQuery}
-                placeholder="Search tip, node, or genus names"
+                placeholder="Search tip, node, genus, or taxonomy names"
                 disabled={!tree}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onKeyDown={(event) => {
@@ -1160,8 +1346,7 @@ export default function App() {
                 </p>
                 {activeSearchResult ? (
                   <p className="search-match-name">
-                    {activeSearchResult.kind === "genus" ? "Genus: " : "Match: "}
-                    {activeSearchResult.displayName}
+                    {searchResultLabel(activeSearchResult)}
                   </p>
                 ) : null}
               </>
@@ -1208,6 +1393,8 @@ export default function App() {
           searchMatches={searchMatches}
           activeSearchNode={activeSearchNode}
           activeSearchGenusCenterNode={activeSearchGenusCenterNode}
+          activeSearchTaxonomyNode={activeSearchTaxonomyNode}
+          activeSearchTaxonomyKey={activeSearchTaxonomyKey}
           focusNodeRequest={focusNodeRequest}
           fitRequest={fitRequest}
           exportSvgRequest={exportSvgRequest}

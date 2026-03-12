@@ -10,6 +10,7 @@ declare global {
       setOrder: (order: "input" | "desc" | "asc") => void;
       setShowGenusLabels: (visible: boolean) => void;
       setTaxonomyEnabled: (visible: boolean) => void;
+      setSearchQuery: (query: string) => void;
       setCircularRotationDegreesForTest: (degrees: number) => void;
       setTaxonomyMapForTest: (payload: TaxonomyMapPayload | null) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;
@@ -17,6 +18,7 @@ declare global {
       setMockTaxonomy: () => void;
       cacheMockTaxonomy: () => Promise<void>;
       clearTaxonomy: () => void;
+      requestSearchFocus: () => void;
       requestFit: () => void;
     };
     __BIG_TREE_VIEWER_RENDER_DEBUG__?: Record<string, unknown> | null;

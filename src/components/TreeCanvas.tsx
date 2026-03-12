@@ -1553,6 +1553,8 @@ export default function TreeCanvas({
   searchMatches,
   activeSearchNode,
   activeSearchGenusCenterNode,
+  activeSearchTaxonomyNode,
+  activeSearchTaxonomyKey,
   focusNodeRequest,
   fitRequest,
   exportSvgRequest,
@@ -2796,7 +2798,7 @@ export default function TreeCanvas({
             if (hiddenNodes[block.centerNode]) {
               continue;
             }
-            const blockKey = `${rank}:${block.label}:${block.centerNode}`;
+            const blockKey = `${rank}:${block.label}`;
             const isPreservedLabel = preservedKeySet.has(blockKey);
             const blockSegments = block.segments && block.segments.length > 0
               ? block.segments
@@ -2895,6 +2897,10 @@ export default function TreeCanvas({
               ? size.height * 0.5
               : Math.max(visibleTop, Math.min((top + bottom) * 0.5, visibleBottom));
             const rotation = Math.PI * 0.5;
+            const searchMatchRange = findSearchMatchRange(block.label, searchQuery);
+            const searchHighlightColor = searchMatchRange
+              ? (activeSearchTaxonomyKey === blockKey ? "#c2410c" : "#2563eb")
+              : undefined;
             ctx.font = `${fitFontSize}px ${LABEL_FONT}`;
             let textMetrics = ctx.measureText(block.label);
             let ascent = textMetrics.actualBoundingBoxAscent || (fitFontSize * 0.72);
@@ -2957,6 +2963,8 @@ export default function TreeCanvas({
               rotation,
               align: "center",
               color: taxonomyTextColor(block.color),
+              searchHighlightColor,
+              searchMatchRange,
               taxId: taxonomyTaxId,
               firstNode: labelSegment.firstNode,
               lastNode: labelSegment.lastNode,
@@ -2981,8 +2989,8 @@ export default function TreeCanvas({
             0,
             "center",
             label.color ?? "#0f172a",
-            null,
-            null,
+            label.searchHighlightColor ?? null,
+            label.searchMatchRange ?? null,
           );
           ctx.restore();
           labelHitsRef.current.push({
@@ -3038,6 +3046,7 @@ export default function TreeCanvas({
             fontSize: label.fontSize ?? 0,
             rotation: label.rotation ?? 0,
             color: label.color ?? null,
+            searchHighlightColor: label.searchHighlightColor ?? null,
           })),
         };
         genusLabelHistoryRef.current = {
@@ -4194,7 +4203,7 @@ export default function TreeCanvas({
             if (hiddenNodes[block.centerNode]) {
               continue;
             }
-            const blockKey = `${rank}:${block.label}:${block.centerNode}`;
+            const blockKey = `${rank}:${block.label}`;
             const isPreservedLabel = preservedKeySet.has(blockKey);
             const blockSegments = block.segments && block.segments.length > 0
               ? block.segments
@@ -4496,6 +4505,10 @@ export default function TreeCanvas({
             const descent = textMetrics.actualBoundingBoxDescent || (finalFontSize * 0.28);
             const radialTextOffsetPx = ((ascent - descent) * 0.5)
               + ((Math.sin(bestLabelCandidate.theta) >= 0 ? -1 : 1) * Math.max(0.5, ringWidthPx * 0.04));
+            const searchMatchRange = findSearchMatchRange(block.label, searchQuery);
+            const searchHighlightColor = searchMatchRange
+              ? (activeSearchTaxonomyKey === blockKey ? "#c2410c" : "#2563eb")
+              : undefined;
             const labelRecord: ScreenLabel = {
               x: labelPoint.x,
               y: labelPoint.y,
@@ -4508,6 +4521,8 @@ export default function TreeCanvas({
               rotation: rotationRadians,
               align: "center",
               color: taxonomyTextColor(block.color),
+              searchHighlightColor,
+              searchMatchRange,
               taxId: taxonomyTaxId,
               firstNode: primaryLabelSegment.firstNode,
               lastNode: primaryLabelSegment.lastNode,
@@ -4618,6 +4633,7 @@ export default function TreeCanvas({
                 fontSize: label.fontSize ?? 0,
                 rotation: label.rotation ?? 0,
                 color: label.color ?? null,
+                searchHighlightColor: label.searchHighlightColor ?? null,
                 clipArc: label.clipArc ?? null,
               })),
               taxonomyCandidateDebug,
@@ -5075,8 +5091,8 @@ export default function TreeCanvas({
           label.offsetY ?? 0,
           label.align ?? "left",
           label.color ?? GENUS_COLOR,
-          searchQuery ? "#2563eb" : null,
-          findSearchMatchRange(label.text, searchQuery),
+          label.searchHighlightColor ?? null,
+          label.searchMatchRange ?? null,
         );
         ctx.restore();
         if (label.rank) {
@@ -5257,6 +5273,7 @@ export default function TreeCanvas({
   }, [
     activeSearchGenusCenterNode,
     activeSearchNode,
+    activeSearchTaxonomyKey,
     cache,
     collapsedView,
     collapsedNodes,
@@ -5571,11 +5588,15 @@ export default function TreeCanvas({
     if (!tree || focusNodeRequest === 0 || handledFocusRequestRef.current === focusNodeRequest) {
       return;
     }
-    const targetNode = activeSearchGenusCenterNode ?? activeSearchNode;
+    const targetNode = activeSearchTaxonomyNode ?? activeSearchGenusCenterNode ?? activeSearchNode;
     if (targetNode === null) {
       return;
     }
     handledFocusRequestRef.current = focusNodeRequest;
+    if (activeSearchTaxonomyNode !== null) {
+      zoomToSubtreeTarget(targetNode);
+      return;
+    }
     const focusTargetKind = activeSearchGenusCenterNode !== null
       ? "genus"
       : tree.buffers.firstChild[targetNode] < 0
@@ -5583,12 +5604,14 @@ export default function TreeCanvas({
         : "node";
     focusNodeTarget(targetNode, focusTargetKind);
   }, [
+    activeSearchTaxonomyNode,
     activeSearchGenusCenterNode,
     activeSearchNode,
     focusNodeRequest,
     focusNodeTarget,
     order,
     tree,
+    zoomToSubtreeTarget,
   ]);
 
   useLayoutEffect(() => {
