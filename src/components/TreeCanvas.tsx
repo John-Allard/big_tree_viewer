@@ -94,6 +94,7 @@ function arcIntersectsViewport(
 }
 
 const GENUS_CONNECTOR_COLORS = ["#111111", "#7a7a7a"] as const;
+const CIRCULAR_TAXONOMY_OVERLAY_ALPHA = 1;
 const TAXONOMY_DISPLAY_ORDER: TaxonomyRank[] = [
   "genus",
   "family",
@@ -264,6 +265,51 @@ function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorBy
   }
 
   return colorsByRank;
+}
+
+function buildTaxonomyTaxIdLookup(
+  taxonomyMap: TaxonomyMapPayload | null,
+): Map<TaxonomyRank, Map<string, number>> {
+  const lookup = new Map<TaxonomyRank, Map<string, number>>();
+  for (let index = 0; index < TAXONOMY_RANKS.length; index += 1) {
+    lookup.set(TAXONOMY_RANKS[index], new Map());
+  }
+  if (!taxonomyMap) {
+    return lookup;
+  }
+  for (let tipIndex = 0; tipIndex < taxonomyMap.tipRanks.length; tipIndex += 1) {
+    const tip = taxonomyMap.tipRanks[tipIndex];
+    for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
+      const rank = TAXONOMY_RANKS[rankIndex];
+      const label = tip.ranks[rank];
+      const taxId = tip.taxIds?.[rank];
+      if (!label || !taxId) {
+        continue;
+      }
+      const byRank = lookup.get(rank);
+      if (byRank && !byRank.has(label)) {
+        byRank.set(label, taxId);
+      }
+    }
+  }
+  return lookup;
+}
+
+function lowestCommonAncestor(tree: TreeModel, leftNode: number, rightNode: number): number {
+  const ancestors = new Set<number>();
+  let current = leftNode;
+  while (current >= 0 && !ancestors.has(current)) {
+    ancestors.add(current);
+    current = tree.buffers.parent[current];
+  }
+  current = rightNode;
+  while (current >= 0) {
+    if (ancestors.has(current)) {
+      return current;
+    }
+    current = tree.buffers.parent[current];
+  }
+  return 0;
 }
 
 function taxonomyTextColor(fill: string): string {
@@ -1578,18 +1624,33 @@ export default function TreeCanvas({
   const [overlayHover, setOverlayHover] = useState<HoverInfo | null>(null);
   const [collapsedNodes, setCollapsedNodes] = useState<Set<number>>(() => new Set());
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    node: number;
-    name: string;
-    descendantTipCount: number;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<(
+    {
+      kind: "node";
+      x: number;
+      y: number;
+      node: number;
+      name: string;
+      descendantTipCount: number;
+    }
+    | {
+      kind: "taxonomy";
+      x: number;
+      y: number;
+      name: string;
+      rank: TaxonomyRank;
+      firstNode: number;
+      lastNode: number;
+      descendantTipCount: number;
+      taxId: number | null;
+    }
+  ) | null>(null);
 
   const cache = useMemo(() => (tree ? buildCache(tree) : null), [tree]);
   const taxonomyColors = useMemo(() => (
     taxonomyMap ? buildTaxonomyColorMap(taxonomyMap) : null
   ), [taxonomyMap]);
+  const taxonomyTaxIdsByRank = useMemo(() => buildTaxonomyTaxIdLookup(taxonomyMap), [taxonomyMap]);
   const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(
     () => sortTaxonomyRanksForDisplay(taxonomyMap?.activeRanks.length ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]),
     [taxonomyMap],
@@ -2758,14 +2819,20 @@ export default function TreeCanvas({
               if (bottom < -18 || top > size.height + 18) {
                 continue;
               }
+              const verticalInsetPx = Math.min(0.75, Math.max(0, (bottom - top - 1) * 0.5));
               ctx.fillStyle = block.color;
-              ctx.fillRect(bandX, top, bandWidthPx, Math.max(2, bottom - top));
+              ctx.fillRect(
+                bandX,
+                top + verticalInsetPx,
+                bandWidthPx,
+                Math.max(1, (bottom - top) - (verticalInsetPx * 2)),
+              );
               if (renderedBlocksDebug.length < 240) {
                 renderedBlocksDebug.push({
                   rank,
                   label: block.label,
-                  topY: Math.min(top, bottom),
-                  bottomY: Math.max(top, bottom),
+                  topY: Math.min(top + verticalInsetPx, bottom - verticalInsetPx),
+                  bottomY: Math.max(top + verticalInsetPx, bottom - verticalInsetPx),
                 });
               }
               taxonomyConnectorSegmentCount += 1;
@@ -2777,6 +2844,7 @@ export default function TreeCanvas({
               startIndex: block.labelStartIndex ?? block.startIndex ?? blockSegments[0].startIndex,
               endIndex: block.labelEndIndex ?? block.endIndex ?? blockSegments[0].endIndex,
             };
+            const taxonomyTaxId = taxonomyTaxIdsByRank.get(rank)?.get(block.label) ?? null;
             if (!taxonomyBlockIntersectsVisibleLeafRanges([labelSegment], visibleLeafRanges, tree.leafCount)) {
               continue;
             }
@@ -2889,6 +2957,10 @@ export default function TreeCanvas({
               rotation,
               align: "center",
               color: taxonomyTextColor(block.color),
+              taxId: taxonomyTaxId,
+              firstNode: labelSegment.firstNode,
+              lastNode: labelSegment.lastNode,
+              taxonomyTipCount: totalTipCount,
             });
             placedKeys.push(blockKey);
           }
@@ -2898,6 +2970,7 @@ export default function TreeCanvas({
         for (let index = 0; index < placedLabels.length; index += 1) {
           const label = placedLabels[index];
           ctx.font = `${label.fontSize ?? baseFontSize}px ${LABEL_FONT}`;
+          const labelMetrics = ctx.measureText(label.text);
           ctx.save();
           ctx.translate(label.x, label.y);
           ctx.rotate(label.rotation ?? 0);
@@ -2912,6 +2985,22 @@ export default function TreeCanvas({
             null,
           );
           ctx.restore();
+          labelHitsRef.current.push({
+            node: label.firstNode ?? 0,
+            kind: "rect",
+            source: "label",
+            labelKind: "taxonomy",
+            text: label.text,
+            taxonomyRank: label.rank,
+            taxonomyTaxId: label.taxId ?? null,
+            taxonomyFirstNode: label.firstNode,
+            taxonomyLastNode: label.lastNode,
+            taxonomyTipCount: label.taxonomyTipCount,
+            x: label.x - Math.max(10, (label.fontSize ?? baseFontSize) * 0.7),
+            y: label.y - (labelMetrics.width * 0.5),
+            width: Math.max(20, (label.fontSize ?? baseFontSize) * 1.4),
+            height: Math.max(20, labelMetrics.width),
+          });
         }
         renderDebug.rect = {
           branchRenderMode: rectBranchRenderMode,
@@ -3221,6 +3310,8 @@ export default function TreeCanvas({
               node: label.node,
               kind: "rect",
               source: "label",
+              labelKind: "tip",
+              text: label.text,
               x: label.x,
               y: label.y - (fittedFontSize * 0.55),
               width: Math.min(globalTipLabelSpacePx, ctx.measureText(label.text).width),
@@ -4185,6 +4276,7 @@ export default function TreeCanvas({
               startIndex: block.labelStartIndex ?? block.startIndex ?? blockSegments[0].startIndex,
               endIndex: block.labelEndIndex ?? block.endIndex ?? blockSegments[0].endIndex,
             };
+            const taxonomyTaxId = taxonomyTaxIdsByRank.get(rank)?.get(block.label) ?? null;
             const labelSegments = [primaryLabelSegment];
             for (let segmentIndex = 0; segmentIndex < labelSegments.length; segmentIndex += 1) {
               const segment = labelSegments[segmentIndex];
@@ -4416,6 +4508,10 @@ export default function TreeCanvas({
               rotation: rotationRadians,
               align: "center",
               color: taxonomyTextColor(block.color),
+              taxId: taxonomyTaxId,
+              firstNode: primaryLabelSegment.firstNode,
+              lastNode: primaryLabelSegment.lastNode,
+              taxonomyTipCount: totalTipCount,
               offsetY: radialTextOffsetPx,
               clipArc: {
                 innerRadiusPx: ringInnerPx,
@@ -4491,6 +4587,7 @@ export default function TreeCanvas({
           taxonomyBlockCounts: Object.fromEntries(
             TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[order][rank]?.length ?? 0]),
           ),
+          taxonomyOverlayAlpha: CIRCULAR_TAXONOMY_OVERLAY_ALPHA,
           taxonomyTipBandOuterRadiusPx: tipBandOuterRadiusPx,
           taxonomyFirstRingInnerRadiusPx: connectorArcs.length > 0
             ? connectorArcs[0].lineRadiusPx - (connectorArcs[0].lineWidthPx * 0.5)
@@ -4768,7 +4865,7 @@ export default function TreeCanvas({
       if (circularGenusArcs.length > 0) {
         for (let index = 0; index < circularGenusArcs.length; index += 1) {
           const arc = circularGenusArcs[index];
-          ctx.globalAlpha = 0.76;
+          ctx.globalAlpha = CIRCULAR_TAXONOMY_OVERLAY_ALPHA;
           if (arc.mode === "ribbon") {
             ctx.beginPath();
             ctx.moveTo(arc.points[0].x, arc.points[0].y);
@@ -4836,6 +4933,8 @@ export default function TreeCanvas({
               node,
               kind: "rotated",
               source: "label",
+              labelKind: "tip",
+              text: label.text,
               x,
               y,
               width: Math.min(globalTipLabelSpacePx, ctx.measureText(label.text).width),
@@ -4955,6 +5054,7 @@ export default function TreeCanvas({
       for (let index = 0; index < circularGenusLabels.length; index += 1) {
         const label = circularGenusLabels[index];
         ctx.font = `${label.fontSize ?? circularGenusBaseFontSize}px ${LABEL_FONT}`;
+        const labelMetrics = ctx.measureText(label.text);
         ctx.save();
         if (label.clipArc && !label.clipArc.skipClip) {
           const clipStart = label.clipArc.startTheta + rotationAngle;
@@ -4979,6 +5079,24 @@ export default function TreeCanvas({
           findSearchMatchRange(label.text, searchQuery),
         );
         ctx.restore();
+        if (label.rank) {
+          labelHitsRef.current.push({
+            node: label.firstNode ?? 0,
+            kind: "rect",
+            source: "label",
+            labelKind: "taxonomy",
+            text: label.text,
+            taxonomyRank: label.rank,
+            taxonomyTaxId: label.taxId ?? null,
+            taxonomyFirstNode: label.firstNode,
+            taxonomyLastNode: label.lastNode,
+            taxonomyTipCount: label.taxonomyTipCount,
+            x: label.x - (labelMetrics.width * 0.5),
+            y: label.y - Math.max(10, (label.fontSize ?? circularGenusBaseFontSize) * 0.7),
+            width: Math.max(20, labelMetrics.width),
+            height: Math.max(20, (label.fontSize ?? circularGenusBaseFontSize) * 1.4),
+          });
+        }
       }
       timing.taxonomyOverlayMs += performance.now() - circularTaxonomyOverlayStartTime;
 
@@ -5519,6 +5637,15 @@ export default function TreeCanvas({
     }
     const layout = collapsedView?.layout ?? tree.layouts[order];
     const children = cache.orderedChildren[order];
+    const findLabelHitboxAt = (localX: number, localY: number): LabelHitbox | null => {
+      for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
+        const hitbox = labelHitsRef.current[index];
+        if (pointInLabelHitbox(localX, localY, hitbox)) {
+          return hitbox;
+        }
+      }
+      return null;
+    };
 
     const hitTestAt = (localX: number, localY: number): CanvasHoverInfo | null => {
       const camera = cameraRef.current;
@@ -5551,13 +5678,10 @@ export default function TreeCanvas({
         };
       };
 
-      for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
-        const hitbox = labelHitsRef.current[index];
-        if (!pointInLabelHitbox(localX, localY, hitbox)) {
-          continue;
-        }
+      const labelHitbox = findLabelHitboxAt(localX, localY);
+      if (labelHitbox) {
+        const hitbox = labelHitbox;
         hover = buildHoverInfo(hitbox.node, "label", localX, localY);
-        break;
       }
 
       if (hover) {
@@ -5871,6 +5995,31 @@ export default function TreeCanvas({
     };
 
     const showContextMenuAt = (localX: number, localY: number): void => {
+      const labelHitbox = findLabelHitboxAt(localX, localY);
+      if (
+        labelHitbox?.labelKind === "taxonomy"
+        && labelHitbox.text
+        && labelHitbox.taxonomyRank
+        && typeof labelHitbox.taxonomyFirstNode === "number"
+        && typeof labelHitbox.taxonomyLastNode === "number"
+      ) {
+        hoverRef.current = null;
+        setOverlayHover(null);
+        onHoverChange(null);
+        setContextMenu({
+          kind: "taxonomy",
+          x: Math.min(size.width - 260, localX + 14),
+          y: Math.min(size.height - 210, localY + 14),
+          name: labelHitbox.text,
+          rank: labelHitbox.taxonomyRank as TaxonomyRank,
+          firstNode: labelHitbox.taxonomyFirstNode,
+          lastNode: labelHitbox.taxonomyLastNode,
+          descendantTipCount: labelHitbox.taxonomyTipCount ?? 0,
+          taxId: labelHitbox.taxonomyTaxId ?? null,
+        });
+        scheduleDraw();
+        return;
+      }
       const hover = hitTestAt(localX, localY);
       if (!hover) {
         setContextMenu(null);
@@ -5880,6 +6029,7 @@ export default function TreeCanvas({
       setOverlayHover(hover);
       onHoverChange(hover);
       setContextMenu({
+        kind: "node",
         x: Math.min(size.width - 220, localX + 14),
         y: Math.min(size.height - 180, localY + 14),
         node: hover.node,
@@ -6020,6 +6170,7 @@ export default function TreeCanvas({
         }
         return result;
       },
+      getLabelHitboxes: () => labelHitsRef.current.map((hitbox) => ({ ...hitbox })),
       zoomToSubtreeTarget,
     };
     return () => {
@@ -6043,7 +6194,7 @@ export default function TreeCanvas({
   ]);
 
   const handleContextZoomToSubtree = useCallback(() => {
-    if (!contextMenu) {
+    if (!contextMenu || contextMenu.kind !== "node") {
       return;
     }
     zoomToSubtreeTarget(contextMenu.node);
@@ -6051,7 +6202,7 @@ export default function TreeCanvas({
   }, [contextMenu, zoomToSubtreeTarget]);
 
   const handleContextZoomToParentSubtree = useCallback(() => {
-    if (!contextMenu || !tree) {
+    if (!contextMenu || contextMenu.kind !== "node" || !tree) {
       return;
     }
     const parent = tree.buffers.parent[contextMenu.node];
@@ -6063,7 +6214,7 @@ export default function TreeCanvas({
   }, [contextMenu, tree, zoomToSubtreeTarget]);
 
   const handleContextOpenSubtreeInNewTab = useCallback(() => {
-    if (!contextMenu || typeof window === "undefined" || !tree) {
+    if (!contextMenu || contextMenu.kind !== "node" || typeof window === "undefined" || !tree) {
       return;
     }
     const key = `big-tree-viewer:subtree:${crypto.randomUUID()}`;
@@ -6076,12 +6227,64 @@ export default function TreeCanvas({
   }, [contextMenu, tree]);
 
   const handleContextToggleCollapse = useCallback(() => {
-    if (!contextMenu || !tree || tree.buffers.firstChild[contextMenu.node] < 0) {
+    if (!contextMenu || contextMenu.kind !== "node" || !tree || tree.buffers.firstChild[contextMenu.node] < 0) {
       return;
     }
     toggleCollapsedNode(contextMenu.node);
     setContextMenu(null);
   }, [contextMenu, toggleCollapsedNode, tree]);
+
+  const copyTextToClipboard = useCallback(async (text: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    if (typeof document === "undefined") {
+      return;
+    }
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.setAttribute("readonly", "true");
+    input.style.position = "absolute";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    document.body.removeChild(input);
+  }, []);
+
+  const handleContextCopyTipName = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "node" || contextMenu.descendantTipCount !== 1) {
+      return;
+    }
+    void copyTextToClipboard(contextMenu.name);
+    setContextMenu(null);
+  }, [contextMenu, copyTextToClipboard]);
+
+  const handleContextCopyTaxonomyName = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "taxonomy") {
+      return;
+    }
+    void copyTextToClipboard(contextMenu.name);
+    setContextMenu(null);
+  }, [contextMenu, copyTextToClipboard]);
+
+  const handleContextZoomToTaxonomySubtree = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "taxonomy" || !tree) {
+      return;
+    }
+    const mrcaNode = lowestCommonAncestor(tree, contextMenu.firstNode, contextMenu.lastNode);
+    zoomToSubtreeTarget(mrcaNode);
+    setContextMenu(null);
+  }, [contextMenu, tree, zoomToSubtreeTarget]);
+
+  const handleContextOpenTaxonomyInNcbi = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "taxonomy" || !contextMenu.taxId || typeof window === "undefined") {
+      return;
+    }
+    window.open(`https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=${contextMenu.taxId}`, "_blank", "noopener,noreferrer");
+    setContextMenu(null);
+  }, [contextMenu]);
 
   return (
     <div
@@ -6126,25 +6329,54 @@ export default function TreeCanvas({
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="tree-context-menu-title">{contextMenu.name}</div>
-          <div className="tree-context-menu-meta">
-            Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}
-          </div>
-          <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToSubtree}>
-            Zoom To Subtree
-          </button>
-          {tree && tree.buffers.parent[contextMenu.node] >= 0 ? (
-            <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToParentSubtree}>
-              Zoom To Parent Subtree
-            </button>
-          ) : null}
-          <button type="button" className="tree-context-menu-item" onClick={handleContextOpenSubtreeInNewTab}>
-            Open Subtree In New Tab
-          </button>
-          {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
-            <button type="button" className="tree-context-menu-item" onClick={handleContextToggleCollapse}>
-              {collapsedNodes.has(contextMenu.node) ? "Expand Subtree" : "Collapse Subtree"}
-            </button>
-          ) : null}
+          {contextMenu.kind === "node" ? (
+            <>
+              <div className="tree-context-menu-meta">
+                Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}
+              </div>
+              <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToSubtree}>
+                Zoom To Subtree
+              </button>
+              {tree && tree.buffers.parent[contextMenu.node] >= 0 ? (
+                <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToParentSubtree}>
+                  Zoom To Parent Subtree
+                </button>
+              ) : null}
+              {contextMenu.descendantTipCount === 1 ? (
+                <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTipName}>
+                  Copy Tip Name
+                </button>
+              ) : null}
+              <button type="button" className="tree-context-menu-item" onClick={handleContextOpenSubtreeInNewTab}>
+                Open Subtree In New Tab
+              </button>
+              {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
+                <button type="button" className="tree-context-menu-item" onClick={handleContextToggleCollapse}>
+                  {collapsedNodes.has(contextMenu.node) ? "Expand Subtree" : "Collapse Subtree"}
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="tree-context-menu-meta">
+                Rank: {contextMenu.rank} · Tips: {contextMenu.descendantTipCount.toLocaleString()}
+              </div>
+              <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToTaxonomySubtree}>
+                Zoom To Group MRCA
+              </button>
+              <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTaxonomyName}>
+                Copy Name
+              </button>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                onClick={handleContextOpenTaxonomyInNcbi}
+                disabled={!contextMenu.taxId}
+              >
+                Open In NCBI Taxonomy
+              </button>
+            </>
+          )}
         </div>
       ) : null}
     </div>

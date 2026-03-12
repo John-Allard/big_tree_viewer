@@ -37,6 +37,7 @@ declare global {
       setRectCamera: (partial: Record<string, unknown>) => void;
       setCircularCamera: (partial: Record<string, unknown>) => void;
       getLeafIndexMap: () => Record<number, number> | null;
+      getLabelHitboxes: () => Array<Record<string, unknown>>;
       zoomToSubtreeTarget: (node: number) => void;
     };
   }

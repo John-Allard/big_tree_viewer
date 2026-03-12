@@ -14,7 +14,7 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-error"; message: string };
 
 const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
-const TAXONOMY_MAPPING_VERSION = 3;
+const TAXONOMY_MAPPING_VERSION = 4;
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };
@@ -267,6 +267,7 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
       continue;
     }
     const ranks: Partial<Record<TaxonomyRank, string>> = {};
+    const taxIds: Partial<Record<TaxonomyRank, number>> = {};
     let anyRank = false;
     for (let rankIndex = 0; rankIndex < TARGET_RANKS.length; rankIndex += 1) {
       const rank = TARGET_RANKS[rankIndex];
@@ -279,6 +280,7 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
         continue;
       }
       ranks[rank] = label;
+      taxIds[rank] = ancestor;
       rankToLabels.get(rank)?.add(label);
       rankToHits.set(rank, (rankToHits.get(rank) ?? 0) + 1);
       const counts = rankToCounts.get(rank);
@@ -291,7 +293,7 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
       continue;
     }
     mappedCount += 1;
-    tipRanks.push({ node: tip.node, ranks });
+    tipRanks.push({ node: tip.node, ranks, taxIds });
   }
   const activeRanks = TARGET_RANKS.filter((rank) => (rankToLabels.get(rank)?.size ?? 0) > 1);
   while (activeRanks.length > 1) {

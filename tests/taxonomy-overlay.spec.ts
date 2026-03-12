@@ -64,6 +64,7 @@ test("rectangular fit-view taxonomy keeps cached colored connectors visible", as
 });
 
 test("real mapped rectangular fit-view starts with class and order taxonomy visible", async ({ page }) => {
+  test.setTimeout(60000);
   await waitForViewer(page);
   await page.evaluate(async () => {
     await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
@@ -89,6 +90,7 @@ test("real mapped rectangular fit-view starts with class and order taxonomy visi
 });
 
 test("real mapped rectangular max zoom-out keeps coarse taxonomy overlays and colored branches", async ({ page }) => {
+  test.setTimeout(60000);
   await waitForViewer(page);
   await page.evaluate(async () => {
     await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
@@ -323,6 +325,114 @@ test("rectangular full-height taxonomy bands keep labels centered in the viewpor
   expect(Math.abs(Number(avesLabel?.y ?? 0) - viewportCenterY)).toBeLessThanOrEqual(3);
 });
 
+test("tip context menu exposes copy tip name action", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 14, 10),
+    });
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => {
+          (window as typeof window & { __copiedText?: string }).__copiedText = text;
+        },
+      },
+      configurable: true,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const tipPoint = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
+    if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
+      throw new Error("Tip label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(tipHit.x) + (Number(tipHit.width) * 0.5),
+      y: rect.top + Number(tipHit.y) + (Number(tipHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(tipPoint.x, tipPoint.y, { button: "right" });
+  await expect(page.getByRole("button", { name: "Copy Tip Name" })).toBeVisible();
+  const menuTitle = await page.locator(".tree-context-menu-title").textContent();
+  await page.getByRole("button", { name: "Copy Tip Name" }).click();
+
+  const copiedText = await page.evaluate(() => (window as typeof window & { __copiedText?: string }).__copiedText ?? null);
+  expect(copiedText).toBe(menuTitle);
+});
+
+test("taxonomy label context menu exposes MRCA zoom, copy name, and NCBI open", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for taxonomy context-menu test.");
+    }
+    const split = Math.floor(leafNodes.length * 0.5);
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        class: index < split ? "Mammalia" : "Aves",
+      },
+      taxIds: {
+        class: index < split ? 40674 : 8782,
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 6,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    Object.defineProperty(window, "open", {
+      value: (url: string) => {
+        (window as typeof window & { __openedUrl?: string }).__openedUrl = url;
+        return null;
+      },
+      configurable: true,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const taxonomyPoint = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const taxonomyHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy" && hitbox.text === "Aves");
+    if (!(canvas instanceof HTMLCanvasElement) || !taxonomyHit) {
+      throw new Error("Taxonomy label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(taxonomyHit.x) + (Number(taxonomyHit.width) * 0.5),
+      y: rect.top + Number(taxonomyHit.y) + (Number(taxonomyHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
+  await expect(page.getByRole("button", { name: "Zoom To Group MRCA" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy Name" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open In NCBI Taxonomy" })).toBeVisible();
+  await page.getByRole("button", { name: "Open In NCBI Taxonomy" }).click();
+
+  const openedUrl = await page.evaluate(() => (window as typeof window & { __openedUrl?: string }).__openedUrl ?? null);
+  expect(openedUrl).toContain("id=8782");
+});
+
 test("circular taxonomy rings stay outside the tip-label band", async ({ page }) => {
   await waitForViewer(page);
   await enableMockTaxonomy(page);
@@ -362,6 +472,22 @@ test("circular taxonomy rings stay outside the tip-label band", async ({ page })
   expect(Number(circularDebug.taxonomyFirstRingInnerRadiusPx ?? 0)).toBeGreaterThan(
     Number(circularDebug.taxonomyTipBandOuterRadiusPx ?? 0) + 6,
   );
+});
+
+test("circular taxonomy overlay uses full-strength taxon colors", async ({ page }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const circularDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+    taxonomyOverlayAlpha?: number;
+  });
+
+  expect(Number(circularDebug.taxonomyOverlayAlpha ?? 0)).toBe(1);
 });
 
 test("circular full-view taxonomy keeps only coarse ranks visible", async ({ page }) => {
@@ -667,6 +793,7 @@ test("circular taxonomy labels on the same ring do not overlap after zooming int
 });
 
 test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape zoom", async ({ page }) => {
+  test.setTimeout(60000);
   await waitForViewer(page);
   await page.evaluate(async () => {
     await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();

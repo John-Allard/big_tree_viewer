@@ -14,6 +14,7 @@ export type TaxonomyRank = typeof TAXONOMY_RANKS[number];
 export interface TaxonomyTipRanks {
   node: number;
   ranks: Partial<Record<TaxonomyRank, string>>;
+  taxIds?: Partial<Record<TaxonomyRank, number>>;
 }
 
 export interface TaxonomyMapPayload {

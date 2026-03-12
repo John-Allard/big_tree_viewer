@@ -78,6 +78,10 @@ export interface ScreenLabel {
   align?: CanvasTextAlign;
   color?: string;
   offsetY?: number;
+  taxId?: number | null;
+  firstNode?: number;
+  lastNode?: number;
+  taxonomyTipCount?: number;
   clipArc?: {
     innerRadiusPx: number;
     outerRadiusPx: number;
@@ -91,6 +95,13 @@ export interface LabelHitbox {
   node: number;
   kind: "rect" | "rotated";
   source?: "label" | "collapse" | "collapse-edge";
+  labelKind?: "tip" | "taxonomy" | "genus";
+  text?: string;
+  taxonomyRank?: string;
+  taxonomyTaxId?: number | null;
+  taxonomyFirstNode?: number;
+  taxonomyLastNode?: number;
+  taxonomyTipCount?: number;
   x: number;
   y: number;
   width: number;
