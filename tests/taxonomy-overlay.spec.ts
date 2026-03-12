@@ -63,6 +63,68 @@ test("rectangular fit-view taxonomy keeps cached colored connectors visible", as
   expect(Number(rectDebug.taxonomyConnectorSegmentCount ?? 0)).toBeGreaterThan(0);
 });
 
+test("real mapped rectangular fit-view starts with class and order taxonomy visible", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const rectDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+    branchRenderMode?: string;
+    taxonomyVisibleRanks?: string[];
+  });
+
+  expect(rectDebug.branchRenderMode).toBe("taxonomy-cached-paths");
+  expect(rectDebug.taxonomyVisibleRanks ?? []).toContain("class");
+  expect(rectDebug.taxonomyVisibleRanks ?? []).toContain("order");
+});
+
+test("real mapped rectangular max zoom-out keeps coarse taxonomy overlays and colored branches", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Number(camera.scaleY) * 0.55,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const rectState = await page.evaluate(() => ({
+    debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      branchRenderMode?: string;
+      taxonomyVisibleRanks?: string[];
+    } | undefined,
+    branchColors: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? [],
+  }));
+
+  const coloredBranchCount = rectState.branchColors.filter((color: string) => color !== "#0f172a").length;
+  expect(rectState.debug?.branchRenderMode).toBe("taxonomy-cached-paths");
+  expect(rectState.debug?.taxonomyVisibleRanks ?? []).toContain("class");
+  expect(coloredBranchCount).toBeGreaterThan(0);
+});
+
 test("rectangular taxonomy bands use outer-weighted widths and in-band vertical labels", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

@@ -153,7 +153,8 @@ function sortTaxonomyRanksForDisplay(activeRanks: TaxonomyRank[]): TaxonomyRank[
 }
 
 function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]): TaxonomyRank[] {
-  const visible = activeRanks.filter((rank) => zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
+  const outermostRank = activeRanks[activeRanks.length - 1] ?? null;
+  const visible = activeRanks.filter((rank) => rank === outermostRank || zoom >= TAXONOMY_LAYER_THRESHOLDS[rank]);
   if (zoom < 0.035 && visible.length > 1) {
     return visible.slice(-1);
   }
@@ -891,6 +892,37 @@ function buildRectTaxonomyPaths(
   }
 
   return paths;
+}
+
+function rectLeafRangeBounds(
+  orderedLeaves: number[],
+  center: Float64Array,
+  startIndex: number,
+  endIndex: number,
+): { topY: number; bottomY: number } | null {
+  if (orderedLeaves.length === 0) {
+    return null;
+  }
+  const clampedStart = Math.max(0, Math.min(startIndex, orderedLeaves.length - 1));
+  const clampedEndExclusive = Math.max(clampedStart + 1, Math.min(endIndex, orderedLeaves.length));
+  const firstCenter = center[orderedLeaves[clampedStart]];
+  const lastCenter = center[orderedLeaves[clampedEndExclusive - 1]];
+  const previousCenter = clampedStart > 0
+    ? center[orderedLeaves[clampedStart - 1]]
+    : center[orderedLeaves[Math.min(clampedStart + 1, orderedLeaves.length - 1)]];
+  const nextCenter = clampedEndExclusive < orderedLeaves.length
+    ? center[orderedLeaves[clampedEndExclusive]]
+    : center[orderedLeaves[Math.max(0, clampedEndExclusive - 2)]];
+  const topY = clampedStart > 0
+    ? (previousCenter + firstCenter) * 0.5
+    : firstCenter - ((nextCenter - firstCenter) * 0.5);
+  const bottomY = clampedEndExclusive < orderedLeaves.length
+    ? (lastCenter + nextCenter) * 0.5
+    : lastCenter + ((lastCenter - previousCenter) * 0.5);
+  return {
+    topY: Math.min(topY, bottomY),
+    bottomY: Math.max(topY, bottomY),
+  };
 }
 
 type RenderTaxonomyBlock = {
@@ -1709,30 +1741,6 @@ export default function TreeCanvas({
     hiddenNodesRef.current = collapsedView?.hiddenNodes ?? null;
   }, [collapsedView]);
 
-  const rectClampPadding = useCallback((camera: RectCamera) => {
-    const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
-    const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
-    const readableBandProgress = smoothstep01((camera.scaleY - 2.7) / Math.max(1e-6, 4.2 - 2.7));
-    const tipBandFontSize = camera.scaleY <= 2.7
-      ? 0
-      : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
-    const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
-    const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
-    const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-    const tipBandWidthPx = interpolateTipBandWidthPx(camera.scaleY, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx);
-    if (taxonomyEnabled && taxonomyBlocks) {
-      const visibleRanks = taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks);
-      return {
-        right: tipBandWidthPx + 34 + (visibleRanks.length * 16) + 96,
-      };
-    }
-    const labelFontSize = Math.max(4.5, Math.min(22, Math.max(genusFontSize, tipBandFontSize)));
-    const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
-    return {
-      right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140,
-    };
-  }, [maxGenusLabelCharacters, reservedTipLabelCharacters, taxonomyActiveRanks, taxonomyBlocks, taxonomyEnabled]);
-
   const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
     const maxRadius = Math.max(tree?.maxDepth ?? 0, tree?.branchLengthMinPositive ?? 1);
     const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree?.leafCount ?? 1));
@@ -1768,6 +1776,82 @@ export default function TreeCanvas({
     clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
     clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
   }, [circularClampExtraRadiusPx, size.height, size.width, tree]);
+
+  const rectTaxonomyZoom = useCallback((scaleY: number): number => {
+    if (!tree || !(scaleY > 0)) {
+      return scaleY;
+    }
+    const fitRect = fitRectCamera(size.width, size.height, tree);
+    const fitRectScaleY = Math.max(fitRect.scaleY, 1e-6);
+    let fitCircular = fitCircularCamera(size.width, size.height, tree, circularRotation);
+    if (taxonomyEnabled && taxonomyBlocks) {
+      const radius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+      for (let iteration = 0; iteration < 2; iteration += 1) {
+        const extra = circularClampExtraRadiusPx(fitCircular);
+        const availableRadiusPx = Math.max(120, (Math.min(size.width, size.height) * 0.44) - extra);
+        fitCircular.scale = availableRadiusPx / radius;
+      }
+      finalizeCircularCamera(fitCircular);
+    }
+    const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+    const fitCircularSpacing = fitCircular.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree.leafCount));
+    if (!(fitCircularSpacing > 0)) {
+      return scaleY;
+    }
+    if (scaleY <= fitRectScaleY) {
+      return fitCircularSpacing;
+    }
+    return scaleY * (fitCircularSpacing / fitRectScaleY);
+  }, [
+    circularClampExtraRadiusPx,
+    circularRotation,
+    finalizeCircularCamera,
+    size.height,
+    size.width,
+    taxonomyBlocks,
+    taxonomyEnabled,
+    tree,
+  ]);
+
+  const rectVisibleTaxonomyRanksForScaleY = useCallback((scaleY: number): TaxonomyRank[] => {
+    const effectiveZoom = rectTaxonomyZoom(scaleY);
+    const visibleRanks = taxonomyVisibleRanksForZoom(effectiveZoom, taxonomyActiveRanks);
+    const hasClass = visibleRanks.includes("class");
+    const hasOrder = visibleRanks.includes("order");
+    if (!hasClass || hasOrder || effectiveZoom < TAXONOMY_LAYER_THRESHOLDS.order) {
+      return visibleRanks;
+    }
+    return taxonomyActiveRanks.filter((rank) => visibleRanks.includes(rank) || rank === "order");
+  }, [rectTaxonomyZoom, taxonomyActiveRanks]);
+
+  const rectClampPadding = useCallback((camera: RectCamera) => {
+    const microTipFontSize = Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34));
+    const tipFontSize = Math.max(6.5, Math.min(22, camera.scaleY * 0.58));
+    const readableBandProgress = smoothstep01((camera.scaleY - 2.7) / Math.max(1e-6, 4.2 - 2.7));
+    const tipBandFontSize = camera.scaleY <= 2.7
+      ? 0
+      : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
+    const genusFontSize = Math.max(10, Math.min(18, camera.scaleY * 0.42));
+    const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
+    const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
+    const tipBandWidthPx = interpolateTipBandWidthPx(camera.scaleY, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx);
+    if (taxonomyEnabled && taxonomyBlocks) {
+      const visibleRanks = rectVisibleTaxonomyRanksForScaleY(camera.scaleY);
+      const baseFontSize = Math.max(8.5, Math.min(18, 8.5 + (camera.scaleY * 0.45)));
+      const metrics = taxonomyRingMetricsPx(visibleRanks.length, baseFontSize);
+      const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
+        + (Math.max(0, visibleRanks.length - 1) * metrics.ringGapPx)
+        + 40;
+      return {
+        right: tipBandWidthPx + taxonomyWidthPx + 60,
+      };
+    }
+    const labelFontSize = Math.max(4.5, Math.min(22, Math.max(genusFontSize, tipBandFontSize)));
+    const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
+    return {
+      right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140,
+    };
+  }, [maxGenusLabelCharacters, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, taxonomyBlocks, taxonomyEnabled]);
 
   const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
@@ -2146,7 +2230,7 @@ export default function TreeCanvas({
       const microTipLabelsVisible = camera.scaleY > 2.7;
       const tipLabelsVisible = camera.scaleY > 4.2;
       const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
-        ? taxonomyVisibleRanksForZoom(camera.scaleY, taxonomyActiveRanks)
+        ? rectVisibleTaxonomyRanksForScaleY(camera.scaleY)
         : [];
       const useTaxonomyBranchRendering = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
       const cachedTaxonomyBranchColors = useTaxonomyBranchRendering ? getTaxonomyBranchColors(order, visibleTaxonomyRanks) : null;
@@ -2662,10 +2746,12 @@ export default function TreeCanvas({
             }, 0);
             for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
               const segment = blockSegments[segmentIndex];
-              const startScreen = worldToScreenRect(camera, tree.buffers.depth[segment.firstNode], layout.center[segment.firstNode]);
-              const endScreen = worldToScreenRect(camera, tree.buffers.depth[segment.lastNode], layout.center[segment.lastNode]);
-              const top = Math.min(startScreen.y, endScreen.y);
-              const bottom = Math.max(startScreen.y, endScreen.y);
+              const bounds = rectLeafRangeBounds(orderedLeaves, layout.center, segment.startIndex, segment.endIndex);
+              if (!bounds) {
+                continue;
+              }
+              const top = worldToScreenRect(camera, tree.buffers.depth[segment.firstNode], bounds.topY).y;
+              const bottom = worldToScreenRect(camera, tree.buffers.depth[segment.lastNode], bounds.bottomY).y;
               if (bottom < -18 || top > size.height + 18) {
                 continue;
               }
@@ -2686,18 +2772,17 @@ export default function TreeCanvas({
             if (totalTipCount <= 1) {
               continue;
             }
-            const labelStartScreen = worldToScreenRect(
-              camera,
-              tree.buffers.depth[labelSegment.firstNode],
-              layout.center[labelSegment.firstNode],
+            const labelBounds = rectLeafRangeBounds(
+              orderedLeaves,
+              layout.center,
+              labelSegment.startIndex,
+              labelSegment.endIndex,
             );
-            const labelEndScreen = worldToScreenRect(
-              camera,
-              tree.buffers.depth[labelSegment.lastNode],
-              layout.center[labelSegment.lastNode],
-            );
-            const top = Math.min(labelStartScreen.y, labelEndScreen.y);
-            const bottom = Math.max(labelStartScreen.y, labelEndScreen.y);
+            if (!labelBounds) {
+              continue;
+            }
+            const top = worldToScreenRect(camera, tree.buffers.depth[labelSegment.firstNode], labelBounds.topY).y;
+            const bottom = worldToScreenRect(camera, tree.buffers.depth[labelSegment.lastNode], labelBounds.bottomY).y;
             const spanPx = Math.max(0, bottom - top);
             const minimumSpanPx = rank === "genus"
               ? (isPreservedLabel ? 10 : 18)
