@@ -1,4 +1,8 @@
+import fs from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
+
+const systemChromePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH
+  ?? (fs.existsSync("/usr/bin/google-chrome-stable") ? "/usr/bin/google-chrome-stable" : undefined);
 
 export default defineConfig({
   testDir: "./tests",
@@ -11,7 +15,11 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: undefined,
+        launchOptions: systemChromePath ? { executablePath: systemChromePath } : undefined,
+      },
     },
   ],
   webServer: {

@@ -42,6 +42,95 @@ test("rectangular taxonomy columns render when taxonomy is enabled", async ({ pa
   expect(Number(rectDebug.genusBandX ?? 0)).toBeGreaterThan(Number(rectDebug.tipSideX ?? 0) + 10);
 });
 
+test("rectangular fit-view taxonomy keeps cached colored connectors visible", async ({ page }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const rectDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+    branchRenderMode?: string;
+    taxonomyVisibleRanks?: string[];
+    taxonomyConnectorSegmentCount?: number;
+  });
+
+  expect(rectDebug.branchRenderMode).toBe("taxonomy-cached-paths");
+  expect((rectDebug.taxonomyVisibleRanks ?? []).length).toBeGreaterThanOrEqual(1);
+  expect((rectDebug.taxonomyVisibleRanks ?? []).length).toBeLessThanOrEqual(2);
+  expect(Number(rectDebug.taxonomyConnectorSegmentCount ?? 0)).toBeGreaterThan(0);
+});
+
+test("rectangular taxonomy bands use outer-weighted widths and in-band vertical labels", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for rectangular taxonomy label test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        phylum: index < 40 ? "Chordata" : "Arthropoda",
+        class: index < 20 ? "Mammalia" : index < 40 ? "Aves" : index < 60 ? "Insecta" : "Arachnida",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 3,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class", "phylum"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 14, 12),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyVisibleRanks?: string[];
+      taxonomyPlacedLabelCount?: number;
+    } | undefined;
+    return Array.isArray(debug?.taxonomyVisibleRanks)
+      && debug.taxonomyVisibleRanks.includes("class")
+      && debug.taxonomyVisibleRanks.includes("phylum")
+      && Number(debug.taxonomyPlacedLabelCount ?? 0) > 0;
+  });
+
+  const rectDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+    taxonomyVisibleRanks?: string[];
+    taxonomyBandWidthsPx?: number[];
+    taxonomyPlacedLabelCount?: number;
+    taxonomyPlacedLabels?: Array<{ rotation?: number; text?: string }>;
+  });
+
+  expect(rectDebug.taxonomyVisibleRanks ?? []).toEqual(expect.arrayContaining(["class", "phylum"]));
+  expect((rectDebug.taxonomyBandWidthsPx ?? []).length).toBeGreaterThanOrEqual(2);
+  expect(Number(rectDebug.taxonomyBandWidthsPx?.[1] ?? 0)).toBeGreaterThan(Number(rectDebug.taxonomyBandWidthsPx?.[0] ?? 0));
+  expect(Number(rectDebug.taxonomyPlacedLabelCount ?? 0)).toBeGreaterThan(0);
+  for (const label of rectDebug.taxonomyPlacedLabels ?? []) {
+    expect(Math.abs(Math.abs(Number(label.rotation ?? 0)) - (Math.PI * 0.5))).toBeLessThan(0.001);
+  }
+});
+
 test("circular taxonomy rings stay outside the tip-label band", async ({ page }) => {
   await waitForViewer(page);
   await enableMockTaxonomy(page);

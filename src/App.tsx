@@ -757,6 +757,7 @@ export default function App() {
     window.__BIG_TREE_VIEWER_APP_TEST__ = {
       getState: () => ({
         treeLoaded: tree !== null,
+        treeSignature,
         loading: loadState.loading,
         loadError: loadState.error,
         viewMode,
