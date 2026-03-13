@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
+import { buildTaxonomyBlocksForOrderedLeaves } from "./lib/taxonomyBlocks";
 import {
   getCachedTaxonomyArchive,
   getCachedTaxonomyMapping,
@@ -406,58 +407,26 @@ export default function App() {
 
     if (taxonomyEnabled && taxonomyMap) {
       const orderedLeaves = computeOrderedLeaves(tree, order);
-      const orderIndexByNode = new Map<number, number>();
-      for (let index = 0; index < orderedLeaves.length; index += 1) {
-        orderIndexByNode.set(orderedLeaves[index], index);
-      }
-      const grouped = new Map<TaxonomyRank, Map<string, { firstNode: number; lastNode: number; orderIndex: number; minIndex: number; maxIndex: number }>>();
-      for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
-        grouped.set(SEARCH_TAXONOMY_RANK_ORDER[rankIndex], new Map());
-      }
-      for (let tipIndex = 0; tipIndex < taxonomyMap.tipRanks.length; tipIndex += 1) {
-        const tip = taxonomyMap.tipRanks[tipIndex];
-        const orderIndex = orderIndexByNode.get(tip.node);
-        if (orderIndex === undefined) {
-          continue;
-        }
-        for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
-          const rank = SEARCH_TAXONOMY_RANK_ORDER[rankIndex];
-          const label = tip.ranks[rank];
-          if (!label) {
-            continue;
-          }
-          const bucket = grouped.get(rank);
-          if (!bucket) {
-            continue;
-          }
-          const existing = bucket.get(label);
-          if (!existing) {
-            bucket.set(label, {
-              firstNode: tip.node,
-              lastNode: tip.node,
-              orderIndex,
-              minIndex: orderIndex,
-              maxIndex: orderIndex,
-            });
-            continue;
-          }
-          if (orderIndex < existing.minIndex) {
-            existing.minIndex = orderIndex;
-            existing.firstNode = tip.node;
-            existing.orderIndex = orderIndex;
-          }
-          if (orderIndex > existing.maxIndex) {
-            existing.maxIndex = orderIndex;
-            existing.lastNode = tip.node;
-          }
-        }
-      }
+      const taxonomyBlocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, taxonomyMap, null);
       for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
         const rank = SEARCH_TAXONOMY_RANK_ORDER[rankIndex];
-        const entries = [...(grouped.get(rank)?.entries() ?? [])].sort((left, right) => left[1].orderIndex - right[1].orderIndex);
-        for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-          const [label, group] = entries[entryIndex];
-          pushTaxonomyResult(rank, label, group.firstNode, group.lastNode, group.orderIndex);
+        const blocks = [...(taxonomyBlocks[rank] ?? [])].sort((left, right) => (
+          (left.labelStartIndex ?? left.startIndex ?? 0) - (right.labelStartIndex ?? right.startIndex ?? 0)
+        ));
+        for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+          const block = blocks[blockIndex];
+          const totalTipCount = (block.segments ?? []).reduce((total, segment) => {
+            const end = segment.endIndex >= segment.startIndex ? segment.endIndex : segment.endIndex + orderedLeaves.length;
+            return total + Math.max(0, end - segment.startIndex);
+          }, 0);
+          if (totalTipCount <= 1) {
+            continue;
+          }
+          const labelStartIndex = block.labelStartIndex ?? block.startIndex ?? block.segments?.[0]?.startIndex ?? 0;
+          const labelEndIndex = block.labelEndIndex ?? block.endIndex ?? block.segments?.[0]?.endIndex ?? (labelStartIndex + 1);
+          const labelFirstNode = orderedLeaves[labelStartIndex];
+          const labelLastNode = orderedLeaves[((labelEndIndex - 1 + orderedLeaves.length) % orderedLeaves.length)];
+          pushTaxonomyResult(rank, block.label, labelFirstNode, labelLastNode, labelStartIndex);
         }
       }
     } else {

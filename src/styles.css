@@ -427,6 +427,48 @@ button.secondary {
   transform: none;
 }
 
+.tree-context-menu-section {
+  padding-top: 0.1rem;
+}
+
+.tree-context-menu-swatch-panel {
+  padding: 0 0.55rem 0.5rem;
+}
+
+.tree-context-menu-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.38rem;
+  margin-bottom: 0.45rem;
+}
+
+.tree-context-menu-swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+}
+
+.tree-context-menu-swatch.active {
+  border-color: #0f172a;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.82);
+}
+
+.tree-context-menu-clear {
+  width: 100%;
+  padding: 0.42rem 0.55rem;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #334155;
+  text-align: left;
+}
+
+.tree-context-menu-clear:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.08);
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;

@@ -372,6 +372,138 @@ test("tip context menu exposes copy tip name action", async ({ page }) => {
   expect(copiedText).toBe(menuTitle);
 });
 
+test("tip context menu branch swatches color and clear a branch", async ({ page }) => {
+  await waitForViewer(page);
+  const tipInfo = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.clearTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 14, 10),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
+    const canvas = document.querySelector("canvas");
+    if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
+      throw new Error("Tip label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      node: Number(tipHit.node),
+      x: rect.left + Number(tipHit.x) + (Number(tipHit.width) * 0.5),
+      y: rect.top + Number(tipHit.y) + (Number(tipHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(tipInfo.x, tipInfo.y, { button: "right" });
+  await page.getByRole("button", { name: "Color Branch" }).click();
+  await page.getByRole("button", { name: "Set branch color Red" }).click();
+
+  const coloredBranch = await page.evaluate((node) => {
+    const colors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors?.() ?? [];
+    return colors[node] ?? null;
+  }, tipInfo.node);
+  expect(coloredBranch).toBe("#dc2626");
+
+  await page.mouse.click(tipInfo.x, tipInfo.y, { button: "right" });
+  await page.getByRole("button", { name: "Color Branch" }).click();
+  await page.getByRole("button", { name: "Clear Branch Color" }).click();
+
+  const clearedBranch = await page.evaluate((node) => {
+    const colors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors?.() ?? [];
+    return colors[node] ?? null;
+  }, tipInfo.node);
+  expect(clearedBranch).toBe("#0f172a");
+});
+
+test("manual subtree colors propagate and branch colors override them", async ({ page }) => {
+  await waitForViewer(page);
+  const nodes = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.clearTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    if (!internal?.leafNodes || !internal.parent || !internal.firstChild || !internal.nextSibling) {
+      throw new Error("Tree topology unavailable for manual subtree color test.");
+    }
+    const leafNodes = internal.leafNodes;
+    const root = internal.parent.findIndex((value) => value < 0);
+    if (root < 0) {
+      throw new Error("Root node unavailable for manual subtree color test.");
+    }
+    const postorder: number[] = [];
+    const stack: Array<{ node: number; expanded: boolean }> = [{ node: root, expanded: false }];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) {
+        continue;
+      }
+      if (current.expanded) {
+        postorder.push(current.node);
+        continue;
+      }
+      stack.push({ node: current.node, expanded: true });
+      for (let child = internal.firstChild[current.node]; child >= 0; child = internal.nextSibling[child]) {
+        stack.push({ node: child, expanded: false });
+      }
+    }
+    const leafCountByNode = new Array(internal.parent.length).fill(0);
+    for (const node of postorder) {
+      if (internal.firstChild[node] < 0) {
+        leafCountByNode[node] = 1;
+        continue;
+      }
+      let total = 0;
+      for (let child = internal.firstChild[node]; child >= 0; child = internal.nextSibling[child]) {
+        total += leafCountByNode[child];
+      }
+      leafCountByNode[node] = total;
+    }
+    const subtreeNode = postorder.find((node) => (
+      internal.firstChild[node] >= 0 && leafCountByNode[node] >= 4 && leafCountByNode[node] <= 10
+    ));
+    if (subtreeNode === undefined) {
+      throw new Error("No suitable subtree found for manual subtree color test.");
+    }
+    const descendants: number[] = [];
+    const subtreeStack = [subtreeNode];
+    while (subtreeStack.length > 0) {
+      const node = subtreeStack.pop();
+      if (node === undefined) {
+        continue;
+      }
+      if (internal.firstChild[node] < 0) {
+        descendants.push(node);
+        continue;
+      }
+      for (let child = internal.firstChild[node]; child >= 0; child = internal.nextSibling[child]) {
+        subtreeStack.push(child);
+      }
+    }
+    const branchNode = descendants[0];
+    const siblingNode = descendants[1];
+    const outsideNode = leafNodes.find((node) => !descendants.includes(node));
+    if (branchNode === undefined || siblingNode === undefined || outsideNode === undefined) {
+      throw new Error("Insufficient descendants for manual subtree color test.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setManualSubtreeColor(subtreeNode, "#16a34a");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setManualBranchColor(branchNode, "#dc2626");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return { branchNode, siblingNode, outsideNode };
+  });
+
+  const colors = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors?.() ?? []);
+  expect(colors[nodes.branchNode]).toBe("#dc2626");
+  expect(colors[nodes.siblingNode]).toBe("#16a34a");
+  expect(colors[nodes.outsideNode]).toBe("#0f172a");
+});
+
 test("taxonomy label context menu exposes MRCA zoom, copy name, and NCBI open", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
@@ -489,6 +621,141 @@ test("taxonomy search ranks exact matches before higher-rank substring matches",
   ]);
 });
 
+test("taxonomy search focuses the dominant segment for a split taxon label", async ({ page }) => {
+  await waitForViewer(page);
+  const expected = await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    const parent = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.parent;
+    const firstChild = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.firstChild;
+    const nextSibling = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.nextSibling;
+    if (!leafNodes || !parent || !firstChild || !nextSibling || leafNodes.length < 80) {
+      throw new Error("Tree topology unavailable for split-taxon search test.");
+    }
+    const leafOrder = new Map<number, number>();
+    for (let index = 0; index < leafNodes.length; index += 1) {
+      leafOrder.set(leafNodes[index], index);
+    }
+    const root = parent.findIndex((value) => value < 0);
+    if (root < 0) {
+      throw new Error("Root node unavailable for split-taxon search test.");
+    }
+    const postorder: number[] = [];
+    const stack: Array<{ node: number; expanded: boolean }> = [{ node: root, expanded: false }];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) {
+        continue;
+      }
+      if (current.expanded) {
+        postorder.push(current.node);
+        continue;
+      }
+      stack.push({ node: current.node, expanded: true });
+      for (let child = firstChild[current.node]; child >= 0; child = nextSibling[child]) {
+        stack.push({ node: child, expanded: false });
+      }
+    }
+    const subtreeLeaves = new Map<number, number[]>();
+    for (const node of postorder) {
+      if (firstChild[node] < 0) {
+        subtreeLeaves.set(node, [node]);
+        continue;
+      }
+      const leaves: number[] = [];
+      for (let child = firstChild[node]; child >= 0; child = nextSibling[child]) {
+        leaves.push(...(subtreeLeaves.get(child) ?? []));
+      }
+      subtreeLeaves.set(node, leaves);
+    }
+    const candidateInfos = postorder.flatMap((node) => {
+      const leaves = subtreeLeaves.get(node) ?? [];
+      if (!(firstChild[node] >= 0 && leaves.length >= 4 && leaves.length <= Math.max(6, Math.floor(leafNodes.length * 0.12)))) {
+        return [];
+      }
+      const positions = leaves.map((leaf) => leafOrder.get(leaf) ?? -1).filter((value) => value >= 0);
+      if (positions.length === 0) {
+        return [];
+      }
+      return [{
+        node,
+        size: leaves.length,
+        start: Math.min(...positions),
+        end: Math.max(...positions),
+      }];
+    });
+    const isAncestor = (ancestor: number, descendant: number): boolean => {
+      let current = descendant;
+      while (current >= 0) {
+        if (current === ancestor) {
+          return true;
+        }
+        current = parent[current];
+      }
+      return false;
+    };
+    let largeNode: number | null = null;
+    let smallNode: number | null = null;
+    const sortedCandidates = [...candidateInfos].sort((left, right) => (
+      right.size - left.size || left.start - right.start || left.node - right.node
+    ));
+    for (let largeIndex = 0; largeIndex < sortedCandidates.length; largeIndex += 1) {
+      const large = sortedCandidates[largeIndex];
+      for (let smallIndex = largeIndex + 1; smallIndex < sortedCandidates.length; smallIndex += 1) {
+        const small = sortedCandidates[smallIndex];
+        if (
+          small.size >= large.size
+          || isAncestor(large.node, small.node)
+          || isAncestor(small.node, large.node)
+          || (small.start <= large.end + 2 && large.start <= small.end + 2)
+        ) {
+          continue;
+        }
+        largeNode = large.node;
+        smallNode = small.node;
+        break;
+      }
+      if (largeNode !== null && smallNode !== null) {
+        break;
+      }
+    }
+    if (largeNode === null || smallNode === null) {
+      throw new Error("Could not find disjoint split-taxon clades.");
+    }
+    const largeLeaves = new Set(subtreeLeaves.get(largeNode) ?? []);
+    const smallLeaves = new Set(subtreeLeaves.get(smallNode) ?? []);
+    const targetLabel = "SplitFocusTaxon";
+    const tipRanks = leafNodes.map((node) => ({
+      node,
+      ranks: {
+        family: largeLeaves.has(node) || smallLeaves.has(node) ? targetLabel : "OtherTaxon",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 9,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["family"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setSearchQuery(targetLabel);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return { largeNode };
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      activeSearchResult?: { displayName?: string; kind?: string; node?: number } | null;
+    } | undefined;
+    return state?.activeSearchResult?.displayName === "SplitFocusTaxon" && state.activeSearchResult?.kind === "taxonomy";
+  });
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState()) as {
+    activeSearchResult?: { node?: number } | null;
+  };
+
+  expect(state.activeSearchResult?.node).toBe(expected.largeNode);
+});
+
 test("taxonomy search highlights the active taxonomy label and focuses its subtree", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
@@ -588,6 +855,7 @@ test("taxonomy search highlights the active taxonomy label and focuses its subtr
 
   const beforeCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()) as {
     kind?: string;
+    scaleX?: number;
     scaleY?: number;
   } | null;
   await page.evaluate(async () => {
@@ -597,12 +865,26 @@ test("taxonomy search highlights the active taxonomy label and focuses its subtr
 
   const afterCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()) as {
     kind?: string;
+    scaleX?: number;
+    scaleY?: number;
+  } | null;
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestSearchFocus();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const repeatedFocusCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()) as {
+    kind?: string;
+    scaleX?: number;
     scaleY?: number;
   } | null;
 
   expect(beforeCamera?.kind).toBe("rect");
   expect(afterCamera?.kind).toBe("rect");
+  expect(repeatedFocusCamera?.kind).toBe("rect");
   expect(Number(afterCamera?.scaleY ?? 0)).toBeGreaterThan(Number(beforeCamera?.scaleY ?? 0) * 1.4);
+  expect(Math.abs(Number(repeatedFocusCamera?.scaleX ?? 0) - Number(afterCamera?.scaleX ?? 0))).toBeLessThanOrEqual(0.001);
+  expect(Math.abs(Number(repeatedFocusCamera?.scaleY ?? 0) - Number(afterCamera?.scaleY ?? 0))).toBeLessThanOrEqual(0.001);
 });
 
 test("search still returns genus matches first without a taxonomy mapping", async ({ page }) => {

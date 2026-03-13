@@ -41,6 +41,10 @@ declare global {
       getLeafIndexMap: () => Record<number, number> | null;
       getLabelHitboxes: () => Array<Record<string, unknown>>;
       zoomToSubtreeTarget: (node: number) => void;
+      setManualBranchColor: (node: number, color: string) => void;
+      clearManualBranchColor: (node: number) => void;
+      setManualSubtreeColor: (node: number, color: string) => void;
+      clearManualSubtreeColor: (node: number) => void;
     };
   }
 }
