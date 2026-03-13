@@ -21,9 +21,10 @@ These are in place and do not need to stay on the active backlog:
 - manual subtree / branch coloring from context menus with swatch selection and clear actions
 - CSV / TSV metadata import keyed by tip names or internal node labels
 - categorical and continuous metadata-driven branch coloring with legends
+- figure-style controls for font family, size, and offset by label class
+- true vector, annotation-aware SVG export for the current view
 - paste-in Newick / NEXUS text loading
 - drag-and-drop tree loading
-- basic current-view SVG export
 - basic NEXUS import support
 - local taxonomy cache download and taxonomy-to-tip mapping
 - taxonomy overlays in rectangular columns and circular rings
@@ -42,15 +43,7 @@ These are in place and do not need to stay on the active backlog:
 
 ### 3. Labels and Text Styling
 
-- Add visual controls for font family selection.
-- Add visual controls for font size by label class.
-- Add visual controls for label offset by label class.
-- Support separate controls for:
-  - tip labels
-  - internal node labels
-  - bootstrap values
-  - node height labels
-  - future extra metadata labels
+- Extend figure-style controls to future extra metadata labels.
 - Improve support for bootstrap values and other extra values when they are present in the input tree.
 
 ### 4. Node Uncertainty / Error Bars
@@ -71,13 +64,6 @@ These are in place and do not need to stay on the active backlog:
 
 ### 6. Export
 
-- Add true vector SVG export for the current view rather than the current embedded-raster SVG wrapper.
-- Preserve annotations in SVG export, including:
-  - labels
-  - subtree colors
-  - scale bars
-  - time stripes where appropriate
-  - future metadata overlays
 - Add a strategy for large-tree export that avoids pathological SVG sizes, for example:
   - vector export for modest visible complexity
   - hybrid raster/vector export for dense branch layers
@@ -168,8 +154,8 @@ Useful direction:
 
 ## Near-Term Priorities
 
-1. Add label / font / offset controls for figure generation.
-2. Add true vector / annotation-aware SVG export.
-3. Add broader Newick-variant support, including deeper NEXUS coverage.
-4. Add taxonomy rank controls and legends that coexist cleanly with branch-color overlays.
-5. Add richer continuous-metadata scale controls and additional metadata annotation channels.
+1. Add broader Newick-variant support, including deeper NEXUS coverage.
+2. Add taxonomy rank controls and legends that coexist cleanly with branch-color overlays.
+3. Add richer continuous-metadata scale controls and additional metadata annotation channels.
+4. Add scale-bar styling controls for figure generation.
+5. Add a large-tree SVG export strategy that can fall back to hybrid output when needed.

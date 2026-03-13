@@ -246,4 +246,83 @@ test.describe("local circular perf regression", () => {
     expect(Number(benchmark?.taxonomyOverlayMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_TAXONOMY_P95_MAX_MS);
     expect(Number(benchmark?.frameDeltaMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_FRAME_P95_MAX_MS);
   });
+
+  test("figure style changes do not break cached circular taxonomy fit-view zoom", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configureCircularPerfScene(page);
+    await page.evaluate(() => {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "sizeScale", 1.6);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.5);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "offsetPx", 12);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    });
+    await settleFrames(page);
+
+    const snapshots: Array<Awaited<ReturnType<typeof readCircularPerfSnapshot>>> = [];
+    for (let step = 0; step <= ZOOM_STEPS; step += 1) {
+      if (step > 0) {
+        await movePointerToCircularCenter(page);
+        await page.mouse.wheel(0, -100);
+        await settleFrames(page);
+      }
+      snapshots.push(await readCircularPerfSnapshot(page));
+    }
+
+    for (const snapshot of snapshots.slice(1)) {
+      expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(snapshot.circular?.branchRenderMode ?? "");
+      expect(Number(snapshot.timing?.branchBaseMs ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(ZOOM_FINAL_BRANCH_MAX_MS);
+    }
+  });
+
+  test("figure style changes do not break cached circular taxonomy fit-view pan", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configureCircularPerfScene(page);
+    await page.evaluate(() => {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "sizeScale", 1.6);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.5);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "offsetPx", 12);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    });
+    await settleFrames(page);
+
+    await page.evaluate(() => {
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.startPanBenchmark("local-perf-pan-styled");
+    });
+
+    await movePointerToCircularCenter(page);
+    const center = await page.evaluate(() => {
+      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+      if (!camera || camera.kind !== "circular") {
+        throw new Error("Circular camera unavailable.");
+      }
+      return { x: Number(camera.translateX), y: Number(camera.translateY) };
+    });
+    await page.mouse.down();
+    await page.mouse.move(center.x + 160, center.y + 40, { steps: 24 });
+    await page.mouse.up();
+    await page.waitForTimeout(150);
+
+    const benchmark = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.stopPanBenchmark?.() as {
+      branchRenderModes?: string[];
+      drawTotalMsP95?: number;
+      branchBaseMsP95?: number;
+      taxonomyOverlayMsP95?: number;
+      frameDeltaMsP95?: number;
+    } | null);
+
+    expect(benchmark).not.toBeNull();
+    expect(benchmark?.branchRenderModes ?? []).toEqual(["taxonomy-cached-bitmap"]);
+    expect(Number(benchmark?.drawTotalMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_DRAW_P95_MAX_MS);
+    expect(Number(benchmark?.branchBaseMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_BRANCH_P95_MAX_MS);
+    expect(Number(benchmark?.taxonomyOverlayMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_TAXONOMY_P95_MAX_MS);
+    expect(Number(benchmark?.frameDeltaMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_FRAME_P95_MAX_MS);
+  });
 });

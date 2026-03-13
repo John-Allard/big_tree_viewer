@@ -1,4 +1,5 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
+import type { FigureStyleSettings } from "../lib/figureStyles";
 import type { TaxonomyMapPayload } from "../types/taxonomy";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
 
@@ -15,6 +16,9 @@ export interface TreeCanvasProps {
   taxonomyMap: TaxonomyMapPayload | null;
   metadataBranchColors: Array<string | null> | null;
   metadataBranchColorVersion: string;
+  showInternalNodeLabels: boolean;
+  showBootstrapLabels: boolean;
+  figureStyles: FigureStyleSettings;
   showNodeHeightLabels: boolean;
   searchQuery: string;
   searchMatches: number[];

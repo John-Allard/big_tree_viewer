@@ -9,6 +9,8 @@ declare global {
       setViewMode: (mode: "rectangular" | "circular") => void;
       setOrder: (order: "input" | "desc" | "asc") => void;
       setShowGenusLabels: (visible: boolean) => void;
+      setShowInternalNodeLabels: (visible: boolean) => void;
+      setShowBootstrapLabels: (visible: boolean) => void;
       setTaxonomyEnabled: (visible: boolean) => void;
       setMetadataEnabled: (visible: boolean) => void;
       setSearchQuery: (query: string) => void;
@@ -21,6 +23,11 @@ declare global {
       setMetadataColorMode: (mode: "categorical" | "continuous") => void;
       setMetadataApplyScope: (scope: "branch" | "subtree") => void;
       setMetadataReverseScale: (reverse: boolean) => void;
+      setFigureStyleForTest: (
+        labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
+        field: "fontFamily" | "sizeScale" | "offsetPx",
+        value: string | number,
+      ) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;
       getTaxonomyMapForTest: () => TaxonomyMapPayload | null;
       setMockTaxonomy: () => void;
@@ -53,6 +60,7 @@ declare global {
       clearManualBranchColor: (node: number) => void;
       setManualSubtreeColor: (node: number, color: string) => void;
       clearManualSubtreeColor: (node: number) => void;
+      buildCurrentSvgForTest: () => string | null;
     };
   }
 }

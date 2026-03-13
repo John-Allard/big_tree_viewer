@@ -2,6 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import {
+  DEFAULT_FIGURE_STYLES,
+  FONT_FAMILY_OPTIONS,
+  LABEL_STYLE_CLASS_LABELS,
+  type FigureStyleSettings,
+  type FontFamilyKey,
+  type LabelStyleClass,
+} from "./lib/figureStyles";
+import {
   buildMetadataColorOverlay,
   metadataColumnLooksContinuous,
   parseMetadataTable,
@@ -368,7 +376,11 @@ export default function App() {
   const [showTimeStripes, setShowTimeStripes] = useState(true);
   const [showScaleBars, setShowScaleBars] = useState(true);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
+  const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
+  const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
   const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
+  const [figureOpen, setFigureOpen] = useSessionDisclosure("section-figure", false);
+  const [figureStyles, setFigureStyles] = useState<FigureStyleSettings>(DEFAULT_FIGURE_STYLES);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [fitRequest, setFitRequest] = useState(0);
@@ -988,6 +1000,20 @@ export default function App() {
     });
   };
 
+  const updateFigureStyle = useCallback((
+    labelClass: LabelStyleClass,
+    field: keyof FigureStyleSettings[LabelStyleClass],
+    value: FontFamilyKey | number,
+  ): void => {
+    setFigureStyles((current) => ({
+      ...current,
+      [labelClass]: {
+        ...current[labelClass],
+        [field]: value,
+      },
+    }));
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -1013,6 +1039,9 @@ export default function App() {
         metadataMatchedRowCount: metadataOverlay.matchedRowCount,
         metadataMatchedNodeCount: metadataOverlay.matchedNodeCount,
         metadataColoredNodeCount: metadataOverlay.coloredNodeCount,
+        showInternalNodeLabels,
+        showBootstrapLabels,
+        figureStyles,
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
         isUltrametric: tree?.isUltrametric ?? false,
@@ -1038,6 +1067,8 @@ export default function App() {
       setViewMode,
       setOrder,
       setShowGenusLabels,
+      setShowInternalNodeLabels,
+      setShowBootstrapLabels,
       setTaxonomyEnabled,
       setMetadataEnabled,
       setSearchQuery,
@@ -1057,6 +1088,9 @@ export default function App() {
       setMetadataColorMode,
       setMetadataApplyScope,
       setMetadataReverseScale,
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx", value: string | number) => {
+        updateFigureStyle(labelClass, field, value as FontFamilyKey | number);
+      },
       runRealTaxonomyMappingForTest: async () => {
         const archive = await getCachedTaxonomyArchive();
         if (!archive) {
@@ -1131,16 +1165,30 @@ export default function App() {
     metadataTable,
     metadataValueColumn,
     order,
+    figureStyles,
     runTaxonomyMapping,
     searchQuery,
     searchResults,
+    showBootstrapLabels,
     showGenusLabels,
+    showInternalNodeLabels,
     taxonomyEnabled,
     taxonomyMap,
     tree,
     treeSignature,
+    updateFigureStyle,
     viewMode,
   ]);
+
+  const figureStyleClasses: LabelStyleClass[] = [
+    "tip",
+    "genus",
+    "taxonomy",
+    "internalNode",
+    "bootstrap",
+    "nodeHeight",
+    "scale",
+  ];
 
   return (
     <div
@@ -1347,6 +1395,22 @@ export default function App() {
             <label>
               <input
                 type="checkbox"
+                checked={showInternalNodeLabels}
+                onChange={(event) => setShowInternalNodeLabels(event.target.checked)}
+              />
+              Show internal node labels
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showBootstrapLabels}
+                onChange={(event) => setShowBootstrapLabels(event.target.checked)}
+              />
+              Show bootstrap labels
+            </label>
+            <label>
+              <input
+                type="checkbox"
                 checked={showNodeHeightLabels}
                 onChange={(event) => setShowNodeHeightLabels(event.target.checked)}
               />
@@ -1368,6 +1432,51 @@ export default function App() {
               />
               Show time stripes
             </label>
+          </div>
+        </PanelSection>
+
+        <PanelSection title="Figure Styles" isOpen={figureOpen} onToggle={() => setFigureOpen(!figureOpen)}>
+          <div className="figure-style-grid">
+            {figureStyleClasses.map((labelClass) => (
+              <div key={labelClass} className="figure-style-card">
+                <div className="figure-style-title">{LABEL_STYLE_CLASS_LABELS[labelClass]}</div>
+                <label>
+                  Font family
+                  <select
+                    value={figureStyles[labelClass].fontFamily}
+                    onChange={(event) => updateFigureStyle(labelClass, "fontFamily", event.target.value as FontFamilyKey)}
+                  >
+                    {FONT_FAMILY_OPTIONS.map((option) => (
+                      <option key={option.key} value={option.key}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Size scale
+                  <input
+                    type="range"
+                    min={0.6}
+                    max={1.8}
+                    step={0.05}
+                    value={figureStyles[labelClass].sizeScale}
+                    onChange={(event) => updateFigureStyle(labelClass, "sizeScale", Number(event.target.value))}
+                  />
+                </label>
+                <div className="figure-style-value">x{figureStyles[labelClass].sizeScale.toFixed(2)}</div>
+                <label>
+                  Offset
+                  <input
+                    type="range"
+                    min={-24}
+                    max={24}
+                    step={1}
+                    value={figureStyles[labelClass].offsetPx}
+                    onChange={(event) => updateFigureStyle(labelClass, "offsetPx", Number(event.target.value))}
+                  />
+                </label>
+                <div className="figure-style-value">{figureStyles[labelClass].offsetPx}px</div>
+              </div>
+            ))}
           </div>
         </PanelSection>
 
@@ -1637,6 +1746,9 @@ export default function App() {
           taxonomyMap={taxonomyMap}
           metadataBranchColors={metadataEnabled && metadataOverlay.hasAny ? metadataOverlay.colors : null}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
+          showInternalNodeLabels={showInternalNodeLabels}
+          showBootstrapLabels={showBootstrapLabels}
+          figureStyles={figureStyles}
           showNodeHeightLabels={showNodeHeightLabels}
           searchQuery={searchQuery}
           searchMatches={searchMatches}

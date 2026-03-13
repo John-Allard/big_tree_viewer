@@ -375,6 +375,36 @@ button.secondary {
   font-variant-numeric: tabular-nums;
 }
 
+.figure-style-grid {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.figure-style-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.74);
+}
+
+.figure-style-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.figure-style-card input[type="range"] {
+  width: 100%;
+}
+
+.figure-style-value {
+  color: #64748b;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .status-line,
 .status-error,
 .empty-note {
