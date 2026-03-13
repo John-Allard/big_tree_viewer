@@ -19,6 +19,8 @@ These are in place and do not need to stay on the active backlog:
   - copy taxonomy name
   - open the NCBI taxonomy page for the taxon
 - manual subtree / branch coloring from context menus with swatch selection and clear actions
+- CSV / TSV metadata import keyed by tip names or internal node labels
+- categorical and continuous metadata-driven branch coloring with legends
 - paste-in Newick / NEXUS text loading
 - drag-and-drop tree loading
 - basic current-view SVG export
@@ -35,10 +37,7 @@ These are in place and do not need to stay on the active backlog:
 
 ### 2. External Metadata and Data-Driven Annotation
 
-- Load a CSV file keyed by tip names and/or internal node labels.
-- Map categorical CSV data to branch coloring.
-- Map continuous numerical CSV data to branch coloring with a color scale.
-- Add legends and scale controls for data-driven coloring.
+- Add richer scale controls for continuous metadata coloring.
 - Plan for additional annotation channels from external tabular data beyond color alone.
 
 ### 3. Labels and Text Styling
@@ -169,8 +168,8 @@ Useful direction:
 
 ## Near-Term Priorities
 
-1. Add CSV metadata loading with branch-color mapping.
-2. Add label / font / offset controls for figure generation.
-3. Add true vector / annotation-aware SVG export.
-4. Add broader Newick-variant support, including deeper NEXUS coverage.
-5. Add taxonomy rank controls and legends that coexist cleanly with branch-color overlays.
+1. Add label / font / offset controls for figure generation.
+2. Add true vector / annotation-aware SVG export.
+3. Add broader Newick-variant support, including deeper NEXUS coverage.
+4. Add taxonomy rank controls and legends that coexist cleanly with branch-color overlays.
+5. Add richer continuous-metadata scale controls and additional metadata annotation channels.

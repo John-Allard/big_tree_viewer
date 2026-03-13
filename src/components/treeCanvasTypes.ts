@@ -13,6 +13,8 @@ export interface TreeCanvasProps {
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
   taxonomyMap: TaxonomyMapPayload | null;
+  metadataBranchColors: Array<string | null> | null;
+  metadataBranchColorVersion: string;
   showNodeHeightLabels: boolean;
   searchQuery: string;
   searchMatches: number[];

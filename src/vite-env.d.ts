@@ -10,9 +10,17 @@ declare global {
       setOrder: (order: "input" | "desc" | "asc") => void;
       setShowGenusLabels: (visible: boolean) => void;
       setTaxonomyEnabled: (visible: boolean) => void;
+      setMetadataEnabled: (visible: boolean) => void;
       setSearchQuery: (query: string) => void;
       setCircularRotationDegreesForTest: (degrees: number) => void;
       setTaxonomyMapForTest: (payload: TaxonomyMapPayload | null) => void;
+      importMetadataTextForTest: (text: string, label?: string) => void;
+      clearMetadataForTest: () => void;
+      setMetadataKeyColumn: (column: string) => void;
+      setMetadataValueColumn: (column: string) => void;
+      setMetadataColorMode: (mode: "categorical" | "continuous") => void;
+      setMetadataApplyScope: (scope: "branch" | "subtree") => void;
+      setMetadataReverseScale: (reverse: boolean) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;
       getTaxonomyMapForTest: () => TaxonomyMapPayload | null;
       setMockTaxonomy: () => void;

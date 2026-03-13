@@ -1433,6 +1433,8 @@ export default function TreeCanvas({
   showGenusLabels,
   taxonomyEnabled,
   taxonomyMap,
+  metadataBranchColors,
+  metadataBranchColorVersion,
   showNodeHeightLabels,
   searchQuery,
   searchMatches,
@@ -1594,6 +1596,15 @@ export default function TreeCanvas({
     () => (tree ? buildManualBranchColorOverlay(tree, manualSubtreeColorAssignments, manualBranchColorAssignments) : { colors: [], hasAny: false }),
     [manualBranchColorAssignments, manualSubtreeColorAssignments, tree],
   );
+  const metadataBranchColorOverlay = useMemo(() => {
+    if (!tree || !metadataBranchColors || metadataBranchColors.length !== tree.nodeCount) {
+      return { colors: [] as Array<string | null>, hasAny: false };
+    }
+    return {
+      colors: metadataBranchColors,
+      hasAny: metadataBranchColors.some((color) => color !== null),
+    };
+  }, [metadataBranchColors, tree]);
   useLayoutEffect(() => {
     taxonomyBranchColorsCacheRef.current.clear();
     effectiveBranchColorsCacheRef.current.clear();
@@ -1602,7 +1613,7 @@ export default function TreeCanvas({
     circularBasePathCacheRef.current.clear();
     rectBasePathCacheRef.current.clear();
     circularTaxonomyBitmapCacheRef.current = null;
-  }, [manualBranchColorVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
+  }, [manualBranchColorVersion, metadataBranchColorVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const reservedTipLabelCharacters = useMemo(() => {
     if (!tree) {
@@ -1907,19 +1918,27 @@ export default function TreeCanvas({
     if (!tree) {
       return null;
     }
-    const key = `${orderKey}:${visibleRanks.join("|")}:${manualBranchColorVersion}`;
+    const key = `${orderKey}:${visibleRanks.join("|")}:${metadataBranchColorVersion}:${manualBranchColorVersion}`;
     const cached = effectiveBranchColorsCacheRef.current.get(key);
     if (cached) {
       return cached;
     }
     const baseColors = visibleRanks.length > 0 ? getTaxonomyBranchColors(orderKey, visibleRanks) : null;
-    if (!manualBranchColorOverlay.hasAny) {
+    if (!metadataBranchColorOverlay.hasAny && !manualBranchColorOverlay.hasAny) {
       if (baseColors) {
         effectiveBranchColorsCacheRef.current.set(key, baseColors);
       }
       return baseColors;
     }
     const merged = baseColors ? [...baseColors] : new Array<string>(tree.nodeCount).fill(BRANCH_COLOR);
+    if (metadataBranchColorOverlay.hasAny) {
+      for (let node = 0; node < tree.nodeCount; node += 1) {
+        const externalColor = metadataBranchColorOverlay.colors[node] ?? null;
+        if (externalColor) {
+          merged[node] = externalColor;
+        }
+      }
+    }
     for (let node = 0; node < tree.nodeCount; node += 1) {
       const override = manualBranchColorOverlay.colors[node] ?? null;
       if (override) {
@@ -1928,7 +1947,7 @@ export default function TreeCanvas({
     }
     effectiveBranchColorsCacheRef.current.set(key, merged);
     return merged;
-  }, [getTaxonomyBranchColors, manualBranchColorOverlay, manualBranchColorVersion, tree]);
+  }, [getTaxonomyBranchColors, manualBranchColorOverlay, manualBranchColorVersion, metadataBranchColorOverlay, metadataBranchColorVersion, tree]);
 
   const getCircularTaxonomyPaths = useCallback((
     orderKey: LayoutOrder,
@@ -2237,9 +2256,9 @@ export default function TreeCanvas({
         : [];
       const taxonomyBranchRenderingVisible = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
       const coloredBranchKey = taxonomyBranchRenderingVisible
-        ? `taxonomy:${visibleTaxonomyRanks.join("|")}:${manualBranchColorVersion}`
-        : manualBranchColorOverlay.hasAny
-          ? `manual:${manualBranchColorVersion}`
+        ? `taxonomy:${visibleTaxonomyRanks.join("|")}:${metadataBranchColorVersion}:${manualBranchColorVersion}`
+        : metadataBranchColorOverlay.hasAny || manualBranchColorOverlay.hasAny
+          ? `manual:${metadataBranchColorVersion}:${manualBranchColorVersion}`
           : "";
       const effectiveBranchColors = coloredBranchKey ? getEffectiveBranchColors(order, visibleTaxonomyRanks) : null;
       const useColoredBranchRendering = effectiveBranchColors !== null;
@@ -3460,9 +3479,9 @@ export default function TreeCanvas({
       const taxonomyBranchRenderingVisible = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
       const circularTaxonomyCacheStartTime = performance.now();
       const coloredBranchKey = taxonomyBranchRenderingVisible
-        ? `taxonomy:${visibleTaxonomyRanks.join("|")}:${manualBranchColorVersion}`
-        : manualBranchColorOverlay.hasAny
-          ? `manual:${manualBranchColorVersion}`
+        ? `taxonomy:${visibleTaxonomyRanks.join("|")}:${metadataBranchColorVersion}:${manualBranchColorVersion}`
+        : metadataBranchColorOverlay.hasAny || manualBranchColorOverlay.hasAny
+          ? `manual:${metadataBranchColorVersion}:${manualBranchColorVersion}`
           : "";
       const effectiveBranchColors = coloredBranchKey ? getEffectiveBranchColors(order, visibleTaxonomyRanks) : null;
       const useColoredBranchRendering = effectiveBranchColors !== null;
@@ -5247,6 +5266,8 @@ export default function TreeCanvas({
     getRectBasePaths,
     manualBranchColorOverlay,
     manualBranchColorVersion,
+    metadataBranchColorOverlay,
+    metadataBranchColorVersion,
     order,
     reservedTipLabelCharacters,
     searchQuery,

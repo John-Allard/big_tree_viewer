@@ -47,7 +47,8 @@ textarea:focus {
   border-color: #2563eb;
 }
 
-input[type="search"] {
+input[type="search"],
+select {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -57,7 +58,8 @@ input[type="search"] {
   appearance: none;
 }
 
-input[type="search"]:focus {
+input[type="search"]:focus,
+select:focus {
   outline: 2px solid rgba(37, 99, 235, 0.16);
   border-color: #2563eb;
 }
@@ -296,6 +298,81 @@ button.secondary {
   align-items: center;
   gap: 0.55rem;
   color: #334155;
+}
+
+.search-controls label {
+  display: grid;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.search-controls label > input[type="checkbox"] {
+  width: auto;
+  margin-right: 0.45rem;
+}
+
+.metadata-summary {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.72);
+  color: #334155;
+  font-size: 0.88rem;
+}
+
+.metadata-legend {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.metadata-legend-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  color: #334155;
+  font-size: 0.88rem;
+}
+
+.metadata-legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+.metadata-legend-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-legend-count {
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.metadata-gradient-legend {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.metadata-gradient-bar {
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.metadata-gradient-labels {
+  display: flex;
+  justify-content: space-between;
+  color: #475569;
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .status-line,

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
+import {
+  buildMetadataColorOverlay,
+  metadataColumnLooksContinuous,
+  parseMetadataTable,
+  type MetadataApplyScope,
+  type MetadataColorMode,
+  type MetadataColorOverlayResult,
+  type ParsedMetadataTable,
+} from "./lib/metadataColors";
 import { buildTaxonomyBlocksForOrderedLeaves } from "./lib/taxonomyBlocks";
 import {
   getCachedTaxonomyArchive,
@@ -120,6 +129,19 @@ interface SearchResult {
   rank?: TaxonomyRank;
   key?: string;
 }
+
+const EMPTY_METADATA_OVERLAY: MetadataColorOverlayResult = {
+  colors: [],
+  hasAny: false,
+  matchedRowCount: 0,
+  matchedNodeCount: 0,
+  coloredNodeCount: 0,
+  unmappedRowCount: 0,
+  invalidValueRowCount: 0,
+  categoryLegend: [],
+  continuousLegend: null,
+  version: "",
+};
 
 const SEARCH_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "superkingdom",
@@ -327,6 +349,7 @@ async function computeTreeSignature(text: string): Promise<string> {
 export default function App() {
   const workerRef = useRef<Worker | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const metadataFileInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoloadRef = useRef(false);
   const dragCounterRef = useRef(0);
   const pendingPasteHideRef = useRef(false);
@@ -361,6 +384,17 @@ export default function App() {
   const [showPasteInput, setShowPasteInput] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
+  const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
+  const [metadataTable, setMetadataTable] = useState<ParsedMetadataTable | null>(null);
+  const [metadataFileName, setMetadataFileName] = useState("");
+  const [metadataEnabled, setMetadataEnabled] = useState(false);
+  const [metadataKeyColumn, setMetadataKeyColumn] = useState("");
+  const [metadataValueColumn, setMetadataValueColumn] = useState("");
+  const [metadataColorMode, setMetadataColorMode] = useState<MetadataColorMode>("categorical");
+  const [metadataApplyScope, setMetadataApplyScope] = useState<MetadataApplyScope>("branch");
+  const [metadataReverseScale, setMetadataReverseScale] = useState(false);
+  const [metadataStatus, setMetadataStatus] = useState("");
+  const [metadataError, setMetadataError] = useState<string | null>(null);
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
   const [taxonomyLoading, setTaxonomyLoading] = useState(false);
   const [taxonomyStatus, setTaxonomyStatus] = useState("");
@@ -530,6 +564,39 @@ export default function App() {
   const activeSearchGenusCenterNode = activeSearchResult?.kind === "genus" ? activeSearchResult.node : null;
   const activeSearchTaxonomyNode = activeSearchResult?.kind === "taxonomy" ? activeSearchResult.node : null;
   const activeSearchTaxonomyKey = activeSearchResult?.kind === "taxonomy" ? (activeSearchResult.key ?? null) : null;
+  const metadataColumns = metadataTable?.columns ?? [];
+  const metadataValueColumnSupportsContinuous = useMemo(
+    () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
+    [metadataTable, metadataValueColumn],
+  );
+  const metadataOverlay = useMemo<MetadataColorOverlayResult>(() => {
+    if (!tree || !metadataTable || !metadataKeyColumn || !metadataValueColumn) {
+      return EMPTY_METADATA_OVERLAY;
+    }
+    return buildMetadataColorOverlay(
+      tree,
+      metadataTable.rows,
+      metadataKeyColumn,
+      metadataValueColumn,
+      metadataColorMode,
+      metadataApplyScope,
+      metadataReverseScale,
+    );
+  }, [
+    metadataApplyScope,
+    metadataColorMode,
+    metadataKeyColumn,
+    metadataReverseScale,
+    metadataTable,
+    metadataValueColumn,
+    tree,
+  ]);
+
+  useEffect(() => {
+    if (metadataColorMode === "continuous" && !metadataValueColumnSupportsContinuous) {
+      setMetadataColorMode("categorical");
+    }
+  }, [metadataColorMode, metadataValueColumnSupportsContinuous]);
 
   useEffect(() => {
     if (searchResults.length === 0) {
@@ -762,6 +829,54 @@ export default function App() {
     event.target.value = "";
   };
 
+  const clearMetadata = useCallback((): void => {
+    setMetadataTable(null);
+    setMetadataFileName("");
+    setMetadataEnabled(false);
+    setMetadataKeyColumn("");
+    setMetadataValueColumn("");
+    setMetadataColorMode("categorical");
+    setMetadataApplyScope("branch");
+    setMetadataReverseScale(false);
+    setMetadataStatus("");
+    setMetadataError(null);
+  }, []);
+
+  const importMetadataText = useCallback((text: string, label: string): void => {
+    try {
+      const table = parseMetadataTable(text);
+      if (table.columns.length < 2) {
+        throw new Error("Metadata file must include at least two columns: one key column and one value column.");
+      }
+      const defaultKeyColumn = table.columns[0];
+      const defaultValueColumn = table.columns[1];
+      setMetadataTable(table);
+      setMetadataFileName(label);
+      setMetadataEnabled(true);
+      setMetadataKeyColumn(defaultKeyColumn);
+      setMetadataValueColumn(defaultValueColumn);
+      setMetadataColorMode(metadataColumnLooksContinuous(table.rows, defaultValueColumn) ? "continuous" : "categorical");
+      setMetadataApplyScope("branch");
+      setMetadataReverseScale(false);
+      setMetadataStatus(`Loaded ${table.rows.length.toLocaleString()} metadata rows from ${label}.`);
+      setMetadataError(null);
+    } catch (error) {
+      clearMetadata();
+      setMetadataError(error instanceof Error ? error.message : String(error));
+      setMetadataStatus("");
+    }
+  }, [clearMetadata]);
+
+  const onMetadataFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    const text = await file.text();
+    importMetadataText(text, file.name);
+    event.target.value = "";
+  }, [importMetadataText]);
+
   const loadPastedTree = useCallback(async (): Promise<void> => {
     const text = pastedTreeText.trim();
     if (!text) {
@@ -787,6 +902,10 @@ export default function App() {
     const file = dataTransfer.files?.[0];
     if (file) {
       const text = await file.text();
+      if (/\.(csv|tsv)$/i.test(file.name)) {
+        importMetadataText(text, file.name);
+        return;
+      }
       await parseText(text, file.name);
       return;
     }
@@ -795,7 +914,7 @@ export default function App() {
       setPastedTreeText(plainText);
       await parseText(plainText, "dropped tree text");
     }
-  }, [parseText]);
+  }, [importMetadataText, parseText]);
 
   const downloadTaxonomy = useCallback(async (): Promise<void> => {
     setTaxonomyLoading(true);
@@ -884,6 +1003,16 @@ export default function App() {
         showGenusLabels,
         taxonomyEnabled,
         taxonomyMappedCount: taxonomyMap?.mappedCount ?? 0,
+        metadataEnabled,
+        metadataFileName,
+        metadataRowCount: metadataTable?.rows.length ?? 0,
+        metadataKeyColumn,
+        metadataValueColumn,
+        metadataColorMode,
+        metadataApplyScope,
+        metadataMatchedRowCount: metadataOverlay.matchedRowCount,
+        metadataMatchedNodeCount: metadataOverlay.matchedNodeCount,
+        metadataColoredNodeCount: metadataOverlay.coloredNodeCount,
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
         isUltrametric: tree?.isUltrametric ?? false,
@@ -910,12 +1039,24 @@ export default function App() {
       setOrder,
       setShowGenusLabels,
       setTaxonomyEnabled,
+      setMetadataEnabled,
       setSearchQuery,
       setCircularRotationDegreesForTest: setCircularRotationDegrees,
       setTaxonomyMapForTest: (payload: TaxonomyMapPayload | null) => {
         setTaxonomyMap(payload);
         setTaxonomyEnabled(Boolean(payload));
       },
+      importMetadataTextForTest: (text: string, label = "test-metadata.csv") => {
+        importMetadataText(text, label);
+      },
+      clearMetadataForTest: () => {
+        clearMetadata();
+      },
+      setMetadataKeyColumn,
+      setMetadataValueColumn,
+      setMetadataColorMode,
+      setMetadataApplyScope,
+      setMetadataReverseScale,
       runRealTaxonomyMappingForTest: async () => {
         const archive = await getCachedTaxonomyArchive();
         if (!archive) {
@@ -974,9 +1115,21 @@ export default function App() {
   }, [
     activeSearchIndex,
     activeSearchResult,
+    clearMetadata,
     downloadTaxonomy,
+    importMetadataText,
     loadState.error,
     loadState.loading,
+    metadataApplyScope,
+    metadataColorMode,
+    metadataEnabled,
+    metadataFileName,
+    metadataKeyColumn,
+    metadataOverlay.coloredNodeCount,
+    metadataOverlay.matchedNodeCount,
+    metadataOverlay.matchedRowCount,
+    metadataTable,
+    metadataValueColumn,
     order,
     runTaxonomyMapping,
     searchQuery,
@@ -1007,7 +1160,7 @@ export default function App() {
       }}
       onDrop={(event) => void handleDrop(event)}
     >
-      {dragActive ? <div className="drag-overlay">Drop a tree file or Newick / NEXUS text to load it</div> : null}
+      {dragActive ? <div className="drag-overlay">Drop a tree file, CSV/TSV metadata file, or Newick / NEXUS text to load it</div> : null}
       <button
         type="button"
         className="mobile-sidebar-toggle"
@@ -1251,6 +1404,131 @@ export default function App() {
           </div>
         </PanelSection>
 
+        <PanelSection title="Metadata" isOpen={metadataOpen} onToggle={() => setMetadataOpen(!metadataOpen)}>
+          <div className="search-controls">
+            <input
+              ref={metadataFileInputRef}
+              type="file"
+              accept=".csv,.tsv,text/csv,text/tab-separated-values"
+              hidden
+              onChange={(event) => void onMetadataFileChange(event)}
+            />
+            <div className="button-row">
+              <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()}>
+                Open CSV / TSV
+              </button>
+              <button type="button" className="secondary" disabled={!metadataTable} onClick={clearMetadata}>
+                Clear Metadata
+              </button>
+            </div>
+            {metadataTable ? (
+              <>
+                <p className="status-line">
+                  {metadataFileName || "metadata"}: {metadataTable.rows.length.toLocaleString()} rows, {metadataTable.columns.length.toLocaleString()} columns
+                </p>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={metadataEnabled}
+                    onChange={(event) => setMetadataEnabled(event.target.checked)}
+                  />
+                  Enable metadata branch colors
+                </label>
+                <label>
+                  Key column
+                  <select value={metadataKeyColumn} onChange={(event) => setMetadataKeyColumn(event.target.value)}>
+                    {metadataColumns.map((column) => (
+                      <option key={column} value={column}>{column}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Value column
+                  <select value={metadataValueColumn} onChange={(event) => {
+                    const nextColumn = event.target.value;
+                    setMetadataValueColumn(nextColumn);
+                    setMetadataColorMode(metadataColumnLooksContinuous(metadataTable.rows, nextColumn) ? "continuous" : "categorical");
+                  }}
+                  >
+                    {metadataColumns.map((column) => (
+                      <option key={column} value={column}>{column}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Apply colors to
+                  <select value={metadataApplyScope} onChange={(event) => setMetadataApplyScope(event.target.value as MetadataApplyScope)}>
+                    <option value="branch">Matched branches</option>
+                    <option value="subtree">Matched subtrees</option>
+                  </select>
+                </label>
+                <label>
+                  Color mode
+                  <select
+                    value={metadataColorMode}
+                    onChange={(event) => setMetadataColorMode(event.target.value as MetadataColorMode)}
+                  >
+                    <option value="categorical">Categorical</option>
+                    <option value="continuous" disabled={!metadataValueColumnSupportsContinuous}>Continuous</option>
+                  </select>
+                </label>
+                {metadataColorMode === "continuous" ? (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={metadataReverseScale}
+                      onChange={(event) => setMetadataReverseScale(event.target.checked)}
+                    />
+                    Reverse continuous scale
+                  </label>
+                ) : null}
+                <div className="metadata-summary">
+                  <span>Matched rows: {metadataOverlay.matchedRowCount.toLocaleString()}</span>
+                  <span>Matched nodes: {metadataOverlay.matchedNodeCount.toLocaleString()}</span>
+                  <span>Colored branches: {metadataOverlay.coloredNodeCount.toLocaleString()}</span>
+                </div>
+                {metadataOverlay.unmappedRowCount > 0 ? (
+                  <p className="status-line">
+                    Unmapped rows: {metadataOverlay.unmappedRowCount.toLocaleString()}
+                  </p>
+                ) : null}
+                {metadataOverlay.invalidValueRowCount > 0 ? (
+                  <p className="status-line">
+                    Invalid numeric rows: {metadataOverlay.invalidValueRowCount.toLocaleString()}
+                  </p>
+                ) : null}
+                {metadataColorMode === "categorical" && metadataOverlay.categoryLegend.length > 0 ? (
+                  <div className="metadata-legend" data-testid="metadata-legend">
+                    {metadataOverlay.categoryLegend.map((item) => (
+                      <div key={item.label} className="metadata-legend-item">
+                        <span className="metadata-legend-swatch" style={{ backgroundColor: item.color }} />
+                        <span className="metadata-legend-label">{item.label}</span>
+                        <span className="metadata-legend-count">{item.count.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {metadataColorMode === "continuous" && metadataOverlay.continuousLegend ? (
+                  <div className="metadata-gradient-legend" data-testid="metadata-gradient-legend">
+                    <div
+                      className="metadata-gradient-bar"
+                      style={{
+                        background: `linear-gradient(90deg, ${metadataOverlay.continuousLegend.startColor} 0%, ${metadataOverlay.continuousLegend.endColor} 100%)`,
+                      }}
+                    />
+                    <div className="metadata-gradient-labels">
+                      <span>{formatNumber(metadataOverlay.continuousLegend.min)}</span>
+                      <span>{formatNumber(metadataOverlay.continuousLegend.max)}</span>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            {metadataStatus ? <p className="status-line">{metadataStatus}</p> : null}
+            {metadataError ? <p className="status-error">{metadataError}</p> : null}
+          </div>
+        </PanelSection>
+
         <PanelSection title="Search" isOpen={searchOpen} onToggle={() => setSearchOpen(!searchOpen)}>
           <div className="search-controls">
             <div className="search-input-wrap">
@@ -1357,6 +1635,8 @@ export default function App() {
           showGenusLabels={showGenusLabels}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyMap={taxonomyMap}
+          metadataBranchColors={metadataEnabled && metadataOverlay.hasAny ? metadataOverlay.colors : null}
+          metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
           showNodeHeightLabels={showNodeHeightLabels}
           searchQuery={searchQuery}
           searchMatches={searchMatches}
