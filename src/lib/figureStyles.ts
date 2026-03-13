@@ -56,6 +56,9 @@ export const LABEL_STYLE_CLASS_LABELS: Record<LabelStyleClass, string> = {
   scale: "Scale labels",
 };
 
+export const TAXONOMY_LABEL_SIZE_SCALE_MIN = 0.55;
+export const TAXONOMY_LABEL_SIZE_SCALE_MAX = 1;
+
 export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
   tip: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, bandThicknessScale: 1 },
   genus: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, bandThicknessScale: 1 },
@@ -74,4 +77,16 @@ export function fontFamilyCss(fontFamily: FontFamilyKey): string {
 export function fontFamilyLabel(fontFamily: FontFamilyKey): string {
   return FONT_FAMILY_OPTIONS.find((option) => option.key === fontFamily)?.label
     ?? FONT_FAMILY_OPTIONS[0].label;
+}
+
+export function cloneDefaultFigureStyles(): FigureStyleSettings {
+  return {
+    tip: { ...DEFAULT_FIGURE_STYLES.tip },
+    genus: { ...DEFAULT_FIGURE_STYLES.genus },
+    taxonomy: { ...DEFAULT_FIGURE_STYLES.taxonomy },
+    internalNode: { ...DEFAULT_FIGURE_STYLES.internalNode },
+    bootstrap: { ...DEFAULT_FIGURE_STYLES.bootstrap },
+    nodeHeight: { ...DEFAULT_FIGURE_STYLES.nodeHeight },
+    scale: { ...DEFAULT_FIGURE_STYLES.scale },
+  };
 }

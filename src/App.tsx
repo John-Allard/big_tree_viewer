@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import {
-  DEFAULT_FIGURE_STYLES,
+  cloneDefaultFigureStyles,
   FONT_FAMILY_OPTIONS,
   LABEL_STYLE_CLASS_LABELS,
+  TAXONOMY_LABEL_SIZE_SCALE_MAX,
+  TAXONOMY_LABEL_SIZE_SCALE_MIN,
   type FigureStyleSettings,
   type FontFamilyKey,
   type LabelStyleClass,
@@ -165,7 +167,7 @@ function LabelStyleSection({
       >
         <span className={`section-toggle-mark${isOpen && !disabled ? " open" : ""}`}>▸</span>
         <span>{LABEL_STYLE_CLASS_LABELS[labelClass]}</span>
-        {disabledReason ? <span className="label-style-state">{disabledReason}</span> : null}
+        {disabled && disabledReason ? <span className="label-style-state">{disabledReason}</span> : null}
       </button>
       {disabled ? null : isOpen ? (
         <div className="label-style-body">
@@ -184,8 +186,8 @@ function LabelStyleSection({
             {isTaxonomy ? "Label size" : "Size scale"}
             <input
               type="range"
-              min={0.6}
-              max={1.8}
+              min={isTaxonomy ? TAXONOMY_LABEL_SIZE_SCALE_MIN : 0.6}
+              max={isTaxonomy ? TAXONOMY_LABEL_SIZE_SCALE_MAX : 1.8}
               step={0.05}
               value={settings.sizeScale}
               onChange={(event) => onUpdate(labelClass, "sizeScale", Number(event.target.value))}
@@ -478,7 +480,7 @@ export default function App() {
   const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
   const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
-  const [figureStyles, setFigureStyles] = useState<FigureStyleSettings>(DEFAULT_FIGURE_STYLES);
+  const [figureStyles, setFigureStyles] = useState<FigureStyleSettings>(() => cloneDefaultFigureStyles());
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [fitRequest, setFitRequest] = useState(0);
@@ -1112,6 +1114,10 @@ export default function App() {
     }));
   }, []);
 
+  const resetFigureStyles = useCallback((): void => {
+    setFigureStyles(cloneDefaultFigureStyles());
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -1520,6 +1526,11 @@ export default function App() {
               />
               Show time stripes
             </label>
+          </div>
+          <div className="button-row">
+            <button type="button" className="secondary" onClick={resetFigureStyles}>
+              Reset Defaults
+            </button>
           </div>
           <div className="figure-style-grid">
             <LabelStyleSection

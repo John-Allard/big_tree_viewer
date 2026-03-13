@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { fontFamilyCss, type LabelStyleClass } from "../lib/figureStyles";
+import {
+  fontFamilyCss,
+  TAXONOMY_LABEL_SIZE_SCALE_MAX,
+  TAXONOMY_LABEL_SIZE_SCALE_MIN,
+  type LabelStyleClass,
+} from "../lib/figureStyles";
 import { distanceToSegmentSquared } from "../lib/spatialIndex";
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
@@ -1713,6 +1718,10 @@ export default function TreeCanvas({
   const scaleLabelFontSize = useCallback((labelClass: LabelStyleClass, baseSize: number): number => (
     Math.max(4, baseSize * figureStyles[labelClass].sizeScale)
   ), [figureStyles]);
+  const taxonomyLabelSizeScale = Math.max(
+    TAXONOMY_LABEL_SIZE_SCALE_MIN,
+    Math.min(TAXONOMY_LABEL_SIZE_SCALE_MAX, figureStyles.taxonomy.sizeScale),
+  );
   const taxonomyBandThicknessScale = Math.max(0.65, Math.min(1.8, figureStyles.taxonomy.bandThicknessScale ?? 1));
   const reservedTipLabelCharacters = useMemo(() => {
     if (!tree) {
@@ -2858,7 +2867,7 @@ export default function TreeCanvas({
       const taxonomyOverlayStartTime = performance.now();
       if (taxonomyEnabled && taxonomyBlocks) {
         const visibleRanks = visibleTaxonomyRanks;
-        const baseFontSize = scaleLabelFontSize("taxonomy", Math.max(8.5, Math.min(18, 8.5 + (camera.scaleY * 0.45))));
+        const baseFontSize = Math.max(8.5, Math.min(18, 8.5 + (camera.scaleY * 0.45)));
         const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (camera.scaleY * 0.45)));
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
         const bandXs: number[] = [];
@@ -3016,14 +3025,13 @@ export default function TreeCanvas({
             const paddingFraction = 0.12;
             const availableSpanPx = Math.max(0, spanPx * (1 - paddingFraction));
             const availableBandPx = Math.max(0, bandWidthPx * (1 - paddingFraction));
-            const maxFitFontSize = Math.min(30, Math.min(
+            const fitFontSize = Math.min(30, Math.min(
               availableSpanPx / normalizedMetrics.widthAtOnePx,
               availableBandPx / normalizedMetrics.heightAtOnePx,
             ) * 0.94);
-            if (!Number.isFinite(maxFitFontSize) || maxFitFontSize < minFontSize) {
+            if (!Number.isFinite(fitFontSize) || fitFontSize < minFontSize) {
               continue;
             }
-            const targetFontSize = Math.max(minFontSize, Math.min(maxFitFontSize, baseFontSize));
             const visibleTop = Math.max(0, top);
             const visibleBottom = Math.min(size.height, bottom);
             const blockSpansViewport = top <= 0 && bottom >= size.height;
@@ -3036,10 +3044,10 @@ export default function TreeCanvas({
             const searchHighlightColor = searchMatchRange
               ? (activeSearchTaxonomyKey === blockKey ? "#c2410c" : "#2563eb")
               : undefined;
-            ctx.font = `${targetFontSize}px ${labelFontFamilies.taxonomy}`;
+            ctx.font = `${fitFontSize}px ${labelFontFamilies.taxonomy}`;
             let textMetrics = ctx.measureText(block.label);
-            let ascent = textMetrics.actualBoundingBoxAscent || (targetFontSize * 0.72);
-            let descent = textMetrics.actualBoundingBoxDescent || (targetFontSize * 0.28);
+            let ascent = textMetrics.actualBoundingBoxAscent || (fitFontSize * 0.72);
+            let descent = textMetrics.actualBoundingBoxDescent || (fitFontSize * 0.28);
             let textHeightPx = ascent + descent;
             let viewportScale = viewportScaleForCenteredRotatedLabel(
               labelX,
@@ -3051,7 +3059,7 @@ export default function TreeCanvas({
               size.height,
               2,
             );
-            let finalFontSize = targetFontSize * Math.max(0.01, viewportScale) * 0.96;
+            let finalFontSize = fitFontSize * Math.max(0.01, viewportScale) * 0.96;
             if (finalFontSize < minFontSize) {
               continue;
             }
@@ -3078,6 +3086,9 @@ export default function TreeCanvas({
               ctx.font = `${finalFontSize}px ${labelFontFamilies.taxonomy}`;
               textMetrics = ctx.measureText(block.label);
             }
+            finalFontSize = Math.max(3.5, finalFontSize * taxonomyLabelSizeScale);
+            ctx.font = `${finalFontSize}px ${labelFontFamilies.taxonomy}`;
+            textMetrics = ctx.measureText(block.label);
             if (!isPreservedLabel && !canPlaceLinearLabel(
               labelsForRank,
               labelX,
@@ -4368,7 +4379,7 @@ export default function TreeCanvas({
       const circularTaxonomyOverlayStartTime = performance.now();
       if (taxonomyEnabled && taxonomyBlocks) {
         const visibleRanks = visibleTaxonomyRanks;
-        const baseFontSize = scaleLabelFontSize("taxonomy", Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45))));
+        const baseFontSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
         circularGenusBaseFontSize = baseFontSize;
         const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
@@ -4664,22 +4675,21 @@ export default function TreeCanvas({
                 (heightAtOnePx * heightAtOnePx) + (4 * curvatureCoeff * availableRadialPx),
               ))) / (2 * curvatureCoeff))
               : (availableRadialPx / heightAtOnePx);
-            const maxFitFontSize = Math.min(30, Math.min(
+            const fitFontSize = Math.min(30, Math.min(
               availableArcPx / widthAtOnePx,
               radialFontLimit,
             ) * 0.94);
-            if (!Number.isFinite(maxFitFontSize) || maxFitFontSize < minFontSize) {
+            if (!Number.isFinite(fitFontSize) || fitFontSize < minFontSize) {
               pushTaxonomyCandidateDebug({
                 rank,
                 label: block.label,
                 accepted: false,
                 reason: "font-too-small",
                 arcLengthPx: bestLabelCandidate.arcLengthPx,
-                fitFontSize: maxFitFontSize,
+                fitFontSize,
               });
               continue;
             }
-            const targetFontSize = Math.max(minFontSize, Math.min(maxFitFontSize, baseFontSize));
             const overflowTolerancePx = isPreservedLabel ? 1.6 : 1.1;
             const labelPoint = worldToScreenCircular(
               camera,
@@ -4698,7 +4708,7 @@ export default function TreeCanvas({
                 accepted: false,
                 reason: "offscreen",
                 arcLengthPx: bestLabelCandidate.arcLengthPx,
-                fontSize: targetFontSize,
+                fontSize: fitFontSize,
                 x: labelPoint.x,
                 y: labelPoint.y,
               });
@@ -4706,7 +4716,7 @@ export default function TreeCanvas({
             }
             const rotationRadians = rotation * Math.PI / 180;
             let low = minFontSize;
-            let high = Math.min(30, targetFontSize);
+            let high = Math.min(30, fitFontSize);
             let bestFitFontSize = minFontSize;
             let bestTextWidthPx = 0;
             let bestRadialHeightPx = 0;
@@ -4752,7 +4762,7 @@ export default function TreeCanvas({
                 accepted: false,
                 reason: "text-overflow",
                 arcLengthPx: bestLabelCandidate.arcLengthPx,
-                fontSize: targetFontSize,
+                fontSize: fitFontSize,
                 textWidth: 0,
                 availableArcPx,
                 radialHeightPx: 0,
@@ -4761,7 +4771,7 @@ export default function TreeCanvas({
               });
               continue;
             }
-            const finalFontSize = Math.max(minFontSize, bestFitFontSize * 0.92);
+            const finalFontSize = Math.max(3.5, Math.max(minFontSize, bestFitFontSize * 0.92) * taxonomyLabelSizeScale);
             ctx.font = `${finalFontSize}px ${labelFontFamilies.taxonomy}`;
             textMetrics = ctx.measureText(block.label);
             const ascent = textMetrics.actualBoundingBoxAscent || (finalFontSize * 0.72);

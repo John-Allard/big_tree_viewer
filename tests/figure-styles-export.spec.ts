@@ -77,7 +77,6 @@ test("circular vector SVG export preserves taxonomy and metadata annotations", a
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(`name,group\n${names[leafNodes[0]]},Hot\n`, "small.csv");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.2);
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     await new Promise<void>((resolve) => {
@@ -130,7 +129,7 @@ test("taxonomy label size and band thickness controls are independent", async ({
       tipRanks,
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 0.8);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1);
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -157,12 +156,12 @@ test("taxonomy label size and band thickness controls are independent", async ({
 
   const base = await readRect();
   await page.evaluate(() => {
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.35);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 0.8);
   });
   await page.evaluate(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
-  const biggerLabels = await readRect();
+  const smallerLabels = await readRect();
 
   await page.evaluate(() => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1.4);
@@ -174,8 +173,37 @@ test("taxonomy label size and band thickness controls are independent", async ({
 
   expect(base.fontSize).toBeGreaterThan(0);
   expect(base.bandWidth).toBeGreaterThan(0);
-  expect(biggerLabels.fontSize).toBeGreaterThan(base.fontSize);
-  expect(biggerLabels.bandWidth).toBeCloseTo(base.bandWidth, 5);
-  expect(thickerBands.bandWidth).toBeGreaterThan(biggerLabels.bandWidth);
-  expect(thickerBands.fontSize).toBeCloseTo(biggerLabels.fontSize, 5);
+  expect(smallerLabels.fontSize).toBeLessThan(base.fontSize);
+  expect(smallerLabels.bandWidth).toBeCloseTo(base.bandWidth, 5);
+  expect(thickerBands.bandWidth).toBeGreaterThan(smallerLabels.bandWidth);
+  expect(thickerBands.fontSize).toBeCloseTo(smallerLabels.fontSize, 5);
+});
+
+test("visual options only mark hidden label sections when they are actually disabled and can reset style defaults", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowBootstrapLabels(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "offsetPx", 12);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1.4);
+  });
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  const bootstrapSection = page.locator(".label-style-toggle").filter({ hasText: "Bootstrap labels" });
+  const nodeHeightSection = page.locator(".label-style-toggle").filter({ hasText: "Node height labels" });
+  await expect(bootstrapSection).toBeVisible();
+  await expect(bootstrapSection).not.toContainText("Hidden");
+  await expect(nodeHeightSection).toContainText("Hidden");
+
+  await page.getByRole("button", { name: "Reset Defaults" }).click();
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null) as {
+    figureStyles?: {
+      tip?: { offsetPx?: number };
+      taxonomy?: { sizeScale?: number; bandThicknessScale?: number };
+    };
+  } | null;
+
+  expect(state?.figureStyles?.tip?.offsetPx).toBe(0);
+  expect(state?.figureStyles?.taxonomy?.sizeScale).toBe(1);
+  expect(state?.figureStyles?.taxonomy?.bandThicknessScale).toBe(1);
 });
