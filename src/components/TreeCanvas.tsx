@@ -215,16 +215,76 @@ function hslColor(hue: number, saturation: number, lightness: number): string {
   return `hsl(${normalizedHue.toFixed(2)}deg ${saturation.toFixed(1)}% ${lightness.toFixed(1)}%)`;
 }
 
-function parseHslColor(fill: string): { h: number; s: number; l: number } | null {
-  const match = /hsl\(([-\d.]+)deg\s+([-\d.]+)%\s+([-\d.]+)%\)/i.exec(fill);
-  if (!match) {
-    return null;
+function rgbToHsl(red: number, green: number, blue: number): { h: number; s: number; l: number } {
+  const r = clamp01(red / 255);
+  const g = clamp01(green / 255);
+  const b = clamp01(blue / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) * 0.5;
+  const delta = max - min;
+  if (delta <= 1e-9) {
+    return { h: 0, s: 0, l: lightness * 100 };
+  }
+  const saturation = lightness > 0.5
+    ? delta / (2 - max - min)
+    : delta / (max + min);
+  let hue = 0;
+  if (max === r) {
+    hue = ((g - b) / delta) + (g < b ? 6 : 0);
+  } else if (max === g) {
+    hue = ((b - r) / delta) + 2;
+  } else {
+    hue = ((r - g) / delta) + 4;
   }
   return {
-    h: Number.parseFloat(match[1]),
-    s: Number.parseFloat(match[2]),
-    l: Number.parseFloat(match[3]),
+    h: (hue * 60) % 360,
+    s: saturation * 100,
+    l: lightness * 100,
   };
+}
+
+function parseHslColor(fill: string): { h: number; s: number; l: number } | null {
+  const match = /hsl\(([-\d.]+)deg\s+([-\d.]+)%\s+([-\d.]+)%\)/i.exec(fill);
+  if (match) {
+    return {
+      h: Number.parseFloat(match[1]),
+      s: Number.parseFloat(match[2]),
+      l: Number.parseFloat(match[3]),
+    };
+  }
+  const hex = fill.trim();
+  const shortHexMatch = /^#([\da-f]{3})$/i.exec(hex);
+  if (shortHexMatch) {
+    const [red, green, blue] = shortHexMatch[1].split("").map((value) => Number.parseInt(value + value, 16));
+    return rgbToHsl(red, green, blue);
+  }
+  const fullHexMatch = /^#([\da-f]{6})$/i.exec(hex);
+  if (fullHexMatch) {
+    const value = fullHexMatch[1];
+    return rgbToHsl(
+      Number.parseInt(value.slice(0, 2), 16),
+      Number.parseInt(value.slice(2, 4), 16),
+      Number.parseInt(value.slice(4, 6), 16),
+    );
+  }
+  const rgbMatch = /^rgb\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)$/i.exec(fill);
+  if (rgbMatch) {
+    return rgbToHsl(
+      Number.parseFloat(rgbMatch[1]),
+      Number.parseFloat(rgbMatch[2]),
+      Number.parseFloat(rgbMatch[3]),
+    );
+  }
+  return null;
+}
+
+function normalizeColorInput(value: string): string | null {
+  const normalized = value.trim();
+  if (/^#([\da-f]{3}|[\da-f]{6})$/i.test(normalized)) {
+    return normalized.toLowerCase();
+  }
+  return null;
 }
 
 function sortTaxonomyRanksForDisplay(activeRanks: TaxonomyRank[]): TaxonomyRank[] {
@@ -1674,7 +1734,7 @@ export default function TreeCanvas({
       ? buildTaxonomyColorMap(
         taxonomyMap,
         taxonomyRootColorAssignments,
-        Math.max(0, Math.min(1.5, taxonomyColorJitter)),
+        Math.max(0, Math.min(4, taxonomyColorJitter)),
       )
       : null
   ), [taxonomyColorJitter, taxonomyMap, taxonomyRootColorAssignments]);
@@ -1746,7 +1806,7 @@ export default function TreeCanvas({
   const scaleLabelFontSize = useCallback((labelClass: LabelStyleClass, baseSize: number): number => (
     Math.max(4, baseSize * figureStyles[labelClass].sizeScale)
   ), [figureStyles]);
-  const branchStrokeScale = Math.max(0.7, Math.min(2, branchThicknessScale));
+  const branchStrokeScale = Math.max(0.5, Math.min(4, branchThicknessScale));
   const taxonomyLabelSizeScale = Math.max(
     TAXONOMY_LABEL_SIZE_SCALE_MIN,
     Math.min(TAXONOMY_LABEL_SIZE_SCALE_MAX, figureStyles.taxonomy.sizeScale),
@@ -6762,32 +6822,52 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [clearTaxonomyRootColor, contextMenu, taxonomyOutermostRank]);
 
+  const applyContextColor = useCallback((scope: "branch" | "subtree" | "taxonomy-root", color: string): void => {
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      return;
+    }
+    if (scope === "branch") {
+      handleContextSetBranchColor(normalized);
+      return;
+    }
+    if (scope === "subtree") {
+      handleContextSetSubtreeColor(normalized);
+      return;
+    }
+    handleContextSetTaxonomyRootColor(normalized);
+  }, [handleContextSetBranchColor, handleContextSetSubtreeColor, handleContextSetTaxonomyRootColor]);
+
   const renderColorSwatches = (
     scope: "branch" | "subtree" | "taxonomy-root",
     selectedColor: string | null,
     disabled: boolean,
   ) => (
-    <div className="tree-context-menu-swatch-grid">
-      {MANUAL_BRANCH_SWATCHES.map((swatch) => (
-        <button
-          key={`${scope}:${swatch.color}`}
-          type="button"
-          className={`tree-context-menu-swatch${selectedColor === swatch.color ? " active" : ""}`}
-          style={{ backgroundColor: swatch.color }}
-          aria-label={`Set ${scope} color ${swatch.label}`}
-          title={swatch.label}
+    <div className="tree-context-menu-color-controls">
+      <div className="tree-context-menu-swatch-grid">
+        {MANUAL_BRANCH_SWATCHES.map((swatch) => (
+          <button
+            key={`${scope}:${swatch.color}`}
+            type="button"
+            className={`tree-context-menu-swatch${selectedColor === swatch.color ? " active" : ""}`}
+            style={{ backgroundColor: swatch.color }}
+            aria-label={`Set ${scope} color ${swatch.label}`}
+            title={swatch.label}
+            disabled={disabled}
+            onClick={() => applyContextColor(scope, swatch.color)}
+          />
+        ))}
+      </div>
+      <label className="tree-context-menu-custom-color">
+        <span>Custom color</span>
+        <input
+          type="color"
+          value={normalizeColorInput(selectedColor ?? "#2563eb") ?? "#2563eb"}
           disabled={disabled}
-          onClick={() => {
-            if (scope === "branch") {
-              handleContextSetBranchColor(swatch.color);
-            } else if (scope === "subtree") {
-              handleContextSetSubtreeColor(swatch.color);
-            } else {
-              handleContextSetTaxonomyRootColor(swatch.color);
-            }
-          }}
+          aria-label={`Choose custom ${scope} color`}
+          onChange={(event) => applyContextColor(scope, event.target.value)}
         />
-      ))}
+      </label>
     </div>
   );
 

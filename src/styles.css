@@ -610,16 +610,21 @@ button.secondary {
   padding: 0 0.55rem 0.5rem;
 }
 
+.tree-context-menu-color-controls {
+  display: grid;
+  gap: 0.45rem;
+}
+
 .tree-context-menu-swatch-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, 1.45rem);
   gap: 0.38rem;
-  margin-bottom: 0.45rem;
 }
 
 .tree-context-menu-swatch {
-  width: 100%;
-  aspect-ratio: 1;
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
   border: 2px solid rgba(148, 163, 184, 0.35);
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
@@ -628,6 +633,24 @@ button.secondary {
 .tree-context-menu-swatch.active {
   border-color: #0f172a;
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.82);
+}
+
+.tree-context-menu-custom-color {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  color: #475569;
+  font-size: 0.78rem;
+}
+
+.tree-context-menu-custom-color input[type="color"] {
+  width: 2.1rem;
+  height: 1.45rem;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+  background: transparent;
 }
 
 .tree-context-menu-clear {

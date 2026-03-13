@@ -1581,8 +1581,8 @@ export default function App() {
               Branch thickness
               <input
                 type="range"
-                min={0.7}
-                max={2}
+                min={0.5}
+                max={4}
                 step={0.05}
                 value={branchThicknessScale}
                 onChange={(event) => setBranchThicknessScale(Number(event.target.value))}
@@ -1621,7 +1621,7 @@ export default function App() {
                     <input
                       type="range"
                       min={0}
-                      max={1.5}
+                      max={4}
                       step={0.05}
                       value={taxonomyColorJitter}
                       onChange={(event) => setTaxonomyColorJitter(Number(event.target.value))}

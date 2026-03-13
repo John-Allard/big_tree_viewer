@@ -652,6 +652,66 @@ test("top-level taxonomy color override cascades through descendants when jitter
   expect(recolored.other).not.toBe("#dc2626");
 });
 
+test("top-level taxonomy color override keeps descendant groups saturated when jitter is enabled", async ({ page }) => {
+  await waitForViewer(page);
+  const taxonomyPoint = await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 120) {
+      throw new Error("Leaf nodes unavailable for taxonomy jitter inheritance test.");
+    }
+    const half = Math.floor(leafNodes.length * 0.5);
+    const classBreakA = Math.floor(half / 3);
+    const classBreakB = Math.floor((half * 2) / 3);
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: index < half
+        ? {
+          phylum: "Chordata",
+          class: index < classBreakA ? "Mammalia" : index < classBreakB ? "Aves" : "Reptilia",
+        }
+        : {
+          phylum: "Arthropoda",
+          class: index < half + Math.floor(half / 2) ? "Insecta" : "Arachnida",
+        },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 11,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class", "phylum"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyColorJitterForTest(1.2);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const taxonomyHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy" && hitbox.text === "Chordata");
+    if (!(canvas instanceof HTMLCanvasElement) || !taxonomyHit) {
+      throw new Error("Top-level taxonomy label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      targetNode: leafNodes[classBreakA + Math.floor((classBreakB - classBreakA) * 0.5)],
+      x: rect.left + Number(taxonomyHit.x) + (Number(taxonomyHit.width) * 0.5),
+      y: rect.top + Number(taxonomyHit.y) + (Number(taxonomyHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
+  await page.getByRole("button", { name: "Color Top-Level Group" }).click();
+  await page.getByRole("button", { name: "Set taxonomy-root color Red" }).click();
+
+  const targetColor = await page.evaluate((targetNode) => {
+    const colors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors?.() ?? [];
+    return String(colors[targetNode] ?? "");
+  }, taxonomyPoint.targetNode);
+
+  expect(targetColor).not.toContain(" 0.0% ");
+});
+
 test("taxonomy search ranks exact matches before higher-rank substring matches", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
