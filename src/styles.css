@@ -378,24 +378,66 @@ button.secondary {
 .figure-style-grid {
   display: grid;
   gap: 0.7rem;
+  margin-top: 0.85rem;
 }
 
-.figure-style-card {
+.label-style-section {
   display: grid;
-  gap: 0.45rem;
-  padding: 0.75rem 0.8rem;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 12px;
   background: rgba(248, 250, 252, 0.74);
 }
 
-.figure-style-title {
-  font-size: 0.86rem;
-  font-weight: 700;
-  color: #0f172a;
+.label-style-section.disabled {
+  opacity: 0.62;
 }
 
-.figure-style-card input[type="range"] {
+.label-style-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.8rem 0.85rem;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #0f172a;
+  text-align: left;
+}
+
+.label-style-toggle:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: transparent;
+  transform: none;
+}
+
+.label-style-toggle:disabled {
+  opacity: 1;
+  color: #64748b;
+}
+
+.label-style-state {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.label-style-body {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0 0.85rem 0.85rem;
+}
+
+.label-style-body label {
+  display: grid;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.label-style-body input[type="range"] {
   width: 100%;
 }
 

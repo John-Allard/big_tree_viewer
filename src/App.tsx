@@ -29,6 +29,7 @@ import type { WorkerResponse } from "./types/messages";
 import type { TaxonomyMapPayload, TaxonomyRank } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
+import type { LabelStyleSettings } from "./lib/figureStyles";
 
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
@@ -127,6 +128,104 @@ function PanelSection({
       </button>
       {isOpen ? <div className="section-body">{children}</div> : null}
     </section>
+  );
+}
+
+function LabelStyleSection({
+  labelClass,
+  settings,
+  disabled,
+  disabledReason,
+  onUpdate,
+}: {
+  labelClass: LabelStyleClass;
+  settings: LabelStyleSettings;
+  disabled: boolean;
+  disabledReason?: string;
+  onUpdate: (
+    labelClass: LabelStyleClass,
+    field: keyof LabelStyleSettings,
+    value: FontFamilyKey | number,
+  ) => void;
+}): ReactNode {
+  const [isOpen, setIsOpen] = useSessionDisclosure(`label-style-${labelClass}`, false);
+  const isTaxonomy = labelClass === "taxonomy";
+  return (
+    <div className={`label-style-section${disabled ? " disabled" : ""}`}>
+      <button
+        type="button"
+        className="label-style-toggle"
+        aria-expanded={disabled ? false : isOpen}
+        onClick={() => {
+          if (!disabled) {
+            setIsOpen(!isOpen);
+          }
+        }}
+        disabled={disabled}
+      >
+        <span className={`section-toggle-mark${isOpen && !disabled ? " open" : ""}`}>▸</span>
+        <span>{LABEL_STYLE_CLASS_LABELS[labelClass]}</span>
+        {disabledReason ? <span className="label-style-state">{disabledReason}</span> : null}
+      </button>
+      {disabled ? null : isOpen ? (
+        <div className="label-style-body">
+          <label>
+            Font family
+            <select
+              value={settings.fontFamily}
+              onChange={(event) => onUpdate(labelClass, "fontFamily", event.target.value as FontFamilyKey)}
+            >
+              {FONT_FAMILY_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {isTaxonomy ? "Label size" : "Size scale"}
+            <input
+              type="range"
+              min={0.6}
+              max={1.8}
+              step={0.05}
+              value={settings.sizeScale}
+              onChange={(event) => onUpdate(labelClass, "sizeScale", Number(event.target.value))}
+            />
+          </label>
+          <div className="figure-style-value">x{settings.sizeScale.toFixed(2)}</div>
+          {isTaxonomy ? (
+            <>
+              <label>
+                Band thickness
+                <input
+                  type="range"
+                  min={0.65}
+                  max={1.8}
+                  step={0.05}
+                  value={settings.bandThicknessScale ?? 1}
+                  onChange={(event) => onUpdate(labelClass, "bandThicknessScale", Number(event.target.value))}
+                />
+              </label>
+              <div className="figure-style-value">x{(settings.bandThicknessScale ?? 1).toFixed(2)}</div>
+            </>
+          ) : (
+            <>
+              <label>
+                Offset
+                <input
+                  type="range"
+                  min={-24}
+                  max={24}
+                  step={1}
+                  value={settings.offsetPx}
+                  onChange={(event) => onUpdate(labelClass, "offsetPx", Number(event.target.value))}
+                />
+              </label>
+              <div className="figure-style-value">{settings.offsetPx}px</div>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -379,7 +478,6 @@ export default function App() {
   const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
   const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
-  const [figureOpen, setFigureOpen] = useSessionDisclosure("section-figure", false);
   const [figureStyles, setFigureStyles] = useState<FigureStyleSettings>(DEFAULT_FIGURE_STYLES);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
@@ -1088,7 +1186,7 @@ export default function App() {
       setMetadataColorMode,
       setMetadataApplyScope,
       setMetadataReverseScale,
-      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx", value: string | number) => {
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "bandThicknessScale", value: string | number) => {
         updateFigureStyle(labelClass, field, value as FontFamilyKey | number);
       },
       runRealTaxonomyMappingForTest: async () => {
@@ -1179,16 +1277,6 @@ export default function App() {
     updateFigureStyle,
     viewMode,
   ]);
-
-  const figureStyleClasses: LabelStyleClass[] = [
-    "tip",
-    "genus",
-    "taxonomy",
-    "internalNode",
-    "bootstrap",
-    "nodeHeight",
-    "scale",
-  ];
 
   return (
     <div
@@ -1433,50 +1521,55 @@ export default function App() {
               Show time stripes
             </label>
           </div>
-        </PanelSection>
-
-        <PanelSection title="Figure Styles" isOpen={figureOpen} onToggle={() => setFigureOpen(!figureOpen)}>
           <div className="figure-style-grid">
-            {figureStyleClasses.map((labelClass) => (
-              <div key={labelClass} className="figure-style-card">
-                <div className="figure-style-title">{LABEL_STYLE_CLASS_LABELS[labelClass]}</div>
-                <label>
-                  Font family
-                  <select
-                    value={figureStyles[labelClass].fontFamily}
-                    onChange={(event) => updateFigureStyle(labelClass, "fontFamily", event.target.value as FontFamilyKey)}
-                  >
-                    {FONT_FAMILY_OPTIONS.map((option) => (
-                      <option key={option.key} value={option.key}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Size scale
-                  <input
-                    type="range"
-                    min={0.6}
-                    max={1.8}
-                    step={0.05}
-                    value={figureStyles[labelClass].sizeScale}
-                    onChange={(event) => updateFigureStyle(labelClass, "sizeScale", Number(event.target.value))}
-                  />
-                </label>
-                <div className="figure-style-value">x{figureStyles[labelClass].sizeScale.toFixed(2)}</div>
-                <label>
-                  Offset
-                  <input
-                    type="range"
-                    min={-24}
-                    max={24}
-                    step={1}
-                    value={figureStyles[labelClass].offsetPx}
-                    onChange={(event) => updateFigureStyle(labelClass, "offsetPx", Number(event.target.value))}
-                  />
-                </label>
-                <div className="figure-style-value">{figureStyles[labelClass].offsetPx}px</div>
-              </div>
-            ))}
+            <LabelStyleSection
+              labelClass="tip"
+              settings={figureStyles.tip}
+              disabled={false}
+              onUpdate={updateFigureStyle}
+            />
+            <LabelStyleSection
+              labelClass="genus"
+              settings={figureStyles.genus}
+              disabled={!showGenusLabels}
+              disabledReason="Hidden"
+              onUpdate={updateFigureStyle}
+            />
+            <LabelStyleSection
+              labelClass="taxonomy"
+              settings={figureStyles.taxonomy}
+              disabled={!taxonomyEnabled}
+              disabledReason="Hidden"
+              onUpdate={updateFigureStyle}
+            />
+            <LabelStyleSection
+              labelClass="internalNode"
+              settings={figureStyles.internalNode}
+              disabled={!showInternalNodeLabels}
+              disabledReason="Hidden"
+              onUpdate={updateFigureStyle}
+            />
+            <LabelStyleSection
+              labelClass="bootstrap"
+              settings={figureStyles.bootstrap}
+              disabled={!showBootstrapLabels}
+              disabledReason="Hidden"
+              onUpdate={updateFigureStyle}
+            />
+            <LabelStyleSection
+              labelClass="nodeHeight"
+              settings={figureStyles.nodeHeight}
+              disabled={!showNodeHeightLabels}
+              disabledReason="Hidden"
+              onUpdate={updateFigureStyle}
+            />
+            <LabelStyleSection
+              labelClass="scale"
+              settings={figureStyles.scale}
+              disabled={!showScaleBars}
+              disabledReason="Hidden"
+              onUpdate={updateFigureStyle}
+            />
           </div>
         </PanelSection>
 

@@ -28,9 +28,9 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowInternalNodeLabels(true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowBootstrapLabels(true);
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "fontFamily", "nunito");
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "fontFamily", "sourceSerif");
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "fontFamily", "jetbrainsMono");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "fontFamily", "arial");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "fontFamily", "georgia");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "fontFamily", "courierNew");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "offsetPx", 12);
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -44,9 +44,9 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
   expect(svg).toContain("<text");
   expect(svg).toContain("CladeOne");
   expect(svg).toContain(">92<");
-  expect(svg).toContain("Nunito Sans");
-  expect(svg).toContain("Source Serif 4");
-  expect(svg).toContain("JetBrains Mono");
+  expect(svg).toContain("Arial");
+  expect(svg).toContain("Georgia");
+  expect(svg).toContain("Courier New");
 });
 
 test("circular vector SVG export preserves taxonomy and metadata annotations", async ({ page }) => {
@@ -80,14 +80,102 @@ test("circular vector SVG export preserves taxonomy and metadata annotations", a
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.2);
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as { kind?: string } | null;
+        if (camera?.kind === "circular") {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(check);
+      };
+      check();
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? null;
   });
 
   expect(svg).toBeTruthy();
   expect(svg).toContain("<svg");
   expect(svg).not.toContain("<image");
-  expect(svg).toContain("<path");
+  expect(svg).toMatch(/<(path|line)/);
   expect(svg).toMatch(/>(Chordata|Arthropoda|Mammalia|Insecta|Alpha|Beta)</);
   expect(svg).toMatch(/>(Alpha one|Alpha two|Beta one|Beta two)</);
   expect(svg).toContain("stroke=\"#2563eb\"");
+});
+
+test("taxonomy label size and band thickness controls are independent", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((Alpha_one:1,Alpha_two:1)CladeOne:1,(Beta_one:1,Beta_two:1)CladeTwo:1)Root;");
+
+  await page.evaluate(async () => {
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const leafNodes = internal?.leafNodes ?? [];
+    if (leafNodes.length < 4) {
+      throw new Error("Expected four leaves for taxonomy style test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        phylum: index < 2 ? "Chordata" : "Arthropoda",
+        class: index < 2 ? "Mammalia" : "Insecta",
+        genus: index < 2 ? "Alpha" : "Beta",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class", "phylum", "genus"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 0.8);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const readRect = async () => page.evaluate(() => {
+    const rect = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyBandWidthsPx?: number[];
+      taxonomyPlacedLabels?: Array<{ text?: string; fontSize?: number }>;
+    } | undefined;
+    const label = (rect?.taxonomyPlacedLabels ?? []).find((entry) => (
+      entry.text === "Chordata"
+      || entry.text === "Arthropoda"
+      || entry.text === "Mammalia"
+      || entry.text === "Insecta"
+      || entry.text === "Alpha"
+      || entry.text === "Beta"
+    ));
+    return {
+      bandWidth: Number(rect?.taxonomyBandWidthsPx?.[0] ?? 0),
+      fontSize: Number(label?.fontSize ?? 0),
+    };
+  });
+
+  const base = await readRect();
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.35);
+  });
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const biggerLabels = await readRect();
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1.4);
+  });
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const thickerBands = await readRect();
+
+  expect(base.fontSize).toBeGreaterThan(0);
+  expect(base.bandWidth).toBeGreaterThan(0);
+  expect(biggerLabels.fontSize).toBeGreaterThan(base.fontSize);
+  expect(biggerLabels.bandWidth).toBeCloseTo(base.bandWidth, 5);
+  expect(thickerBands.bandWidth).toBeGreaterThan(biggerLabels.bandWidth);
+  expect(thickerBands.fontSize).toBeCloseTo(biggerLabels.fontSize, 5);
 });

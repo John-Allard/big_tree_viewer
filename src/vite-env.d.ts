@@ -25,7 +25,7 @@ declare global {
       setMetadataReverseScale: (reverse: boolean) => void;
       setFigureStyleForTest: (
         labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
-        field: "fontFamily" | "sizeScale" | "offsetPx",
+        field: "fontFamily" | "sizeScale" | "offsetPx" | "bandThicknessScale",
         value: string | number,
       ) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;

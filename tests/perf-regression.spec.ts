@@ -257,7 +257,7 @@ test.describe("local circular perf regression", () => {
     await page.evaluate(() => {
       window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "sizeScale", 1.6);
       window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.5);
-      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "offsetPx", 12);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1.35);
       window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     });
     await settleFrames(page);
@@ -288,7 +288,7 @@ test.describe("local circular perf regression", () => {
     await page.evaluate(() => {
       window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "sizeScale", 1.6);
       window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1.5);
-      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "offsetPx", 12);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1.35);
       window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     });
     await settleFrames(page);

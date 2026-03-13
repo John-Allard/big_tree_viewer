@@ -1,4 +1,13 @@
-export type FontFamilyKey = "plexSans" | "sourceSerif" | "jetbrainsMono" | "nunito";
+export type FontFamilyKey =
+  | "arial"
+  | "helvetica"
+  | "trebuchet"
+  | "verdana"
+  | "georgia"
+  | "palatino"
+  | "timesNewRoman"
+  | "courierNew"
+  | "systemMono";
 export type LabelStyleClass =
   | "tip"
   | "genus"
@@ -12,6 +21,7 @@ export interface LabelStyleSettings {
   fontFamily: FontFamilyKey;
   sizeScale: number;
   offsetPx: number;
+  bandThicknessScale?: number;
 }
 
 export interface FigureStyleSettings {
@@ -25,10 +35,15 @@ export interface FigureStyleSettings {
 }
 
 export const FONT_FAMILY_OPTIONS: Array<{ key: FontFamilyKey; label: string; css: string }> = [
-  { key: "plexSans", label: "IBM Plex Sans", css: "\"IBM Plex Sans\", \"Segoe UI\", sans-serif" },
-  { key: "sourceSerif", label: "Source Serif", css: "\"Source Serif 4\", Georgia, serif" },
-  { key: "jetbrainsMono", label: "JetBrains Mono", css: "\"JetBrains Mono\", \"SFMono-Regular\", monospace" },
-  { key: "nunito", label: "Nunito", css: "\"Nunito Sans\", \"Trebuchet MS\", sans-serif" },
+  { key: "arial", label: "Arial", css: "Arial, \"Helvetica Neue\", sans-serif" },
+  { key: "helvetica", label: "Helvetica", css: "Helvetica, Arial, sans-serif" },
+  { key: "trebuchet", label: "Trebuchet MS", css: "\"Trebuchet MS\", Arial, sans-serif" },
+  { key: "verdana", label: "Verdana", css: "Verdana, Geneva, sans-serif" },
+  { key: "georgia", label: "Georgia", css: "Georgia, serif" },
+  { key: "palatino", label: "Palatino", css: "\"Palatino Linotype\", Palatino, serif" },
+  { key: "timesNewRoman", label: "Times New Roman", css: "\"Times New Roman\", Times, serif" },
+  { key: "courierNew", label: "Courier New", css: "\"Courier New\", Courier, monospace" },
+  { key: "systemMono", label: "System Monospace", css: "\"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace" },
 ];
 
 export const LABEL_STYLE_CLASS_LABELS: Record<LabelStyleClass, string> = {
@@ -42,13 +57,13 @@ export const LABEL_STYLE_CLASS_LABELS: Record<LabelStyleClass, string> = {
 };
 
 export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
-  tip: { fontFamily: "plexSans", sizeScale: 1, offsetPx: 0 },
-  genus: { fontFamily: "plexSans", sizeScale: 1, offsetPx: 0 },
-  taxonomy: { fontFamily: "plexSans", sizeScale: 1, offsetPx: 0 },
-  internalNode: { fontFamily: "sourceSerif", sizeScale: 0.95, offsetPx: 0 },
-  bootstrap: { fontFamily: "jetbrainsMono", sizeScale: 0.9, offsetPx: 0 },
-  nodeHeight: { fontFamily: "jetbrainsMono", sizeScale: 1, offsetPx: 0 },
-  scale: { fontFamily: "jetbrainsMono", sizeScale: 1, offsetPx: 0 },
+  tip: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, bandThicknessScale: 1 },
+  genus: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, bandThicknessScale: 1 },
+  taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, bandThicknessScale: 1 },
+  internalNode: { fontFamily: "georgia", sizeScale: 0.95, offsetPx: 0, bandThicknessScale: 1 },
+  bootstrap: { fontFamily: "courierNew", sizeScale: 0.9, offsetPx: 0, bandThicknessScale: 1 },
+  nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, bandThicknessScale: 1 },
+  scale: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, bandThicknessScale: 1 },
 };
 
 export function fontFamilyCss(fontFamily: FontFamilyKey): string {
