@@ -245,7 +245,11 @@ function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]):
   return visible;
 }
 
-function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorByRank {
+function buildTaxonomyColorMap(
+  taxonomyMap: TaxonomyMapPayload,
+  topLevelOverrides: Map<string, string>,
+  jitterScale: number,
+): TaxonomyColorByRank {
   const activeRanks = sortTaxonomyRanksForDisplay(
     taxonomyMap.activeRanks.length > 0 ? taxonomyMap.activeRanks : [...TAXONOMY_RANKS].slice(-4),
   );
@@ -274,8 +278,14 @@ function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorBy
   const outerColors: Record<string, string> = {};
   const phi = 0.618033988749895;
   for (let index = 0; index < outerEntries.length; index += 1) {
+    const label = outerEntries[index][0];
+    const override = topLevelOverrides.get(label) ?? null;
+    if (override) {
+      outerColors[label] = override;
+      continue;
+    }
     const hue = (index * phi * 360) % 360;
-    outerColors[outerEntries[index][0]] = hslColor(hue, 70, 64);
+    outerColors[label] = hslColor(hue, 70, 64);
   }
   colorsByRank[outerRank] = outerColors;
 
@@ -319,7 +329,7 @@ function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorBy
       const parsed = parseHslColor(parentColor) ?? { h: 0, s: 0, l: 55 };
       children.sort((left, right) => left.firstSeen - right.firstSeen);
       const half = Math.max(1, Math.floor((children.length - 1) / 2));
-      const hueStep = half > 0 ? 18 / half : 0;
+      const hueStep = half > 0 ? (18 * jitterScale) / half : 0;
       const positions: number[] = [0];
       for (let value = 1; positions.length < children.length; value += 1) {
         positions.push(value);
@@ -330,7 +340,8 @@ function buildTaxonomyColorMap(taxonomyMap: TaxonomyMapPayload): TaxonomyColorBy
       for (let childIndex = 0; childIndex < children.length; childIndex += 1) {
         const position = positions[childIndex] ?? 0;
         const hue = parsed.h + (position * hueStep);
-        const lightness = parsed.l + (position > 0 ? 4 : position < 0 ? -4 : 0);
+        const lightnessDelta = position > 0 ? 4 * jitterScale : position < 0 ? -4 * jitterScale : 0;
+        const lightness = parsed.l + lightnessDelta;
         childColors[children[childIndex].childLabel] = hslColor(hue, parsed.s, Math.max(42, Math.min(76, lightness)));
       }
     });
@@ -1519,12 +1530,15 @@ export default function TreeCanvas({
   showScaleBars,
   showGenusLabels,
   taxonomyEnabled,
+  taxonomyBranchColoringEnabled,
+  taxonomyColorJitter,
   taxonomyMap,
   metadataBranchColors,
   metadataBranchColorVersion,
   showInternalNodeLabels,
   showBootstrapLabels,
   figureStyles,
+  branchThicknessScale,
   showNodeHeightLabels,
   searchQuery,
   searchMatches,
@@ -1535,6 +1549,7 @@ export default function TreeCanvas({
   focusNodeRequest,
   fitRequest,
   exportSvgRequest,
+  visualResetRequest,
   onHoverChange,
   onViewModeChange,
 }: TreeCanvasProps) {
@@ -1606,7 +1621,8 @@ export default function TreeCanvas({
   const [collapsedNodes, setCollapsedNodes] = useState<Set<number>>(() => new Set());
   const [manualBranchColorAssignments, setManualBranchColorAssignments] = useState<Map<number, string>>(() => new Map());
   const [manualSubtreeColorAssignments, setManualSubtreeColorAssignments] = useState<Map<number, string>>(() => new Map());
-  const [contextMenuColorMode, setContextMenuColorMode] = useState<"branch" | "subtree" | null>(null);
+  const [taxonomyRootColorAssignments, setTaxonomyRootColorAssignments] = useState<Map<string, string>>(() => new Map());
+  const [contextMenuColorMode, setContextMenuColorMode] = useState<"branch" | "subtree" | "taxonomy-root" | null>(null);
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
   const [contextMenu, setContextMenu] = useState<(
     {
@@ -1635,22 +1651,34 @@ export default function TreeCanvas({
     setCollapsedNodes(new Set());
     setManualBranchColorAssignments(new Map());
     setManualSubtreeColorAssignments(new Map());
+    setTaxonomyRootColorAssignments(new Map());
     setContextMenu(null);
     setContextMenuColorMode(null);
   }, [tree]);
+  useEffect(() => {
+    setTaxonomyRootColorAssignments(new Map());
+    setContextMenuColorMode(null);
+  }, [taxonomyMap, visualResetRequest]);
   useEffect(() => {
     if (!contextMenu) {
       setContextMenuColorMode(null);
     }
   }, [contextMenu]);
-  const taxonomyColors = useMemo(() => (
-    taxonomyMap ? buildTaxonomyColorMap(taxonomyMap) : null
-  ), [taxonomyMap]);
-  const taxonomyTaxIdsByRank = useMemo(() => buildTaxonomyTaxIdLookup(taxonomyMap), [taxonomyMap]);
   const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(
     () => sortTaxonomyRanksForDisplay(taxonomyMap?.activeRanks.length ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]),
     [taxonomyMap],
   );
+  const taxonomyOutermostRank = taxonomyActiveRanks[taxonomyActiveRanks.length - 1] ?? null;
+  const taxonomyColors = useMemo(() => (
+    taxonomyMap
+      ? buildTaxonomyColorMap(
+        taxonomyMap,
+        taxonomyRootColorAssignments,
+        Math.max(0, Math.min(1.5, taxonomyColorJitter)),
+      )
+      : null
+  ), [taxonomyColorJitter, taxonomyMap, taxonomyRootColorAssignments]);
+  const taxonomyTaxIdsByRank = useMemo(() => buildTaxonomyTaxIdLookup(taxonomyMap), [taxonomyMap]);
   const taxonomyBlocks = useMemo<TaxonomyBlocksByOrder | null>(() => {
     if (!cache || !taxonomyMap) {
       return null;
@@ -1704,7 +1732,7 @@ export default function TreeCanvas({
     circularBasePathCacheRef.current.clear();
     rectBasePathCacheRef.current.clear();
     circularTaxonomyBitmapCacheRef.current = null;
-  }, [manualBranchColorVersion, metadataBranchColorVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
+  }, [branchThicknessScale, manualBranchColorVersion, metadataBranchColorVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const labelFontFamilies = useMemo<Record<LabelStyleClass, string>>(() => ({
     tip: fontFamilyCss(figureStyles.tip.fontFamily),
@@ -1718,6 +1746,7 @@ export default function TreeCanvas({
   const scaleLabelFontSize = useCallback((labelClass: LabelStyleClass, baseSize: number): number => (
     Math.max(4, baseSize * figureStyles[labelClass].sizeScale)
   ), [figureStyles]);
+  const branchStrokeScale = Math.max(0.7, Math.min(2, branchThicknessScale));
   const taxonomyLabelSizeScale = Math.max(
     TAXONOMY_LABEL_SIZE_SCALE_MIN,
     Math.min(TAXONOMY_LABEL_SIZE_SCALE_MAX, figureStyles.taxonomy.sizeScale),
@@ -2028,12 +2057,14 @@ export default function TreeCanvas({
     if (!tree) {
       return null;
     }
-    const key = `${orderKey}:${visibleRanks.join("|")}:${metadataBranchColorVersion}:${manualBranchColorVersion}`;
+    const key = `${orderKey}:${taxonomyBranchColoringEnabled ? visibleRanks.join("|") : ""}:${metadataBranchColorVersion}:${manualBranchColorVersion}`;
     const cached = effectiveBranchColorsCacheRef.current.get(key);
     if (cached) {
       return cached;
     }
-    const baseColors = visibleRanks.length > 0 ? getTaxonomyBranchColors(orderKey, visibleRanks) : null;
+    const baseColors = taxonomyBranchColoringEnabled && visibleRanks.length > 0
+      ? getTaxonomyBranchColors(orderKey, visibleRanks)
+      : null;
     if (!metadataBranchColorOverlay.hasAny && !manualBranchColorOverlay.hasAny) {
       if (baseColors) {
         effectiveBranchColorsCacheRef.current.set(key, baseColors);
@@ -2057,7 +2088,7 @@ export default function TreeCanvas({
     }
     effectiveBranchColorsCacheRef.current.set(key, merged);
     return merged;
-  }, [getTaxonomyBranchColors, manualBranchColorOverlay, manualBranchColorVersion, metadataBranchColorOverlay, metadataBranchColorVersion, tree]);
+  }, [getTaxonomyBranchColors, manualBranchColorOverlay, manualBranchColorVersion, metadataBranchColorOverlay, metadataBranchColorVersion, taxonomyBranchColoringEnabled, tree]);
 
   const getCircularTaxonomyPaths = useCallback((
     orderKey: LayoutOrder,
@@ -2141,6 +2172,7 @@ export default function TreeCanvas({
     const signature = [
       orderKey,
       branchColorKey,
+      branchStrokeScale.toFixed(3),
       size.width,
       size.height,
       camera.scale.toFixed(6),
@@ -2175,7 +2207,7 @@ export default function TreeCanvas({
     ctx.lineCap = "butt";
     paths.forEach((path, color) => {
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.2 / Math.max(camera.scale, 1e-6);
+      ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scale, 1e-6);
       ctx.globalAlpha = 0.95;
       ctx.stroke(path);
     });
@@ -2191,7 +2223,7 @@ export default function TreeCanvas({
     };
     circularTaxonomyBitmapCacheRef.current = built;
     return built;
-  }, [size.height, size.width, tree]);
+  }, [branchStrokeScale, size.height, size.width, tree]);
 
   const toggleCollapsedNode = useCallback((node: number) => {
     if (!tree || tree.buffers.firstChild[node] < 0) {
@@ -2417,7 +2449,7 @@ export default function TreeCanvas({
       const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? rectVisibleTaxonomyRanksForScaleY(camera.scaleY)
         : [];
-      const taxonomyBranchRenderingVisible = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
+      const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
       const coloredBranchKey = taxonomyBranchRenderingVisible
         ? `taxonomy:${visibleTaxonomyRanks.join("|")}:${metadataBranchColorVersion}:${manualBranchColorVersion}`
         : metadataBranchColorOverlay.hasAny || manualBranchColorOverlay.hasAny
@@ -2498,9 +2530,9 @@ export default function TreeCanvas({
         cachedRectTaxonomyPaths.forEach((paths, color) => {
           ctx.strokeStyle = color;
           ctx.globalAlpha = 0.95;
-          ctx.lineWidth = 1.2 / Math.max(camera.scaleX, 1e-6);
+          ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scaleX, 1e-6);
           ctx.stroke(paths.connectors);
-          ctx.lineWidth = 1.2 / Math.max(camera.scaleY, 1e-6);
+          ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scaleY, 1e-6);
           ctx.stroke(paths.stems);
         });
         ctx.globalAlpha = 1;
@@ -2511,14 +2543,14 @@ export default function TreeCanvas({
         ctx.scale(camera.scaleX, camera.scaleY);
         ctx.strokeStyle = BRANCH_COLOR;
         ctx.lineCap = "butt";
-        ctx.lineWidth = 1 / Math.max(camera.scaleX, 1e-6);
+        ctx.lineWidth = branchStrokeScale / Math.max(camera.scaleX, 1e-6);
         ctx.stroke(cachedRectBasePaths.connectors);
-        ctx.lineWidth = 1 / Math.max(camera.scaleY, 1e-6);
+        ctx.lineWidth = branchStrokeScale / Math.max(camera.scaleY, 1e-6);
         ctx.stroke(cachedRectBasePaths.stems);
         ctx.restore();
       } else if (!useColoredBranchRendering) {
         ctx.strokeStyle = BRANCH_COLOR;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = branchStrokeScale;
         ctx.beginPath();
         if (visibleRectSegments) {
           for (let index = 0; index < visibleRectSegments.length; index += 1) {
@@ -2534,7 +2566,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, 1);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
           }
         } else {
           for (let node = 0; node < tree.nodeCount; node += 1) {
@@ -2562,7 +2594,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, 1);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
           }
           for (let node = 0; node < tree.nodeCount; node += 1) {
             if (hiddenNodes[node]) {
@@ -2589,7 +2621,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, 1);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
           }
         }
         ctx.stroke();
@@ -2599,7 +2631,7 @@ export default function TreeCanvas({
           const segments = colorPaths.get(color) ?? [];
           segments.push([x1, y1, x2, y2]);
           colorPaths.set(color, segments);
-          pushSceneLine(x1, y1, x2, y2, color, 1);
+          pushSceneLine(x1, y1, x2, y2, color, branchStrokeScale);
         };
         if (visibleRectSegments) {
           for (let index = 0; index < visibleRectSegments.length; index += 1) {
@@ -2701,7 +2733,7 @@ export default function TreeCanvas({
             ctx.lineTo(x2, y2);
           }
           ctx.strokeStyle = color;
-          ctx.lineWidth = 1;
+          ctx.lineWidth = branchStrokeScale;
           ctx.globalAlpha = 1;
           ctx.stroke();
         });
@@ -3736,7 +3768,7 @@ export default function TreeCanvas({
       if (visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 2) {
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
-      const taxonomyBranchRenderingVisible = visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
+      const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
       const circularTaxonomyCacheStartTime = performance.now();
       const coloredBranchKey = taxonomyBranchRenderingVisible
         ? `taxonomy:${visibleTaxonomyRanks.join("|")}:${metadataBranchColorVersion}:${manualBranchColorVersion}`
@@ -3895,7 +3927,7 @@ export default function TreeCanvas({
         ctx.lineCap = "butt";
         cachedCircularTaxonomyPaths.forEach((path, color) => {
           ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2 / Math.max(camera.scale, 1e-6);
+          ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scale, 1e-6);
           ctx.globalAlpha = 0.95;
           ctx.stroke(path);
         });
@@ -3907,13 +3939,13 @@ export default function TreeCanvas({
         ctx.scale(camera.scale, camera.scale);
         ctx.rotate(rotationAngle);
         ctx.strokeStyle = BRANCH_COLOR;
-        ctx.lineWidth = 1 / Math.max(camera.scale, 1e-6);
+        ctx.lineWidth = branchStrokeScale / Math.max(camera.scale, 1e-6);
         ctx.lineCap = "butt";
         ctx.stroke(cachedCircularBasePath);
         ctx.restore();
       } else if (!useColoredBranchRendering) {
         ctx.strokeStyle = BRANCH_COLOR;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = branchStrokeScale;
         ctx.beginPath();
         if (visibleCircularSegments) {
           const drawnConnectorNodes = new Set<number>();
@@ -3953,11 +3985,11 @@ export default function TreeCanvas({
                 centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx,
               );
               ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
-              pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, 1);
+              pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, branchStrokeScale);
             } else {
               ctx.moveTo(start.x, start.y);
               ctx.lineTo(end.x, end.y);
-              pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, 1);
+              pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
             }
           }
         } else {
@@ -3993,7 +4025,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(startX, startY);
             ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
-            pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, 1);
+            pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, branchStrokeScale);
           }
           for (let node = 0; node < tree.nodeCount; node += 1) {
             if (hiddenNodes[node]) {
@@ -4020,7 +4052,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, 1);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
           }
         }
         ctx.stroke();
@@ -4031,7 +4063,7 @@ export default function TreeCanvas({
           const segments = colorStemPaths.get(color) ?? [];
           segments.push([x1, y1, x2, y2]);
           colorStemPaths.set(color, segments);
-          pushSceneLine(x1, y1, x2, y2, color, 1.2, 0.95);
+          pushSceneLine(x1, y1, x2, y2, color, 1.2 * branchStrokeScale, 0.95);
         };
         const pushArc = (color: string, radiusPx: number, start: number, end: number): void => {
           if (radiusPx < 0.25 || end <= start) {
@@ -4040,7 +4072,7 @@ export default function TreeCanvas({
           const arcs = colorArcPaths.get(color) ?? [];
           arcs.push({ radiusPx, start, end });
           colorArcPaths.set(color, arcs);
-          pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, start, end), color, 1.2, undefined, 0.95);
+          pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, start, end), color, 1.2 * branchStrokeScale, undefined, 0.95);
         };
         if (visibleCircularSegments) {
           const drawnConnectorNodes = new Set<number>();
@@ -4129,7 +4161,7 @@ export default function TreeCanvas({
             ctx.arc(centerPoint.x, centerPoint.y, arc.radiusPx, arc.start, arc.end, false);
           }
           ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2;
+          ctx.lineWidth = 1.2 * branchStrokeScale;
           ctx.globalAlpha = 0.95;
           ctx.stroke();
         });
@@ -4141,7 +4173,7 @@ export default function TreeCanvas({
             ctx.lineTo(x2, y2);
           }
           ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2;
+          ctx.lineWidth = 1.2 * branchStrokeScale;
           ctx.globalAlpha = 0.95;
           ctx.stroke();
         });
@@ -5650,6 +5682,7 @@ export default function TreeCanvas({
     activeSearchGenusCenterNode,
     activeSearchNode,
     activeSearchTaxonomyKey,
+    branchThicknessScale,
     cache,
     collapsedView,
     collapsedNodes,
@@ -5681,6 +5714,7 @@ export default function TreeCanvas({
     size.width,
     taxonomyActiveRanks,
     taxonomyBlocks,
+    taxonomyBranchColoringEnabled,
     taxonomyColors,
     taxonomyConsensus,
     taxonomyEnabled,
@@ -6617,6 +6651,25 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [contextMenu]);
 
+  const setTaxonomyRootColor = useCallback((label: string, color: string) => {
+    setTaxonomyRootColorAssignments((current) => {
+      const next = new Map(current);
+      next.set(label, color);
+      return next;
+    });
+  }, []);
+
+  const clearTaxonomyRootColor = useCallback((label: string) => {
+    setTaxonomyRootColorAssignments((current) => {
+      if (!current.has(label)) {
+        return current;
+      }
+      const next = new Map(current);
+      next.delete(label);
+      return next;
+    });
+  }, []);
+
   const setManualBranchColor = useCallback((node: number, color: string) => {
     if (!tree || tree.buffers.parent[node] < 0) {
       return;
@@ -6693,8 +6746,24 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [clearManualSubtreeColor, contextMenu]);
 
+  const handleContextSetTaxonomyRootColor = useCallback((color: string) => {
+    if (!contextMenu || contextMenu.kind !== "taxonomy" || contextMenu.rank !== taxonomyOutermostRank) {
+      return;
+    }
+    setTaxonomyRootColor(contextMenu.name, color);
+    setContextMenu(null);
+  }, [contextMenu, setTaxonomyRootColor, taxonomyOutermostRank]);
+
+  const handleContextClearTaxonomyRootColor = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "taxonomy" || contextMenu.rank !== taxonomyOutermostRank) {
+      return;
+    }
+    clearTaxonomyRootColor(contextMenu.name);
+    setContextMenu(null);
+  }, [clearTaxonomyRootColor, contextMenu, taxonomyOutermostRank]);
+
   const renderColorSwatches = (
-    scope: "branch" | "subtree",
+    scope: "branch" | "subtree" | "taxonomy-root",
     selectedColor: string | null,
     disabled: boolean,
   ) => (
@@ -6711,8 +6780,10 @@ export default function TreeCanvas({
           onClick={() => {
             if (scope === "branch") {
               handleContextSetBranchColor(swatch.color);
-            } else {
+            } else if (scope === "subtree") {
               handleContextSetSubtreeColor(swatch.color);
+            } else {
+              handleContextSetTaxonomyRootColor(swatch.color);
             }
           }}
         />
@@ -6978,6 +7049,34 @@ export default function TreeCanvas({
               >
                 Open In NCBI Taxonomy
               </button>
+              {contextMenu.rank === taxonomyOutermostRank ? (
+                <div className="tree-context-menu-section">
+                  <button
+                    type="button"
+                    className="tree-context-menu-item"
+                    onClick={() => setContextMenuColorMode((current) => current === "taxonomy-root" ? null : "taxonomy-root")}
+                  >
+                    Color Top-Level Group
+                  </button>
+                  {contextMenuColorMode === "taxonomy-root" ? (
+                    <div className="tree-context-menu-swatch-panel">
+                      {renderColorSwatches(
+                        "taxonomy-root",
+                        taxonomyRootColorAssignments.get(contextMenu.name) ?? null,
+                        false,
+                      )}
+                      <button
+                        type="button"
+                        className="tree-context-menu-clear"
+                        disabled={!taxonomyRootColorAssignments.has(contextMenu.name)}
+                        onClick={handleContextClearTaxonomyRootColor}
+                      >
+                        Clear Group Color
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </>
           )}
         </div>

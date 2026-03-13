@@ -565,6 +565,93 @@ test("taxonomy label context menu exposes MRCA zoom, copy name, and NCBI open", 
   expect(openedUrl).toContain("id=8782");
 });
 
+test("taxonomy overlays can stay visible while taxonomy branch coloring is disabled", async ({ page }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyBranchColoringEnabled(false);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const rectState = await page.evaluate(() => ({
+    debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyVisibleRanks?: string[];
+      taxonomyConnectorSegmentCount?: number;
+    } | undefined,
+    branchColors: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors?.() ?? [],
+  }));
+
+  expect((rectState.debug?.taxonomyVisibleRanks ?? []).length).toBeGreaterThan(0);
+  expect(Number(rectState.debug?.taxonomyConnectorSegmentCount ?? 0)).toBeGreaterThan(0);
+  expect(rectState.branchColors.every((color: string) => color === "#0f172a")).toBeTruthy();
+});
+
+test("top-level taxonomy color override cascades through descendants when jitter is zero", async ({ page }) => {
+  await waitForViewer(page);
+  const taxonomyPoint = await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for taxonomy root color test.");
+    }
+    const split = Math.floor(leafNodes.length * 0.5);
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: index < split
+        ? {
+          phylum: "Chordata",
+          class: index < split * 0.5 ? "Mammalia" : "Aves",
+        }
+        : {
+          phylum: "Arthropoda",
+          class: index < split + (split * 0.5) ? "Insecta" : "Arachnida",
+        },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 10,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class", "phylum"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyColorJitterForTest(0);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const taxonomyHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy" && hitbox.text === "Chordata");
+    if (!(canvas instanceof HTMLCanvasElement) || !taxonomyHit) {
+      throw new Error("Top-level taxonomy label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      targetNode: leafNodes[0],
+      otherNode: leafNodes[leafNodes.length - 1],
+      x: rect.left + Number(taxonomyHit.x) + (Number(taxonomyHit.width) * 0.5),
+      y: rect.top + Number(taxonomyHit.y) + (Number(taxonomyHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
+  await expect(page.getByRole("button", { name: "Color Top-Level Group" })).toBeVisible();
+  await page.getByRole("button", { name: "Color Top-Level Group" }).click();
+  await page.getByRole("button", { name: "Set taxonomy-root color Red" }).click();
+
+  const recolored = await page.evaluate(({ targetNode, otherNode }) => {
+    const colors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors?.() ?? [];
+    return {
+      target: colors[targetNode] ?? null,
+      other: colors[otherNode] ?? null,
+    };
+  }, { targetNode: taxonomyPoint.targetNode, otherNode: taxonomyPoint.otherNode });
+
+  expect(recolored.target).toBe("#dc2626");
+  expect(recolored.other).not.toBe("#dc2626");
+});
+
 test("taxonomy search ranks exact matches before higher-rank substring matches", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

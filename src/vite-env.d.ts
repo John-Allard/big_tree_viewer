@@ -12,6 +12,9 @@ declare global {
       setShowInternalNodeLabels: (visible: boolean) => void;
       setShowBootstrapLabels: (visible: boolean) => void;
       setTaxonomyEnabled: (visible: boolean) => void;
+      setTaxonomyBranchColoringEnabled: (enabled: boolean) => void;
+      setTaxonomyColorJitterForTest: (value: number) => void;
+      setBranchThicknessScaleForTest: (value: number) => void;
       setMetadataEnabled: (visible: boolean) => void;
       setSearchQuery: (query: string) => void;
       setCircularRotationDegreesForTest: (degrees: number) => void;

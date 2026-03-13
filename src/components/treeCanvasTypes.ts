@@ -13,12 +13,15 @@ export interface TreeCanvasProps {
   showScaleBars: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
+  taxonomyBranchColoringEnabled: boolean;
+  taxonomyColorJitter: number;
   taxonomyMap: TaxonomyMapPayload | null;
   metadataBranchColors: Array<string | null> | null;
   metadataBranchColorVersion: string;
   showInternalNodeLabels: boolean;
   showBootstrapLabels: boolean;
   figureStyles: FigureStyleSettings;
+  branchThicknessScale: number;
   showNodeHeightLabels: boolean;
   searchQuery: string;
   searchMatches: number[];
@@ -29,6 +32,7 @@ export interface TreeCanvasProps {
   focusNodeRequest: number;
   fitRequest: number;
   exportSvgRequest: number;
+  visualResetRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
   onViewModeChange?: (mode: ViewMode) => void;
 }

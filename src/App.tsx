@@ -133,17 +133,23 @@ function PanelSection({
   );
 }
 
+const DEFAULT_TAXONOMY_COLOR_JITTER = 1;
+const DEFAULT_BRANCH_THICKNESS_SCALE = 1;
+const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
+
 function LabelStyleSection({
   labelClass,
   settings,
   disabled,
   disabledReason,
+  extraControls,
   onUpdate,
 }: {
   labelClass: LabelStyleClass;
   settings: LabelStyleSettings;
   disabled: boolean;
   disabledReason?: string;
+  extraControls?: ReactNode;
   onUpdate: (
     labelClass: LabelStyleClass,
     field: keyof LabelStyleSettings,
@@ -225,6 +231,7 @@ function LabelStyleSection({
               <div className="figure-style-value">{settings.offsetPx}px</div>
             </>
           )}
+          {extraControls}
         </div>
       ) : null}
     </div>
@@ -481,6 +488,9 @@ export default function App() {
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
   const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
   const [figureStyles, setFigureStyles] = useState<FigureStyleSettings>(() => cloneDefaultFigureStyles());
+  const [taxonomyColorJitter, setTaxonomyColorJitter] = useState(DEFAULT_TAXONOMY_COLOR_JITTER);
+  const [taxonomyBranchColoringEnabled, setTaxonomyBranchColoringEnabled] = useState(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
+  const [branchThicknessScale, setBranchThicknessScale] = useState(DEFAULT_BRANCH_THICKNESS_SCALE);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [fitRequest, setFitRequest] = useState(0);
@@ -496,6 +506,7 @@ export default function App() {
   const [showPasteInput, setShowPasteInput] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
+  const [visualResetRequest, setVisualResetRequest] = useState(0);
   const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
   const [metadataTable, setMetadataTable] = useState<ParsedMetadataTable | null>(null);
   const [metadataFileName, setMetadataFileName] = useState("");
@@ -514,6 +525,12 @@ export default function App() {
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
   const handleHoverChange = useCallback(() => {}, []);
+
+  useEffect(() => {
+    if (taxonomyEnabled && showGenusLabels) {
+      setShowGenusLabels(false);
+    }
+  }, [showGenusLabels, taxonomyEnabled]);
 
   const searchResults = useMemo(() => {
     const query = normalizeSearchQuery(searchQuery);
@@ -1116,6 +1133,10 @@ export default function App() {
 
   const resetFigureStyles = useCallback((): void => {
     setFigureStyles(cloneDefaultFigureStyles());
+    setTaxonomyColorJitter(DEFAULT_TAXONOMY_COLOR_JITTER);
+    setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
+    setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
+    setVisualResetRequest((current) => current + 1);
   }, []);
 
   useEffect(() => {
@@ -1132,6 +1153,8 @@ export default function App() {
         order,
         showGenusLabels,
         taxonomyEnabled,
+        taxonomyBranchColoringEnabled,
+        taxonomyColorJitter,
         taxonomyMappedCount: taxonomyMap?.mappedCount ?? 0,
         metadataEnabled,
         metadataFileName,
@@ -1146,6 +1169,7 @@ export default function App() {
         showInternalNodeLabels,
         showBootstrapLabels,
         figureStyles,
+        branchThicknessScale,
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
         isUltrametric: tree?.isUltrametric ?? false,
@@ -1174,6 +1198,9 @@ export default function App() {
       setShowInternalNodeLabels,
       setShowBootstrapLabels,
       setTaxonomyEnabled,
+      setTaxonomyBranchColoringEnabled,
+      setTaxonomyColorJitterForTest: setTaxonomyColorJitter,
+      setBranchThicknessScaleForTest: setBranchThicknessScale,
       setMetadataEnabled,
       setSearchQuery,
       setCircularRotationDegreesForTest: setCircularRotationDegrees,
@@ -1269,6 +1296,7 @@ export default function App() {
     metadataTable,
     metadataValueColumn,
     order,
+    branchThicknessScale,
     figureStyles,
     runTaxonomyMapping,
     searchQuery,
@@ -1276,6 +1304,8 @@ export default function App() {
     showBootstrapLabels,
     showGenusLabels,
     showInternalNodeLabels,
+    taxonomyBranchColoringEnabled,
+    taxonomyColorJitter,
     taxonomyEnabled,
     taxonomyMap,
     tree,
@@ -1483,8 +1513,27 @@ export default function App() {
                 type="checkbox"
                 checked={showGenusLabels}
                 onChange={(event) => setShowGenusLabels(event.target.checked)}
+                disabled={taxonomyEnabled}
               />
               Show genus labels
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={taxonomyEnabled}
+                onChange={(event) => setTaxonomyEnabled(event.target.checked)}
+                disabled={!taxonomyMap}
+              />
+              Show taxonomy overlays
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={taxonomyBranchColoringEnabled}
+                onChange={(event) => setTaxonomyBranchColoringEnabled(event.target.checked)}
+                disabled={!taxonomyEnabled}
+              />
+              Color taxonomy branches
             </label>
             <label>
               <input
@@ -1527,8 +1576,22 @@ export default function App() {
               Show time stripes
             </label>
           </div>
-          <div className="button-row">
-            <button type="button" className="secondary" onClick={resetFigureStyles}>
+          <div className="visual-options-controls">
+            <label>
+              Branch thickness
+              <input
+                type="range"
+                min={0.7}
+                max={2}
+                step={0.05}
+                value={branchThicknessScale}
+                onChange={(event) => setBranchThicknessScale(Number(event.target.value))}
+              />
+            </label>
+            <div className="figure-style-value">x{branchThicknessScale.toFixed(2)}</div>
+          </div>
+          <div className="visual-options-actions">
+            <button type="button" className="secondary visual-options-reset" onClick={resetFigureStyles}>
               Reset Defaults
             </button>
           </div>
@@ -1542,8 +1605,8 @@ export default function App() {
             <LabelStyleSection
               labelClass="genus"
               settings={figureStyles.genus}
-              disabled={!showGenusLabels}
-              disabledReason="Hidden"
+              disabled={taxonomyEnabled || !showGenusLabels}
+              disabledReason={taxonomyEnabled ? "Taxonomy On" : "Hidden"}
               onUpdate={updateFigureStyle}
             />
             <LabelStyleSection
@@ -1551,6 +1614,22 @@ export default function App() {
               settings={figureStyles.taxonomy}
               disabled={!taxonomyEnabled}
               disabledReason="Hidden"
+              extraControls={(
+                <>
+                  <label>
+                    Color jitter
+                    <input
+                      type="range"
+                      min={0}
+                      max={1.5}
+                      step={0.05}
+                      value={taxonomyColorJitter}
+                      onChange={(event) => setTaxonomyColorJitter(Number(event.target.value))}
+                    />
+                  </label>
+                  <div className="figure-style-value">x{taxonomyColorJitter.toFixed(2)}</div>
+                </>
+              )}
               onUpdate={updateFigureStyle}
             />
             <LabelStyleSection
@@ -1601,16 +1680,6 @@ export default function App() {
                   Run Taxonomy Mapping
                 </button>
               </div>
-            ) : null}
-            {taxonomyMap ? (
-              <label>
-                <input
-                  type="checkbox"
-                  checked={taxonomyEnabled}
-                  onChange={(event) => setTaxonomyEnabled(event.target.checked)}
-                />
-                Show taxonomy overlays
-              </label>
             ) : null}
             {taxonomyStatus ? <p className="status-line">{taxonomyStatus}</p> : null}
             {taxonomyError ? <p className="status-error">{taxonomyError}</p> : null}
@@ -1845,14 +1914,17 @@ export default function App() {
           circularRotation={(circularRotationDegrees * Math.PI) / 180}
           showTimeStripes={showTimeStripes}
           showScaleBars={showScaleBars}
-          showGenusLabels={showGenusLabels}
+          showGenusLabels={showGenusLabels && !taxonomyEnabled}
           taxonomyEnabled={taxonomyEnabled}
+          taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
+          taxonomyColorJitter={taxonomyColorJitter}
           taxonomyMap={taxonomyMap}
           metadataBranchColors={metadataEnabled && metadataOverlay.hasAny ? metadataOverlay.colors : null}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
           showInternalNodeLabels={showInternalNodeLabels}
           showBootstrapLabels={showBootstrapLabels}
           figureStyles={figureStyles}
+          branchThicknessScale={branchThicknessScale}
           showNodeHeightLabels={showNodeHeightLabels}
           searchQuery={searchQuery}
           searchMatches={searchMatches}
@@ -1863,6 +1935,7 @@ export default function App() {
           focusNodeRequest={focusNodeRequest}
           fitRequest={fitRequest}
           exportSvgRequest={exportSvgRequest}
+          visualResetRequest={visualResetRequest}
           onHoverChange={handleHoverChange}
           onViewModeChange={setViewMode}
         />
