@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 async function waitForViewer(page: Page): Promise<void> {
   await page.goto("/");
@@ -47,6 +48,71 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
   expect(svg).toContain("Arial");
   expect(svg).toContain("Georgia");
   expect(svg).toContain("Courier New");
+});
+
+test("download newick exports the active tree in the current tab", async ({ page }) => {
+  await waitForViewer(page);
+  const pastedNewick = "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;";
+  const exportedNewick = "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1):1)Root;";
+  await loadTreeFromPaste(page, pastedNewick);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download Newick" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("pasted_tree.nwk");
+
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  const fileText = await readFile(path as string, "utf8");
+  expect(fileText.trim()).toBe(exportedNewick);
+});
+
+test("point-anchored label styles support separate x and y offsets", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;");
+
+  const buildSvg = async () => page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowInternalNodeLabels(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowBootstrapLabels(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? null;
+  });
+
+  const extractTextPosition = (svg: string, text: string) => {
+    const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`<text x="([^"]+)" y="([^"]+)"[^>]*>${escaped}</text>`).exec(svg);
+    if (!match) {
+      throw new Error(`Unable to locate SVG text node for ${text}.`);
+    }
+    return {
+      x: Number.parseFloat(match[1]),
+      y: Number.parseFloat(match[2]),
+    };
+  };
+
+  const baseSvg = await buildSvg();
+  expect(baseSvg).toBeTruthy();
+  const baseInternal = extractTextPosition(baseSvg ?? "", "CladeOne");
+  const baseBootstrap = extractTextPosition(baseSvg ?? "", "92");
+
+  const offsetSvg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "offsetXPx", 18);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "offsetYPx", -10);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "offsetXPx", -12);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "offsetYPx", 14);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? null;
+  });
+  expect(offsetSvg).toBeTruthy();
+  const offsetInternal = extractTextPosition(offsetSvg ?? "", "CladeOne");
+  const offsetBootstrap = extractTextPosition(offsetSvg ?? "", "92");
+
+  expect(offsetInternal.x - baseInternal.x).toBeCloseTo(18, 1);
+  expect(offsetInternal.y - baseInternal.y).toBeCloseTo(-10, 1);
+  expect(offsetBootstrap.x - baseBootstrap.x).toBeCloseTo(-12, 1);
+  expect(offsetBootstrap.y - baseBootstrap.y).toBeCloseTo(14, 1);
 });
 
 test("circular vector SVG export preserves taxonomy and metadata annotations", async ({ page }) => {
@@ -184,6 +250,8 @@ test("visual options only mark hidden label sections when they are actually disa
   await page.evaluate(() => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowBootstrapLabels(true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "offsetPx", 12);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "offsetXPx", 9);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "offsetYPx", -7);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1.4);
   });
 
@@ -199,11 +267,14 @@ test("visual options only mark hidden label sections when they are actually disa
   const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null) as {
     figureStyles?: {
       tip?: { offsetPx?: number };
+      internalNode?: { offsetXPx?: number; offsetYPx?: number };
       taxonomy?: { sizeScale?: number; bandThicknessScale?: number };
     };
   } | null;
 
   expect(state?.figureStyles?.tip?.offsetPx).toBe(0);
+  expect(state?.figureStyles?.internalNode?.offsetXPx).toBe(0);
+  expect(state?.figureStyles?.internalNode?.offsetYPx).toBe(0);
   expect(state?.figureStyles?.taxonomy?.sizeScale).toBe(1);
   expect(state?.figureStyles?.taxonomy?.bandThicknessScale).toBe(1);
 });

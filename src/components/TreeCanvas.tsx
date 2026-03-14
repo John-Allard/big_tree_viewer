@@ -5,6 +5,8 @@ import {
   TAXONOMY_LABEL_SIZE_SCALE_MIN,
   type LabelStyleClass,
 } from "../lib/figureStyles";
+import { putSharedSubtreePayload } from "../lib/taxonomyCache";
+import type { SharedSubtreeStoragePayload, SharedSubtreeTaxonomyEntry } from "../lib/sharedSubtreePayload";
 import { distanceToSegmentSquared } from "../lib/spatialIndex";
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
@@ -104,6 +106,67 @@ function isNumericInternalLabel(value: string): boolean {
   return /^[+-]?\d+(?:\.\d+)?$/.test(value.trim());
 }
 
+function collectSubtreeLeafNodes(tree: TreeModel, rootNode: number): number[] {
+  const leaves: number[] = [];
+  const stack = [rootNode];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === undefined) {
+      continue;
+    }
+    const firstChild = tree.buffers.firstChild[node];
+    if (firstChild < 0) {
+      leaves.push(node);
+      continue;
+    }
+    let child = firstChild;
+    while (child >= 0) {
+      stack.push(child);
+      child = tree.buffers.nextSibling[child];
+    }
+  }
+  return leaves;
+}
+
+function buildSharedSubtreeStoragePayload(
+  tree: TreeModel,
+  rootNode: number,
+  taxonomyMap: TaxonomyMapPayload | null,
+  taxonomyEnabled: boolean,
+): SharedSubtreeStoragePayload {
+  const payload: SharedSubtreeStoragePayload = {
+    version: 1,
+    newick: serializeSubtreeToNewick(tree, rootNode),
+  };
+  if (!taxonomyEnabled || !taxonomyMap) {
+    return payload;
+  }
+  const subtreeLeafSet = new Set<number>(collectSubtreeLeafNodes(tree, rootNode));
+  const tipEntries: SharedSubtreeTaxonomyEntry[] = [];
+  for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
+    const tip = taxonomyMap.tipRanks[index];
+    if (!subtreeLeafSet.has(tip.node)) {
+      continue;
+    }
+    tipEntries.push({
+      name: tree.names[tip.node] ?? "",
+      ranks: tip.ranks,
+      taxIds: tip.taxIds,
+    });
+  }
+  if (tipEntries.length === 0) {
+    return payload;
+  }
+  payload.taxonomy = {
+    version: taxonomyMap.version,
+    mappedCount: tipEntries.length,
+    totalTips: subtreeLeafSet.size,
+    activeRanks: [...taxonomyMap.activeRanks],
+    tipEntries,
+  };
+  return payload;
+}
+
 const GENUS_CONNECTOR_COLORS = ["#111111", "#7a7a7a"] as const;
 const CIRCULAR_TAXONOMY_OVERLAY_ALPHA = 1;
 const TAXONOMY_DISPLAY_ORDER: TaxonomyRank[] = [
@@ -125,13 +188,22 @@ const TAXONOMY_LAYER_THRESHOLDS: Record<TaxonomyRank, number> = {
 
 const MANUAL_BRANCH_SWATCHES = [
   { label: "Slate", color: "#334155" },
+  { label: "Charcoal", color: "#1f2937" },
+  { label: "Indigo", color: "#4338ca" },
   { label: "Blue", color: "#2563eb" },
+  { label: "Sky", color: "#0284c7" },
   { label: "Teal", color: "#0f766e" },
+  { label: "Cyan", color: "#0891b2" },
   { label: "Green", color: "#16a34a" },
+  { label: "Lime", color: "#65a30d" },
+  { label: "Olive", color: "#4d7c0f" },
   { label: "Amber", color: "#d97706" },
   { label: "Orange", color: "#ea580c" },
+  { label: "Coral", color: "#f97316" },
   { label: "Red", color: "#dc2626" },
+  { label: "Rose", color: "#e11d48" },
   { label: "Magenta", color: "#c026d3" },
+  { label: "Violet", color: "#7c3aed" },
 ] as const;
 
 type SvgScenePrimitive =
@@ -1592,6 +1664,7 @@ export default function TreeCanvas({
   taxonomyEnabled,
   taxonomyBranchColoringEnabled,
   taxonomyColorJitter,
+  taxonomyRankVisibility,
   taxonomyMap,
   metadataBranchColors,
   metadataBranchColorVersion,
@@ -1683,6 +1756,7 @@ export default function TreeCanvas({
   const [manualSubtreeColorAssignments, setManualSubtreeColorAssignments] = useState<Map<number, string>>(() => new Map());
   const [taxonomyRootColorAssignments, setTaxonomyRootColorAssignments] = useState<Map<string, string>>(() => new Map());
   const [contextMenuColorMode, setContextMenuColorMode] = useState<"branch" | "subtree" | "taxonomy-root" | null>(null);
+  const nativeColorPickerActiveRef = useRef(false);
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
   const [contextMenu, setContextMenu] = useState<(
     {
@@ -1725,8 +1799,12 @@ export default function TreeCanvas({
     }
   }, [contextMenu]);
   const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(
-    () => sortTaxonomyRanksForDisplay(taxonomyMap?.activeRanks.length ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]),
-    [taxonomyMap],
+    () => sortTaxonomyRanksForDisplay(
+      (taxonomyMap?.activeRanks.length ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]).filter(
+        (rank) => taxonomyRankVisibility[rank] !== false,
+      ),
+    ),
+    [taxonomyMap, taxonomyRankVisibility],
   );
   const taxonomyOutermostRank = taxonomyActiveRanks[taxonomyActiveRanks.length - 1] ?? null;
   const taxonomyColors = useMemo(() => (
@@ -3634,8 +3712,8 @@ export default function TreeCanvas({
             : Math.max(8.5, Math.min(13, Math.min(camera.scaleY * 0.26, camera.scaleX * 0.2)));
           const fontSize = scaleLabelFontSize(labelClass, baseFontSize);
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], layout.center[node]);
-          const x = screen.x + 8 + figureStyles[labelClass].offsetPx;
-          const y = screen.y + (isBootstrap ? 10 : -10);
+          const x = screen.x + 8 + figureStyles[labelClass].offsetXPx;
+          const y = screen.y + (isBootstrap ? 10 : -10) + figureStyles[labelClass].offsetYPx;
           if (x < -40 || x > size.width + 140 || y < -20 || y > size.height + 20) {
             continue;
           }
@@ -3733,12 +3811,13 @@ export default function TreeCanvas({
             continue;
           }
           const screen = worldToScreenRect(camera, x, y);
-          const labelY = screen.y - 5 - figureStyles.nodeHeight.offsetPx;
-          if (!canPlaceLinearLabel(labels, screen.x, labelY, fontSize * 1.7, fontSize * 4.8)) {
+          const labelX = screen.x + figureStyles.nodeHeight.offsetXPx;
+          const labelY = screen.y - 5 + figureStyles.nodeHeight.offsetYPx;
+          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.7, fontSize * 4.8)) {
             continue;
           }
           labels.push({
-            x: screen.x,
+            x: labelX,
             y: labelY,
             text: formatAgeNumber(nodeHeightValue(tree, node)),
             alpha: 0.78,
@@ -3785,8 +3864,20 @@ export default function TreeCanvas({
             const boundary = stripeBoundaries[index];
             const x = worldToScreenRect(camera, tree.rootAge - boundary.value, 0).x;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
-            ctx.fillText(`${formatAgeNumber(boundary.value)} mya`, x, axisY + 8 + figureStyles.scale.offsetPx);
-            pushSceneText(`${formatAgeNumber(boundary.value)} mya`, x, axisY + 8 + figureStyles.scale.offsetPx, "#6b7280", scaleFontSize, labelFontFamilies.scale, "middle");
+            ctx.fillText(
+              `${formatAgeNumber(boundary.value)} mya`,
+              x + figureStyles.scale.offsetXPx,
+              axisY + 8 + figureStyles.scale.offsetYPx,
+            );
+            pushSceneText(
+              `${formatAgeNumber(boundary.value)} mya`,
+              x + figureStyles.scale.offsetXPx,
+              axisY + 8 + figureStyles.scale.offsetYPx,
+              "#6b7280",
+              scaleFontSize,
+              labelFontFamilies.scale,
+              "middle",
+            );
           }
           ctx.globalAlpha = 1;
         }
@@ -5407,20 +5498,22 @@ export default function TreeCanvas({
           );
           const theta = thetaFor(layout.center, node, tree.leafCount);
           const renderedTheta = theta + rotationAngle;
-          const radius = tree.buffers.depth[node] + ((14 + figureStyles[labelClass].offsetPx) / camera.scale);
+          const radius = tree.buffers.depth[node] + (14 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
-          if (screen.x < -40 || screen.x > size.width + 40 || screen.y < -40 || screen.y > size.height + 40) {
+          const labelX = screen.x + figureStyles[labelClass].offsetXPx;
+          const labelY = screen.y + figureStyles[labelClass].offsetYPx;
+          if (labelX < -40 || labelX > size.width + 40 || labelY < -40 || labelY > size.height + 40) {
             continue;
           }
-          if (!canPlaceLinearLabel(labels, screen.x, screen.y, fontSize * 1.8, fontSize * 4.8)) {
+          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.8, fontSize * 4.8)) {
             continue;
           }
           const onRightSide = Math.cos(renderedTheta) >= 0;
           const rotation = normalizeRotation((renderedTheta * 180 / Math.PI) + (onRightSide ? 90 : 270)) * Math.PI / 180;
           labels.push({
-            x: screen.x,
-            y: screen.y,
+            x: labelX,
+            y: labelY,
             text: rawLabel,
             alpha: 0.9,
             fontSize,
@@ -5584,23 +5677,25 @@ export default function TreeCanvas({
             continue;
           }
           const theta = thetaFor(layout.center, node, tree.leafCount);
-          const radius = tree.buffers.depth[node] + ((10 + figureStyles.nodeHeight.offsetPx) / camera.scale);
+          const radius = tree.buffers.depth[node] + (10 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
+          const labelX = screen.x + figureStyles.nodeHeight.offsetXPx;
+          const labelY = screen.y + figureStyles.nodeHeight.offsetYPx;
           if (
-            screen.x < -40 || screen.x > size.width + 40 ||
-            screen.y < -40 || screen.y > size.height + 40
+            labelX < -40 || labelX > size.width + 40 ||
+            labelY < -40 || labelY > size.height + 40
           ) {
             continue;
           }
-          if (!canPlaceLinearLabel(labels, screen.x, screen.y, fontSize * 2.1, fontSize * 5.5)) {
+          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 2.1, fontSize * 5.5)) {
             continue;
           }
           const deg = (theta + rotationAngle) * 180 / Math.PI;
           const onRightSide = Math.cos(theta + rotationAngle) >= 0;
           labels.push({
-            x: screen.x,
-            y: screen.y,
+            x: labelX,
+            y: labelY,
             text: formatAgeNumber(nodeHeightValue(tree, node)),
             alpha: 0.76,
             rotation: normalizeRotation(onRightSide ? deg : deg + 180) * Math.PI / 180,
@@ -5635,8 +5730,20 @@ export default function TreeCanvas({
             const point = polarToCartesian(radius, labelTheta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
-            ctx.fillText(`${formatAgeNumber(boundary.value)} mya`, screen.x, screen.y + figureStyles.scale.offsetPx);
-            pushSceneText(`${formatAgeNumber(boundary.value)} mya`, screen.x, screen.y + figureStyles.scale.offsetPx, "#6b7280", scaleFontSize, labelFontFamilies.scale, Math.cos(labelTheta + rotationAngle) >= 0 ? "start" : "end");
+            ctx.fillText(
+              `${formatAgeNumber(boundary.value)} mya`,
+              screen.x + figureStyles.scale.offsetXPx,
+              screen.y + figureStyles.scale.offsetYPx,
+            );
+            pushSceneText(
+              `${formatAgeNumber(boundary.value)} mya`,
+              screen.x + figureStyles.scale.offsetXPx,
+              screen.y + figureStyles.scale.offsetYPx,
+              "#6b7280",
+              scaleFontSize,
+              labelFontFamilies.scale,
+              Math.cos(labelTheta + rotationAngle) >= 0 ? "start" : "end",
+            );
           }
           ctx.globalAlpha = 1;
         } else if (circularScaleBar) {
@@ -5673,10 +5780,18 @@ export default function TreeCanvas({
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
               ctx.fillText(
                 `${formatAgeNumber(tick.boundary.value)} mya`,
-                tick.position,
-                circularScaleBar.axisPosition + 8 + figureStyles.scale.offsetPx,
+                tick.position + figureStyles.scale.offsetXPx,
+                circularScaleBar.axisPosition + 8 + figureStyles.scale.offsetYPx,
               );
-              pushSceneText(`${formatAgeNumber(tick.boundary.value)} mya`, tick.position, circularScaleBar.axisPosition + 8 + figureStyles.scale.offsetPx, "#6b7280", scaleFontSize, labelFontFamilies.scale, "middle");
+              pushSceneText(
+                `${formatAgeNumber(tick.boundary.value)} mya`,
+                tick.position + figureStyles.scale.offsetXPx,
+                circularScaleBar.axisPosition + 8 + figureStyles.scale.offsetYPx,
+                "#6b7280",
+                scaleFontSize,
+                labelFontFamilies.scale,
+                "middle",
+              );
             }
             ctx.globalAlpha = 1;
           } else {
@@ -5698,11 +5813,23 @@ export default function TreeCanvas({
               const tick = circularScaleBar.ticks[index];
               ctx.save();
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
-              ctx.translate(circularScaleBar.axisPosition - 8 + figureStyles.scale.offsetPx, tick.position);
+              ctx.translate(
+                circularScaleBar.axisPosition - 8 + figureStyles.scale.offsetXPx,
+                tick.position + figureStyles.scale.offsetYPx,
+              );
               ctx.rotate(-Math.PI / 2);
               ctx.fillText(`${formatAgeNumber(tick.boundary.value)} mya`, 0, 0);
               ctx.restore();
-              pushSceneText(`${formatAgeNumber(tick.boundary.value)} mya`, circularScaleBar.axisPosition - 8 + figureStyles.scale.offsetPx, tick.position, "#6b7280", scaleFontSize, labelFontFamilies.scale, "middle", -Math.PI / 2);
+              pushSceneText(
+                `${formatAgeNumber(tick.boundary.value)} mya`,
+                circularScaleBar.axisPosition - 8 + figureStyles.scale.offsetXPx,
+                tick.position + figureStyles.scale.offsetYPx,
+                "#6b7280",
+                scaleFontSize,
+                labelFontFamilies.scale,
+                "middle",
+                -Math.PI / 2,
+              );
             }
           }
         }
@@ -6204,7 +6331,34 @@ export default function TreeCanvas({
       const labelHitbox = findLabelHitboxAt(localX, localY);
       if (labelHitbox) {
         const hitbox = labelHitbox;
-        hover = buildHoverInfo(hitbox.node, "label", localX, localY);
+        if (
+          hitbox.labelKind === "taxonomy"
+          && hitbox.text
+          && hitbox.taxonomyRank
+          && typeof hitbox.taxonomyFirstNode === "number"
+          && typeof hitbox.taxonomyLastNode === "number"
+        ) {
+          const mrcaNode = lowestCommonAncestor(tree, hitbox.taxonomyFirstNode, hitbox.taxonomyLastNode);
+          const parent = tree.buffers.parent[mrcaNode];
+          const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
+          hover = {
+            node: mrcaNode,
+            branchLength: tree.buffers.branchLength[mrcaNode],
+            parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
+            parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+            childAge: mrcaAge,
+            descendantTipCount: hitbox.taxonomyTipCount ?? tree.buffers.leafCount[mrcaNode],
+            name: hitbox.text,
+            screenX: localX,
+            screenY: localY,
+            targetKind: "label",
+            kind: "taxonomy",
+            taxonomyRank: hitbox.taxonomyRank,
+            mrcaAge,
+          };
+        } else {
+          hover = buildHoverInfo(hitbox.node, "label", localX, localY);
+        }
       }
 
       if (hover) {
@@ -6638,18 +6792,34 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [contextMenu, tree, zoomToSubtreeTarget]);
 
-  const handleContextOpenSubtreeInNewTab = useCallback(() => {
-    if (!contextMenu || contextMenu.kind !== "node" || typeof window === "undefined" || !tree) {
+  const openSubtreeInNewTab = useCallback(async (node: number) => {
+    if (typeof window === "undefined" || !tree) {
       return;
     }
     const key = `big-tree-viewer:subtree:${crypto.randomUUID()}`;
-    const newick = serializeSubtreeToNewick(tree, contextMenu.node);
-    window.localStorage.setItem(key, newick);
+    const payload = buildSharedSubtreeStoragePayload(tree, node, taxonomyMap, taxonomyEnabled);
+    try {
+      await putSharedSubtreePayload(key, payload);
+    } catch {
+      try {
+        window.localStorage.setItem(key, JSON.stringify(payload));
+      } catch {
+        // Fall back to Newick-only sharing only if both IndexedDB and localStorage payload storage fail.
+        window.localStorage.setItem(key, payload.newick);
+      }
+    }
     const url = new URL(window.location.href);
     url.searchParams.set("subtree", key);
     window.open(url.toString(), "_blank", "noopener");
+  }, [taxonomyEnabled, taxonomyMap, tree]);
+
+  const handleContextOpenSubtreeInNewTab = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "node") {
+      return;
+    }
+    void openSubtreeInNewTab(contextMenu.node);
     setContextMenu(null);
-  }, [contextMenu, tree]);
+  }, [contextMenu, openSubtreeInNewTab]);
 
   const handleContextToggleCollapse = useCallback(() => {
     if (!contextMenu || contextMenu.kind !== "node" || !tree || tree.buffers.firstChild[contextMenu.node] < 0) {
@@ -6702,6 +6872,15 @@ export default function TreeCanvas({
     zoomToSubtreeTarget(mrcaNode);
     setContextMenu(null);
   }, [contextMenu, tree, zoomToSubtreeTarget]);
+
+  const handleContextOpenTaxonomySubtreeInNewTab = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "taxonomy" || !tree) {
+      return;
+    }
+    const mrcaNode = lowestCommonAncestor(tree, contextMenu.firstNode, contextMenu.lastNode);
+    void openSubtreeInNewTab(mrcaNode);
+    setContextMenu(null);
+  }, [contextMenu, openSubtreeInNewTab, tree]);
 
   const handleContextOpenTaxonomyInNcbi = useCallback(() => {
     if (!contextMenu || contextMenu.kind !== "taxonomy" || !contextMenu.taxId || typeof window === "undefined") {
@@ -6858,13 +7037,26 @@ export default function TreeCanvas({
           />
         ))}
       </div>
-      <label className="tree-context-menu-custom-color">
+      <label
+        className="tree-context-menu-custom-color tree-context-menu-color-picker-shell"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         <span>Custom color</span>
         <input
           type="color"
           value={normalizeColorInput(selectedColor ?? "#2563eb") ?? "#2563eb"}
           disabled={disabled}
           aria-label={`Choose custom ${scope} color`}
+          onFocus={() => {
+            nativeColorPickerActiveRef.current = true;
+          }}
+          onBlur={() => {
+            nativeColorPickerActiveRef.current = false;
+          }}
+          onPointerDown={(event) => {
+            nativeColorPickerActiveRef.current = true;
+            event.stopPropagation();
+          }}
           onChange={(event) => applyContextColor(scope, event.target.value)}
         />
       </label>
@@ -6991,7 +7183,11 @@ export default function TreeCanvas({
       className="tree-canvas-shell"
       ref={wrapperRef}
       onPointerDown={(event) => {
-        if ((event.target as HTMLElement).closest(".tree-context-menu")) {
+        if (nativeColorPickerActiveRef.current) {
+          return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (target?.closest(".tree-context-menu") || target?.closest(".tree-context-menu-color-picker-shell")) {
           return;
         }
         setContextMenu(null);
@@ -7008,16 +7204,28 @@ export default function TreeCanvas({
           }}
         >
           <div className="hover-tooltip-label">{overlayHover.name}</div>
-          {tree && tree.buffers.firstChild[overlayHover.node] >= 0 ? (
-            <div>Descendant tips: {overlayHover.descendantTipCount.toLocaleString()}</div>
-          ) : null}
-          <div>Branch: {overlayHover.branchLength.toPrecision(5)}</div>
-          <div>
-            Parent age: {overlayHover.parentAge === null ? "n/a" : overlayHover.parentAge.toPrecision(5)}
-          </div>
-          <div>
-            Child age: {overlayHover.childAge === null ? "n/a" : overlayHover.childAge.toPrecision(5)}
-          </div>
+          {overlayHover.kind === "taxonomy" ? (
+            <>
+              <div>Rank: {overlayHover.taxonomyRank ?? "n/a"}</div>
+              <div>Descendant tips: {overlayHover.descendantTipCount.toLocaleString()}</div>
+              <div>
+                MRCA age: {overlayHover.mrcaAge === null || overlayHover.mrcaAge === undefined ? "n/a" : overlayHover.mrcaAge.toPrecision(5)}
+              </div>
+            </>
+          ) : (
+            <>
+              {tree && tree.buffers.firstChild[overlayHover.node] >= 0 ? (
+                <div>Descendant tips: {overlayHover.descendantTipCount.toLocaleString()}</div>
+              ) : null}
+              <div>Branch: {overlayHover.branchLength.toPrecision(5)}</div>
+              <div>
+                Parent age: {overlayHover.parentAge === null ? "n/a" : overlayHover.parentAge.toPrecision(5)}
+              </div>
+              <div>
+                Child age: {overlayHover.childAge === null ? "n/a" : overlayHover.childAge.toPrecision(5)}
+              </div>
+            </>
+          )}
         </div>
       ) : null}
       {contextMenu ? (
@@ -7117,6 +7325,9 @@ export default function TreeCanvas({
               </div>
               <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToTaxonomySubtree}>
                 Zoom To Group MRCA
+              </button>
+              <button type="button" className="tree-context-menu-item" onClick={handleContextOpenTaxonomySubtreeInNewTab}>
+                Open Group Subtree In New Tab
               </button>
               <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTaxonomyName}>
                 Copy Name

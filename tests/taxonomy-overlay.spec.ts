@@ -1,7 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-async function waitForViewer(page: Page): Promise<void> {
-  await page.goto("/");
+async function waitForViewerReady(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     return Boolean(
       window.__BIG_TREE_VIEWER_APP_TEST__
@@ -10,6 +9,11 @@ async function waitForViewer(page: Page): Promise<void> {
       && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded,
     );
   });
+}
+
+async function waitForViewer(page: Page): Promise<void> {
+  await page.goto("/");
+  await waitForViewerReady(page);
 }
 
 async function enableMockTaxonomy(page: Page): Promise<void> {
@@ -422,6 +426,192 @@ test("tip context menu branch swatches color and clear a branch", async ({ page 
   expect(clearedBranch).toBe("#0f172a");
 });
 
+test("custom color input does not dismiss the context menu before selection", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.clearTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 14, 10),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const tipPoint = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
+    if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
+      throw new Error("Tip label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(tipHit.x) + (Number(tipHit.width) * 0.5),
+      y: rect.top + Number(tipHit.y) + (Number(tipHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(tipPoint.x, tipPoint.y, { button: "right" });
+  await page.getByRole("button", { name: "Color Branch" }).click();
+  await page.locator(".tree-context-menu input[type=\"color\"]").click({ force: true });
+
+  await expect(page.locator(".tree-context-menu")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear Branch Color" })).toBeVisible();
+});
+
+test("opening a subtree in a new tab inherits the loaded taxonomy mapping", async ({ page, context }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 14, 10),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const tipPoint = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
+    if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
+      throw new Error("Tip label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(tipHit.x) + (Number(tipHit.width) * 0.5),
+      y: rect.top + Number(tipHit.y) + (Number(tipHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(tipPoint.x, tipPoint.y, { button: "right" });
+  const popupPromise = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Open Subtree In New Tab" }).click();
+  const popup = await popupPromise;
+  await waitForViewerReady(popup);
+  await popup.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+
+  const popupState = await popup.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null) as {
+    taxonomyEnabled?: boolean;
+    taxonomyMappedCount?: number;
+    treeLoaded?: boolean;
+  } | null;
+  expect(Boolean(popupState?.treeLoaded)).toBe(true);
+  expect(Boolean(popupState?.taxonomyEnabled)).toBe(true);
+  expect(Number(popupState?.taxonomyMappedCount ?? 0)).toBeGreaterThan(0);
+  await popup.close();
+});
+
+test("opening a large taxonomy group subtree in a new tab keeps taxonomy enabled", async ({ page, context }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 3.5, 5),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const taxonomyPoint = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const taxonomyHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy");
+    if (!(canvas instanceof HTMLCanvasElement) || !taxonomyHit) {
+      throw new Error("Taxonomy label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(taxonomyHit.x) + (Number(taxonomyHit.width) * 0.5),
+      y: rect.top + Number(taxonomyHit.y) + (Number(taxonomyHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
+  const popupPromise = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Open Group Subtree In New Tab" }).click();
+  const popup = await popupPromise;
+  await waitForViewerReady(popup);
+  await popup.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+
+  const popupState = await popup.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null) as {
+    taxonomyEnabled?: boolean;
+    taxonomyMappedCount?: number;
+  } | null;
+  expect(Boolean(popupState?.taxonomyEnabled)).toBe(true);
+  expect(Number(popupState?.taxonomyMappedCount ?? 0)).toBeGreaterThan(0);
+  await popup.close();
+});
+
+test("shared subtree taxonomy recomputes active ranks for the standalone tree", async ({ page, context }) => {
+  await waitForViewer(page);
+  const subtreeKey = `big-tree-viewer:subtree:test-${Date.now()}`;
+  await page.evaluate((key) => {
+    const payload = {
+      version: 1,
+      newick: "((Alpha,Beta),(Gamma,Delta),(Epsilon,Zeta),(Eta,Theta));",
+      taxonomy: {
+        version: 3,
+        mappedCount: 8,
+        totalTips: 8,
+        activeRanks: ["genus", "family", "order", "class"],
+        tipEntries: [
+          { name: "Alpha", ranks: { class: "Aves", order: "Passeriformes", family: "FamA", genus: "Alpha" } },
+          { name: "Beta", ranks: { class: "Aves", order: "Passeriformes", family: "FamA", genus: "Beta" } },
+          { name: "Gamma", ranks: { class: "Aves", order: "Galliformes", family: "FamB", genus: "Gamma" } },
+          { name: "Delta", ranks: { class: "Aves", order: "Galliformes", family: "FamB", genus: "Delta" } },
+          { name: "Epsilon", ranks: { class: "Aves", order: "Strigiformes", family: "FamC", genus: "Epsilon" } },
+          { name: "Zeta", ranks: { class: "Aves", order: "Strigiformes", family: "FamC", genus: "Zeta" } },
+          { name: "Eta", ranks: { class: "Aves", order: "Anseriformes", family: "FamD", genus: "Eta" } },
+          { name: "Theta", ranks: { class: "Mammalia", order: "Anseriformes", family: "FamD", genus: "Theta" } },
+        ],
+      },
+    };
+    window.localStorage.setItem(key, JSON.stringify(payload));
+  }, subtreeKey);
+
+  const popup = await context.newPage();
+  await popup.goto(`/?subtree=${encodeURIComponent(subtreeKey)}`);
+  await waitForViewerReady(popup);
+  await popup.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+
+  const popupTaxonomy = await popup.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null) as {
+    activeRanks?: string[];
+    mappedCount?: number;
+  } | null;
+  expect(popupTaxonomy?.activeRanks ?? []).not.toContain("class");
+  expect(popupTaxonomy?.activeRanks?.[popupTaxonomy.activeRanks.length - 1] ?? null).toBe("order");
+  expect(Number(popupTaxonomy?.mappedCount ?? 0)).toBe(8);
+  await popup.close();
+});
+
 test("manual subtree colors propagate and branch colors override them", async ({ page }) => {
   await waitForViewer(page);
   const nodes = await page.evaluate(async () => {
@@ -504,7 +694,7 @@ test("manual subtree colors propagate and branch colors override them", async ({
   expect(colors[nodes.outsideNode]).toBe("#0f172a");
 });
 
-test("taxonomy label context menu exposes MRCA zoom, copy name, and NCBI open", async ({ page }) => {
+test("taxonomy label context menu exposes subtree, copy, and NCBI actions", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
     const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
@@ -557,12 +747,116 @@ test("taxonomy label context menu exposes MRCA zoom, copy name, and NCBI open", 
 
   await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
   await expect(page.getByRole("button", { name: "Zoom To Group MRCA" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Group Subtree In New Tab" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy Name" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open In NCBI Taxonomy" })).toBeVisible();
   await page.getByRole("button", { name: "Open In NCBI Taxonomy" }).click();
 
   const openedUrl = await page.evaluate(() => (window as typeof window & { __openedUrl?: string }).__openedUrl ?? null);
   expect(openedUrl).toContain("id=8782");
+});
+
+test("taxonomy label hover shows taxonomy tooltip details instead of branch metrics", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for taxonomy hover test.");
+    }
+    const split = Math.max(8, Math.floor(leafNodes.length * 0.2));
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        class: index < split ? "Mammalia" : "Aves",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 7,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const taxonomyPoint = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const taxonomyHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy" && hitbox.text === "Aves");
+    if (!(canvas instanceof HTMLCanvasElement) || !taxonomyHit) {
+      throw new Error("Taxonomy label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(taxonomyHit.x) + (Number(taxonomyHit.width) * 0.5),
+      y: rect.top + Number(taxonomyHit.y) + (Number(taxonomyHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.move(taxonomyPoint.x, taxonomyPoint.y);
+  const tooltip = page.locator(".hover-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("Rank: class");
+  await expect(tooltip).toContainText("Descendant tips:");
+  await expect(tooltip).toContainText("MRCA age:");
+  await expect(tooltip).not.toContainText("Branch:");
+});
+
+test("taxonomy rank controls filter visible ranks and the rank legend", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for taxonomy rank control test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        class: index < 30 ? "Aves" : "Mammalia",
+        order: index < 15 ? "Passeriformes" : index < 30 ? "Falconiformes" : index < 45 ? "Primates" : "Carnivora",
+        family: index < 8 ? "FamA" : index < 15 ? "FamB" : index < 23 ? "FamC" : index < 30 ? "FamD" : index < 38 ? "FamE" : index < 45 ? "FamF" : index < 53 ? "FamG" : "FamH",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 8,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["family", "order", "class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 12, 10),
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowTaxonomyRankLegendForTest(true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  await page.waitForFunction(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined;
+    return Array.isArray(debug?.taxonomyVisibleRanks) && !debug.taxonomyVisibleRanks.includes("class");
+  });
+
+  const rectDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+    taxonomyVisibleRanks?: string[];
+  });
+  expect(rectDebug.taxonomyVisibleRanks ?? []).not.toContain("class");
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await expect(page.getByTestId("taxonomy-rank-legend")).toBeVisible();
+  await expect(page.getByTestId("taxonomy-rank-legend")).not.toContainText("Class");
+  await expect(page.getByTestId("taxonomy-rank-legend")).toContainText("Order");
+  await expect(page.getByTestId("taxonomy-rank-legend")).toContainText("Family");
 });
 
 test("taxonomy overlays can stay visible while taxonomy branch coloring is disabled", async ({ page }) => {

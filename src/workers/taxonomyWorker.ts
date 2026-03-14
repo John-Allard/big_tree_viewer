@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { DecodeUTF8, Unzip, UnzipInflate } from "fflate";
+import { deriveActiveTaxonomyRanks } from "../lib/taxonomyActiveRanks";
 import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
 type TaxonomyWorkerRequest =
@@ -241,14 +242,6 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
   const ancestorMemo = new Map<string, number | null>();
   const tipRanks: TaxonomyMapPayload["tipRanks"] = [];
   let mappedCount = 0;
-  const rankToLabels = new Map<TaxonomyRank, Set<string>>();
-  const rankToHits = new Map<TaxonomyRank, number>();
-  const rankToCounts = new Map<TaxonomyRank, Map<string, number>>();
-  for (let index = 0; index < TARGET_RANKS.length; index += 1) {
-    rankToLabels.set(TARGET_RANKS[index], new Set());
-    rankToHits.set(TARGET_RANKS[index], 0);
-    rankToCounts.set(TARGET_RANKS[index], new Map());
-  }
   for (let index = 0; index < tips.length; index += 1) {
     const tip = tips[index];
     let taxId: number | undefined;
@@ -281,12 +274,6 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
       }
       ranks[rank] = label;
       taxIds[rank] = ancestor;
-      rankToLabels.get(rank)?.add(label);
-      rankToHits.set(rank, (rankToHits.get(rank) ?? 0) + 1);
-      const counts = rankToCounts.get(rank);
-      if (counts) {
-        counts.set(label, (counts.get(label) ?? 0) + 1);
-      }
       anyRank = true;
     }
     if (!anyRank) {
@@ -295,26 +282,7 @@ function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTa
     mappedCount += 1;
     tipRanks.push({ node: tip.node, ranks, taxIds });
   }
-  const activeRanks = TARGET_RANKS.filter((rank) => (rankToLabels.get(rank)?.size ?? 0) > 1);
-  while (activeRanks.length > 1) {
-    const topRank = activeRanks[activeRanks.length - 1];
-    const counts = rankToCounts.get(topRank);
-    const total = rankToHits.get(topRank) ?? 0;
-    if (!counts || total <= 0) {
-      break;
-    }
-    let dominant = 0;
-    counts.forEach((count) => {
-      if (count > dominant) {
-        dominant = count;
-      }
-    });
-    if ((dominant / total) > 0.8) {
-      activeRanks.pop();
-      continue;
-    }
-    break;
-  }
+  const activeRanks = deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
   return {
     version: TAXONOMY_MAPPING_VERSION,
     mappedCount,

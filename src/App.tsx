@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
+import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import {
   cloneDefaultFigureStyles,
   FONT_FAMILY_OPTIONS,
@@ -20,15 +21,21 @@ import {
   type MetadataColorOverlayResult,
   type ParsedMetadataTable,
 } from "./lib/metadataColors";
+import {
+  parseSharedSubtreeStoragePayload,
+  rebuildSharedSubtreeTaxonomyMap,
+  type SharedSubtreeTaxonomyPayload,
+} from "./lib/sharedSubtreePayload";
 import { buildTaxonomyBlocksForOrderedLeaves } from "./lib/taxonomyBlocks";
 import {
   getCachedTaxonomyArchive,
   getCachedTaxonomyMapping,
+  getSharedSubtreePayload,
   putCachedTaxonomyArchive,
   putCachedTaxonomyMapping,
 } from "./lib/taxonomyCache";
 import type { WorkerResponse } from "./types/messages";
-import type { TaxonomyMapPayload, TaxonomyRank } from "./types/taxonomy";
+import { TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
@@ -56,6 +63,10 @@ function normalizeSearchTarget(value: string): string {
 
 function canonicalSearchKey(value: string): string {
   return normalizeSearchTarget(value).replace(/\s+/g, " ");
+}
+
+function taxonomyRankLabel(rank: TaxonomyRank): string {
+  return rank.charAt(0).toUpperCase() + rank.slice(1);
 }
 
 function escapeRegExp(value: string): string {
@@ -158,6 +169,10 @@ function LabelStyleSection({
 }): ReactNode {
   const [isOpen, setIsOpen] = useSessionDisclosure(`label-style-${labelClass}`, false);
   const isTaxonomy = labelClass === "taxonomy";
+  const supportsAxisOffsets = labelClass === "internalNode"
+    || labelClass === "bootstrap"
+    || labelClass === "nodeHeight"
+    || labelClass === "scale";
   return (
     <div className={`label-style-section${disabled ? " disabled" : ""}`}>
       <button
@@ -214,6 +229,33 @@ function LabelStyleSection({
                 />
               </label>
               <div className="figure-style-value">x{(settings.bandThicknessScale ?? 1).toFixed(2)}</div>
+            </>
+          ) : supportsAxisOffsets ? (
+            <>
+              <label>
+                X offset
+                <input
+                  type="range"
+                  min={-24}
+                  max={24}
+                  step={1}
+                  value={settings.offsetXPx}
+                  onChange={(event) => onUpdate(labelClass, "offsetXPx", Number(event.target.value))}
+                />
+              </label>
+              <div className="figure-style-value">{settings.offsetXPx}px</div>
+              <label>
+                Y offset
+                <input
+                  type="range"
+                  min={-24}
+                  max={24}
+                  step={1}
+                  value={settings.offsetYPx}
+                  onChange={(event) => onUpdate(labelClass, "offsetYPx", Number(event.target.value))}
+                />
+              </label>
+              <div className="figure-style-value">{settings.offsetYPx}px</div>
             </>
           ) : (
             <>
@@ -470,8 +512,11 @@ export default function App() {
   const dragCounterRef = useRef(0);
   const pendingPasteHideRef = useRef(false);
   const pendingTreeSignatureRef = useRef<string | null>(null);
+  const pendingTreeLabelRef = useRef("");
+  const pendingSharedSubtreeTaxonomyRef = useRef<SharedSubtreeTaxonomyPayload | null>(null);
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
+  const [loadedTreeLabel, setLoadedTreeLabel] = useState("tree");
   const [loadState, setLoadState] = useState<LoadState>({
     loading: false,
     message: "Load a Newick tree to begin.",
@@ -523,6 +568,8 @@ export default function App() {
   const [taxonomyStatus, setTaxonomyStatus] = useState("");
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
+  const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
+  const [showTaxonomyRankLegend, setShowTaxonomyRankLegend] = useState(false);
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
   const handleHoverChange = useCallback(() => {}, []);
 
@@ -720,6 +767,16 @@ export default function App() {
     metadataValueColumn,
     tree,
   ]);
+  const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
+    () => [...(taxonomyMap?.activeRanks ?? [])].sort(
+      (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
+    ),
+    [taxonomyMap],
+  );
+  const enabledTaxonomyRanks = useMemo<TaxonomyRank[]>(
+    () => availableTaxonomyRanks.filter((rank) => taxonomyRankVisibility[rank] !== false),
+    [availableTaxonomyRanks, taxonomyRankVisibility],
+  );
 
   useEffect(() => {
     if (metadataColorMode === "continuous" && !metadataValueColumnSupportsContinuous) {
@@ -748,6 +805,8 @@ export default function App() {
     if (data.type === "parse-error") {
       pendingPasteHideRef.current = false;
       pendingTreeSignatureRef.current = null;
+      pendingTreeLabelRef.current = "";
+      pendingSharedSubtreeTaxonomyRef.current = null;
       setLoadState({
         loading: false,
         message: "Failed to parse tree.",
@@ -758,7 +817,9 @@ export default function App() {
     const nextTree = buildTreeModel(data.payload);
     setTree(nextTree);
     setTreeSignature(pendingTreeSignatureRef.current);
+    setLoadedTreeLabel(pendingTreeLabelRef.current || "tree");
     pendingTreeSignatureRef.current = null;
+    pendingTreeLabelRef.current = "";
     setLoadState({
       loading: false,
       message: "",
@@ -775,6 +836,8 @@ export default function App() {
   const handleWorkerError = useCallback((event: ErrorEvent): void => {
     pendingPasteHideRef.current = false;
     pendingTreeSignatureRef.current = null;
+    pendingTreeLabelRef.current = "";
+    pendingSharedSubtreeTaxonomyRef.current = null;
     setLoadState({
       loading: false,
       message: "Tree worker failed.",
@@ -785,6 +848,8 @@ export default function App() {
   const handleWorkerMessageError = useCallback((): void => {
     pendingPasteHideRef.current = false;
     pendingTreeSignatureRef.current = null;
+    pendingTreeLabelRef.current = "";
+    pendingSharedSubtreeTaxonomyRef.current = null;
     setLoadState({
       loading: false,
       message: "Tree worker message transfer failed.",
@@ -816,6 +881,7 @@ export default function App() {
   const parseText = useCallback(async (text: string, label: string): Promise<void> => {
     const normalizedText = normalizeImportedTreeText(text);
     pendingTreeSignatureRef.current = await computeTreeSignature(normalizedText);
+    pendingTreeLabelRef.current = label;
     setLoadState({
       loading: true,
       message: `Starting worker for ${label}...`,
@@ -875,8 +941,9 @@ export default function App() {
     if (!subtreeKey) {
       return false;
     }
-    const text = window.localStorage.getItem(subtreeKey);
-    if (!text) {
+    const sharedPayload = await getSharedSubtreePayload(subtreeKey);
+    const raw = sharedPayload ? JSON.stringify(sharedPayload) : window.localStorage.getItem(subtreeKey);
+    if (!raw) {
       setLoadState({
         loading: false,
         message: "Unable to load shared subtree.",
@@ -884,7 +951,9 @@ export default function App() {
       });
       return true;
     }
-    await parseText(text, "shared subtree");
+    const payload = parseSharedSubtreeStoragePayload(raw);
+    pendingSharedSubtreeTaxonomyRef.current = payload.taxonomy ?? null;
+    await parseText(payload.newick, "shared subtree");
     return true;
   }, [parseText]);
 
@@ -910,6 +979,28 @@ export default function App() {
     }
   };
 
+  const downloadCurrentTreeNewick = useCallback((): void => {
+    if (!tree || typeof window === "undefined") {
+      return;
+    }
+    const newick = serializeSubtreeToNewick(tree, tree.root);
+    const blob = new Blob([newick], { type: "text/plain;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = window.document.createElement("a");
+    const baseLabel = loadedTreeLabel
+      .trim()
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^a-z0-9._-]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+      || "tree";
+    link.href = url;
+    link.download = `${baseLabel}.nwk`;
+    window.document.body.appendChild(link);
+    link.click();
+    window.document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  }, [loadedTreeLabel, tree]);
+
   useEffect(() => {
     if (didAutoloadRef.current) {
       return;
@@ -929,9 +1020,22 @@ export default function App() {
       setTaxonomyEnabled(false);
       return;
     }
+    setFitRequest((value) => value + 1);
+    const inheritedSubtreeTaxonomy = pendingSharedSubtreeTaxonomyRef.current;
+    if (inheritedSubtreeTaxonomy) {
+      pendingSharedSubtreeTaxonomyRef.current = null;
+      const rebuilt = rebuildSharedSubtreeTaxonomyMap(tree, inheritedSubtreeTaxonomy);
+      if (rebuilt) {
+        setTaxonomyMap(rebuilt);
+        setTaxonomyEnabled(true);
+        setTaxonomyStatus(`Loaded shared taxonomy mapping for this subtree (${rebuilt.mappedCount.toLocaleString()} mapped tips).`);
+        setTaxonomyError(null);
+        void putCachedTaxonomyMapping(treeSignature, rebuilt);
+        return;
+      }
+    }
     setTaxonomyMap(null);
     setTaxonomyEnabled(false);
-    setFitRequest((value) => value + 1);
     let cancelled = false;
     void (async () => {
       const cached = await getCachedTaxonomyMapping(treeSignature);
@@ -1135,6 +1239,8 @@ export default function App() {
     setFigureStyles(cloneDefaultFigureStyles());
     setTaxonomyColorJitter(DEFAULT_TAXONOMY_COLOR_JITTER);
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
+    setTaxonomyRankVisibility({});
+    setShowTaxonomyRankLegend(false);
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
     setVisualResetRequest((current) => current + 1);
   }, []);
@@ -1154,6 +1260,9 @@ export default function App() {
         showGenusLabels,
         taxonomyEnabled,
         taxonomyBranchColoringEnabled,
+        taxonomyRankVisibility,
+        enabledTaxonomyRanks,
+        showTaxonomyRankLegend,
         taxonomyColorJitter,
         taxonomyMappedCount: taxonomyMap?.mappedCount ?? 0,
         metadataEnabled,
@@ -1199,6 +1308,13 @@ export default function App() {
       setShowBootstrapLabels,
       setTaxonomyEnabled,
       setTaxonomyBranchColoringEnabled,
+      setTaxonomyRankVisibilityForTest: (rank: TaxonomyRank, visible: boolean) => {
+        setTaxonomyRankVisibility((current) => ({
+          ...current,
+          [rank]: visible,
+        }));
+      },
+      setShowTaxonomyRankLegendForTest: setShowTaxonomyRankLegend,
       setTaxonomyColorJitterForTest: setTaxonomyColorJitter,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
       setMetadataEnabled,
@@ -1219,7 +1335,7 @@ export default function App() {
       setMetadataColorMode,
       setMetadataApplyScope,
       setMetadataReverseScale,
-      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "bandThicknessScale", value: string | number) => {
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale", value: string | number) => {
         updateFigureStyle(labelClass, field, value as FontFamilyKey | number);
       },
       runRealTaxonomyMappingForTest: async () => {
@@ -1297,6 +1413,7 @@ export default function App() {
     metadataValueColumn,
     order,
     branchThicknessScale,
+    enabledTaxonomyRanks,
     figureStyles,
     runTaxonomyMapping,
     searchQuery,
@@ -1307,11 +1424,13 @@ export default function App() {
     taxonomyBranchColoringEnabled,
     taxonomyColorJitter,
     taxonomyEnabled,
+    taxonomyRankVisibility,
     taxonomyMap,
     tree,
     treeSignature,
     updateFigureStyle,
     viewMode,
+    showTaxonomyRankLegend,
   ]);
 
   return (
@@ -1406,6 +1525,14 @@ export default function App() {
               onClick={() => setExportSvgRequest((value) => value + 1)}
             >
               Export View SVG
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={!tree}
+              onClick={downloadCurrentTreeNewick}
+            >
+              Download Newick
             </button>
           </div>
           {loadState.loading && loadState.message ? <p className="status-line">{loadState.message}</p> : null}
@@ -1589,6 +1716,50 @@ export default function App() {
               />
             </label>
             <div className="figure-style-value">x{branchThicknessScale.toFixed(2)}</div>
+            {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
+              <div className="taxonomy-rank-controls">
+                <div className="taxonomy-rank-controls-title">Visible taxonomy ranks</div>
+                <div className="taxonomy-rank-checkboxes">
+                  {availableTaxonomyRanks.map((rank) => (
+                    <label key={rank} className="taxonomy-rank-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={taxonomyRankVisibility[rank] !== false}
+                        onChange={(event) => {
+                          setTaxonomyRankVisibility((current) => ({
+                            ...current,
+                            [rank]: event.target.checked,
+                          }));
+                        }}
+                      />
+                      {taxonomyRankLabel(rank)}
+                    </label>
+                  ))}
+                </div>
+                <label className="taxonomy-rank-legend-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showTaxonomyRankLegend}
+                    onChange={(event) => setShowTaxonomyRankLegend(event.target.checked)}
+                    disabled={!taxonomyEnabled || enabledTaxonomyRanks.length === 0}
+                  />
+                  Show taxonomy rank legend
+                </label>
+                {showTaxonomyRankLegend && taxonomyEnabled && enabledTaxonomyRanks.length > 0 ? (
+                  <div className="taxonomy-rank-legend" data-testid="taxonomy-rank-legend">
+                    {enabledTaxonomyRanks.map((rank, index) => (
+                      <div key={rank} className="taxonomy-rank-legend-item">
+                        <span className="taxonomy-rank-legend-order">
+                          {index === 0 ? "Outer" : index === enabledTaxonomyRanks.length - 1 ? "Inner" : index + 1}
+                        </span>
+                        <span className="taxonomy-rank-legend-bar" />
+                        <span className="taxonomy-rank-legend-label">{taxonomyRankLabel(rank)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="visual-options-actions">
             <button type="button" className="secondary visual-options-reset" onClick={resetFigureStyles}>
@@ -1918,6 +2089,7 @@ export default function App() {
           taxonomyEnabled={taxonomyEnabled}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
           taxonomyColorJitter={taxonomyColorJitter}
+          taxonomyRankVisibility={taxonomyRankVisibility}
           taxonomyMap={taxonomyMap}
           metadataBranchColors={metadataEnabled && metadataOverlay.hasAny ? metadataOverlay.colors : null}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}

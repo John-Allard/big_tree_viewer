@@ -1,8 +1,10 @@
 import type { TaxonomyMapPayload } from "../types/taxonomy";
+import type { SharedSubtreeStoragePayload } from "./sharedSubtreePayload";
 
 const DB_NAME = "big-tree-viewer-taxonomy";
 const ARCHIVE_STORE_NAME = "archives";
 const MAPPING_STORE_NAME = "mappings";
+const SUBTREE_STORE_NAME = "shared-subtrees";
 const ARCHIVE_KEY = "ncbi-taxdmp-zip";
 const LATEST_MAPPING_KEY = "latest-tree-mapping";
 const TAXONOMY_MAPPING_CACHE_VERSION = 3;
@@ -15,7 +17,7 @@ interface CachedTaxonomyMappingRecord {
 
 function openTaxonomyDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(ARCHIVE_STORE_NAME)) {
@@ -23,6 +25,9 @@ function openTaxonomyDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(MAPPING_STORE_NAME)) {
         db.createObjectStore(MAPPING_STORE_NAME);
+      }
+      if (!db.objectStoreNames.contains(SUBTREE_STORE_NAME)) {
+        db.createObjectStore(SUBTREE_STORE_NAME);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -85,6 +90,30 @@ export async function putCachedTaxonomyMapping(treeSignature: string, payload: T
     } satisfies CachedTaxonomyMappingRecord, LATEST_MAPPING_KEY);
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error ?? new Error("Unable to update taxonomy mapping cache."));
+    transaction.oncomplete = () => db.close();
+  });
+}
+
+export async function getSharedSubtreePayload(key: string): Promise<SharedSubtreeStoragePayload | null> {
+  const db = await openTaxonomyDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(SUBTREE_STORE_NAME, "readonly");
+    const store = transaction.objectStore(SUBTREE_STORE_NAME);
+    const request = store.get(key);
+    request.onsuccess = () => resolve((request.result as SharedSubtreeStoragePayload | undefined) ?? null);
+    request.onerror = () => reject(request.error ?? new Error("Unable to read shared subtree payload."));
+    transaction.oncomplete = () => db.close();
+  });
+}
+
+export async function putSharedSubtreePayload(key: string, payload: SharedSubtreeStoragePayload): Promise<void> {
+  const db = await openTaxonomyDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(SUBTREE_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(SUBTREE_STORE_NAME);
+    const request = store.put(payload, key);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error ?? new Error("Unable to store shared subtree payload."));
     transaction.oncomplete = () => db.close();
   });
 }

@@ -56,6 +56,9 @@ export interface HoverInfo {
   name: string;
   screenX: number;
   screenY: number;
+  kind?: "node" | "taxonomy";
+  taxonomyRank?: string | null;
+  mrcaAge?: number | null;
 }
 
 export interface LoadState {

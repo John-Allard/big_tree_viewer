@@ -13,6 +13,11 @@ declare global {
       setShowBootstrapLabels: (visible: boolean) => void;
       setTaxonomyEnabled: (visible: boolean) => void;
       setTaxonomyBranchColoringEnabled: (enabled: boolean) => void;
+      setTaxonomyRankVisibilityForTest: (
+        rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus",
+        visible: boolean,
+      ) => void;
+      setShowTaxonomyRankLegendForTest: (visible: boolean) => void;
       setTaxonomyColorJitterForTest: (value: number) => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setMetadataEnabled: (visible: boolean) => void;
@@ -28,7 +33,7 @@ declare global {
       setMetadataReverseScale: (reverse: boolean) => void;
       setFigureStyleForTest: (
         labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
-        field: "fontFamily" | "sizeScale" | "offsetPx" | "bandThicknessScale",
+        field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale",
         value: string | number,
       ) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;
