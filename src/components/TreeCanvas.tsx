@@ -382,9 +382,10 @@ function buildTaxonomyColorMap(
   topLevelOverrides: Map<string, string>,
   jitterScale: number,
 ): TaxonomyColorByRank {
-  const activeRanks = sortTaxonomyRanksForDisplay(
-    taxonomyMap.activeRanks.length > 0 ? taxonomyMap.activeRanks : [...TAXONOMY_RANKS].slice(-4),
-  );
+  const activeRanks = sortTaxonomyRanksForDisplay([...taxonomyMap.activeRanks]);
+  if (activeRanks.length === 0) {
+    return {};
+  }
   const firstSeen = new Map<TaxonomyRank, Map<string, number>>();
   for (let rankIndex = 0; rankIndex < activeRanks.length; rankIndex += 1) {
     firstSeen.set(activeRanks[rankIndex], new Map());
@@ -1802,7 +1803,7 @@ export default function TreeCanvas({
   }, [contextMenu]);
   const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(
     () => sortTaxonomyRanksForDisplay(
-      (taxonomyMap?.activeRanks.length ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]).filter(
+      (taxonomyMap ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]).filter(
         (rank) => taxonomyRankVisibility[rank] !== false,
       ),
     ),

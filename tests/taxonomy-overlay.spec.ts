@@ -646,14 +646,19 @@ test("shared subtree taxonomy suppresses singleton-only ranks for tiny clades", 
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const taxonomy = window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null;
     const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const rectDebug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[]; taxonomyRenderedBlocks?: unknown[] } | undefined;
     return {
       activeRanks: taxonomy?.activeRanks ?? [],
       taxonomyHitCount: hitboxes.filter((hitbox) => hitbox.labelKind === "taxonomy").length,
+      visibleRanks: rectDebug?.taxonomyVisibleRanks ?? [],
+      renderedBlockCount: Array.isArray(rectDebug?.taxonomyRenderedBlocks) ? rectDebug.taxonomyRenderedBlocks.length : 0,
     };
   });
 
   expect(result.activeRanks).toEqual([]);
   expect(result.taxonomyHitCount).toBe(0);
+  expect(result.visibleRanks).toEqual([]);
+  expect(result.renderedBlockCount).toBe(0);
   await popup.close();
 });
 
@@ -1883,4 +1888,118 @@ test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape
   });
 
   expect(apeArcPixels.every((arc) => arc.maxDistance > 20)).toBeTruthy();
+});
+
+test("opening the real mapped Pongo taxonomy subtree in a new tab keeps genus as the only visible taxonomy rank", async ({ page, context }) => {
+  test.setTimeout(60000);
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.viewMode === "circular" && Boolean(state?.taxonomyEnabled);
+  });
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  await page.evaluate(async () => {
+    const names = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names ?? [];
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    const leafIndexMap = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLeafIndexMap() ?? {};
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    if (!camera || camera.kind !== "circular" || !state) {
+      throw new Error("Circular camera unavailable for Pongo subtree test.");
+    }
+    const pongoIndices = leafNodes
+      .filter((node) => {
+        const name = String(names[node] ?? "");
+        return name.startsWith("Pongo_") || name.startsWith("Pongo ");
+      })
+      .map((node) => Number(leafIndexMap[node]))
+      .sort((left, right) => left - right);
+    if (pongoIndices.length === 0) {
+      throw new Error("Pongo tips unavailable for subtree test.");
+    }
+    const leafCount = leafNodes.length;
+    const startIndex = pongoIndices[0];
+    const endIndex = pongoIndices[pongoIndices.length - 1] + 1;
+    const turns = Math.PI * 2;
+    const startTheta = ((startIndex - 0.5) / leafCount) * turns;
+    const endTheta = ((endIndex - 0.5) / leafCount) * turns;
+    const midTheta = (startTheta + endTheta) * 0.5;
+    const radiusWorld = Number(state.rootAge);
+    const scale = Number(camera.scale) * 384;
+    const rotatedX = ((Math.cos(midTheta) * radiusWorld) * camera.rotationCos) - ((Math.sin(midTheta) * radiusWorld) * camera.rotationSin);
+    const rotatedY = ((Math.cos(midTheta) * radiusWorld) * camera.rotationSin) + ((Math.sin(midTheta) * radiusWorld) * camera.rotationCos);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale,
+      translateX: (1400 * 0.56) - (rotatedX * scale),
+      translateY: (900 * 0.50) - (rotatedY * scale),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const taxonomyPoint = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    const canvas = document.querySelector("canvas");
+    const taxonomyHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy" && hitbox.text === "Pongo");
+    if (!(canvas instanceof HTMLCanvasElement) || !taxonomyHit) {
+      throw new Error("Pongo taxonomy label hitbox unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(taxonomyHit.x) + (Number(taxonomyHit.width) * 0.5),
+      y: rect.top + Number(taxonomyHit.y) + (Number(taxonomyHit.height) * 0.5),
+    };
+  });
+
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
+  const popupPromise = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Open Group Subtree In New Tab" }).click();
+  const popup = await popupPromise;
+  await waitForViewerReady(popup);
+  await popup.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.treeLoaded) && Boolean(state?.taxonomyEnabled);
+  });
+
+  const popupResult = await popup.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const rectDebug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyVisibleRanks?: string[];
+      taxonomyRenderedBlocks?: unknown[];
+    } | undefined;
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const circularDebug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyVisibleRanks?: string[];
+      taxonomyArcDebug?: unknown[];
+      taxonomyPlacedLabels?: unknown[];
+    } | undefined;
+    const taxonomy = window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null;
+    return {
+      activeRanks: taxonomy?.activeRanks ?? [],
+      rectVisibleRanks: rectDebug?.taxonomyVisibleRanks ?? [],
+      rectRenderedBlockCount: Array.isArray(rectDebug?.taxonomyRenderedBlocks) ? rectDebug.taxonomyRenderedBlocks.length : 0,
+      circularVisibleRanks: circularDebug?.taxonomyVisibleRanks ?? [],
+      circularArcCount: Array.isArray(circularDebug?.taxonomyArcDebug) ? circularDebug.taxonomyArcDebug.length : 0,
+      circularLabelCount: Array.isArray(circularDebug?.taxonomyPlacedLabels) ? circularDebug.taxonomyPlacedLabels.length : 0,
+    };
+  });
+
+  expect(popupResult.activeRanks).toEqual(["genus"]);
+  expect(popupResult.rectVisibleRanks).toEqual(["genus"]);
+  expect(popupResult.rectRenderedBlockCount).toBeGreaterThan(0);
+  expect(popupResult.circularVisibleRanks).toEqual(["genus"]);
+  expect(popupResult.circularArcCount).toBeGreaterThan(0);
+  await popup.close();
 });

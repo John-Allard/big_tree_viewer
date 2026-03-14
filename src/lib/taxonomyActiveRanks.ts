@@ -38,7 +38,6 @@ export function deriveActiveTaxonomyRanks(
     }
   }
   const activeRanks = ACTIVE_TAXONOMY_RANK_ORDER.filter((rank) => {
-    const uniqueLabels = rankToLabels.get(rank)?.size ?? 0;
     const counts = rankToCounts.get(rank);
     let largestBlock = 0;
     counts?.forEach((count) => {
@@ -46,7 +45,7 @@ export function deriveActiveTaxonomyRanks(
         largestBlock = count;
       }
     });
-    return uniqueLabels > 1 && largestBlock > 1;
+    return largestBlock > 1;
   });
   while (activeRanks.length > 1) {
     const topRank = activeRanks[activeRanks.length - 1];
