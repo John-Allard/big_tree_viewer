@@ -53,7 +53,7 @@ function parseNewick(text: string): { nodes: TempNode[]; root: number; maxDepth:
   let expectingChild = false;
   let readingLength = false;
   let lengthTarget = -1;
-  let inQuote = false;
+  let quoteChar: "'" | "\"" | null = null;
 
   const createNode = (parent: number): number => {
     const id = nodes.length;
@@ -125,19 +125,21 @@ function parseNewick(text: string): { nodes: TempNode[]; root: number; maxDepth:
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
-    if (inQuote) {
-      if (ch === "'") {
-        if (text[i + 1] === "'") {
+    if (quoteChar !== null) {
+      if (ch === quoteChar) {
+        if (quoteChar === "'" && text[i + 1] === "'") {
           i += 1;
+        } else if (quoteChar === "\"" && text[i - 1] === "\\") {
+          // Keep escaped quotes inside double-quoted labels.
         } else {
-          inQuote = false;
+          quoteChar = null;
         }
       }
       i += 1;
       continue;
     }
-    if (ch === "'") {
-      inQuote = true;
+    if (ch === "'" || ch === "\"") {
+      quoteChar = ch;
       if (tokenStart < 0) {
         tokenStart = i;
       }

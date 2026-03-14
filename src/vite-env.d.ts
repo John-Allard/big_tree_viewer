@@ -17,7 +17,6 @@ declare global {
         rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus",
         visible: boolean,
       ) => void;
-      setShowTaxonomyRankLegendForTest: (visible: boolean) => void;
       setTaxonomyColorJitterForTest: (value: number) => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setMetadataEnabled: (visible: boolean) => void;
@@ -31,6 +30,12 @@ declare global {
       setMetadataColorMode: (mode: "categorical" | "continuous") => void;
       setMetadataApplyScope: (scope: "branch" | "subtree") => void;
       setMetadataReverseScale: (reverse: boolean) => void;
+      setMetadataContinuousPalette: (palette: "blueOrange" | "viridis" | "redBlue" | "tealRose") => void;
+      setMetadataContinuousTransform: (transform: "linear" | "sqrt" | "log") => void;
+      setMetadataContinuousMinInput: (value: string) => void;
+      setMetadataContinuousMaxInput: (value: string) => void;
+      setMetadataLabelsEnabled: (visible: boolean) => void;
+      setMetadataLabelColumn: (column: string) => void;
       setFigureStyleForTest: (
         labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
         field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale",

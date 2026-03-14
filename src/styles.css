@@ -424,47 +424,8 @@ button.secondary {
   font-size: 0.88rem;
 }
 
-.taxonomy-rank-checkbox input[type="checkbox"],
-.taxonomy-rank-legend-toggle input[type="checkbox"] {
+.taxonomy-rank-checkbox input[type="checkbox"] {
   width: auto;
-}
-
-.taxonomy-rank-legend-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  color: #334155;
-  font-size: 0.88rem;
-}
-
-.taxonomy-rank-legend {
-  display: grid;
-  gap: 0.42rem;
-}
-
-.taxonomy-rank-legend-item {
-  display: grid;
-  grid-template-columns: auto 18px minmax(0, 1fr);
-  gap: 0.55rem;
-  align-items: center;
-  color: #334155;
-  font-size: 0.86rem;
-}
-
-.taxonomy-rank-legend-order {
-  color: #64748b;
-  font-variant-numeric: tabular-nums;
-}
-
-.taxonomy-rank-legend-bar {
-  width: 18px;
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #94a3b8, #475569);
-}
-
-.taxonomy-rank-legend-label {
-  min-width: 0;
 }
 
 .visual-options-actions {

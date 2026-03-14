@@ -37,7 +37,17 @@ export function deriveActiveTaxonomyRanks(
       }
     }
   }
-  const activeRanks = ACTIVE_TAXONOMY_RANK_ORDER.filter((rank) => (rankToLabels.get(rank)?.size ?? 0) > 1);
+  const activeRanks = ACTIVE_TAXONOMY_RANK_ORDER.filter((rank) => {
+    const uniqueLabels = rankToLabels.get(rank)?.size ?? 0;
+    const counts = rankToCounts.get(rank);
+    let largestBlock = 0;
+    counts?.forEach((count) => {
+      if (count > largestBlock) {
+        largestBlock = count;
+      }
+    });
+    return uniqueLabels > 1 && largestBlock > 1;
+  });
   while (activeRanks.length > 1) {
     const topRank = activeRanks[activeRanks.length - 1];
     const counts = rankToCounts.get(topRank);

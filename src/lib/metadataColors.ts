@@ -2,6 +2,8 @@ import type { TreeModel } from "../types/tree";
 
 export type MetadataColorMode = "categorical" | "continuous";
 export type MetadataApplyScope = "branch" | "subtree";
+export type MetadataContinuousPalette = "blueOrange" | "viridis" | "redBlue" | "tealRose";
+export type MetadataContinuousTransform = "linear" | "sqrt" | "log";
 
 export interface ParsedMetadataTable {
   columns: string[];
@@ -20,6 +22,11 @@ export interface MetadataContinuousLegend {
   max: number;
   startColor: string;
   endColor: string;
+  gradientCss: string;
+  actualMin: number;
+  actualMax: number;
+  palette: MetadataContinuousPalette;
+  transform: MetadataContinuousTransform;
 }
 
 export interface MetadataColorOverlayResult {
@@ -33,6 +40,25 @@ export interface MetadataColorOverlayResult {
   categoryLegend: MetadataLegendCategoryItem[];
   continuousLegend: MetadataContinuousLegend | null;
   version: string;
+}
+
+export interface MetadataLabelOverlayResult {
+  labels: Array<string | null>;
+  hasAny: boolean;
+  labeledNodeCount: number;
+  matchedRowCount: number;
+  unmappedRowCount: number;
+  version: string;
+}
+
+export interface MetadataColorOverlayOptions {
+  mode: MetadataColorMode;
+  scope: MetadataApplyScope;
+  reverseScale: boolean;
+  continuousPalette: MetadataContinuousPalette;
+  continuousTransform: MetadataContinuousTransform;
+  continuousMin: number | null;
+  continuousMax: number | null;
 }
 
 const CATEGORICAL_PALETTE = [
@@ -49,6 +75,25 @@ const CATEGORICAL_PALETTE = [
   "#0f766e",
   "#b45309",
 ];
+
+export const METADATA_CONTINUOUS_PALETTES: Record<MetadataContinuousPalette, { label: string; stops: string[] }> = {
+  blueOrange: {
+    label: "Blue to orange",
+    stops: ["#2563eb", "#d97706"],
+  },
+  viridis: {
+    label: "Viridis",
+    stops: ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"],
+  },
+  redBlue: {
+    label: "Red to blue",
+    stops: ["#b91c1c", "#f8fafc", "#1d4ed8"],
+  },
+  tealRose: {
+    label: "Teal to rose",
+    stops: ["#0f766e", "#f8fafc", "#e11d48"],
+  },
+};
 
 function normalizeKey(value: string): string {
   return value.trim().replace(/^['"]+|['"]+$/g, "").replaceAll("_", " ").replace(/\s+/g, " ").toLowerCase();
@@ -154,6 +199,28 @@ function interpolateColor(start: string, end: string, t: number): string {
   );
 }
 
+function interpolatePalette(stops: string[], t: number): string {
+  if (stops.length <= 1) {
+    return stops[0] ?? "#2563eb";
+  }
+  const clamped = Math.max(0, Math.min(1, t));
+  const scaled = clamped * (stops.length - 1);
+  const leftIndex = Math.floor(scaled);
+  const rightIndex = Math.min(stops.length - 1, leftIndex + 1);
+  const localT = scaled - leftIndex;
+  return interpolateColor(stops[leftIndex], stops[rightIndex], localT);
+}
+
+function buildGradientCss(stops: string[]): string {
+  if (stops.length <= 1) {
+    return stops[0] ?? "#2563eb";
+  }
+  return `linear-gradient(90deg, ${stops.map((stop, index) => {
+    const percent = stops.length === 1 ? 0 : (index / (stops.length - 1)) * 100;
+    return `${stop} ${percent.toFixed(2)}%`;
+  }).join(", ")})`;
+}
+
 function categoricalColor(index: number): string {
   if (index < CATEGORICAL_PALETTE.length) {
     return CATEGORICAL_PALETTE[index];
@@ -175,6 +242,31 @@ function buildNodeLookup(tree: TreeModel): Map<string, number[]> {
     byName.set(normalized, existing);
   }
   return byName;
+}
+
+function signedSqrt(value: number): number {
+  return Math.sign(value) * Math.sqrt(Math.abs(value));
+}
+
+function signedLog1p(value: number): number {
+  return Math.sign(value) * Math.log10(1 + Math.abs(value));
+}
+
+function transformContinuousValue(value: number, transform: MetadataContinuousTransform): number {
+  if (transform === "sqrt") {
+    return signedSqrt(value);
+  }
+  if (transform === "log") {
+    return signedLog1p(value);
+  }
+  return value;
+}
+
+function normalizeContinuousBounds(min: number | null, max: number | null): { min: number | null; max: number | null } {
+  if (min === null || max === null) {
+    return { min, max };
+  }
+  return min <= max ? { min, max } : { min: max, max: min };
 }
 
 function applySubtreeColor(tree: TreeModel, colors: Array<string | null>, node: number, color: string): number {
@@ -242,10 +334,17 @@ export function buildMetadataColorOverlay(
   rows: Array<Record<string, string>>,
   keyColumn: string,
   valueColumn: string,
-  mode: MetadataColorMode,
-  scope: MetadataApplyScope,
-  reverseScale: boolean,
+  options: MetadataColorOverlayOptions,
 ): MetadataColorOverlayResult {
+  const {
+    mode,
+    scope,
+    reverseScale,
+    continuousPalette,
+    continuousTransform,
+    continuousMin,
+    continuousMax,
+  } = options;
   const colors = new Array<string | null>(tree.nodeCount).fill(null);
   const byName = buildNodeLookup(tree);
   const matchedNodes = new Set<number>();
@@ -305,8 +404,8 @@ export function buildMetadataColorOverlay(
   }
 
   const numericEntries: Array<{ nodes: number[]; value: number }> = [];
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
+  let actualMin = Number.POSITIVE_INFINITY;
+  let actualMax = Number.NEGATIVE_INFINITY;
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const key = normalizeKey(rows[rowIndex][keyColumn] ?? "");
     const raw = (rows[rowIndex][valueColumn] ?? "").trim();
@@ -325,19 +424,28 @@ export function buildMetadataColorOverlay(
     }
     matchedRowCount += 1;
     numericEntries.push({ nodes, value });
-    min = Math.min(min, value);
-    max = Math.max(max, value);
+    actualMin = Math.min(actualMin, value);
+    actualMax = Math.max(actualMax, value);
     for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
       matchedNodes.add(nodes[nodeIndex]);
     }
   }
-  const startColor = reverseScale ? "#d97706" : "#2563eb";
-  const endColor = reverseScale ? "#2563eb" : "#d97706";
-  const span = Math.max(1e-9, max - min);
+  const paletteStops = [...METADATA_CONTINUOUS_PALETTES[continuousPalette].stops];
+  if (reverseScale) {
+    paletteStops.reverse();
+  }
+  const bounded = normalizeContinuousBounds(continuousMin, continuousMax);
+  const legendMin = bounded.min ?? actualMin;
+  const legendMax = bounded.max ?? actualMax;
+  const transformedMin = transformContinuousValue(legendMin, continuousTransform);
+  const transformedMax = transformContinuousValue(legendMax, continuousTransform);
+  const span = Math.max(1e-9, transformedMax - transformedMin);
   for (let entryIndex = 0; entryIndex < numericEntries.length; entryIndex += 1) {
     const entry = numericEntries[entryIndex];
-    const t = max > min ? (entry.value - min) / span : 0.5;
-    const color = interpolateColor(startColor, endColor, t);
+    const clampedValue = Math.max(legendMin, Math.min(legendMax, entry.value));
+    const transformedValue = transformContinuousValue(clampedValue, continuousTransform);
+    const t = legendMax > legendMin ? (transformedValue - transformedMin) / span : 0.5;
+    const color = interpolatePalette(paletteStops, t);
     for (let nodeIndex = 0; nodeIndex < entry.nodes.length; nodeIndex += 1) {
       const node = entry.nodes[nodeIndex];
       if (scope === "subtree") {
@@ -361,12 +469,62 @@ export function buildMetadataColorOverlay(
     categoryLegend: [],
     continuousLegend: numericEntries.length > 0
       ? {
-        min,
-        max,
-        startColor,
-        endColor,
+        min: legendMin,
+        max: legendMax,
+        startColor: paletteStops[0],
+        endColor: paletteStops[paletteStops.length - 1],
+        gradientCss: buildGradientCss(paletteStops),
+        actualMin,
+        actualMax,
+        palette: continuousPalette,
+        transform: continuousTransform,
       }
       : null,
-    version: `continuous:${keyColumn}:${valueColumn}:${scope}:${reverseScale ? "reverse" : "forward"}:${rows.length}:${min}:${max}`,
+    version: `continuous:${keyColumn}:${valueColumn}:${scope}:${reverseScale ? "reverse" : "forward"}:${continuousPalette}:${continuousTransform}:${bounded.min ?? "auto"}:${bounded.max ?? "auto"}:${rows.length}:${actualMin}:${actualMax}`,
+  };
+}
+
+export function buildMetadataLabelOverlay(
+  tree: TreeModel,
+  rows: Array<Record<string, string>>,
+  keyColumn: string,
+  labelColumn: string,
+  scope: MetadataApplyScope,
+): MetadataLabelOverlayResult {
+  const labels = new Array<string | null>(tree.nodeCount).fill(null);
+  const byName = buildNodeLookup(tree);
+  let labeledNodeCount = 0;
+  let matchedRowCount = 0;
+  let unmappedRowCount = 0;
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const key = normalizeKey(rows[rowIndex][keyColumn] ?? "");
+    const label = (rows[rowIndex][labelColumn] ?? "").trim();
+    if (!key || !label) {
+      continue;
+    }
+    const nodes = byName.get(key);
+    if (!nodes || nodes.length === 0) {
+      unmappedRowCount += 1;
+      continue;
+    }
+    matchedRowCount += 1;
+    for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+      const node = nodes[nodeIndex];
+      const targetNode = scope === "subtree" ? node : node;
+      if (labels[targetNode] === null) {
+        labeledNodeCount += 1;
+      }
+      labels[targetNode] = label;
+    }
+  }
+
+  return {
+    labels,
+    hasAny: labeledNodeCount > 0,
+    labeledNodeCount,
+    matchedRowCount,
+    unmappedRowCount,
+    version: `labels:${keyColumn}:${labelColumn}:${scope}:${rows.length}:${labeledNodeCount}`,
   };
 }

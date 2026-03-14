@@ -1668,6 +1668,8 @@ export default function TreeCanvas({
   taxonomyMap,
   metadataBranchColors,
   metadataBranchColorVersion,
+  metadataLabels,
+  metadataLabelVersion,
   showInternalNodeLabels,
   showBootstrapLabels,
   figureStyles,
@@ -1862,6 +1864,18 @@ export default function TreeCanvas({
       hasAny: metadataBranchColors.some((color) => color !== null),
     };
   }, [metadataBranchColors, tree]);
+  const metadataLabelNodes = useMemo(() => {
+    if (!tree || !metadataLabels || metadataLabels.length !== tree.nodeCount) {
+      return [] as number[];
+    }
+    const nodes: number[] = [];
+    for (let node = 0; node < tree.nodeCount; node += 1) {
+      if (metadataLabels[node]) {
+        nodes.push(node);
+      }
+    }
+    return nodes;
+  }, [metadataLabels, tree]);
   useLayoutEffect(() => {
     taxonomyBranchColorsCacheRef.current.clear();
     effectiveBranchColorsCacheRef.current.clear();
@@ -1870,7 +1884,7 @@ export default function TreeCanvas({
     circularBasePathCacheRef.current.clear();
     rectBasePathCacheRef.current.clear();
     circularTaxonomyBitmapCacheRef.current = null;
-  }, [branchThicknessScale, manualBranchColorVersion, metadataBranchColorVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
+  }, [branchThicknessScale, manualBranchColorVersion, metadataBranchColorVersion, metadataLabelVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const labelFontFamilies = useMemo<Record<LabelStyleClass, string>>(() => ({
     tip: fontFamilyCss(figureStyles.tip.fontFamily),
@@ -3832,6 +3846,55 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
+      if (metadataLabelNodes.length > 0 && metadataLabels && camera.scaleX > 1.05) {
+        const fontSize = scaleLabelFontSize("internalNode", Math.max(8, Math.min(12, Math.min(camera.scaleY * 0.25, camera.scaleX * 0.18))));
+        const labels: ScreenLabel[] = [];
+        ctx.font = `${fontSize}px ${labelFontFamilies.internalNode}`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        const maxVisibleMetadataLabels = 320;
+        for (let index = 0; index < metadataLabelNodes.length; index += 1) {
+          if (labels.length >= maxVisibleMetadataLabels) {
+            break;
+          }
+          const node = metadataLabelNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const labelText = metadataLabels[node];
+          if (!labelText) {
+            continue;
+          }
+          const x = tree.buffers.depth[node];
+          const y = layout.center[node];
+          if (x < minX || x > maxX || y < minY || y > maxY) {
+            continue;
+          }
+          const screen = worldToScreenRect(camera, x, y);
+          const labelX = screen.x + 10 + figureStyles.internalNode.offsetXPx;
+          const labelY = screen.y - 12 + figureStyles.internalNode.offsetYPx;
+          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.5, estimateLabelWidth(fontSize, labelText.length))) {
+            continue;
+          }
+          labels.push({
+            x: labelX,
+            y: labelY,
+            text: labelText,
+            alpha: 0.9,
+            fontSize,
+            color: effectiveBranchColors?.[node] ?? metadataBranchColorOverlay.colors[node] ?? "#1f2937",
+          });
+        }
+        for (let index = 0; index < labels.length; index += 1) {
+          const label = labels[index];
+          ctx.globalAlpha = label.alpha;
+          ctx.fillStyle = label.color ?? "#1f2937";
+          ctx.fillText(label.text, label.x, label.y);
+          pushSceneText(label.text, label.x, label.y, label.color ?? "#1f2937", label.fontSize ?? fontSize, labelFontFamilies.internalNode, "start");
+        }
+        ctx.globalAlpha = 1;
+      }
+
       if (tree.isUltrametric && showScaleBars) {
         ctx.fillStyle = "rgba(251,252,254,0.96)";
         ctx.fillRect(0, size.height - axisBarHeight, size.width, axisBarHeight);
@@ -5712,6 +5775,74 @@ export default function TreeCanvas({
           ctx.fillText(label.text, 0, 0);
           ctx.restore();
           pushSceneText(label.text, label.x, label.y, "#64748b", fontSize, labelFontFamilies.nodeHeight, label.align === "right" ? "end" : "start", label.rotation ?? 0);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      if (metadataLabelNodes.length > 0 && metadataLabels && camera.scale > 5.5) {
+        const fontSize = scaleLabelFontSize("internalNode", Math.max(8, Math.min(11.5, camera.scale * 0.038)));
+        const labels: ScreenLabel[] = [];
+        ctx.font = `${fontSize}px ${labelFontFamilies.internalNode}`;
+        ctx.textBaseline = "middle";
+        const maxVisibleMetadataLabels = 240;
+        for (let index = 0; index < metadataLabelNodes.length; index += 1) {
+          if (labels.length >= maxVisibleMetadataLabels) {
+            break;
+          }
+          const node = metadataLabelNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const labelText = metadataLabels[node];
+          if (!labelText) {
+            continue;
+          }
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const radius = tree.buffers.depth[node] + (12 / camera.scale);
+          const point = polarToCartesian(radius, theta);
+          const screen = worldToScreenCircular(camera, point.x, point.y);
+          const labelX = screen.x + figureStyles.internalNode.offsetXPx;
+          const labelY = screen.y - 10 + figureStyles.internalNode.offsetYPx;
+          if (labelX < -40 || labelX > size.width + 40 || labelY < -40 || labelY > size.height + 40) {
+            continue;
+          }
+          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.8, estimateLabelWidth(fontSize, labelText.length))) {
+            continue;
+          }
+          const renderedTheta = theta + rotationAngle;
+          const onRightSide = Math.cos(renderedTheta) >= 0;
+          const rotation = normalizeRotation((renderedTheta * 180 / Math.PI) + (onRightSide ? 90 : 270)) * Math.PI / 180;
+          labels.push({
+            x: labelX,
+            y: labelY,
+            text: labelText,
+            alpha: 0.9,
+            fontSize,
+            rotation,
+            align: onRightSide ? "left" : "right",
+            color: effectiveBranchColors?.[node] ?? metadataBranchColorOverlay.colors[node] ?? "#1f2937",
+          });
+        }
+        for (let index = 0; index < labels.length; index += 1) {
+          const label = labels[index];
+          ctx.globalAlpha = label.alpha;
+          ctx.fillStyle = label.color ?? "#1f2937";
+          ctx.save();
+          ctx.translate(label.x, label.y);
+          ctx.rotate(label.rotation ?? 0);
+          ctx.textAlign = label.align ?? "left";
+          ctx.fillText(label.text, 0, 0);
+          ctx.restore();
+          pushSceneText(
+            label.text,
+            label.x,
+            label.y,
+            label.color ?? "#1f2937",
+            label.fontSize ?? fontSize,
+            labelFontFamilies.internalNode,
+            label.align === "right" ? "end" : "start",
+            label.rotation ?? 0,
+          );
         }
         ctx.globalAlpha = 1;
       }

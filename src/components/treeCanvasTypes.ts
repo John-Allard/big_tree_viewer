@@ -19,6 +19,8 @@ export interface TreeCanvasProps {
   taxonomyMap: TaxonomyMapPayload | null;
   metadataBranchColors: Array<string | null> | null;
   metadataBranchColorVersion: string;
+  metadataLabels: Array<string | null> | null;
+  metadataLabelVersion: string;
   showInternalNodeLabels: boolean;
   showBootstrapLabels: boolean;
   figureStyles: FigureStyleSettings;

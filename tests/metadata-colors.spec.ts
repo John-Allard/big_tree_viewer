@@ -140,6 +140,66 @@ test("continuous metadata mapping shows a gradient legend and distinct colors", 
   expect(result.colors[sample[0].node]).not.toBe(result.colors[sample[2].node]);
 });
 
+test("continuous metadata controls support palette, transform, and clamp settings", async ({ page }) => {
+  await waitForViewer(page);
+  const sample = await page.evaluate(() => {
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const leafNodes = internal?.leafNodes ?? [];
+    const names = internal?.names ?? [];
+    if (leafNodes.length < 3) {
+      throw new Error("Not enough leaf nodes for metadata continuous controls test.");
+    }
+    return leafNodes.slice(0, 3).map((node) => ({ node, name: names[node] ?? "" }));
+  });
+  await page.evaluate((chosen) => {
+    const csv = `name,score\n"${chosen[0].name}",-100\n"${chosen[1].name}",0\n"${chosen[2].name}",100\n`;
+    window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(csv, "signed-scores.csv");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataContinuousPalette("viridis");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataContinuousTransform("sqrt");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataContinuousMinInput("-25");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataContinuousMaxInput("25");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+  }, sample);
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.metadataContinuousPalette === "viridis" && state?.metadataContinuousTransform === "sqrt";
+  });
+  const result = await page.evaluate(() => ({
+    state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState(),
+    colors: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? [],
+  }));
+
+  expect(result.state?.metadataContinuousMin).toBe(-25);
+  expect(result.state?.metadataContinuousMax).toBe(25);
+  await page.getByRole("button", { name: /Metadata/ }).click();
+  await expect(page.getByTestId("metadata-gradient-legend")).toContainText("Viridis");
+  await expect(page.getByTestId("metadata-gradient-legend")).toContainText("sqrt");
+  expect(result.colors[sample[0].node]).not.toBe(result.colors[sample[1].node]);
+  expect(result.colors[sample[2].node]).not.toBe(result.colors[sample[1].node]);
+});
+
+test("metadata labels can annotate matched nodes in SVG export", async ({ page }) => {
+  await waitForViewer(page);
+  await loadLabeledTree(page);
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(
+      "label,group,note\nCladeOne,Alpha,Major clade\nCladeTwo,Beta,Sister clade\n",
+      "notes.csv",
+    );
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataApplyScope("subtree");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelsEnabled(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelColumn("note");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain("Major clade");
+  expect(svg).toContain("Sister clade");
+});
+
 test("metadata colors override taxonomy colors and manual colors override metadata", async ({ page }) => {
   await waitForViewer(page);
   const seed = await page.evaluate(async () => {

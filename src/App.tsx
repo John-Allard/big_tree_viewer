@@ -14,11 +14,16 @@ import {
 } from "./lib/figureStyles";
 import {
   buildMetadataColorOverlay,
+  buildMetadataLabelOverlay,
+  METADATA_CONTINUOUS_PALETTES,
   metadataColumnLooksContinuous,
   parseMetadataTable,
   type MetadataApplyScope,
   type MetadataColorMode,
+  type MetadataContinuousPalette,
+  type MetadataContinuousTransform,
   type MetadataColorOverlayResult,
+  type MetadataLabelOverlayResult,
   type ParsedMetadataTable,
 } from "./lib/metadataColors";
 import {
@@ -34,6 +39,7 @@ import {
   putCachedTaxonomyArchive,
   putCachedTaxonomyMapping,
 } from "./lib/taxonomyCache";
+import { normalizeImportedTreeText } from "./lib/treeImport";
 import type { WorkerResponse } from "./types/messages";
 import { TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
@@ -301,6 +307,15 @@ const EMPTY_METADATA_OVERLAY: MetadataColorOverlayResult = {
   version: "",
 };
 
+const EMPTY_METADATA_LABEL_OVERLAY: MetadataLabelOverlayResult = {
+  labels: [],
+  hasAny: false,
+  labeledNodeCount: 0,
+  matchedRowCount: 0,
+  unmappedRowCount: 0,
+  version: "",
+};
+
 const SEARCH_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "superkingdom",
   "phylum",
@@ -397,107 +412,6 @@ function buildTreeModel(payload: WorkerTreePayload): TreeModel {
   };
 }
 
-function splitOutsideQuotes(value: string, delimiter: string): string[] {
-  const parts: string[] = [];
-  let current = "";
-  let quote: "'" | "\"" | null = null;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (character === "'" || character === "\"") {
-      if (quote === character) {
-        quote = null;
-      } else if (quote === null) {
-        quote = character;
-      }
-      current += character;
-      continue;
-    }
-    if (character === delimiter && quote === null) {
-      if (current.trim()) {
-        parts.push(current.trim());
-      }
-      current = "";
-      continue;
-    }
-    current += character;
-  }
-  if (current.trim()) {
-    parts.push(current.trim());
-  }
-  return parts;
-}
-
-function stripWrappingQuotes(value: string): string {
-  return value.trim().replace(/^['"]+|['"]+$/g, "");
-}
-
-function applyNexusTranslate(newick: string, translate: Map<string, string>): string {
-  if (translate.size === 0) {
-    return newick;
-  }
-  let output = "";
-  let token = "";
-  let quote: "'" | "\"" | null = null;
-  const flushToken = (): void => {
-    if (!token) {
-      return;
-    }
-    output += translate.get(token) ?? token;
-    token = "";
-  };
-  for (let index = 0; index < newick.length; index += 1) {
-    const character = newick[index];
-    if (character === "'" || character === "\"") {
-      flushToken();
-      if (quote === character) {
-        quote = null;
-      } else if (quote === null) {
-        quote = character;
-      }
-      output += character;
-      continue;
-    }
-    if (quote !== null) {
-      output += character;
-      continue;
-    }
-    if (/[\s(),:;[\]]/.test(character)) {
-      flushToken();
-      output += character;
-      continue;
-    }
-    token += character;
-  }
-  flushToken();
-  return output;
-}
-
-function normalizeImportedTreeText(text: string): string {
-  const trimmed = text.trim();
-  if (!/^#?nexus/i.test(trimmed) && !/begin\s+trees\s*;/i.test(trimmed)) {
-    return text;
-  }
-  const treeBlockMatch = /begin\s+trees\s*;([\s\S]*?)end\s*;/i.exec(trimmed);
-  const treeBlock = treeBlockMatch?.[1] ?? trimmed;
-  const translate = new Map<string, string>();
-  const translateMatch = /translate\s+([\s\S]*?);/i.exec(treeBlock);
-  if (translateMatch) {
-    const entries = splitOutsideQuotes(translateMatch[1], ",");
-    for (let index = 0; index < entries.length; index += 1) {
-      const match = /^(\S+)\s+(.+)$/.exec(entries[index].trim());
-      if (!match) {
-        continue;
-      }
-      translate.set(match[1], stripWrappingQuotes(match[2]));
-    }
-  }
-  const treeMatch = /tree\s+[^=]+=\s*(?:\[[^\]]*\]\s*)*([\s\S]*?;)/i.exec(treeBlock);
-  if (!treeMatch) {
-    return text;
-  }
-  return applyNexusTranslate(treeMatch[1].trim(), translate);
-}
-
 async function computeTreeSignature(text: string): Promise<string> {
   const encoded = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest("SHA-256", encoded);
@@ -561,6 +475,12 @@ export default function App() {
   const [metadataColorMode, setMetadataColorMode] = useState<MetadataColorMode>("categorical");
   const [metadataApplyScope, setMetadataApplyScope] = useState<MetadataApplyScope>("branch");
   const [metadataReverseScale, setMetadataReverseScale] = useState(false);
+  const [metadataContinuousPalette, setMetadataContinuousPalette] = useState<MetadataContinuousPalette>("blueOrange");
+  const [metadataContinuousTransform, setMetadataContinuousTransform] = useState<MetadataContinuousTransform>("linear");
+  const [metadataContinuousMinInput, setMetadataContinuousMinInput] = useState("");
+  const [metadataContinuousMaxInput, setMetadataContinuousMaxInput] = useState("");
+  const [metadataLabelsEnabled, setMetadataLabelsEnabled] = useState(false);
+  const [metadataLabelColumn, setMetadataLabelColumn] = useState("");
   const [metadataStatus, setMetadataStatus] = useState("");
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
@@ -569,7 +489,6 @@ export default function App() {
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
-  const [showTaxonomyRankLegend, setShowTaxonomyRankLegend] = useState(false);
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
   const handleHoverChange = useCallback(() => {}, []);
 
@@ -745,6 +664,22 @@ export default function App() {
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
     [metadataTable, metadataValueColumn],
   );
+  const metadataContinuousMin = useMemo(() => {
+    const trimmed = metadataContinuousMinInput.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [metadataContinuousMinInput]);
+  const metadataContinuousMax = useMemo(() => {
+    const trimmed = metadataContinuousMaxInput.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [metadataContinuousMaxInput]);
   const metadataOverlay = useMemo<MetadataColorOverlayResult>(() => {
     if (!tree || !metadataTable || !metadataKeyColumn || !metadataValueColumn) {
       return EMPTY_METADATA_OVERLAY;
@@ -754,30 +689,47 @@ export default function App() {
       metadataTable.rows,
       metadataKeyColumn,
       metadataValueColumn,
-      metadataColorMode,
-      metadataApplyScope,
-      metadataReverseScale,
+      {
+        mode: metadataColorMode,
+        scope: metadataApplyScope,
+        reverseScale: metadataReverseScale,
+        continuousPalette: metadataContinuousPalette,
+        continuousTransform: metadataContinuousTransform,
+        continuousMin: metadataContinuousMin,
+        continuousMax: metadataContinuousMax,
+      },
     );
   }, [
     metadataApplyScope,
     metadataColorMode,
+    metadataContinuousMax,
+    metadataContinuousMin,
+    metadataContinuousPalette,
+    metadataContinuousTransform,
     metadataKeyColumn,
     metadataReverseScale,
     metadataTable,
     metadataValueColumn,
     tree,
   ]);
+  const metadataLabelOverlay = useMemo<MetadataLabelOverlayResult>(() => {
+    if (!tree || !metadataTable || !metadataKeyColumn || !metadataLabelColumn) {
+      return EMPTY_METADATA_LABEL_OVERLAY;
+    }
+    return buildMetadataLabelOverlay(
+      tree,
+      metadataTable.rows,
+      metadataKeyColumn,
+      metadataLabelColumn,
+      metadataApplyScope,
+    );
+  }, [metadataApplyScope, metadataKeyColumn, metadataLabelColumn, metadataTable, tree]);
   const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(taxonomyMap?.activeRanks ?? [])].sort(
       (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
     ),
     [taxonomyMap],
   );
-  const enabledTaxonomyRanks = useMemo<TaxonomyRank[]>(
-    () => availableTaxonomyRanks.filter((rank) => taxonomyRankVisibility[rank] !== false),
-    [availableTaxonomyRanks, taxonomyRankVisibility],
-  );
-
   useEffect(() => {
     if (metadataColorMode === "continuous" && !metadataValueColumnSupportsContinuous) {
       setMetadataColorMode("categorical");
@@ -1071,6 +1023,12 @@ export default function App() {
     setMetadataColorMode("categorical");
     setMetadataApplyScope("branch");
     setMetadataReverseScale(false);
+    setMetadataContinuousPalette("blueOrange");
+    setMetadataContinuousTransform("linear");
+    setMetadataContinuousMinInput("");
+    setMetadataContinuousMaxInput("");
+    setMetadataLabelsEnabled(false);
+    setMetadataLabelColumn("");
     setMetadataStatus("");
     setMetadataError(null);
   }, []);
@@ -1088,9 +1046,15 @@ export default function App() {
       setMetadataEnabled(true);
       setMetadataKeyColumn(defaultKeyColumn);
       setMetadataValueColumn(defaultValueColumn);
+      setMetadataLabelColumn(table.columns[2] ?? defaultValueColumn);
+      setMetadataLabelsEnabled(false);
       setMetadataColorMode(metadataColumnLooksContinuous(table.rows, defaultValueColumn) ? "continuous" : "categorical");
       setMetadataApplyScope("branch");
       setMetadataReverseScale(false);
+      setMetadataContinuousPalette("blueOrange");
+      setMetadataContinuousTransform("linear");
+      setMetadataContinuousMinInput("");
+      setMetadataContinuousMaxInput("");
       setMetadataStatus(`Loaded ${table.rows.length.toLocaleString()} metadata rows from ${label}.`);
       setMetadataError(null);
     } catch (error) {
@@ -1240,7 +1204,6 @@ export default function App() {
     setTaxonomyColorJitter(DEFAULT_TAXONOMY_COLOR_JITTER);
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
     setTaxonomyRankVisibility({});
-    setShowTaxonomyRankLegend(false);
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
     setVisualResetRequest((current) => current + 1);
   }, []);
@@ -1261,8 +1224,6 @@ export default function App() {
         taxonomyEnabled,
         taxonomyBranchColoringEnabled,
         taxonomyRankVisibility,
-        enabledTaxonomyRanks,
-        showTaxonomyRankLegend,
         taxonomyColorJitter,
         taxonomyMappedCount: taxonomyMap?.mappedCount ?? 0,
         metadataEnabled,
@@ -1272,9 +1233,16 @@ export default function App() {
         metadataValueColumn,
         metadataColorMode,
         metadataApplyScope,
+        metadataContinuousPalette,
+        metadataContinuousTransform,
+        metadataContinuousMin,
+        metadataContinuousMax,
+        metadataLabelsEnabled,
+        metadataLabelColumn,
         metadataMatchedRowCount: metadataOverlay.matchedRowCount,
         metadataMatchedNodeCount: metadataOverlay.matchedNodeCount,
         metadataColoredNodeCount: metadataOverlay.coloredNodeCount,
+        metadataLabeledNodeCount: metadataLabelOverlay.labeledNodeCount,
         showInternalNodeLabels,
         showBootstrapLabels,
         figureStyles,
@@ -1314,7 +1282,6 @@ export default function App() {
           [rank]: visible,
         }));
       },
-      setShowTaxonomyRankLegendForTest: setShowTaxonomyRankLegend,
       setTaxonomyColorJitterForTest: setTaxonomyColorJitter,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
       setMetadataEnabled,
@@ -1335,6 +1302,12 @@ export default function App() {
       setMetadataColorMode,
       setMetadataApplyScope,
       setMetadataReverseScale,
+      setMetadataContinuousPalette,
+      setMetadataContinuousTransform,
+      setMetadataContinuousMinInput,
+      setMetadataContinuousMaxInput,
+      setMetadataLabelsEnabled,
+      setMetadataLabelColumn,
       setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale", value: string | number) => {
         updateFigureStyle(labelClass, field, value as FontFamilyKey | number);
       },
@@ -1403,9 +1376,16 @@ export default function App() {
     loadState.loading,
     metadataApplyScope,
     metadataColorMode,
+    metadataContinuousMax,
+    metadataContinuousMin,
+    metadataContinuousPalette,
+    metadataContinuousTransform,
     metadataEnabled,
     metadataFileName,
     metadataKeyColumn,
+    metadataLabelColumn,
+    metadataLabelOverlay.labeledNodeCount,
+    metadataLabelsEnabled,
     metadataOverlay.coloredNodeCount,
     metadataOverlay.matchedNodeCount,
     metadataOverlay.matchedRowCount,
@@ -1413,7 +1393,6 @@ export default function App() {
     metadataValueColumn,
     order,
     branchThicknessScale,
-    enabledTaxonomyRanks,
     figureStyles,
     runTaxonomyMapping,
     searchQuery,
@@ -1430,7 +1409,6 @@ export default function App() {
     treeSignature,
     updateFigureStyle,
     viewMode,
-    showTaxonomyRankLegend,
   ]);
 
   return (
@@ -1716,50 +1694,6 @@ export default function App() {
               />
             </label>
             <div className="figure-style-value">x{branchThicknessScale.toFixed(2)}</div>
-            {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
-              <div className="taxonomy-rank-controls">
-                <div className="taxonomy-rank-controls-title">Visible taxonomy ranks</div>
-                <div className="taxonomy-rank-checkboxes">
-                  {availableTaxonomyRanks.map((rank) => (
-                    <label key={rank} className="taxonomy-rank-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={taxonomyRankVisibility[rank] !== false}
-                        onChange={(event) => {
-                          setTaxonomyRankVisibility((current) => ({
-                            ...current,
-                            [rank]: event.target.checked,
-                          }));
-                        }}
-                      />
-                      {taxonomyRankLabel(rank)}
-                    </label>
-                  ))}
-                </div>
-                <label className="taxonomy-rank-legend-toggle">
-                  <input
-                    type="checkbox"
-                    checked={showTaxonomyRankLegend}
-                    onChange={(event) => setShowTaxonomyRankLegend(event.target.checked)}
-                    disabled={!taxonomyEnabled || enabledTaxonomyRanks.length === 0}
-                  />
-                  Show taxonomy rank legend
-                </label>
-                {showTaxonomyRankLegend && taxonomyEnabled && enabledTaxonomyRanks.length > 0 ? (
-                  <div className="taxonomy-rank-legend" data-testid="taxonomy-rank-legend">
-                    {enabledTaxonomyRanks.map((rank, index) => (
-                      <div key={rank} className="taxonomy-rank-legend-item">
-                        <span className="taxonomy-rank-legend-order">
-                          {index === 0 ? "Outer" : index === enabledTaxonomyRanks.length - 1 ? "Inner" : index + 1}
-                        </span>
-                        <span className="taxonomy-rank-legend-bar" />
-                        <span className="taxonomy-rank-legend-label">{taxonomyRankLabel(rank)}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
           </div>
           <div className="visual-options-actions">
             <button type="button" className="secondary visual-options-reset" onClick={resetFigureStyles}>
@@ -1836,6 +1770,28 @@ export default function App() {
 
         <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)}>
           <div className="search-controls">
+            {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
+              <div className="taxonomy-rank-controls">
+                <div className="taxonomy-rank-controls-title">Visible taxonomy ranks</div>
+                <div className="taxonomy-rank-checkboxes">
+                  {availableTaxonomyRanks.map((rank) => (
+                    <label key={rank} className="taxonomy-rank-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={taxonomyRankVisibility[rank] !== false}
+                        onChange={(event) => {
+                          setTaxonomyRankVisibility((current) => ({
+                            ...current,
+                            [rank]: event.target.checked,
+                          }));
+                        }}
+                      />
+                      {taxonomyRankLabel(rank)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {taxonomyCached ? (
               <p className="status-line">Taxonomy cache found.</p>
             ) : (
@@ -1888,6 +1844,14 @@ export default function App() {
                   Enable metadata branch colors
                 </label>
                 <label>
+                  <input
+                    type="checkbox"
+                    checked={metadataLabelsEnabled}
+                    onChange={(event) => setMetadataLabelsEnabled(event.target.checked)}
+                  />
+                  Show metadata text labels
+                </label>
+                <label>
                   Key column
                   <select value={metadataKeyColumn} onChange={(event) => setMetadataKeyColumn(event.target.value)}>
                     {metadataColumns.map((column) => (
@@ -1903,6 +1867,14 @@ export default function App() {
                     setMetadataColorMode(metadataColumnLooksContinuous(metadataTable.rows, nextColumn) ? "continuous" : "categorical");
                   }}
                   >
+                    {metadataColumns.map((column) => (
+                      <option key={column} value={column}>{column}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Label column
+                  <select value={metadataLabelColumn} onChange={(event) => setMetadataLabelColumn(event.target.value)}>
                     {metadataColumns.map((column) => (
                       <option key={column} value={column}>{column}</option>
                     ))}
@@ -1926,19 +1898,62 @@ export default function App() {
                   </select>
                 </label>
                 {metadataColorMode === "continuous" ? (
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={metadataReverseScale}
-                      onChange={(event) => setMetadataReverseScale(event.target.checked)}
-                    />
-                    Reverse continuous scale
-                  </label>
+                  <>
+                    <label>
+                      Palette
+                      <select
+                        value={metadataContinuousPalette}
+                        onChange={(event) => setMetadataContinuousPalette(event.target.value as MetadataContinuousPalette)}
+                      >
+                        {Object.entries(METADATA_CONTINUOUS_PALETTES).map(([key, palette]) => (
+                          <option key={key} value={key}>{palette.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Transform
+                      <select
+                        value={metadataContinuousTransform}
+                        onChange={(event) => setMetadataContinuousTransform(event.target.value as MetadataContinuousTransform)}
+                      >
+                        <option value="linear">Linear</option>
+                        <option value="sqrt">Signed square root</option>
+                        <option value="log">Signed log1p</option>
+                      </select>
+                    </label>
+                    <label>
+                      Clamp minimum
+                      <input
+                        type="number"
+                        value={metadataContinuousMinInput}
+                        placeholder="auto"
+                        onChange={(event) => setMetadataContinuousMinInput(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Clamp maximum
+                      <input
+                        type="number"
+                        value={metadataContinuousMaxInput}
+                        placeholder="auto"
+                        onChange={(event) => setMetadataContinuousMaxInput(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={metadataReverseScale}
+                        onChange={(event) => setMetadataReverseScale(event.target.checked)}
+                      />
+                      Reverse continuous scale
+                    </label>
+                  </>
                 ) : null}
                 <div className="metadata-summary">
                   <span>Matched rows: {metadataOverlay.matchedRowCount.toLocaleString()}</span>
                   <span>Matched nodes: {metadataOverlay.matchedNodeCount.toLocaleString()}</span>
                   <span>Colored branches: {metadataOverlay.coloredNodeCount.toLocaleString()}</span>
+                  <span>Metadata labels: {metadataLabelOverlay.labeledNodeCount.toLocaleString()}</span>
                 </div>
                 {metadataOverlay.unmappedRowCount > 0 ? (
                   <p className="status-line">
@@ -1966,12 +1981,17 @@ export default function App() {
                     <div
                       className="metadata-gradient-bar"
                       style={{
-                        background: `linear-gradient(90deg, ${metadataOverlay.continuousLegend.startColor} 0%, ${metadataOverlay.continuousLegend.endColor} 100%)`,
+                        background: metadataOverlay.continuousLegend.gradientCss,
                       }}
                     />
                     <div className="metadata-gradient-labels">
                       <span>{formatNumber(metadataOverlay.continuousLegend.min)}</span>
                       <span>{formatNumber(metadataOverlay.continuousLegend.max)}</span>
+                    </div>
+                    <div className="metadata-gradient-labels">
+                      <span>data {formatNumber(metadataOverlay.continuousLegend.actualMin)}</span>
+                      <span>{METADATA_CONTINUOUS_PALETTES[metadataOverlay.continuousLegend.palette].label} · {metadataOverlay.continuousLegend.transform}</span>
+                      <span>data {formatNumber(metadataOverlay.continuousLegend.actualMax)}</span>
                     </div>
                   </div>
                 ) : null}
@@ -2093,6 +2113,8 @@ export default function App() {
           taxonomyMap={taxonomyMap}
           metadataBranchColors={metadataEnabled && metadataOverlay.hasAny ? metadataOverlay.colors : null}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
+          metadataLabels={metadataLabelsEnabled && metadataLabelOverlay.hasAny ? metadataLabelOverlay.labels : null}
+          metadataLabelVersion={metadataLabelsEnabled ? metadataLabelOverlay.version : ""}
           showInternalNodeLabels={showInternalNodeLabels}
           showBootstrapLabels={showBootstrapLabels}
           figureStyles={figureStyles}

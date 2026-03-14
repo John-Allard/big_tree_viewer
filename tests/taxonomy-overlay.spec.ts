@@ -612,6 +612,51 @@ test("shared subtree taxonomy recomputes active ranks for the standalone tree", 
   await popup.close();
 });
 
+test("shared subtree taxonomy suppresses singleton-only ranks for tiny clades", async ({ page, context }) => {
+  await waitForViewer(page);
+  const subtreeKey = `big-tree-viewer:subtree:tiny-${Date.now()}`;
+  await page.evaluate((key) => {
+    const payload = {
+      version: 1,
+      newick: "(Alpha,Beta);",
+      taxonomy: {
+        version: 3,
+        mappedCount: 2,
+        totalTips: 2,
+        activeRanks: ["genus", "family", "order", "class", "phylum"],
+        tipEntries: [
+          { name: "Alpha", ranks: { phylum: "Chordata", class: "Aves", order: "Passeriformes", family: "FamA", genus: "Alpha" } },
+          { name: "Beta", ranks: { phylum: "Arthropoda", class: "Insecta", order: "Diptera", family: "FamB", genus: "Beta" } },
+        ],
+      },
+    };
+    window.localStorage.setItem(key, JSON.stringify(payload));
+  }, subtreeKey);
+
+  const popup = await context.newPage();
+  await popup.goto(`/?subtree=${encodeURIComponent(subtreeKey)}`);
+  await waitForViewerReady(popup);
+  await popup.waitForFunction(() => {
+    return Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState()?.treeLoaded);
+  });
+
+  const result = await popup.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const taxonomy = window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null;
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
+    return {
+      activeRanks: taxonomy?.activeRanks ?? [],
+      taxonomyHitCount: hitboxes.filter((hitbox) => hitbox.labelKind === "taxonomy").length,
+    };
+  });
+
+  expect(result.activeRanks).toEqual([]);
+  expect(result.taxonomyHitCount).toBe(0);
+  await popup.close();
+});
+
 test("manual subtree colors propagate and branch colors override them", async ({ page }) => {
   await waitForViewer(page);
   const nodes = await page.evaluate(async () => {
@@ -806,7 +851,7 @@ test("taxonomy label hover shows taxonomy tooltip details instead of branch metr
   await expect(tooltip).not.toContainText("Branch:");
 });
 
-test("taxonomy rank controls filter visible ranks and the rank legend", async ({ page }) => {
+test("taxonomy rank controls in the taxonomy section filter visible ranks", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
     const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
@@ -839,7 +884,6 @@ test("taxonomy rank controls filter visible ranks and the rank legend", async ({
       scaleY: Math.max(Number(camera.scaleY) * 12, 10),
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", false);
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowTaxonomyRankLegendForTest(true);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
 
@@ -852,11 +896,11 @@ test("taxonomy rank controls filter visible ranks and the rank legend", async ({
     taxonomyVisibleRanks?: string[];
   });
   expect(rectDebug.taxonomyVisibleRanks ?? []).not.toContain("class");
-  await page.getByRole("button", { name: "Visual Options" }).click();
-  await expect(page.getByTestId("taxonomy-rank-legend")).toBeVisible();
-  await expect(page.getByTestId("taxonomy-rank-legend")).not.toContainText("Class");
-  await expect(page.getByTestId("taxonomy-rank-legend")).toContainText("Order");
-  await expect(page.getByTestId("taxonomy-rank-legend")).toContainText("Family");
+  await page.getByRole("button", { name: "Taxonomy" }).click();
+  await expect(page.getByText("Visible taxonomy ranks")).toBeVisible();
+  await expect(page.getByLabel("Class")).not.toBeChecked();
+  await expect(page.getByLabel("Order")).toBeChecked();
+  await expect(page.getByLabel("Family")).toBeChecked();
 });
 
 test("taxonomy overlays can stay visible while taxonomy branch coloring is disabled", async ({ page }) => {
