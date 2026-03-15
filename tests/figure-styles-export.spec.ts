@@ -50,6 +50,23 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
   expect(svg).toContain("Courier New");
 });
 
+test("tip labels can export with bold and italic styling", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "bold", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "italic", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? null;
+  });
+
+  expect(svg).toContain("font-style=\"italic\"");
+  expect(svg).toContain("font-weight=\"700\"");
+});
+
 test("download newick exports the active tree in the current tab", async ({ page }) => {
   await waitForViewer(page);
   const pastedNewick = "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;";
@@ -245,6 +262,25 @@ test("taxonomy label size and band thickness controls are independent", async ({
   expect(thickerBands.fontSize).toBeCloseTo(smallerLabels.fontSize, 5);
 });
 
+test("scale settings support explicit tick interval and disabling fading subdivision ticks", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowIntermediateScaleTicks(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setScaleTickIntervalInput("200");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain(">200 mya<");
+  expect(svg).toContain(">400 mya<");
+  expect(svg).not.toContain(">100 mya<");
+  expect(svg).not.toContain(">300 mya<");
+});
+
 test("visual options only mark hidden label sections when they are actually disabled and can reset style defaults", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(() => {
@@ -260,7 +296,7 @@ test("visual options only mark hidden label sections when they are actually disa
   const nodeHeightRow = page.locator(".visual-option-row").filter({ hasText: "Show node height labels" });
   await expect(bootstrapRow).toBeVisible();
   await expect(bootstrapRow).not.toContainText("Hidden");
-  await expect(nodeHeightRow).toContainText("Hidden");
+  await expect(nodeHeightRow).not.toContainText("Hidden");
 
   await page.getByRole("button", { name: "Reset Defaults" }).click();
 

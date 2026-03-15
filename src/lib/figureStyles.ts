@@ -23,6 +23,8 @@ export interface LabelStyleSettings {
   offsetPx: number;
   offsetXPx: number;
   offsetYPx: number;
+  bold?: boolean;
+  italic?: boolean;
   bandThicknessScale?: number;
 }
 
@@ -62,13 +64,13 @@ export const TAXONOMY_LABEL_SIZE_SCALE_MIN = 0.55;
 export const TAXONOMY_LABEL_SIZE_SCALE_MAX = 1;
 
 export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
-  tip: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bandThicknessScale: 1 },
-  genus: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bandThicknessScale: 1 },
-  taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bandThicknessScale: 1 },
-  internalNode: { fontFamily: "georgia", sizeScale: 0.95, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bandThicknessScale: 1 },
-  bootstrap: { fontFamily: "courierNew", sizeScale: 0.9, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bandThicknessScale: 1 },
-  nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bandThicknessScale: 1 },
-  scale: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bandThicknessScale: 1 },
+  tip: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1 },
+  genus: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1 },
+  taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1 },
+  internalNode: { fontFamily: "georgia", sizeScale: 0.95, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1 },
+  bootstrap: { fontFamily: "courierNew", sizeScale: 0.9, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1 },
+  nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1 },
+  scale: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1 },
 };
 
 export function fontFamilyCss(fontFamily: FontFamilyKey): string {
@@ -91,4 +93,8 @@ export function cloneDefaultFigureStyles(): FigureStyleSettings {
     nodeHeight: { ...DEFAULT_FIGURE_STYLES.nodeHeight },
     scale: { ...DEFAULT_FIGURE_STYLES.scale },
   };
+}
+
+export function fontStyleCss(settings: LabelStyleSettings): string {
+  return `${settings.italic ? "italic " : ""}${settings.bold ? "700 " : ""}`.trim();
 }

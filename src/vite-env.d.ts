@@ -19,6 +19,8 @@ declare global {
       ) => void;
       setTaxonomyColorJitterForTest: (value: number) => void;
       setBranchThicknessScaleForTest: (value: number) => void;
+      setShowIntermediateScaleTicks: (visible: boolean) => void;
+      setScaleTickIntervalInput: (value: string) => void;
       setMetadataEnabled: (visible: boolean) => void;
       setSearchQuery: (query: string) => void;
       setCircularRotationDegreesForTest: (degrees: number) => void;
@@ -45,8 +47,8 @@ declare global {
       setMetadataLabelOffsetYPx: (value: number) => void;
       setFigureStyleForTest: (
         labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
-        field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale",
-        value: string | number,
+        field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "bold" | "italic",
+        value: string | number | boolean,
       ) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;
       getTaxonomyMapForTest: () => TaxonomyMapPayload | null;

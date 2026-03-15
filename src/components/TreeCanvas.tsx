@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   fontFamilyCss,
+  fontStyleCss,
   TAXONOMY_LABEL_SIZE_SCALE_MAX,
   TAXONOMY_LABEL_SIZE_SCALE_MIN,
   type LabelStyleClass,
@@ -218,6 +219,7 @@ type SvgScenePrimitive =
     fill: string;
     fontSize: number;
     fontFamily: string;
+    fontStyle?: string;
     anchor: "start" | "middle" | "end";
     rotation?: number;
   };
@@ -322,7 +324,8 @@ function buildSvgString(scene: SvgScene): string {
     const transform = element.rotation
       ? ` transform="rotate(${((element.rotation * 180) / Math.PI).toFixed(3)} ${element.x.toFixed(3)} ${element.y.toFixed(3)})"`
       : "";
-    return `<text x="${element.x.toFixed(3)}" y="${element.y.toFixed(3)}" fill="${element.fill}" font-size="${element.fontSize.toFixed(3)}" font-family="${escapeSvgText(element.fontFamily)}" text-anchor="${element.anchor}" dominant-baseline="middle"${transform}>${escapeSvgText(element.text)}</text>`;
+    const style = element.fontStyle ? ` font-style="${element.fontStyle.includes("italic") ? "italic" : "normal"}" font-weight="${element.fontStyle.includes("700") ? "700" : "400"}"` : "";
+    return `<text x="${element.x.toFixed(3)}" y="${element.y.toFixed(3)}" fill="${element.fill}" font-size="${element.fontSize.toFixed(3)}" font-family="${escapeSvgText(element.fontFamily)}"${style} text-anchor="${element.anchor}" dominant-baseline="middle"${transform}>${escapeSvgText(element.text)}</text>`;
   }).join("");
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${scene.width}" height="${scene.height}" viewBox="0 0 ${scene.width} ${scene.height}">`,
@@ -1711,6 +1714,8 @@ export default function TreeCanvas({
   circularRotation,
   showTimeStripes,
   showScaleBars,
+  scaleTickInterval,
+  showIntermediateScaleTicks,
   showGenusLabels,
   taxonomyEnabled,
   taxonomyBranchColoringEnabled,
@@ -1965,6 +1970,19 @@ export default function TreeCanvas({
     nodeHeight: fontFamilyCss(figureStyles.nodeHeight.fontFamily),
     scale: fontFamilyCss(figureStyles.scale.fontFamily),
   }), [figureStyles]);
+  const labelFontStyles = useMemo<Record<LabelStyleClass, string>>(() => ({
+    tip: fontStyleCss(figureStyles.tip),
+    genus: fontStyleCss(figureStyles.genus),
+    taxonomy: fontStyleCss(figureStyles.taxonomy),
+    internalNode: fontStyleCss(figureStyles.internalNode),
+    bootstrap: fontStyleCss(figureStyles.bootstrap),
+    nodeHeight: fontStyleCss(figureStyles.nodeHeight),
+    scale: fontStyleCss(figureStyles.scale),
+  }), [figureStyles]);
+  const fontSpec = useCallback((labelClass: LabelStyleClass, fontSize: number): string => {
+    const style = labelFontStyles[labelClass];
+    return `${style ? `${style} ` : ""}${fontSize}px ${labelFontFamilies[labelClass]}`;
+  }, [labelFontFamilies, labelFontStyles]);
   const scaleLabelFontSize = useCallback((labelClass: LabelStyleClass, baseSize: number): number => (
     Math.max(4, baseSize * figureStyles[labelClass].sizeScale)
   ), [figureStyles]);
@@ -2612,6 +2630,7 @@ export default function TreeCanvas({
       fontFamily: string,
       anchor: "start" | "middle" | "end",
       rotation?: number,
+      fontStyle?: string,
     ): void => {
       if (!exportCaptureRef.current || !text) {
         return;
@@ -2624,6 +2643,7 @@ export default function TreeCanvas({
         fill,
         fontSize,
         fontFamily,
+        fontStyle,
         anchor,
         rotation,
       });
@@ -2663,8 +2683,11 @@ export default function TreeCanvas({
       const axisBarHeight = tree.isUltrametric && showScaleBars ? 44 : 0;
       const treeDrawBottom = size.height - axisBarHeight;
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
-      const stripeLevels = buildStripeLevels(Math.max(1e-9, maxX - minX), camera.scaleX);
+      const stripeLevels = buildStripeLevels(Math.max(1e-9, maxX - minX), camera.scaleX, scaleTickInterval);
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
+      const visibleScaleBoundaries = showIntermediateScaleTicks
+        ? stripeBoundaries
+        : stripeBoundaries.filter((boundary) => boundary.alpha >= 0.999);
       const tipLabelCueVisible = camera.scaleY > 1.45;
       const microTipLabelsVisible = camera.scaleY > 2.7;
       const tipLabelsVisible = camera.scaleY > 4.2;
@@ -3096,7 +3119,7 @@ export default function TreeCanvas({
       const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
       const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
-        ctx.font = `${tipFontSize}px ${labelFontFamilies.tip}`;
+        ctx.font = fontSpec("tip", tipFontSize);
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
         for (let index = startLeafIndex; index < endLeafIndex; index += 1) {
@@ -3719,7 +3742,7 @@ export default function TreeCanvas({
               renderTipFontSize * Math.min(1, globalTipLabelSpacePx / Math.max(1e-6, label.width)),
             ),
           );
-          ctx.font = `${fittedFontSize}px ${labelFontFamilies.tip}`;
+          ctx.font = fontSpec("tip", fittedFontSize);
           if (tipLabelsVisible) {
             const highlightColor = label.node === activeSearchNode
               ? "#c2410c"
@@ -3744,6 +3767,8 @@ export default function TreeCanvas({
               fittedFontSize,
               labelFontFamilies.tip,
               "start",
+              undefined,
+              labelFontStyles.tip,
             );
             labelHitsRef.current.push({
               node: label.node,
@@ -3759,7 +3784,7 @@ export default function TreeCanvas({
           } else {
             ctx.fillStyle = "rgba(15,23,42,0.6)";
             ctx.fillText(label.text, label.x, label.y);
-            pushSceneText(label.text, label.x, label.y, "rgba(15,23,42,0.6)", fittedFontSize, labelFontFamilies.tip, "start");
+            pushSceneText(label.text, label.x, label.y, "rgba(15,23,42,0.6)", fittedFontSize, labelFontFamilies.tip, "start", undefined, labelFontStyles.tip);
           }
         }
       } else if (tipLabelCueVisible && measuredLabels.length <= 9000) {
@@ -4011,7 +4036,7 @@ export default function TreeCanvas({
         ctx.fillStyle = "#6b7280";
         ctx.lineWidth = 1;
         const scaleFontSize = scaleLabelFontSize("scale", 11);
-        ctx.font = `${scaleFontSize}px ${labelFontFamilies.scale}`;
+        ctx.font = fontSpec("scale", scaleFontSize);
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.beginPath();
@@ -4020,9 +4045,9 @@ export default function TreeCanvas({
         ctx.moveTo(axisStart, axisY);
         ctx.lineTo(axisEnd, axisY);
         pushSceneLine(axisStart, axisY, axisEnd, axisY, "#6b7280", 1);
-        if (stripeBoundaries.length > 0) {
-          for (let index = 0; index < stripeBoundaries.length; index += 1) {
-            const boundary = stripeBoundaries[index];
+        if (visibleScaleBoundaries.length > 0) {
+          for (let index = 0; index < visibleScaleBoundaries.length; index += 1) {
+            const boundary = visibleScaleBoundaries[index];
             const x = worldToScreenRect(camera, tree.rootAge - boundary.value, 0).x;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
             ctx.moveTo(x, axisY);
@@ -4031,8 +4056,8 @@ export default function TreeCanvas({
           }
           ctx.globalAlpha = 1;
           ctx.stroke();
-          for (let index = 0; index < stripeBoundaries.length; index += 1) {
-            const boundary = stripeBoundaries[index];
+          for (let index = 0; index < visibleScaleBoundaries.length; index += 1) {
+            const boundary = visibleScaleBoundaries[index];
             const x = worldToScreenRect(camera, tree.rootAge - boundary.value, 0).x;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
             ctx.fillText(
@@ -4048,6 +4073,8 @@ export default function TreeCanvas({
               scaleFontSize,
               labelFontFamilies.scale,
               "middle",
+              undefined,
+              labelFontStyles.scale,
             );
           }
           ctx.globalAlpha = 1;
@@ -4066,8 +4093,11 @@ export default function TreeCanvas({
       const angularSpacingPx = camera.scale * maxRadius * (Math.PI * 2 / Math.max(1, tree.leafCount));
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const visibleRadius = Math.max(1e-9, Math.min(size.width, size.height) / (2 * camera.scale));
-      const stripeLevels = buildStripeLevels(visibleRadius, camera.scale);
+      const stripeLevels = buildStripeLevels(visibleRadius, camera.scale, scaleTickInterval);
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
+      const visibleScaleBoundaries = showIntermediateScaleTicks
+        ? stripeBoundaries
+        : stripeBoundaries.filter((boundary) => boundary.alpha >= 0.999);
       const centerPoint = worldToScreenCircular(camera, 0, 0);
       const fullyVisibleRadiusPx = Math.min(
         centerPoint.x,
@@ -4142,7 +4172,7 @@ export default function TreeCanvas({
           centerPoint.y,
           size.width,
           size.height,
-          stripeBoundaries,
+          visibleScaleBoundaries,
           tree.rootAge,
           camera.scale,
         )
@@ -4694,7 +4724,7 @@ export default function TreeCanvas({
       let circularVisibleTipLabels: Array<{ node: number; theta: number; x: number; y: number; text: string; width: number }> = [];
       let maxVisibleTipLabelWidth = 0;
       if (tipLabelCueVisible) {
-        ctx.font = `${tipFontSize}px ${labelFontFamilies.tip}`;
+        ctx.font = fontSpec("tip", tipFontSize);
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
         const labelAnchorRadius = microTipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
@@ -5539,7 +5569,7 @@ export default function TreeCanvas({
       }
       if (tipLabelsVisible) {
         const fontSize = tipFontSize;
-        ctx.font = `${fontSize}px ${labelFontFamilies.tip}`;
+        ctx.font = fontSpec("tip", fontSize);
         ctx.textBaseline = "middle";
         const maxVisibleLabels = 4200;
         if (circularVisibleTipLabels.length <= maxVisibleLabels) {
@@ -5558,7 +5588,7 @@ export default function TreeCanvas({
               : searchMatchSet.has(node)
                 ? "#2563eb"
                 : null;
-            ctx.font = `${fittedFontSize}px ${labelFontFamilies.tip}`;
+            ctx.font = fontSpec("tip", fittedFontSize);
             ctx.save();
             ctx.translate(x + (Math.cos(theta + rotationAngle) * figureStyles.tip.offsetPx), y + (Math.sin(theta + rotationAngle) * figureStyles.tip.offsetPx));
             ctx.rotate(rotation * Math.PI / 180);
@@ -5583,6 +5613,7 @@ export default function TreeCanvas({
               labelFontFamilies.tip,
               onRightSide ? "start" : "end",
               rotation * Math.PI / 180,
+              labelFontStyles.tip,
             );
             labelHitsRef.current.push({
               node,
@@ -5601,7 +5632,7 @@ export default function TreeCanvas({
         }
       } else if (microTipLabelsVisible) {
         const fontSize = microTipFontSize;
-        ctx.font = `${fontSize}px ${labelFontFamilies.tip}`;
+        ctx.font = fontSpec("tip", fontSize);
         ctx.textBaseline = "middle";
         const maxVisibleLabels = 4200;
         if (circularVisibleTipLabels.length <= maxVisibleLabels) {
@@ -5615,7 +5646,7 @@ export default function TreeCanvas({
             const deg = (label.theta + rotationAngle) * 180 / Math.PI;
             const onRightSide = Math.cos(label.theta + rotationAngle) >= 0;
             const rotation = normalizeRotation(onRightSide ? deg : deg + 180);
-            ctx.font = `${fittedFontSize}px ${labelFontFamilies.tip}`;
+            ctx.font = fontSpec("tip", fittedFontSize);
             ctx.save();
             ctx.translate(label.x + (Math.cos(label.theta + rotationAngle) * figureStyles.tip.offsetPx), label.y + (Math.sin(label.theta + rotationAngle) * figureStyles.tip.offsetPx));
             ctx.rotate(rotation * Math.PI / 180);
@@ -5631,6 +5662,7 @@ export default function TreeCanvas({
               labelFontFamilies.tip,
               onRightSide ? "start" : "end",
               rotation * Math.PI / 180,
+              labelFontStyles.tip,
             );
           }
         }
@@ -5996,13 +6028,13 @@ export default function TreeCanvas({
       if (tree.isUltrametric && showScaleBars) {
         ctx.fillStyle = "#6b7280";
         const scaleFontSize = scaleLabelFontSize("scale", 11);
-        ctx.font = `${scaleFontSize}px ${labelFontFamilies.scale}`;
+        ctx.font = fontSpec("scale", scaleFontSize);
         ctx.textBaseline = "middle";
         if (showCentralTimeLabels) {
           const labelTheta = circularTimeLabelTheta(order);
           ctx.textAlign = Math.cos(labelTheta + rotationAngle) >= 0 ? "left" : "right";
-          for (let index = 0; index < stripeBoundaries.length; index += 1) {
-            const boundary = stripeBoundaries[index];
+          for (let index = 0; index < visibleScaleBoundaries.length; index += 1) {
+            const boundary = visibleScaleBoundaries[index];
             const radius = Math.max(0, tree.rootAge - boundary.value) + (10 / camera.scale);
             const point = polarToCartesian(radius, labelTheta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
@@ -6020,6 +6052,8 @@ export default function TreeCanvas({
               scaleFontSize,
               labelFontFamilies.scale,
               Math.cos(labelTheta + rotationAngle) >= 0 ? "start" : "end",
+              undefined,
+              labelFontStyles.scale,
             );
           }
           ctx.globalAlpha = 1;
@@ -6068,6 +6102,8 @@ export default function TreeCanvas({
                 scaleFontSize,
                 labelFontFamilies.scale,
                 "middle",
+                undefined,
+                labelFontStyles.scale,
               );
             }
             ctx.globalAlpha = 1;
@@ -6106,6 +6142,7 @@ export default function TreeCanvas({
                 labelFontFamilies.scale,
                 "middle",
                 -Math.PI / 2,
+                labelFontStyles.scale,
               );
             }
           }
@@ -6157,7 +6194,9 @@ export default function TreeCanvas({
     getCircularBasePath,
     getEffectiveBranchColors,
     getRectBasePaths,
+    fontSpec,
     labelFontFamilies,
+    labelFontStyles,
     manualBranchColorOverlay,
     manualBranchColorVersion,
     metadataBranchColorOverlay,
@@ -6177,8 +6216,10 @@ export default function TreeCanvas({
     searchMatches,
     searchMatchSet,
     scaleLabelFontSize,
+    scaleTickInterval,
     showBootstrapLabels,
     showGenusLabels,
+    showIntermediateScaleTicks,
     showInternalNodeLabels,
     showNodeHeightLabels,
     showScaleBars,

@@ -12,6 +12,8 @@ export interface TreeCanvasProps {
   circularRotation: number;
   showTimeStripes: boolean;
   showScaleBars: boolean;
+  scaleTickInterval: number | null;
+  showIntermediateScaleTicks: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
   taxonomyBranchColoringEnabled: boolean;

@@ -540,6 +540,22 @@ button.secondary {
   font-size: 0.9rem;
 }
 
+.label-style-inline-toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.label-style-inline-toggle input[type="checkbox"] {
+  width: auto;
+}
+
+.figure-style-help {
+  margin: -0.1rem 0 0;
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
 .label-style-body input[type="range"] {
   width: 100%;
 }

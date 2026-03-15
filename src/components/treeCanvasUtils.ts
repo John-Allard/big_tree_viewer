@@ -90,9 +90,9 @@ export function pointInLabelHitbox(x: number, y: number, hitbox: LabelHitbox): b
   return localX >= left && localX <= left + hitbox.width && localY >= (-hitbox.height * 0.5) && localY <= (hitbox.height * 0.5);
 }
 
-export function buildStripeLevels(visibleSpan: number, pixelsPerUnit: number): StripeLevel[] {
+export function buildStripeLevels(visibleSpan: number, pixelsPerUnit: number, baseStep?: number | null): StripeLevel[] {
   const levels: StripeLevel[] = [];
-  const coarseStep = niceTickStep(visibleSpan);
+  const coarseStep = baseStep && Number.isFinite(baseStep) && baseStep > 0 ? baseStep : niceTickStep(visibleSpan);
   if (!Number.isFinite(coarseStep) || coarseStep <= 0) {
     return levels;
   }

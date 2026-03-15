@@ -155,6 +155,7 @@ function PanelSection({
 const DEFAULT_TAXONOMY_COLOR_JITTER = 1;
 const DEFAULT_BRANCH_THICKNESS_SCALE = 1;
 const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
+const DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS = true;
 const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
@@ -181,14 +182,13 @@ function LabelStyleSection({
   onUpdate: (
     labelClass: LabelStyleClass,
     field: keyof LabelStyleSettings,
-    value: FontFamilyKey | number,
+    value: FontFamilyKey | number | boolean,
   ) => void;
 }): ReactNode {
   const isTaxonomy = labelClass === "taxonomy";
   const supportsAxisOffsets = labelClass === "internalNode"
     || labelClass === "bootstrap"
-    || labelClass === "nodeHeight"
-    || labelClass === "scale";
+    || labelClass === "nodeHeight";
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -240,6 +240,26 @@ function LabelStyleSection({
             />
           </label>
           <div className="figure-style-value">x{settings.sizeScale.toFixed(2)}</div>
+          {labelClass === "tip" ? (
+            <>
+              <label className="label-style-inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.bold)}
+                  onChange={(event) => onUpdate(labelClass, "bold", event.target.checked)}
+                />
+                Bold
+              </label>
+              <label className="label-style-inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.italic)}
+                  onChange={(event) => onUpdate(labelClass, "italic", event.target.checked)}
+                />
+                Italic
+              </label>
+            </>
+          ) : null}
           {isTaxonomy ? (
             <>
               <label>
@@ -472,6 +492,8 @@ export default function App() {
   const [circularRotationDegrees, setCircularRotationDegrees] = useState(0);
   const [showTimeStripes, setShowTimeStripes] = useState(true);
   const [showScaleBars, setShowScaleBars] = useState(true);
+  const [showIntermediateScaleTicks, setShowIntermediateScaleTicks] = useState(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
+  const [scaleTickIntervalInput, setScaleTickIntervalInput] = useState("");
   const [showGenusLabels, setShowGenusLabels] = useState(true);
   const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
@@ -721,6 +743,14 @@ export default function App() {
   const activeSearchGenusCenterNode = activeSearchResult?.kind === "genus" ? activeSearchResult.node : null;
   const activeSearchTaxonomyNode = activeSearchResult?.kind === "taxonomy" ? activeSearchResult.node : null;
   const activeSearchTaxonomyKey = activeSearchResult?.kind === "taxonomy" ? (activeSearchResult.key ?? null) : null;
+  const scaleTickInterval = useMemo(() => {
+    const trimmed = scaleTickIntervalInput.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [scaleTickIntervalInput]);
   const metadataColumns = metadataTable?.columns ?? [];
   const metadataValueColumnSupportsContinuous = useMemo(
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
@@ -1275,7 +1305,7 @@ export default function App() {
   const updateFigureStyle = useCallback((
     labelClass: LabelStyleClass,
     field: keyof FigureStyleSettings[LabelStyleClass],
-    value: FontFamilyKey | number,
+    value: FontFamilyKey | number | boolean,
   ): void => {
     setFigureStyles((current) => ({
       ...current,
@@ -1292,6 +1322,8 @@ export default function App() {
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
     setTaxonomyRankVisibility({});
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
+    setShowIntermediateScaleTicks(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
+    setScaleTickIntervalInput("");
     setActiveLabelStylePopover(null);
     setVisualResetRequest((current) => current + 1);
   }, []);
@@ -1343,6 +1375,8 @@ export default function App() {
         showBootstrapLabels,
         figureStyles,
         branchThicknessScale,
+        showIntermediateScaleTicks,
+        scaleTickInterval,
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
         isUltrametric: tree?.isUltrametric ?? false,
@@ -1380,6 +1414,8 @@ export default function App() {
       },
       setTaxonomyColorJitterForTest: setTaxonomyColorJitter,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
+      setShowIntermediateScaleTicks,
+      setScaleTickIntervalInput,
       setMetadataEnabled,
       setSearchQuery,
       setCircularRotationDegreesForTest: setCircularRotationDegrees,
@@ -1411,8 +1447,8 @@ export default function App() {
       setMetadataLabelMinSpacingPx,
       setMetadataLabelOffsetXPx,
       setMetadataLabelOffsetYPx,
-      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale", value: string | number) => {
-        updateFigureStyle(labelClass, field, value as FontFamilyKey | number);
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "bold" | "italic", value: string | number | boolean) => {
+        updateFigureStyle(labelClass, field, value as FontFamilyKey | number | boolean);
       },
       runRealTaxonomyMappingForTest: async () => {
         const archive = await getCachedTaxonomyArchive();
@@ -1500,6 +1536,8 @@ export default function App() {
     metadataOverlay.coloredNodeCount,
     metadataOverlay.matchedNodeCount,
     metadataOverlay.matchedRowCount,
+    scaleTickInterval,
+    showIntermediateScaleTicks,
     metadataTable,
     metadataValueColumn,
     order,
@@ -1748,7 +1786,7 @@ export default function App() {
                 Show genus labels
               </label>
               <div className="visual-option-actions">
-                {taxonomyEnabled ? <span className="label-style-state">Taxonomy On</span> : !showGenusLabels ? <span className="label-style-state">Hidden</span> : null}
+                {taxonomyEnabled ? <span className="label-style-state">Taxonomy On</span> : null}
                 <LabelStyleSection
                   labelClass="genus"
                   settings={figureStyles.genus}
@@ -1771,7 +1809,6 @@ export default function App() {
                 Show taxonomy overlays
               </label>
               <div className="visual-option-actions">
-                {!taxonomyEnabled ? <span className="label-style-state">Hidden</span> : null}
                 <LabelStyleSection
                   labelClass="taxonomy"
                   settings={figureStyles.taxonomy}
@@ -1820,7 +1857,6 @@ export default function App() {
                 Show internal node labels
               </label>
               <div className="visual-option-actions">
-                {!showInternalNodeLabels ? <span className="label-style-state">Hidden</span> : null}
                 <LabelStyleSection
                   labelClass="internalNode"
                   settings={figureStyles.internalNode}
@@ -1842,7 +1878,6 @@ export default function App() {
                 Show bootstrap labels
               </label>
               <div className="visual-option-actions">
-                {!showBootstrapLabels ? <span className="label-style-state">Hidden</span> : null}
                 <LabelStyleSection
                   labelClass="bootstrap"
                   settings={figureStyles.bootstrap}
@@ -1864,7 +1899,6 @@ export default function App() {
                 Show node height labels
               </label>
               <div className="visual-option-actions">
-                {!showNodeHeightLabels ? <span className="label-style-state">Hidden</span> : null}
                 <LabelStyleSection
                   labelClass="nodeHeight"
                   settings={figureStyles.nodeHeight}
@@ -1886,13 +1920,36 @@ export default function App() {
                 Show scale bars
               </label>
               <div className="visual-option-actions">
-                {!showScaleBars ? <span className="label-style-state">Hidden</span> : null}
                 <LabelStyleSection
                   labelClass="scale"
                   settings={figureStyles.scale}
                   isOpen={activeLabelStylePopover === "scale"}
                   disabled={!showScaleBars}
                   disabledReason="Hidden"
+                  extraControls={(
+                    <>
+                      <label>
+                        Tick interval
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={scaleTickIntervalInput}
+                          placeholder="auto"
+                          onChange={(event) => setScaleTickIntervalInput(event.target.value)}
+                        />
+                      </label>
+                      <p className="figure-style-help">Leave blank for automatic tick spacing.</p>
+                      <label className="label-style-inline-toggle">
+                        <input
+                          type="checkbox"
+                          checked={showIntermediateScaleTicks}
+                          onChange={(event) => setShowIntermediateScaleTicks(event.target.checked)}
+                        />
+                        Show fading subdivision ticks
+                      </label>
+                    </>
+                  )}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "scale" ? null : "scale")}
                   onUpdate={updateFigureStyle}
                 />
@@ -2352,6 +2409,8 @@ export default function App() {
           circularRotation={(circularRotationDegrees * Math.PI) / 180}
           showTimeStripes={showTimeStripes}
           showScaleBars={showScaleBars}
+          scaleTickInterval={scaleTickInterval}
+          showIntermediateScaleTicks={showIntermediateScaleTicks}
           showGenusLabels={showGenusLabels && !taxonomyEnabled}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
