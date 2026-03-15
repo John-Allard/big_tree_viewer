@@ -49,7 +49,6 @@ import {
   buildStripeBoundaries,
   buildStripeLevels,
   canPlaceLinearLabel,
-  circularTimeLabelTheta,
   clamp01,
   displayLabelText,
   displayNodeName,
@@ -1725,6 +1724,9 @@ export default function TreeCanvas({
   showIntermediateScaleTicks,
   extendRectScaleToTick,
   showScaleZeroTick,
+  circularCenterScaleAngleDegrees,
+  showCircularCenterRadialScaleBar,
+  circularCenterScaleTickInterval,
   showGenusLabels,
   taxonomyEnabled,
   taxonomyBranchColoringEnabled,
@@ -4208,6 +4210,21 @@ export default function TreeCanvas({
       const visibleScaleBoundaries = showIntermediateScaleTicks
         ? stripeBoundaries
         : stripeBoundaries.filter((boundary) => boundary.alpha >= SOLID_SCALE_TICK_ALPHA_THRESHOLD);
+      const circularCenterScaleLevels = buildStripeLevels(
+        visibleRadius,
+        camera.scale,
+        circularCenterScaleTickInterval ?? scaleTickInterval,
+      );
+      const circularCenterScaleBoundariesRaw = buildStripeBoundaries(stripeExtent, circularCenterScaleLevels);
+      const circularCenterVisibleBoundaries = showIntermediateScaleTicks
+        ? circularCenterScaleBoundariesRaw
+        : circularCenterScaleBoundariesRaw.filter((boundary) => boundary.alpha >= SOLID_SCALE_TICK_ALPHA_THRESHOLD);
+      const circularCenterScaleBoundaries = showScaleZeroTick
+        ? [...circularCenterVisibleBoundaries, { value: 0, alpha: 1 }]
+        : circularCenterVisibleBoundaries;
+      const displayedCircularCenterScaleBoundaries = [...new Map(
+        circularCenterScaleBoundaries.map((boundary) => [boundary.value.toPrecision(12), boundary]),
+      ).values()].sort((left, right) => left.value - right.value);
       const circularScaleBoundaries = showScaleZeroTick
         ? [...visibleScaleBoundaries, { value: 0, alpha: 1 }]
         : visibleScaleBoundaries;
@@ -4280,6 +4297,7 @@ export default function TreeCanvas({
               ? "visible-segments"
               : "full-tree";
       const showCentralTimeLabels = showScaleBars && visibleCircleFraction >= 0.58;
+      const centerScaleTheta = (circularCenterScaleAngleDegrees * Math.PI) / 180;
       const circularScaleBar = showScaleBars && !showCentralTimeLabels
         ? buildCircularScaleBar(
           centerPoint.x,
@@ -6220,6 +6238,10 @@ export default function TreeCanvas({
         renderDebug.circular = {};
       }
       (renderDebug.circular as Record<string, unknown>).errorBarCount = circularErrorBarCount;
+      (renderDebug.circular as Record<string, unknown>).centerScaleAngleDegrees = circularCenterScaleAngleDegrees;
+      (renderDebug.circular as Record<string, unknown>).showCentralScaleLabels = showCentralTimeLabels;
+      (renderDebug.circular as Record<string, unknown>).centerScaleTickCount = displayedCircularCenterScaleBoundaries.length;
+      (renderDebug.circular as Record<string, unknown>).showCenterRadialScaleBar = showCentralTimeLabels && showCircularCenterRadialScaleBar;
 
       if (showScaleBars) {
         ctx.fillStyle = "#6b7280";
@@ -6227,14 +6249,13 @@ export default function TreeCanvas({
         ctx.font = fontSpec("scale", scaleFontSize);
         ctx.textBaseline = "middle";
         if (showCentralTimeLabels) {
-          const labelTheta = circularTimeLabelTheta(order);
-          ctx.textAlign = Math.cos(labelTheta + rotationAngle) >= 0 ? "left" : "right";
-          for (let index = 0; index < displayedCircularScaleBoundaries.length; index += 1) {
-            const boundary = displayedCircularScaleBoundaries[index];
+          ctx.textAlign = Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "left" : "right";
+          for (let index = 0; index < displayedCircularCenterScaleBoundaries.length; index += 1) {
+            const boundary = displayedCircularCenterScaleBoundaries[index];
             const radius = tree.isUltrametric
               ? Math.max(0, stripeExtent - boundary.value) + (10 / camera.scale)
               : Math.max(0, boundary.value) + (10 / camera.scale);
-            const point = polarToCartesian(radius, labelTheta);
+            const point = polarToCartesian(radius, centerScaleTheta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
             ctx.fillText(scaleLabelText(boundary.value), screen.x, screen.y);
@@ -6245,10 +6266,45 @@ export default function TreeCanvas({
               "#6b7280",
               scaleFontSize,
               labelFontFamilies.scale,
-              Math.cos(labelTheta + rotationAngle) >= 0 ? "start" : "end",
+              Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "start" : "end",
               undefined,
               labelFontStyles.scale,
             );
+          }
+          if (showCircularCenterRadialScaleBar) {
+            const startPoint = worldToScreenCircular(camera, 0, 0);
+            const endWorld = polarToCartesian(stripeExtent, centerScaleTheta);
+            const endPoint = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+            const tangentX = -Math.sin(centerScaleTheta + rotationAngle);
+            const tangentY = Math.cos(centerScaleTheta + rotationAngle);
+            ctx.globalAlpha = 0.82;
+            ctx.strokeStyle = "#6b7280";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(startPoint.x, startPoint.y);
+            ctx.lineTo(endPoint.x, endPoint.y);
+            ctx.stroke();
+            pushSceneLine(startPoint.x, startPoint.y, endPoint.x, endPoint.y, "#6b7280", 1, 0.82);
+            ctx.beginPath();
+            for (let index = 0; index < displayedCircularCenterScaleBoundaries.length; index += 1) {
+              const boundary = displayedCircularCenterScaleBoundaries[index];
+              const radius = tree.isUltrametric ? Math.max(0, stripeExtent - boundary.value) : Math.max(0, boundary.value);
+              const tickWorld = polarToCartesian(radius, centerScaleTheta);
+              const tickScreen = worldToScreenCircular(camera, tickWorld.x, tickWorld.y);
+              const halfTick = (4 + (3 * boundary.alpha)) * 0.5;
+              ctx.moveTo(tickScreen.x - (tangentX * halfTick), tickScreen.y - (tangentY * halfTick));
+              ctx.lineTo(tickScreen.x + (tangentX * halfTick), tickScreen.y + (tangentY * halfTick));
+              pushSceneLine(
+                tickScreen.x - (tangentX * halfTick),
+                tickScreen.y - (tangentY * halfTick),
+                tickScreen.x + (tangentX * halfTick),
+                tickScreen.y + (tangentY * halfTick),
+                "#6b7280",
+                1,
+                0.35 + (0.65 * boundary.alpha),
+              );
+            }
+            ctx.stroke();
           }
           ctx.globalAlpha = 1;
         } else if (circularScaleBar) {

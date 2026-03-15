@@ -316,6 +316,31 @@ test("dashed stripe mode exports dashed guide lines", async ({ page }) => {
   expect(svg).toContain('stroke-dasharray="6 6"');
 });
 
+test("circular center scale supports manual angle and radial bar controls", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");
+
+  const debug = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleAngleDegrees(90);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowCircularCenterRadialScaleBar(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleTickIntervalInput("200");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular ?? null;
+  }) as {
+    centerScaleAngleDegrees?: number;
+    showCentralScaleLabels?: boolean;
+    centerScaleTickCount?: number;
+    showCenterRadialScaleBar?: boolean;
+  } | null;
+
+  expect(debug?.showCentralScaleLabels).toBe(true);
+  expect(debug?.centerScaleAngleDegrees).toBe(90);
+  expect(debug?.centerScaleTickCount).toBeGreaterThanOrEqual(4);
+  expect(debug?.showCenterRadialScaleBar).toBe(true);
+});
+
 test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A:275,B:275):275,(C:275,D:275):275)Root;");

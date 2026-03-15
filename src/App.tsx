@@ -158,6 +158,8 @@ const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
 const DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS = true;
 const DEFAULT_EXTEND_RECT_SCALE_TO_TICK = false;
 const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
+const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = 5;
+const DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR = false;
 const DEFAULT_TIME_STRIPE_STYLE = "bands";
 const DEFAULT_TIME_STRIPE_LINE_WEIGHT = 1.1;
 const DEFAULT_SHOW_NODE_ERROR_BARS = false;
@@ -503,6 +505,9 @@ export default function App() {
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
   const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
   const [scaleTickIntervalInput, setScaleTickIntervalInput] = useState("");
+  const [circularCenterScaleAngleDegrees, setCircularCenterScaleAngleDegrees] = useState(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
+  const [showCircularCenterRadialScaleBar, setShowCircularCenterRadialScaleBar] = useState(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
+  const [circularCenterScaleTickIntervalInput, setCircularCenterScaleTickIntervalInput] = useState("");
   const [timeStripeStyle, setTimeStripeStyle] = useState<"bands" | "dashed">(DEFAULT_TIME_STRIPE_STYLE);
   const [timeStripeLineWeight, setTimeStripeLineWeight] = useState(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
@@ -765,6 +770,14 @@ export default function App() {
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }, [scaleTickIntervalInput]);
+  const circularCenterScaleTickInterval = useMemo(() => {
+    const trimmed = circularCenterScaleTickIntervalInput.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [circularCenterScaleTickIntervalInput]);
   const metadataColumns = metadataTable?.columns ?? [];
   const metadataValueColumnSupportsContinuous = useMemo(
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
@@ -1340,6 +1353,9 @@ export default function App() {
     setExtendRectScaleToTick(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
     setShowScaleZeroTick(DEFAULT_SHOW_SCALE_ZERO_TICK);
     setScaleTickIntervalInput("");
+    setCircularCenterScaleAngleDegrees(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
+    setShowCircularCenterRadialScaleBar(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
+    setCircularCenterScaleTickIntervalInput("");
     setTimeStripeStyle(DEFAULT_TIME_STRIPE_STYLE);
     setTimeStripeLineWeight(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
     setShowNodeErrorBars(DEFAULT_SHOW_NODE_ERROR_BARS);
@@ -1400,6 +1416,9 @@ export default function App() {
         extendRectScaleToTick,
         showScaleZeroTick,
         scaleTickInterval,
+        circularCenterScaleAngleDegrees,
+        showCircularCenterRadialScaleBar,
+        circularCenterScaleTickInterval,
         timeStripeStyle,
         timeStripeLineWeight,
         showNodeErrorBars,
@@ -1447,6 +1466,9 @@ export default function App() {
       setExtendRectScaleToTick,
       setShowScaleZeroTick,
       setScaleTickIntervalInput,
+      setCircularCenterScaleAngleDegrees,
+      setShowCircularCenterRadialScaleBar,
+      setCircularCenterScaleTickIntervalInput,
       setTimeStripeStyle: (value: "bands" | "dashed") => setTimeStripeStyle(value),
       setTimeStripeLineWeight,
       setShowNodeErrorBars,
@@ -1575,9 +1597,12 @@ export default function App() {
     extendRectScaleToTick,
     errorBarCapSizePx,
     errorBarThicknessPx,
+    circularCenterScaleAngleDegrees,
+    circularCenterScaleTickInterval,
     scaleTickInterval,
     showScaleZeroTick,
     showIntermediateScaleTicks,
+    showCircularCenterRadialScaleBar,
     showNodeErrorBars,
     metadataTable,
     metadataValueColumn,
@@ -2017,6 +2042,38 @@ export default function App() {
                           onChange={(event) => setShowScaleZeroTick(event.target.checked)}
                         />
                         Show zero tick
+                      </label>
+                      <label>
+                        Circular center scale angle
+                        <input
+                          type="range"
+                          min={-180}
+                          max={180}
+                          step={1}
+                          value={circularCenterScaleAngleDegrees}
+                          onChange={(event) => setCircularCenterScaleAngleDegrees(Number(event.target.value))}
+                        />
+                      </label>
+                      <div className="figure-style-value">{circularCenterScaleAngleDegrees.toFixed(0)} deg</div>
+                      <label>
+                        Circular center tick interval
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={circularCenterScaleTickIntervalInput}
+                          placeholder="reuse main"
+                          onChange={(event) => setCircularCenterScaleTickIntervalInput(event.target.value)}
+                        />
+                      </label>
+                      <p className="figure-style-help">Leave blank to reuse the main scale tick spacing.</p>
+                      <label className="label-style-inline-toggle">
+                        <input
+                          type="checkbox"
+                          checked={showCircularCenterRadialScaleBar}
+                          onChange={(event) => setShowCircularCenterRadialScaleBar(event.target.checked)}
+                        />
+                        Show circular radial scale bar
                       </label>
                     </>
                   )}
@@ -2540,6 +2597,9 @@ export default function App() {
           showIntermediateScaleTicks={showIntermediateScaleTicks}
           extendRectScaleToTick={extendRectScaleToTick}
           showScaleZeroTick={showScaleZeroTick}
+          circularCenterScaleAngleDegrees={circularCenterScaleAngleDegrees}
+          showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
+          circularCenterScaleTickInterval={circularCenterScaleTickInterval}
           showGenusLabels={showGenusLabels && !taxonomyEnabled}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}

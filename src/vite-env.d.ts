@@ -23,6 +23,9 @@ declare global {
       setExtendRectScaleToTick: (visible: boolean) => void;
       setShowScaleZeroTick: (visible: boolean) => void;
       setScaleTickIntervalInput: (value: string) => void;
+      setCircularCenterScaleAngleDegrees: (value: number) => void;
+      setShowCircularCenterRadialScaleBar: (visible: boolean) => void;
+      setCircularCenterScaleTickIntervalInput: (value: string) => void;
       setTimeStripeStyle: (value: "bands" | "dashed") => void;
       setTimeStripeLineWeight: (value: number) => void;
       setShowNodeErrorBars: (visible: boolean) => void;
