@@ -11,6 +11,8 @@ export interface TreeCanvasProps {
   zoomAxisMode: ZoomAxisMode;
   circularRotation: number;
   showTimeStripes: boolean;
+  timeStripeStyle: "bands" | "dashed";
+  timeStripeLineWeight: number;
   showScaleBars: boolean;
   scaleTickInterval: number | null;
   showIntermediateScaleTicks: boolean;
@@ -38,6 +40,9 @@ export interface TreeCanvasProps {
   figureStyles: FigureStyleSettings;
   branchThicknessScale: number;
   showNodeHeightLabels: boolean;
+  showNodeErrorBars: boolean;
+  errorBarThicknessPx: number;
+  errorBarCapSizePx: number;
   searchQuery: string;
   searchMatches: number[];
   activeSearchNode: number | null;

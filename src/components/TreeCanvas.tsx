@@ -69,6 +69,8 @@ import {
 import type { LayoutOrder, TreeModel, ViewMode } from "../types/tree";
 
 const SOLID_SCALE_TICK_ALPHA_THRESHOLD = 0.6;
+const DASHED_STRIPE_DASH_ARRAY = "6 6";
+const ERROR_BAR_COLOR = "#64748b";
 
 function arcIntersectsViewport(
   centerX: number,
@@ -212,8 +214,8 @@ const MANUAL_BRANCH_SWATCHES = [
 
 type SvgScenePrimitive =
   | { kind: "rect"; x: number; y: number; width: number; height: number; fill: string; opacity?: number }
-  | { kind: "line"; x1: number; y1: number; x2: number; y2: number; stroke: string; strokeWidth: number; opacity?: number }
-  | { kind: "path"; d: string; stroke?: string; strokeWidth?: number; fill?: string; opacity?: number }
+  | { kind: "line"; x1: number; y1: number; x2: number; y2: number; stroke: string; strokeWidth: number; opacity?: number; dashArray?: string }
+  | { kind: "path"; d: string; stroke?: string; strokeWidth?: number; fill?: string; opacity?: number; dashArray?: string }
   | {
     kind: "text";
     text: string;
@@ -319,10 +321,10 @@ function buildSvgString(scene: SvgScene): string {
       return `<rect x="${element.x.toFixed(3)}" y="${element.y.toFixed(3)}" width="${element.width.toFixed(3)}" height="${element.height.toFixed(3)}" fill="${element.fill}"${element.opacity !== undefined ? ` opacity="${element.opacity}"` : ""}/>`;
     }
     if (element.kind === "line") {
-      return `<line x1="${element.x1.toFixed(3)}" y1="${element.y1.toFixed(3)}" x2="${element.x2.toFixed(3)}" y2="${element.y2.toFixed(3)}" stroke="${element.stroke}" stroke-width="${element.strokeWidth.toFixed(3)}"${element.opacity !== undefined ? ` opacity="${element.opacity}"` : ""} stroke-linecap="butt"/>`;
+      return `<line x1="${element.x1.toFixed(3)}" y1="${element.y1.toFixed(3)}" x2="${element.x2.toFixed(3)}" y2="${element.y2.toFixed(3)}" stroke="${element.stroke}" stroke-width="${element.strokeWidth.toFixed(3)}"${element.opacity !== undefined ? ` opacity="${element.opacity}"` : ""}${element.dashArray ? ` stroke-dasharray="${element.dashArray}"` : ""} stroke-linecap="butt"/>`;
     }
     if (element.kind === "path") {
-      return `<path d="${element.d}"${element.stroke ? ` stroke="${element.stroke}"` : ""}${element.strokeWidth !== undefined ? ` stroke-width="${element.strokeWidth.toFixed(3)}"` : ""}${element.fill ? ` fill="${element.fill}"` : " fill=\"none\""}${element.opacity !== undefined ? ` opacity="${element.opacity}"` : ""} stroke-linecap="butt" stroke-linejoin="round"/>`;
+      return `<path d="${element.d}"${element.stroke ? ` stroke="${element.stroke}"` : ""}${element.strokeWidth !== undefined ? ` stroke-width="${element.strokeWidth.toFixed(3)}"` : ""}${element.fill ? ` fill="${element.fill}"` : " fill=\"none\""}${element.opacity !== undefined ? ` opacity="${element.opacity}"` : ""}${element.dashArray ? ` stroke-dasharray="${element.dashArray}"` : ""} stroke-linecap="butt" stroke-linejoin="round"/>`;
     }
     const transform = element.rotation
       ? ` transform="rotate(${((element.rotation * 180) / Math.PI).toFixed(3)} ${element.x.toFixed(3)} ${element.y.toFixed(3)})"`
@@ -1716,6 +1718,8 @@ export default function TreeCanvas({
   zoomAxisMode,
   circularRotation,
   showTimeStripes,
+  timeStripeStyle,
+  timeStripeLineWeight,
   showScaleBars,
   scaleTickInterval,
   showIntermediateScaleTicks,
@@ -1743,6 +1747,9 @@ export default function TreeCanvas({
   figureStyles,
   branchThicknessScale,
   showNodeHeightLabels,
+  showNodeErrorBars,
+  errorBarThicknessPx,
+  errorBarCapSizePx,
   searchQuery,
   searchMatches,
   activeSearchNode,
@@ -2617,17 +2624,17 @@ export default function TreeCanvas({
       }
       exportCaptureRef.current.elements.push({ kind: "rect", x, y, width, height, fill, opacity });
     };
-    const pushSceneLine = (x1: number, y1: number, x2: number, y2: number, stroke: string, strokeWidth: number, opacity?: number): void => {
+    const pushSceneLine = (x1: number, y1: number, x2: number, y2: number, stroke: string, strokeWidth: number, opacity?: number, dashArray?: string): void => {
       if (!exportCaptureRef.current) {
         return;
       }
-      exportCaptureRef.current.elements.push({ kind: "line", x1, y1, x2, y2, stroke, strokeWidth, opacity });
+      exportCaptureRef.current.elements.push({ kind: "line", x1, y1, x2, y2, stroke, strokeWidth, opacity, dashArray });
     };
-    const pushScenePath = (d: string, stroke?: string, strokeWidth?: number, fill?: string, opacity?: number): void => {
+    const pushScenePath = (d: string, stroke?: string, strokeWidth?: number, fill?: string, opacity?: number, dashArray?: string): void => {
       if (!exportCaptureRef.current || !d) {
         return;
       }
-      exportCaptureRef.current.elements.push({ kind: "path", d, stroke, strokeWidth, fill, opacity });
+      exportCaptureRef.current.elements.push({ kind: "path", d, stroke, strokeWidth, fill, opacity, dashArray });
     };
     const pushSceneText = (
       text: string,
@@ -2739,27 +2746,46 @@ export default function TreeCanvas({
         : null;
 
       if (showTimeStripes) {
-        const drawBands = (step: number, alpha: number) => {
-          if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
-            return;
+        if (timeStripeStyle === "dashed") {
+          ctx.save();
+          ctx.setLineDash([6, 6]);
+          for (let index = 0; index < stripeBoundaries.length; index += 1) {
+            const boundary = stripeBoundaries[index];
+            const x = tree.isUltrametric
+              ? worldToScreenRect(camera, tree.rootAge - boundary.value, 0).x
+              : worldToScreenRect(camera, boundary.value, 0).x;
+            ctx.strokeStyle = `rgba(148,163,184,${0.22 + (0.5 * boundary.alpha)})`;
+            ctx.lineWidth = timeStripeLineWeight;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, treeDrawBottom);
+            ctx.stroke();
+            pushSceneLine(x, 0, x, treeDrawBottom, "#94a3b8", timeStripeLineWeight, 0.22 + (0.5 * boundary.alpha), DASHED_STRIPE_DASH_ARRAY);
           }
-          for (let start = 0, index = 0; start < rectStripeExtent; start += step, index += 1) {
-            const next = Math.min(rectStripeExtent, start + step);
-            const left = tree.isUltrametric
-              ? worldToScreenRect(camera, tree.rootAge - next, 0).x
-              : worldToScreenRect(camera, start, 0).x;
-            const right = tree.isUltrametric
-              ? worldToScreenRect(camera, tree.rootAge - start, 0).x
-              : worldToScreenRect(camera, next, 0).x;
-            ctx.fillStyle = index % 2 === 0
-              ? `rgba(243,244,246,${0.95 * alpha})`
-              : `rgba(255,255,255,${0.95 * alpha})`;
-            ctx.fillRect(left, 0, right - left, treeDrawBottom);
-            pushSceneRect(left, 0, right - left, treeDrawBottom, ctx.fillStyle, 1);
+          ctx.restore();
+        } else {
+          const drawBands = (step: number, alpha: number) => {
+            if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
+              return;
+            }
+            for (let start = 0, index = 0; start < rectStripeExtent; start += step, index += 1) {
+              const next = Math.min(rectStripeExtent, start + step);
+              const left = tree.isUltrametric
+                ? worldToScreenRect(camera, tree.rootAge - next, 0).x
+                : worldToScreenRect(camera, start, 0).x;
+              const right = tree.isUltrametric
+                ? worldToScreenRect(camera, tree.rootAge - start, 0).x
+                : worldToScreenRect(camera, next, 0).x;
+              ctx.fillStyle = index % 2 === 0
+                ? `rgba(243,244,246,${0.95 * alpha})`
+                : `rgba(255,255,255,${0.95 * alpha})`;
+              ctx.fillRect(left, 0, right - left, treeDrawBottom);
+              pushSceneRect(left, 0, right - left, treeDrawBottom, ctx.fillStyle, 1);
+            }
+          };
+          for (let index = 0; index < stripeLevels.length; index += 1) {
+            drawBands(stripeLevels[index].step, index === 0 ? 1 : stripeLevels[index].alpha * 0.82);
           }
-        };
-        for (let index = 0; index < stripeLevels.length; index += 1) {
-          drawBands(stripeLevels[index].step, index === 0 ? 1 : stripeLevels[index].alpha * 0.82);
         }
       }
 
@@ -4051,6 +4077,63 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
+      let rectErrorBarCount = 0;
+      if (showNodeErrorBars && tree.nodeIntervalCount > 0 && camera.scaleX > 1.1) {
+        const placements: ScreenLabel[] = [];
+        ctx.strokeStyle = ERROR_BAR_COLOR;
+        ctx.lineWidth = errorBarThicknessPx;
+        const halfCap = Math.max(0, errorBarCapSizePx * 0.5);
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (tree.buffers.firstChild[node] < 0) {
+            continue;
+          }
+          const lower = tree.nodeIntervalLower[node];
+          const upper = tree.nodeIntervalUpper[node];
+          if (!Number.isFinite(lower) || !Number.isFinite(upper)) {
+            continue;
+          }
+          const y = layout.center[node];
+          if (y < minY || y > maxY) {
+            continue;
+          }
+          const start = worldToScreenRect(camera, lower, y);
+          const end = worldToScreenRect(camera, upper, y);
+          const midX = (start.x + end.x) * 0.5;
+          const midY = start.y;
+          const subtreeSpanPx = Math.max(0, (layout.max[node] - layout.min[node]) * camera.scaleY);
+          const intervalSpanPx = Math.abs(end.x - start.x);
+          if (camera.scaleY <= 3.2 && subtreeSpanPx < 10 && intervalSpanPx < 12) {
+            continue;
+          }
+          if (!canPlaceLinearLabel(placements, midX, midY, 10, 18)) {
+            continue;
+          }
+          placements.push({ x: midX, y: midY, text: "", alpha: 1 });
+          ctx.globalAlpha = 0.82;
+          ctx.beginPath();
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(end.x, end.y);
+          if (halfCap > 0) {
+            ctx.moveTo(start.x, start.y - halfCap);
+            ctx.lineTo(start.x, start.y + halfCap);
+            ctx.moveTo(end.x, end.y - halfCap);
+            ctx.lineTo(end.x, end.y + halfCap);
+          }
+          ctx.stroke();
+          pushSceneLine(start.x, start.y, end.x, end.y, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+          if (halfCap > 0) {
+            pushSceneLine(start.x, start.y - halfCap, start.x, start.y + halfCap, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+            pushSceneLine(end.x, end.y - halfCap, end.x, end.y + halfCap, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+          }
+          rectErrorBarCount += 1;
+        }
+        ctx.globalAlpha = 1;
+      }
+      if (!renderDebug.rect || typeof renderDebug.rect !== "object") {
+        renderDebug.rect = {};
+      }
+      (renderDebug.rect as Record<string, unknown>).errorBarCount = rectErrorBarCount;
+
       if (showScaleBars) {
         ctx.fillStyle = "rgba(251,252,254,0.96)";
         ctx.fillRect(0, size.height - axisBarHeight, size.width, axisBarHeight);
@@ -4212,33 +4295,56 @@ export default function TreeCanvas({
 
       if (showTimeStripes) {
         const center = { x: camera.translateX, y: camera.translateY };
-        const drawBands = (step: number, alpha: number) => {
-          if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
-            return;
-          }
-          for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
-            const next = Math.min(stripeExtent, start + step);
-            const outer = (tree.isUltrametric ? tree.rootAge - start : next) * camera.scale;
-            const inner = (tree.isUltrametric ? tree.rootAge - next : start) * camera.scale;
+        if (timeStripeStyle === "dashed") {
+          ctx.save();
+          ctx.setLineDash([6, 6]);
+          for (let index = 0; index < stripeBoundaries.length; index += 1) {
+            const boundary = stripeBoundaries[index];
+            const radiusPx = (tree.isUltrametric ? stripeExtent - boundary.value : boundary.value) * camera.scale;
             ctx.beginPath();
-            ctx.arc(center.x, center.y, outer, 0, Math.PI * 2);
-            ctx.arc(center.x, center.y, inner, 0, Math.PI * 2, true);
-            ctx.closePath();
-            ctx.fillStyle = index % 2 === 0
-              ? `rgba(243,244,246,${0.95 * alpha})`
-              : `rgba(255,255,255,${0.95 * alpha})`;
-            ctx.fill();
+            ctx.strokeStyle = `rgba(148,163,184,${0.22 + (0.5 * boundary.alpha)})`;
+            ctx.lineWidth = timeStripeLineWeight;
+            ctx.arc(center.x, center.y, radiusPx, 0, Math.PI * 2);
+            ctx.stroke();
             pushScenePath(
-              `M ${(center.x + outer).toFixed(3)} ${center.y.toFixed(3)} A ${outer.toFixed(3)} ${outer.toFixed(3)} 0 1 1 ${(center.x - outer).toFixed(3)} ${center.y.toFixed(3)} A ${outer.toFixed(3)} ${outer.toFixed(3)} 0 1 1 ${(center.x + outer).toFixed(3)} ${center.y.toFixed(3)} M ${(center.x + inner).toFixed(3)} ${center.y.toFixed(3)} A ${inner.toFixed(3)} ${inner.toFixed(3)} 0 1 0 ${(center.x - inner).toFixed(3)} ${center.y.toFixed(3)} A ${inner.toFixed(3)} ${inner.toFixed(3)} 0 1 0 ${(center.x + inner).toFixed(3)} ${center.y.toFixed(3)} Z`,
+              `M ${(center.x + radiusPx).toFixed(3)} ${center.y.toFixed(3)} A ${radiusPx.toFixed(3)} ${radiusPx.toFixed(3)} 0 1 1 ${(center.x - radiusPx).toFixed(3)} ${center.y.toFixed(3)} A ${radiusPx.toFixed(3)} ${radiusPx.toFixed(3)} 0 1 1 ${(center.x + radiusPx).toFixed(3)} ${center.y.toFixed(3)}`,
+              "#94a3b8",
+              timeStripeLineWeight,
               undefined,
-              undefined,
-              ctx.fillStyle,
-              1,
+              0.22 + (0.5 * boundary.alpha),
+              DASHED_STRIPE_DASH_ARRAY,
             );
           }
-        };
-        for (let index = 0; index < stripeLevels.length; index += 1) {
-          drawBands(stripeLevels[index].step, index === 0 ? 1 : stripeLevels[index].alpha * 0.82);
+          ctx.restore();
+        } else {
+          const drawBands = (step: number, alpha: number) => {
+            if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
+              return;
+            }
+            for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
+              const next = Math.min(stripeExtent, start + step);
+              const outer = (tree.isUltrametric ? tree.rootAge - start : next) * camera.scale;
+              const inner = (tree.isUltrametric ? tree.rootAge - next : start) * camera.scale;
+              ctx.beginPath();
+              ctx.arc(center.x, center.y, outer, 0, Math.PI * 2);
+              ctx.arc(center.x, center.y, inner, 0, Math.PI * 2, true);
+              ctx.closePath();
+              ctx.fillStyle = index % 2 === 0
+                ? `rgba(243,244,246,${0.95 * alpha})`
+                : `rgba(255,255,255,${0.95 * alpha})`;
+              ctx.fill();
+              pushScenePath(
+                `M ${(center.x + outer).toFixed(3)} ${center.y.toFixed(3)} A ${outer.toFixed(3)} ${outer.toFixed(3)} 0 1 1 ${(center.x - outer).toFixed(3)} ${center.y.toFixed(3)} A ${outer.toFixed(3)} ${outer.toFixed(3)} 0 1 1 ${(center.x + outer).toFixed(3)} ${center.y.toFixed(3)} M ${(center.x + inner).toFixed(3)} ${center.y.toFixed(3)} A ${inner.toFixed(3)} ${inner.toFixed(3)} 0 1 0 ${(center.x - inner).toFixed(3)} ${center.y.toFixed(3)} A ${inner.toFixed(3)} ${inner.toFixed(3)} 0 1 0 ${(center.x + inner).toFixed(3)} ${center.y.toFixed(3)} Z`,
+                undefined,
+                undefined,
+                ctx.fillStyle,
+                1,
+              );
+            }
+          };
+          for (let index = 0; index < stripeLevels.length; index += 1) {
+            drawBands(stripeLevels[index].step, index === 0 ? 1 : stripeLevels[index].alpha * 0.82);
+          }
         }
       }
 
@@ -6056,6 +6162,65 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
+      let circularErrorBarCount = 0;
+      if (showNodeErrorBars && tree.nodeIntervalCount > 0 && camera.scale > 10) {
+        const placements: ScreenLabel[] = [];
+        const halfCap = Math.max(0, errorBarCapSizePx * 0.5);
+        ctx.strokeStyle = ERROR_BAR_COLOR;
+        ctx.lineWidth = errorBarThicknessPx;
+        for (let node = 0; node < tree.nodeCount; node += 1) {
+          if (tree.buffers.firstChild[node] < 0) {
+            continue;
+          }
+          const lower = tree.nodeIntervalLower[node];
+          const upper = tree.nodeIntervalUpper[node];
+          if (!Number.isFinite(lower) || !Number.isFinite(upper)) {
+            continue;
+          }
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const startWorld = polarToCartesian(lower, theta);
+          const endWorld = polarToCartesian(upper, theta);
+          const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+          const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+          const midX = (start.x + end.x) * 0.5;
+          const midY = (start.y + end.y) * 0.5;
+          if (
+            midX < -40 || midX > size.width + 40 ||
+            midY < -40 || midY > size.height + 40
+          ) {
+            continue;
+          }
+          if (!canPlaceLinearLabel(placements, midX, midY, 12, 18)) {
+            continue;
+          }
+          placements.push({ x: midX, y: midY, text: "", alpha: 1 });
+          const tangentX = -Math.sin(theta + rotationAngle);
+          const tangentY = Math.cos(theta + rotationAngle);
+          ctx.globalAlpha = 0.82;
+          ctx.beginPath();
+          ctx.moveTo(start.x, start.y);
+          ctx.lineTo(end.x, end.y);
+          if (halfCap > 0) {
+            ctx.moveTo(start.x - (tangentX * halfCap), start.y - (tangentY * halfCap));
+            ctx.lineTo(start.x + (tangentX * halfCap), start.y + (tangentY * halfCap));
+            ctx.moveTo(end.x - (tangentX * halfCap), end.y - (tangentY * halfCap));
+            ctx.lineTo(end.x + (tangentX * halfCap), end.y + (tangentY * halfCap));
+          }
+          ctx.stroke();
+          pushSceneLine(start.x, start.y, end.x, end.y, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+          if (halfCap > 0) {
+            pushSceneLine(start.x - (tangentX * halfCap), start.y - (tangentY * halfCap), start.x + (tangentX * halfCap), start.y + (tangentY * halfCap), ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+            pushSceneLine(end.x - (tangentX * halfCap), end.y - (tangentY * halfCap), end.x + (tangentX * halfCap), end.y + (tangentY * halfCap), ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+          }
+          circularErrorBarCount += 1;
+        }
+        ctx.globalAlpha = 1;
+      }
+      if (!renderDebug.circular || typeof renderDebug.circular !== "object") {
+        renderDebug.circular = {};
+      }
+      (renderDebug.circular as Record<string, unknown>).errorBarCount = circularErrorBarCount;
+
       if (showScaleBars) {
         ctx.fillStyle = "#6b7280";
         const scaleFontSize = scaleLabelFontSize("scale", 11);
@@ -6237,6 +6402,8 @@ export default function TreeCanvas({
     searchQuery,
     searchMatches,
     searchMatchSet,
+    errorBarCapSizePx,
+    errorBarThicknessPx,
     extendRectScaleToTick,
     scaleLabelFontSize,
     scaleTickInterval,
@@ -6244,12 +6411,15 @@ export default function TreeCanvas({
     showGenusLabels,
     showIntermediateScaleTicks,
     showInternalNodeLabels,
+    showNodeErrorBars,
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
     showTimeStripes,
     size.height,
     size.width,
+    timeStripeLineWeight,
+    timeStripeStyle,
     taxonomyActiveRanks,
     taxonomyBlocks,
     taxonomyBranchColoringEnabled,

@@ -23,6 +23,11 @@ declare global {
       setExtendRectScaleToTick: (visible: boolean) => void;
       setShowScaleZeroTick: (visible: boolean) => void;
       setScaleTickIntervalInput: (value: string) => void;
+      setTimeStripeStyle: (value: "bands" | "dashed") => void;
+      setTimeStripeLineWeight: (value: number) => void;
+      setShowNodeErrorBars: (visible: boolean) => void;
+      setErrorBarThicknessPx: (value: number) => void;
+      setErrorBarCapSizePx: (value: number) => void;
       setMetadataEnabled: (visible: boolean) => void;
       setSearchQuery: (query: string) => void;
       setCircularRotationDegreesForTest: (degrees: number) => void;

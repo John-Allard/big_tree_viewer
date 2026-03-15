@@ -300,6 +300,22 @@ test("solid subdivision ticks remain when fading ticks are hidden", async ({ pag
   expect(svg).not.toContain(">300 mya<");
 });
 
+test("dashed stripe mode exports dashed guide lines", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:300,B:300):300,(C:300,D:300):300)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTimeStripeStyle("dashed");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTimeStripeLineWeight(1.6);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain('stroke-dasharray="6 6"');
+});
+
 test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A:275,B:275):275,(C:275,D:275):275)Root;");
@@ -319,6 +335,28 @@ test("rectangular scale can extend to the next tick and include zero", async ({ 
   expect(svg).toContain(">200 mya<");
   expect(svg).toContain(">400 mya<");
   expect(svg).toContain(">600 mya<");
+});
+
+test("BEAST or MrBayes-style interval annotations render node error bars", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:1,B:1)[&height_95%_HPD={0.6,0.8}]:1,(C:1,D:1)[&length_95%_HPD={0.2,0.4}]:1)Root;");
+
+  const result = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowNodeErrorBars(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return {
+      state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+      debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect ?? null,
+    };
+  }) as {
+    state?: { nodeIntervalCount?: number };
+    debug?: { errorBarCount?: number };
+  };
+
+  expect(result.state?.nodeIntervalCount).toBeGreaterThanOrEqual(2);
+  expect(result.debug?.errorBarCount).toBeGreaterThanOrEqual(2);
 });
 
 test("branch hover clears when the pointer leaves or the view is panned", async ({ page }) => {

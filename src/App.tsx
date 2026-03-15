@@ -158,6 +158,11 @@ const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
 const DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS = true;
 const DEFAULT_EXTEND_RECT_SCALE_TO_TICK = false;
 const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
+const DEFAULT_TIME_STRIPE_STYLE = "bands";
+const DEFAULT_TIME_STRIPE_LINE_WEIGHT = 1.1;
+const DEFAULT_SHOW_NODE_ERROR_BARS = false;
+const DEFAULT_ERROR_BAR_THICKNESS_PX = 1.2;
+const DEFAULT_ERROR_BAR_CAP_SIZE_PX = 7;
 const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
@@ -498,10 +503,15 @@ export default function App() {
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
   const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
   const [scaleTickIntervalInput, setScaleTickIntervalInput] = useState("");
+  const [timeStripeStyle, setTimeStripeStyle] = useState<"bands" | "dashed">(DEFAULT_TIME_STRIPE_STYLE);
+  const [timeStripeLineWeight, setTimeStripeLineWeight] = useState(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
   const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
   const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
+  const [showNodeErrorBars, setShowNodeErrorBars] = useState(DEFAULT_SHOW_NODE_ERROR_BARS);
+  const [errorBarThicknessPx, setErrorBarThicknessPx] = useState(DEFAULT_ERROR_BAR_THICKNESS_PX);
+  const [errorBarCapSizePx, setErrorBarCapSizePx] = useState(DEFAULT_ERROR_BAR_CAP_SIZE_PX);
   const [figureStyles, setFigureStyles] = useState<FigureStyleSettings>(() => cloneDefaultFigureStyles());
   const [taxonomyColorJitter, setTaxonomyColorJitter] = useState(DEFAULT_TAXONOMY_COLOR_JITTER);
   const [taxonomyBranchColoringEnabled, setTaxonomyBranchColoringEnabled] = useState(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
@@ -1330,6 +1340,11 @@ export default function App() {
     setExtendRectScaleToTick(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
     setShowScaleZeroTick(DEFAULT_SHOW_SCALE_ZERO_TICK);
     setScaleTickIntervalInput("");
+    setTimeStripeStyle(DEFAULT_TIME_STRIPE_STYLE);
+    setTimeStripeLineWeight(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
+    setShowNodeErrorBars(DEFAULT_SHOW_NODE_ERROR_BARS);
+    setErrorBarThicknessPx(DEFAULT_ERROR_BAR_THICKNESS_PX);
+    setErrorBarCapSizePx(DEFAULT_ERROR_BAR_CAP_SIZE_PX);
     setActiveLabelStylePopover(null);
     setVisualResetRequest((current) => current + 1);
   }, []);
@@ -1385,6 +1400,12 @@ export default function App() {
         extendRectScaleToTick,
         showScaleZeroTick,
         scaleTickInterval,
+        timeStripeStyle,
+        timeStripeLineWeight,
+        showNodeErrorBars,
+        errorBarThicknessPx,
+        errorBarCapSizePx,
+        nodeIntervalCount: tree?.nodeIntervalCount ?? 0,
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
         isUltrametric: tree?.isUltrametric ?? false,
@@ -1426,6 +1447,11 @@ export default function App() {
       setExtendRectScaleToTick,
       setShowScaleZeroTick,
       setScaleTickIntervalInput,
+      setTimeStripeStyle: (value: "bands" | "dashed") => setTimeStripeStyle(value),
+      setTimeStripeLineWeight,
+      setShowNodeErrorBars,
+      setErrorBarThicknessPx,
+      setErrorBarCapSizePx,
       setMetadataEnabled,
       setSearchQuery,
       setCircularRotationDegreesForTest: setCircularRotationDegrees,
@@ -1547,9 +1573,12 @@ export default function App() {
     metadataOverlay.matchedNodeCount,
     metadataOverlay.matchedRowCount,
     extendRectScaleToTick,
+    errorBarCapSizePx,
+    errorBarThicknessPx,
     scaleTickInterval,
     showScaleZeroTick,
     showIntermediateScaleTicks,
+    showNodeErrorBars,
     metadataTable,
     metadataValueColumn,
     order,
@@ -1561,6 +1590,8 @@ export default function App() {
     showBootstrapLabels,
     showGenusLabels,
     showInternalNodeLabels,
+    timeStripeLineWeight,
+    timeStripeStyle,
     taxonomyBranchColoringEnabled,
     taxonomyColorJitter,
     taxonomyEnabled,
@@ -1926,6 +1957,17 @@ export default function App() {
               <label className="visual-option-checkbox">
                 <input
                   type="checkbox"
+                  checked={showNodeErrorBars}
+                  disabled={(tree?.nodeIntervalCount ?? 0) === 0}
+                  onChange={(event) => setShowNodeErrorBars(event.target.checked)}
+                />
+                Show node error bars
+              </label>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
                   checked={showScaleBars}
                   onChange={(event) => setShowScaleBars(event.target.checked)}
                 />
@@ -1995,6 +2037,61 @@ export default function App() {
             </div>
           </div>
           <div className="visual-options-controls">
+            {showTimeStripes ? (
+              <>
+                <label>
+                  Stripe style
+                  <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as "bands" | "dashed")}>
+                    <option value="bands">Shaded bands</option>
+                    <option value="dashed">Dashed guides</option>
+                  </select>
+                </label>
+                {timeStripeStyle === "dashed" ? (
+                  <>
+                    <label>
+                      Stripe line weight
+                      <input
+                        type="range"
+                        min={0.5}
+                        max={4}
+                        step={0.1}
+                        value={timeStripeLineWeight}
+                        onChange={(event) => setTimeStripeLineWeight(Number(event.target.value))}
+                      />
+                    </label>
+                    <div className="figure-style-value">{timeStripeLineWeight.toFixed(1)}px</div>
+                  </>
+                ) : null}
+              </>
+            ) : null}
+            {showNodeErrorBars ? (
+              <>
+                <label>
+                  Error bar thickness
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={4}
+                    step={0.1}
+                    value={errorBarThicknessPx}
+                    onChange={(event) => setErrorBarThicknessPx(Number(event.target.value))}
+                  />
+                </label>
+                <div className="figure-style-value">{errorBarThicknessPx.toFixed(1)}px</div>
+                <label>
+                  Error bar cap size
+                  <input
+                    type="range"
+                    min={0}
+                    max={16}
+                    step={1}
+                    value={errorBarCapSizePx}
+                    onChange={(event) => setErrorBarCapSizePx(Number(event.target.value))}
+                  />
+                </label>
+                <div className="figure-style-value">{errorBarCapSizePx.toFixed(0)}px</div>
+              </>
+            ) : null}
             <label>
               Branch thickness
               <input
@@ -2436,6 +2533,8 @@ export default function App() {
           zoomAxisMode={viewMode === "circular" ? "both" : zoomAxisMode}
           circularRotation={(circularRotationDegrees * Math.PI) / 180}
           showTimeStripes={showTimeStripes}
+          timeStripeStyle={timeStripeStyle}
+          timeStripeLineWeight={timeStripeLineWeight}
           showScaleBars={showScaleBars}
           scaleTickInterval={scaleTickInterval}
           showIntermediateScaleTicks={showIntermediateScaleTicks}
@@ -2463,6 +2562,9 @@ export default function App() {
           figureStyles={figureStyles}
           branchThicknessScale={branchThicknessScale}
           showNodeHeightLabels={showNodeHeightLabels}
+          showNodeErrorBars={showNodeErrorBars}
+          errorBarThicknessPx={errorBarThicknessPx}
+          errorBarCapSizePx={errorBarCapSizePx}
           searchQuery={searchQuery}
           searchMatches={searchMatches}
           activeSearchNode={activeSearchNode}

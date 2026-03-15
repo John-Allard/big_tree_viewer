@@ -11,6 +11,7 @@ interface TempNode {
   hasExplicitLength: boolean;
   depth: number;
   leafCount: number;
+  comments: string[];
 }
 
 function createTempNode(parent: number): TempNode {
@@ -22,6 +23,7 @@ function createTempNode(parent: number): TempNode {
     hasExplicitLength: false,
     depth: 0,
     leafCount: 0,
+    comments: [],
   };
 }
 
@@ -42,6 +44,151 @@ function normalizeQuotedLabel(raw: string): string {
 function parseFloatSafe(raw: string, fallback: number): number {
   const value = Number.parseFloat(raw.trim());
   return Number.isFinite(value) ? value : fallback;
+}
+
+function splitTopLevelComma(value: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let quote: "'" | "\"" | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote !== null) {
+      current += character;
+      if (character === quote && !(quote === "\"" && value[index - 1] === "\\")) {
+        if (quote === "'" && value[index + 1] === "'") {
+          current += value[index + 1];
+          index += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+    if (character === "'" || character === "\"") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === "{") {
+      braceDepth += 1;
+      current += character;
+      continue;
+    }
+    if (character === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      current += character;
+      continue;
+    }
+    if (character === "[") {
+      bracketDepth += 1;
+      current += character;
+      continue;
+    }
+    if (character === "]") {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+      current += character;
+      continue;
+    }
+    if (character === "," && braceDepth === 0 && bracketDepth === 0) {
+      if (current.trim()) {
+        parts.push(current.trim());
+      }
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+  return parts;
+}
+
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    || (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseAnnotationMap(rawComment: string): Map<string, string> {
+  const normalized = rawComment.trim().replace(/^&+/, "");
+  const entries = splitTopLevelComma(normalized);
+  const annotations = new Map<string, string>();
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const equalsIndex = entry.indexOf("=");
+    if (equalsIndex < 0) {
+      continue;
+    }
+    const key = entry.slice(0, equalsIndex).trim();
+    const value = entry.slice(equalsIndex + 1).trim();
+    if (!key || !value) {
+      continue;
+    }
+    annotations.set(key, stripWrappingQuotes(value));
+  }
+  return annotations;
+}
+
+function parseNumericInterval(rawValue: string | undefined): [number, number] | null {
+  if (!rawValue) {
+    return null;
+  }
+  const normalized = rawValue.trim().replace(/^\{/, "").replace(/\}$/, "");
+  const parts = splitTopLevelComma(normalized);
+  if (parts.length < 2) {
+    return null;
+  }
+  const left = Number.parseFloat(parts[0]);
+  const right = Number.parseFloat(parts[1]);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) {
+    return null;
+  }
+  return left <= right ? [left, right] : [right, left];
+}
+
+function readNodeIntervals(comments: string[]): {
+  height: [number, number] | null;
+  length: [number, number] | null;
+} {
+  const result = {
+    height: null as [number, number] | null,
+    length: null as [number, number] | null,
+  };
+  const heightKeys = ["height_95%_HPD", "height_95%HPD", "height_hpd", "age_95%_HPD", "age_95%HPD"];
+  const lengthKeys = ["length_95%_HPD", "length_95%HPD", "length_hpd"];
+  for (let index = 0; index < comments.length; index += 1) {
+    const annotations = parseAnnotationMap(comments[index]);
+    if (!result.height) {
+      for (let keyIndex = 0; keyIndex < heightKeys.length; keyIndex += 1) {
+        const parsed = parseNumericInterval(annotations.get(heightKeys[keyIndex]));
+        if (parsed) {
+          result.height = parsed;
+          break;
+        }
+      }
+    }
+    if (!result.length) {
+      for (let keyIndex = 0; keyIndex < lengthKeys.length; keyIndex += 1) {
+        const parsed = parseNumericInterval(annotations.get(lengthKeys[keyIndex]));
+        if (parsed) {
+          result.length = parsed;
+          break;
+        }
+      }
+    }
+    if (result.height && result.length) {
+      break;
+    }
+  }
+  return result;
 }
 
 function parseNewick(text: string): { nodes: TempNode[]; root: number; maxDepth: number; hasBranchLengths: boolean } {
@@ -148,6 +295,7 @@ function parseNewick(text: string): { nodes: TempNode[]; root: number; maxDepth:
     }
     if (ch === "[") {
       finalizeToken(i);
+      const commentStart = i + 1;
       let depth = 1;
       i += 1;
       while (i < text.length && depth > 0) {
@@ -157,6 +305,10 @@ function parseNewick(text: string): { nodes: TempNode[]; root: number; maxDepth:
           depth -= 1;
         }
         i += 1;
+      }
+      const comment = text.slice(commentStart, Math.max(commentStart, i - 1)).trim();
+      if (comment && lastNode >= 0) {
+        nodes[lastNode].comments.push(comment);
       }
       continue;
     }
@@ -261,6 +413,9 @@ function buildTopology(nodes: TempNode[], root: number): {
   names: string[];
   isUltrametric: boolean;
   rootAge: number;
+  nodeIntervalLower: Float64Array;
+  nodeIntervalUpper: Float64Array;
+  nodeIntervalCount: number;
   minPositiveBranchLength: number;
 } {
   const nodeCount = nodes.length;
@@ -270,7 +425,12 @@ function buildTopology(nodes: TempNode[], root: number): {
   const branchLength = new Float64Array(nodeCount);
   const depth = new Float64Array(nodeCount);
   const leafCount = new Int32Array(nodeCount);
+  const nodeIntervalLower = new Float64Array(nodeCount);
+  const nodeIntervalUpper = new Float64Array(nodeCount);
   const names = new Array<string>(nodeCount);
+
+  nodeIntervalLower.fill(Number.NaN);
+  nodeIntervalUpper.fill(Number.NaN);
 
   parent.fill(-1);
   firstChild.fill(-1);
@@ -348,6 +508,34 @@ function buildTopology(nodes: TempNode[], root: number): {
   const isUltrametric = Number.isFinite(leafDepthMin) && Number.isFinite(leafDepthMax)
     ? (leafDepthMax - leafDepthMin) <= tolerance
     : false;
+  let nodeIntervalCount = 0;
+  for (let nodeIndex = 0; nodeIndex < nodeCount; nodeIndex += 1) {
+    const intervals = readNodeIntervals(nodes[nodeIndex].comments);
+    let depthInterval: [number, number] | null = null;
+    if (intervals.height) {
+      const [lowerAge, upperAge] = intervals.height;
+      depthInterval = [
+        Math.max(0, rootAge - upperAge),
+        Math.max(0, rootAge - lowerAge),
+      ];
+    } else if (intervals.length && parent[nodeIndex] >= 0) {
+      const [lowerLength, upperLength] = intervals.length;
+      const parentDepth = depth[parent[nodeIndex]];
+      depthInterval = [
+        parentDepth + lowerLength,
+        parentDepth + upperLength,
+      ];
+    }
+    if (!depthInterval) {
+      continue;
+    }
+    const [lowerDepth, upperDepth] = depthInterval[0] <= depthInterval[1]
+      ? depthInterval
+      : [depthInterval[1], depthInterval[0]];
+    nodeIntervalLower[nodeIndex] = lowerDepth;
+    nodeIntervalUpper[nodeIndex] = upperDepth;
+    nodeIntervalCount += 1;
+  }
 
   return {
     buffers: {
@@ -362,6 +550,9 @@ function buildTopology(nodes: TempNode[], root: number): {
     names,
     isUltrametric,
     rootAge,
+    nodeIntervalLower,
+    nodeIntervalUpper,
+    nodeIntervalCount,
     minPositiveBranchLength: Number.isFinite(minPositiveBranchLength) ? minPositiveBranchLength : 1,
   };
 }
@@ -484,12 +675,17 @@ function buildPayload(
     isUltrametric: topology.isUltrametric,
     leafNodes: topology.leafNodes,
     names: topology.names,
+    nodeIntervalLower: topology.nodeIntervalLower,
+    nodeIntervalUpper: topology.nodeIntervalUpper,
+    nodeIntervalCount: topology.nodeIntervalCount,
     buffers: topology.buffers,
     layouts,
   };
 
   const transfers: Transferable[] = [
     payload.leafNodes.buffer,
+    payload.nodeIntervalLower.buffer,
+    payload.nodeIntervalUpper.buffer,
     payload.buffers.parent.buffer,
     payload.buffers.firstChild.buffer,
     payload.buffers.nextSibling.buffer,

@@ -36,6 +36,10 @@ These are in place and do not need to stay on the active backlog:
 - taxonomy overlays in rectangular columns and circular rings
 - taxonomy hover tooltips with rank, descendant-tip count, and MRCA age
 - taxonomy rank visibility controls
+- configurable scale bars for ultrametric and non-ultrametric trees
+- explicit tick interval control, zero tick, fit-extension, and stripe style options
+- node interval / HPD error-bar parsing from BEAST- and MrBayes-style annotations
+- node error-bar rendering with visual controls and density-aware display
 
 ## Active Feature Areas
 
@@ -56,16 +60,14 @@ These are in place and do not need to stay on the active backlog:
 
 ### 4. Node Uncertainty / Error Bars
 
-- Support node-associated error bars when that data is available, similar to FigTree.
-- Add controls for whether error bars are shown.
-- Add controls for error-bar appearance for figure generation.
-- Define how error-bar data is represented in parsed tree input and/or external metadata files.
+- Expand beyond the currently supported BEAST / MrBayes-style interval annotations if additional formats are needed.
+- Add richer error-bar styling controls if figure-export workflows need more than thickness and cap size.
+- Consider external-metadata-driven interval support in addition to parsed tree annotations.
 
 ### 5. Scale Bar and Figure Controls
 
-- Add circular scale bar customization.
-- Add rectangular scale bar customization.
-- Support explicit tick interval control.
+- Add richer circular scale bar customization.
+- Add richer rectangular scale bar customization.
 - Support scale label font-size control.
 - Support scale line / tick styling controls for figure generation.
 - Keep time stripes and scale bars independently configurable.
@@ -162,6 +164,6 @@ Useful direction:
 
 1. Continue broader Newick-variant support, including deeper NEXUS coverage.
 2. Continue metadata annotation expansion beyond color, text labels, and markers.
-3. Add scale-bar styling controls for figure generation.
+3. Add deeper scale-bar styling controls for figure generation.
 4. Add a large-tree SVG export strategy that can fall back to hybrid output when needed.
-5. Add node uncertainty / error-bar support.
+5. Extend parsed / external interval support beyond the current BEAST / MrBayes-style error bars.

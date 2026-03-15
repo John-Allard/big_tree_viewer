@@ -29,6 +29,9 @@ export interface WorkerTreePayload {
   isUltrametric: boolean;
   leafNodes: Int32Array;
   names: string[];
+  nodeIntervalLower: Float64Array;
+  nodeIntervalUpper: Float64Array;
+  nodeIntervalCount: number;
   buffers: TreeBuffers;
   layouts: Record<LayoutOrder, LayoutBuffers>;
 }
