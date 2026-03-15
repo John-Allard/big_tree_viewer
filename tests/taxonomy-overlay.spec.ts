@@ -1990,16 +1990,28 @@ test("opening the real mapped Pongo taxonomy subtree in a new tab keeps genus as
       activeRanks: taxonomy?.activeRanks ?? [],
       rectVisibleRanks: rectDebug?.taxonomyVisibleRanks ?? [],
       rectRenderedBlockCount: Array.isArray(rectDebug?.taxonomyRenderedBlocks) ? rectDebug.taxonomyRenderedBlocks.length : 0,
+      rectLeafEdges: rectDebug?.leafEdgeCenters ?? null,
+      rectRenderedBlocks: rectDebug?.taxonomyRenderedBlocks ?? [],
+      rectPlacedLabelCount: Number(rectDebug?.taxonomyPlacedLabelCount ?? 0),
+      rectPlacedLabels: rectDebug?.taxonomyPlacedLabels ?? [],
       circularVisibleRanks: circularDebug?.taxonomyVisibleRanks ?? [],
       circularArcCount: Array.isArray(circularDebug?.taxonomyArcDebug) ? circularDebug.taxonomyArcDebug.length : 0,
       circularLabelCount: Array.isArray(circularDebug?.taxonomyPlacedLabels) ? circularDebug.taxonomyPlacedLabels.length : 0,
+      circularPlacedLabels: circularDebug?.taxonomyPlacedLabels ?? [],
     };
   });
 
   expect(popupResult.activeRanks).toEqual(["genus"]);
   expect(popupResult.rectVisibleRanks).toEqual(["genus"]);
   expect(popupResult.rectRenderedBlockCount).toBeGreaterThan(0);
+  expect(popupResult.rectPlacedLabelCount).toBeGreaterThan(0);
+  expect(popupResult.rectPlacedLabels.map((label) => label.text)).toContain("Pongo");
+  const genusBlock = popupResult.rectRenderedBlocks.find((block) => block.label === "Pongo");
+  expect(genusBlock).toBeTruthy();
+  expect(Math.abs(Number(genusBlock.topY) - Number(popupResult.rectLeafEdges.topY))).toBeLessThanOrEqual(1.5);
+  expect(Math.abs(Number(genusBlock.bottomY) - Number(popupResult.rectLeafEdges.bottomY))).toBeLessThanOrEqual(1.5);
   expect(popupResult.circularVisibleRanks).toEqual(["genus"]);
-  expect(popupResult.circularArcCount).toBeGreaterThan(0);
+  expect(popupResult.circularLabelCount).toBeGreaterThan(0);
+  expect(popupResult.circularPlacedLabels.map((label) => label.text)).toContain("Pongo");
   await popup.close();
 });
