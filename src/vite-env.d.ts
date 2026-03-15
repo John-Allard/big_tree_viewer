@@ -36,6 +36,13 @@ declare global {
       setMetadataContinuousMaxInput: (value: string) => void;
       setMetadataLabelsEnabled: (visible: boolean) => void;
       setMetadataLabelColumn: (column: string) => void;
+      setMetadataMarkersEnabled: (visible: boolean) => void;
+      setMetadataMarkerColumn: (column: string) => void;
+      setMetadataMarkerSizePx: (value: number) => void;
+      setMetadataLabelMaxCount: (value: number) => void;
+      setMetadataLabelMinSpacingPx: (value: number) => void;
+      setMetadataLabelOffsetXPx: (value: number) => void;
+      setMetadataLabelOffsetYPx: (value: number) => void;
       setFigureStyleForTest: (
         labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
         field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale",

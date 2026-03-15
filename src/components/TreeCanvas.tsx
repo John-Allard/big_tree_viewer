@@ -229,6 +229,56 @@ interface SvgScene {
   elements: SvgScenePrimitive[];
 }
 
+function metadataMarkerPath(shape: "circle" | "square" | "diamond" | "triangle", x: number, y: number, sizePx: number): string {
+  const radius = Math.max(2, sizePx * 0.5);
+  if (shape === "circle") {
+    return [
+      `M ${x + radius} ${y}`,
+      `A ${radius} ${radius} 0 1 1 ${x - radius} ${y}`,
+      `A ${radius} ${radius} 0 1 1 ${x + radius} ${y}`,
+      "Z",
+    ].join(" ");
+  }
+  if (shape === "square") {
+    return `M ${x - radius} ${y - radius} L ${x + radius} ${y - radius} L ${x + radius} ${y + radius} L ${x - radius} ${y + radius} Z`;
+  }
+  if (shape === "diamond") {
+    return `M ${x} ${y - radius} L ${x + radius} ${y} L ${x} ${y + radius} L ${x - radius} ${y} Z`;
+  }
+  return `M ${x} ${y - radius} L ${x + radius} ${y + radius} L ${x - radius} ${y + radius} Z`;
+}
+
+function drawMetadataMarker(
+  ctx: CanvasRenderingContext2D,
+  shape: "circle" | "square" | "diamond" | "triangle",
+  x: number,
+  y: number,
+  sizePx: number,
+): void {
+  const radius = Math.max(2, sizePx * 0.5);
+  ctx.beginPath();
+  if (shape === "circle") {
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    return;
+  }
+  if (shape === "square") {
+    ctx.rect(x - radius, y - radius, radius * 2, radius * 2);
+    return;
+  }
+  if (shape === "diamond") {
+    ctx.moveTo(x, y - radius);
+    ctx.lineTo(x + radius, y);
+    ctx.lineTo(x, y + radius);
+    ctx.lineTo(x - radius, y);
+    ctx.closePath();
+    return;
+  }
+  ctx.moveTo(x, y - radius);
+  ctx.lineTo(x + radius, y + radius);
+  ctx.lineTo(x - radius, y + radius);
+  ctx.closePath();
+}
+
 function escapeSvgText(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -1671,6 +1721,13 @@ export default function TreeCanvas({
   metadataBranchColorVersion,
   metadataLabels,
   metadataLabelVersion,
+  metadataMarkers,
+  metadataMarkerVersion,
+  metadataMarkerSizePx,
+  metadataLabelMaxCount,
+  metadataLabelMinSpacingPx,
+  metadataLabelOffsetXPx,
+  metadataLabelOffsetYPx,
   showInternalNodeLabels,
   showBootstrapLabels,
   figureStyles,
@@ -1877,6 +1934,18 @@ export default function TreeCanvas({
     }
     return nodes;
   }, [metadataLabels, tree]);
+  const metadataMarkerNodes = useMemo(() => {
+    if (!tree || !metadataMarkers || metadataMarkers.length !== tree.nodeCount) {
+      return [] as number[];
+    }
+    const nodes: number[] = [];
+    for (let node = 0; node < tree.nodeCount; node += 1) {
+      if (metadataMarkers[node]) {
+        nodes.push(node);
+      }
+    }
+    return nodes;
+  }, [metadataMarkers, tree]);
   useLayoutEffect(() => {
     taxonomyBranchColorsCacheRef.current.clear();
     effectiveBranchColorsCacheRef.current.clear();
@@ -1885,7 +1954,7 @@ export default function TreeCanvas({
     circularBasePathCacheRef.current.clear();
     rectBasePathCacheRef.current.clear();
     circularTaxonomyBitmapCacheRef.current = null;
-  }, [branchThicknessScale, manualBranchColorVersion, metadataBranchColorVersion, metadataLabelVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
+  }, [branchThicknessScale, manualBranchColorVersion, metadataBranchColorVersion, metadataLabelVersion, metadataMarkerVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const labelFontFamilies = useMemo<Record<LabelStyleClass, string>>(() => ({
     tip: fontFamilyCss(figureStyles.tip.fontFamily),
@@ -3847,13 +3916,45 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
+      if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scaleX > 0.95) {
+        const maxVisibleMetadataMarkers = 1800;
+        let visibleMarkers = 0;
+        ctx.lineWidth = 1.1;
+        for (let index = 0; index < metadataMarkerNodes.length; index += 1) {
+          if (visibleMarkers >= maxVisibleMetadataMarkers) {
+            break;
+          }
+          const node = metadataMarkerNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const marker = metadataMarkers[node];
+          if (!marker) {
+            continue;
+          }
+          const x = tree.buffers.depth[node];
+          const y = layout.center[node];
+          if (x < minX || x > maxX || y < minY || y > maxY) {
+            continue;
+          }
+          const screen = worldToScreenRect(camera, x, y);
+          ctx.fillStyle = marker.color;
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          drawMetadataMarker(ctx, marker.shape, screen.x, screen.y, metadataMarkerSizePx);
+          ctx.fill();
+          ctx.stroke();
+          pushScenePath(metadataMarkerPath(marker.shape, screen.x, screen.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
+          visibleMarkers += 1;
+        }
+      }
+
       if (metadataLabelNodes.length > 0 && metadataLabels && camera.scaleX > 1.05) {
         const fontSize = scaleLabelFontSize("internalNode", Math.max(8, Math.min(12, Math.min(camera.scaleY * 0.25, camera.scaleX * 0.18))));
         const labels: ScreenLabel[] = [];
         ctx.font = `${fontSize}px ${labelFontFamilies.internalNode}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
-        const maxVisibleMetadataLabels = 320;
+        const maxVisibleMetadataLabels = Math.max(1, metadataLabelMaxCount);
         for (let index = 0; index < metadataLabelNodes.length; index += 1) {
           if (labels.length >= maxVisibleMetadataLabels) {
             break;
@@ -3872,9 +3973,15 @@ export default function TreeCanvas({
             continue;
           }
           const screen = worldToScreenRect(camera, x, y);
-          const labelX = screen.x + 10 + figureStyles.internalNode.offsetXPx;
-          const labelY = screen.y - 12 + figureStyles.internalNode.offsetYPx;
-          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.5, estimateLabelWidth(fontSize, labelText.length))) {
+          const labelX = screen.x + 10 + figureStyles.internalNode.offsetXPx + metadataLabelOffsetXPx;
+          const labelY = screen.y - 12 + figureStyles.internalNode.offsetYPx + metadataLabelOffsetYPx;
+          if (!canPlaceLinearLabel(
+            labels,
+            labelX,
+            labelY,
+            (fontSize * 1.5) + metadataLabelMinSpacingPx,
+            estimateLabelWidth(fontSize, labelText.length) + metadataLabelMinSpacingPx,
+          )) {
             continue;
           }
           labels.push({
@@ -5780,12 +5887,44 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
+      if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scale > 4.5) {
+        const maxVisibleMetadataMarkers = 1600;
+        let visibleMarkers = 0;
+        ctx.lineWidth = 1.1;
+        for (let index = 0; index < metadataMarkerNodes.length; index += 1) {
+          if (visibleMarkers >= maxVisibleMetadataMarkers) {
+            break;
+          }
+          const node = metadataMarkerNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const marker = metadataMarkers[node];
+          if (!marker) {
+            continue;
+          }
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const point = polarToCartesian(tree.buffers.depth[node], theta);
+          const screen = worldToScreenCircular(camera, point.x, point.y);
+          if (screen.x < -20 || screen.x > size.width + 20 || screen.y < -20 || screen.y > size.height + 20) {
+            continue;
+          }
+          ctx.fillStyle = marker.color;
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          drawMetadataMarker(ctx, marker.shape, screen.x, screen.y, metadataMarkerSizePx);
+          ctx.fill();
+          ctx.stroke();
+          pushScenePath(metadataMarkerPath(marker.shape, screen.x, screen.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
+          visibleMarkers += 1;
+        }
+      }
+
       if (metadataLabelNodes.length > 0 && metadataLabels && camera.scale > 5.5) {
         const fontSize = scaleLabelFontSize("internalNode", Math.max(8, Math.min(11.5, camera.scale * 0.038)));
         const labels: ScreenLabel[] = [];
         ctx.font = `${fontSize}px ${labelFontFamilies.internalNode}`;
         ctx.textBaseline = "middle";
-        const maxVisibleMetadataLabels = 240;
+        const maxVisibleMetadataLabels = Math.max(1, metadataLabelMaxCount);
         for (let index = 0; index < metadataLabelNodes.length; index += 1) {
           if (labels.length >= maxVisibleMetadataLabels) {
             break;
@@ -5802,12 +5941,18 @@ export default function TreeCanvas({
           const radius = tree.buffers.depth[node] + (12 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
-          const labelX = screen.x + figureStyles.internalNode.offsetXPx;
-          const labelY = screen.y - 10 + figureStyles.internalNode.offsetYPx;
+          const labelX = screen.x + figureStyles.internalNode.offsetXPx + metadataLabelOffsetXPx;
+          const labelY = screen.y - 10 + figureStyles.internalNode.offsetYPx + metadataLabelOffsetYPx;
           if (labelX < -40 || labelX > size.width + 40 || labelY < -40 || labelY > size.height + 40) {
             continue;
           }
-          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.8, estimateLabelWidth(fontSize, labelText.length))) {
+          if (!canPlaceLinearLabel(
+            labels,
+            labelX,
+            labelY,
+            (fontSize * 1.8) + metadataLabelMinSpacingPx,
+            estimateLabelWidth(fontSize, labelText.length) + metadataLabelMinSpacingPx,
+          )) {
             continue;
           }
           const renderedTheta = theta + rotationAngle;
@@ -6017,6 +6162,15 @@ export default function TreeCanvas({
     manualBranchColorVersion,
     metadataBranchColorOverlay,
     metadataBranchColorVersion,
+    metadataLabelMaxCount,
+    metadataLabelMinSpacingPx,
+    metadataLabelNodes,
+    metadataLabelOffsetXPx,
+    metadataLabelOffsetYPx,
+    metadataLabels,
+    metadataMarkerNodes,
+    metadataMarkerSizePx,
+    metadataMarkers,
     order,
     reservedTipLabelCharacters,
     searchQuery,

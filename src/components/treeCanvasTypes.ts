@@ -1,5 +1,6 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { FigureStyleSettings } from "../lib/figureStyles";
+import type { MetadataMarkerStyle } from "../lib/metadataColors";
 import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
 
@@ -21,6 +22,13 @@ export interface TreeCanvasProps {
   metadataBranchColorVersion: string;
   metadataLabels: Array<string | null> | null;
   metadataLabelVersion: string;
+  metadataMarkers: Array<MetadataMarkerStyle | null> | null;
+  metadataMarkerVersion: string;
+  metadataMarkerSizePx: number;
+  metadataLabelMaxCount: number;
+  metadataLabelMinSpacingPx: number;
+  metadataLabelOffsetXPx: number;
+  metadataLabelOffsetYPx: number;
   showInternalNodeLabels: boolean;
   showBootstrapLabels: boolean;
   figureStyles: FigureStyleSettings;

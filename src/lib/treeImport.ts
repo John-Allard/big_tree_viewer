@@ -152,9 +152,63 @@ function extractNexusStatement(block: string, keywords: string[]): string | null
   return null;
 }
 
+interface NexusTreeStatement {
+  body: string;
+  isDefault: boolean;
+}
+
 function extractNexusTreeBlocks(text: string): string[] {
   const blocks = Array.from(text.matchAll(/begin\s+trees\s*;([\s\S]*?)end\s*;/ig), (match) => match[1]);
   return blocks.length > 0 ? blocks : [text];
+}
+
+function extractNexusTreeStatements(block: string): NexusTreeStatement[] {
+  const statements: NexusTreeStatement[] = [];
+  let index = 0;
+  while (index < block.length) {
+    const character = block[index];
+    if (character === "'" || character === "\"") {
+      index = skipQuotedToken(block, index, character);
+      continue;
+    }
+    if (character === "[") {
+      index = skipBracketComment(block, index);
+      continue;
+    }
+    if (!/[A-Za-z]/.test(character)) {
+      index += 1;
+      continue;
+    }
+    const wordStart = index;
+    while (index < block.length && /[A-Za-z]/.test(block[index])) {
+      index += 1;
+    }
+    const keyword = block.slice(wordStart, index).toLowerCase();
+    if (keyword !== "tree" && keyword !== "utree") {
+      continue;
+    }
+    while (index < block.length && /\s/.test(block[index])) {
+      index += 1;
+    }
+    let isDefault = false;
+    if (block[index] === "*") {
+      isDefault = true;
+      index += 1;
+      while (index < block.length && /\s/.test(block[index])) {
+        index += 1;
+      }
+    }
+    const statement = readNexusStatementBody(block, index);
+    if (!statement) {
+      break;
+    }
+    statements.push({
+      body: statement.body,
+      isDefault,
+    });
+    index = statement.endIndex;
+  }
+  return statements;
 }
 
 function parseTranslateMap(block: string): Map<string, string> {
@@ -180,6 +234,14 @@ function extractFirstTreeStatement(block: string): string | null {
   if (!statement) {
     return null;
   }
+  const equalsIndex = statement.indexOf("=");
+  if (equalsIndex < 0) {
+    return null;
+  }
+  return statement.slice(equalsIndex + 1).trim();
+}
+
+function extractTreeNewick(statement: string): string | null {
   const equalsIndex = statement.indexOf("=");
   if (equalsIndex < 0) {
     return null;
@@ -247,13 +309,31 @@ export function normalizeImportedTreeText(text: string): string {
     return text;
   }
   const blocks = extractNexusTreeBlocks(trimmed);
+  let firstTree: string | null = null;
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index];
-    const newick = extractFirstTreeStatement(block);
-    if (!newick) {
-      continue;
+    const translate = parseTranslateMap(block);
+    const treeStatements = extractNexusTreeStatements(block);
+    for (let treeIndex = 0; treeIndex < treeStatements.length; treeIndex += 1) {
+      const treeStatement = treeStatements[treeIndex];
+      const newick = extractTreeNewick(treeStatement.body);
+      if (!newick) {
+        continue;
+      }
+      const normalized = applyNexusTranslate(newick, translate);
+      if (treeStatement.isDefault) {
+        return normalized;
+      }
+      if (firstTree === null) {
+        firstTree = normalized;
+      }
     }
-    return applyNexusTranslate(newick, parseTranslateMap(block));
+    if (treeStatements.length === 0) {
+      const legacyTree = extractFirstTreeStatement(block);
+      if (legacyTree && firstTree === null) {
+        firstTree = applyNexusTranslate(legacyTree, translate);
+      }
+    }
   }
-  return text;
+  return firstTree ?? text;
 }

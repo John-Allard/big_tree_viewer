@@ -4,6 +4,7 @@ export type MetadataColorMode = "categorical" | "continuous";
 export type MetadataApplyScope = "branch" | "subtree";
 export type MetadataContinuousPalette = "blueOrange" | "viridis" | "redBlue" | "tealRose";
 export type MetadataContinuousTransform = "linear" | "sqrt" | "log";
+export type MetadataMarkerShape = "circle" | "square" | "diamond" | "triangle";
 
 export interface ParsedMetadataTable {
   columns: string[];
@@ -29,6 +30,19 @@ export interface MetadataContinuousLegend {
   transform: MetadataContinuousTransform;
 }
 
+export interface MetadataMarkerStyle {
+  color: string;
+  shape: MetadataMarkerShape;
+  label: string;
+}
+
+export interface MetadataMarkerLegendItem {
+  label: string;
+  color: string;
+  shape: MetadataMarkerShape;
+  count: number;
+}
+
 export interface MetadataColorOverlayResult {
   colors: Array<string | null>;
   hasAny: boolean;
@@ -48,6 +62,16 @@ export interface MetadataLabelOverlayResult {
   labeledNodeCount: number;
   matchedRowCount: number;
   unmappedRowCount: number;
+  version: string;
+}
+
+export interface MetadataMarkerOverlayResult {
+  markers: Array<MetadataMarkerStyle | null>;
+  hasAny: boolean;
+  matchedRowCount: number;
+  markedNodeCount: number;
+  unmappedRowCount: number;
+  legend: MetadataMarkerLegendItem[];
   version: string;
 }
 
@@ -75,6 +99,8 @@ const CATEGORICAL_PALETTE = [
   "#0f766e",
   "#b45309",
 ];
+
+const MARKER_SHAPES: MetadataMarkerShape[] = ["circle", "square", "diamond", "triangle"];
 
 export const METADATA_CONTINUOUS_PALETTES: Record<MetadataContinuousPalette, { label: string; stops: string[] }> = {
   blueOrange: {
@@ -227,6 +253,10 @@ function categoricalColor(index: number): string {
   }
   const hue = (index * 47) % 360;
   return `hsl(${hue} 72% 46%)`;
+}
+
+function categoricalMarkerShape(index: number): MetadataMarkerShape {
+  return MARKER_SHAPES[index % MARKER_SHAPES.length];
 }
 
 function buildNodeLookup(tree: TreeModel): Map<string, number[]> {
@@ -526,5 +556,67 @@ export function buildMetadataLabelOverlay(
     matchedRowCount,
     unmappedRowCount,
     version: `labels:${keyColumn}:${labelColumn}:${scope}:${rows.length}:${labeledNodeCount}`,
+  };
+}
+
+export function buildMetadataMarkerOverlay(
+  tree: TreeModel,
+  rows: Array<Record<string, string>>,
+  keyColumn: string,
+  markerColumn: string,
+): MetadataMarkerOverlayResult {
+  const markers = new Array<MetadataMarkerStyle | null>(tree.nodeCount).fill(null);
+  const byName = buildNodeLookup(tree);
+  const categoryStyles = new Map<string, MetadataMarkerStyle>();
+  const categoryCounts = new Map<string, number>();
+  const markedNodes = new Set<number>();
+  let matchedRowCount = 0;
+  let unmappedRowCount = 0;
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const key = normalizeKey(rows[rowIndex][keyColumn] ?? "");
+    const value = (rows[rowIndex][markerColumn] ?? "").trim();
+    if (!key || !value) {
+      continue;
+    }
+    const nodes = byName.get(key);
+    if (!nodes || nodes.length === 0) {
+      unmappedRowCount += 1;
+      continue;
+    }
+    matchedRowCount += 1;
+    let style = categoryStyles.get(value);
+    if (!style) {
+      const categoryIndex = categoryStyles.size;
+      style = {
+        color: categoricalColor(categoryIndex),
+        shape: categoricalMarkerShape(categoryIndex),
+        label: value,
+      };
+      categoryStyles.set(value, style);
+    }
+    categoryCounts.set(value, (categoryCounts.get(value) ?? 0) + nodes.length);
+    for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+      const node = nodes[nodeIndex];
+      markers[node] = style;
+      markedNodes.add(node);
+    }
+  }
+
+  const legend = Array.from(categoryStyles.values()).map((style) => ({
+    label: style.label,
+    color: style.color,
+    shape: style.shape,
+    count: categoryCounts.get(style.label) ?? 0,
+  }));
+
+  return {
+    markers,
+    hasAny: markedNodes.size > 0,
+    matchedRowCount,
+    markedNodeCount: markedNodes.size,
+    unmappedRowCount,
+    legend,
+    version: `markers:${keyColumn}:${markerColumn}:${rows.length}:${legend.map((item) => `${item.label}:${item.color}:${item.shape}`).join("|")}`,
   };
 }

@@ -23,28 +23,31 @@ These are in place and do not need to stay on the active backlog:
 - categorical and continuous metadata-driven branch coloring with legends
 - richer continuous-metadata controls: palette presets, signed transforms, and clampable ranges
 - metadata text-label annotations from external tabular data
+- metadata marker annotations from external tabular data
+- metadata label density and placement controls
 - figure-style controls for font family, size, and offset by label class
 - true vector, annotation-aware SVG export for the current view
 - paste-in Newick / NEXUS text loading
 - drag-and-drop tree loading
 - basic NEXUS import support
 - improved quoted-label Newick parsing and deeper NEXUS translate / `utree` import handling
+- multi-tree NEXUS default-tree selection across tree blocks
 - local taxonomy cache download and taxonomy-to-tip mapping
 - taxonomy overlays in rectangular columns and circular rings
 - taxonomy hover tooltips with rank, descendant-tip count, and MRCA age
-- taxonomy rank visibility controls and toggleable rank legend / headers
+- taxonomy rank visibility controls
 
 ## Active Feature Areas
 
 ### 1. Input and Format Support
 
-- Continue expanding parser support beyond the currently handled quoted-label and translated-NEXUS cases.
-- Cover more multi-tree NEXUS workflows and additional real-world Newick dialect quirks.
+- Continue expanding parser support beyond the currently handled quoted-label, translated-NEXUS, and default-tree multi-tree cases.
+- Cover additional real-world multi-tree NEXUS workflows and Newick dialect quirks.
 
 ### 2. External Metadata and Data-Driven Annotation
 
-- Add more annotation channels from external tabular data beyond branch color and text labels.
-- Add stronger control over metadata label density / placement for publication views.
+- Add more annotation channels from external tabular data beyond branch color, text labels, and markers.
+- Continue refining metadata label density / placement behavior for publication views.
 
 ### 3. Labels and Text Styling
 
@@ -157,8 +160,8 @@ Useful direction:
 
 ## Near-Term Priorities
 
-1. Add broader Newick-variant support, including deeper NEXUS coverage.
-2. Add additional metadata annotation channels beyond color and text labels.
+1. Continue broader Newick-variant support, including deeper NEXUS coverage.
+2. Continue metadata annotation expansion beyond color, text labels, and markers.
 3. Add scale-bar styling controls for figure generation.
 4. Add a large-tree SVG export strategy that can fall back to hybrid output when needed.
 5. Add node uncertainty / error-bar support.

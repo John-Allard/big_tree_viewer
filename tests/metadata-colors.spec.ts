@@ -200,6 +200,85 @@ test("metadata labels can annotate matched nodes in SVG export", async ({ page }
   expect(svg).toContain("Sister clade");
 });
 
+test("metadata markers can annotate matched nodes in SVG export", async ({ page }) => {
+  await waitForViewer(page);
+  await loadLabeledTree(page);
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(
+      "label,group,marker\nCladeOne,Alpha,Important\nCladeTwo,Beta,Reference\n",
+      "markers.csv",
+    );
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataMarkersEnabled(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataMarkerColumn("marker");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataMarkerSizePx(12);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.metadataMarkersEnabled === true && state?.metadataMarkedNodeCount === 2;
+  });
+  const result = await page.evaluate(() => ({
+    state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState(),
+    svg: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "",
+  }));
+
+  expect(result.state?.metadataMarkedNodeCount).toBe(2);
+  expect(result.svg).toContain('fill="#2563eb"');
+  expect(result.svg).toContain('fill="#16a34a"');
+});
+
+test("metadata label density and offset controls affect exported labels", async ({ page }) => {
+  await waitForViewer(page);
+  await loadLabeledTree(page);
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(
+      "label,group,note\nCladeOne,Alpha,Major clade\nCladeTwo,Beta,Sister clade\n",
+      "notes-controls.csv",
+    );
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataApplyScope("subtree");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelsEnabled(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelColumn("note");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelMaxCount(4);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelOffsetXPx(0);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelOffsetYPx(0);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.metadataLabelsEnabled === true && state?.metadataLabelMaxCount === 4;
+  });
+  const baseSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelOffsetXPx(18);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelOffsetYPx(-8);
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.metadataLabelOffsetXPx === 18 && state?.metadataLabelOffsetYPx === -8;
+  });
+  const offsetSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelMaxCount(1);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelMinSpacingPx(24);
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.metadataLabelMaxCount === 1 && state?.metadataLabelMinSpacingPx === 24;
+  });
+  const sparseSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
+
+  const matchBase = /<text x="([^"]+)" y="([^"]+)"[^>]*>Major clade<\/text>/.exec(baseSvg);
+  const matchOffset = /<text x="([^"]+)" y="([^"]+)"[^>]*>Major clade<\/text>/.exec(offsetSvg);
+  expect(matchBase).not.toBeNull();
+  expect(matchOffset).not.toBeNull();
+  expect(Number(matchOffset?.[1])).toBeGreaterThan(Number(matchBase?.[1]));
+  expect(Number(matchOffset?.[2])).toBeLessThan(Number(matchBase?.[2]));
+  expect(sparseSvg.includes("Major clade") || sparseSvg.includes("Sister clade")).toBeTruthy();
+  expect(sparseSvg.includes("Major clade") && sparseSvg.includes("Sister clade")).toBeFalsy();
+});
+
 test("metadata colors override taxonomy colors and manual colors override metadata", async ({ page }) => {
   await waitForViewer(page);
   const seed = await page.evaluate(async () => {

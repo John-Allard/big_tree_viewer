@@ -15,6 +15,7 @@ import {
 import {
   buildMetadataColorOverlay,
   buildMetadataLabelOverlay,
+  buildMetadataMarkerOverlay,
   METADATA_CONTINUOUS_PALETTES,
   metadataColumnLooksContinuous,
   parseMetadataTable,
@@ -24,6 +25,7 @@ import {
   type MetadataContinuousTransform,
   type MetadataColorOverlayResult,
   type MetadataLabelOverlayResult,
+  type MetadataMarkerOverlayResult,
   type ParsedMetadataTable,
 } from "./lib/metadataColors";
 import {
@@ -153,6 +155,11 @@ function PanelSection({
 const DEFAULT_TAXONOMY_COLOR_JITTER = 1;
 const DEFAULT_BRANCH_THICKNESS_SCALE = 1;
 const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
+const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
+const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
+const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
+const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
+const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
 
 function LabelStyleSection({
   labelClass,
@@ -313,6 +320,16 @@ const EMPTY_METADATA_LABEL_OVERLAY: MetadataLabelOverlayResult = {
   labeledNodeCount: 0,
   matchedRowCount: 0,
   unmappedRowCount: 0,
+  version: "",
+};
+
+const EMPTY_METADATA_MARKER_OVERLAY: MetadataMarkerOverlayResult = {
+  markers: [],
+  hasAny: false,
+  matchedRowCount: 0,
+  markedNodeCount: 0,
+  unmappedRowCount: 0,
+  legend: [],
   version: "",
 };
 
@@ -481,6 +498,13 @@ export default function App() {
   const [metadataContinuousMaxInput, setMetadataContinuousMaxInput] = useState("");
   const [metadataLabelsEnabled, setMetadataLabelsEnabled] = useState(false);
   const [metadataLabelColumn, setMetadataLabelColumn] = useState("");
+  const [metadataMarkersEnabled, setMetadataMarkersEnabled] = useState(false);
+  const [metadataMarkerColumn, setMetadataMarkerColumn] = useState("");
+  const [metadataMarkerSizePx, setMetadataMarkerSizePx] = useState(DEFAULT_METADATA_MARKER_SIZE_PX);
+  const [metadataLabelMaxCount, setMetadataLabelMaxCount] = useState(DEFAULT_METADATA_LABEL_MAX_COUNT);
+  const [metadataLabelMinSpacingPx, setMetadataLabelMinSpacingPx] = useState(DEFAULT_METADATA_LABEL_MIN_SPACING_PX);
+  const [metadataLabelOffsetXPx, setMetadataLabelOffsetXPx] = useState(DEFAULT_METADATA_LABEL_OFFSET_X_PX);
+  const [metadataLabelOffsetYPx, setMetadataLabelOffsetYPx] = useState(DEFAULT_METADATA_LABEL_OFFSET_Y_PX);
   const [metadataStatus, setMetadataStatus] = useState("");
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
@@ -724,6 +748,17 @@ export default function App() {
       metadataApplyScope,
     );
   }, [metadataApplyScope, metadataKeyColumn, metadataLabelColumn, metadataTable, tree]);
+  const metadataMarkerOverlay = useMemo<MetadataMarkerOverlayResult>(() => {
+    if (!tree || !metadataTable || !metadataKeyColumn || !metadataMarkerColumn) {
+      return EMPTY_METADATA_MARKER_OVERLAY;
+    }
+    return buildMetadataMarkerOverlay(
+      tree,
+      metadataTable.rows,
+      metadataKeyColumn,
+      metadataMarkerColumn,
+    );
+  }, [metadataKeyColumn, metadataMarkerColumn, metadataTable, tree]);
   const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(taxonomyMap?.activeRanks ?? [])].sort(
       (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
@@ -1029,6 +1064,13 @@ export default function App() {
     setMetadataContinuousMaxInput("");
     setMetadataLabelsEnabled(false);
     setMetadataLabelColumn("");
+    setMetadataMarkersEnabled(false);
+    setMetadataMarkerColumn("");
+    setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
+    setMetadataLabelMaxCount(DEFAULT_METADATA_LABEL_MAX_COUNT);
+    setMetadataLabelMinSpacingPx(DEFAULT_METADATA_LABEL_MIN_SPACING_PX);
+    setMetadataLabelOffsetXPx(DEFAULT_METADATA_LABEL_OFFSET_X_PX);
+    setMetadataLabelOffsetYPx(DEFAULT_METADATA_LABEL_OFFSET_Y_PX);
     setMetadataStatus("");
     setMetadataError(null);
   }, []);
@@ -1055,6 +1097,13 @@ export default function App() {
       setMetadataContinuousTransform("linear");
       setMetadataContinuousMinInput("");
       setMetadataContinuousMaxInput("");
+      setMetadataMarkersEnabled(false);
+      setMetadataMarkerColumn(table.columns[3] ?? table.columns[1]);
+      setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
+      setMetadataLabelMaxCount(DEFAULT_METADATA_LABEL_MAX_COUNT);
+      setMetadataLabelMinSpacingPx(DEFAULT_METADATA_LABEL_MIN_SPACING_PX);
+      setMetadataLabelOffsetXPx(DEFAULT_METADATA_LABEL_OFFSET_X_PX);
+      setMetadataLabelOffsetYPx(DEFAULT_METADATA_LABEL_OFFSET_Y_PX);
       setMetadataStatus(`Loaded ${table.rows.length.toLocaleString()} metadata rows from ${label}.`);
       setMetadataError(null);
     } catch (error) {
@@ -1239,10 +1288,18 @@ export default function App() {
         metadataContinuousMax,
         metadataLabelsEnabled,
         metadataLabelColumn,
+        metadataMarkersEnabled,
+        metadataMarkerColumn,
+        metadataMarkerSizePx,
+        metadataLabelMaxCount,
+        metadataLabelMinSpacingPx,
+        metadataLabelOffsetXPx,
+        metadataLabelOffsetYPx,
         metadataMatchedRowCount: metadataOverlay.matchedRowCount,
         metadataMatchedNodeCount: metadataOverlay.matchedNodeCount,
         metadataColoredNodeCount: metadataOverlay.coloredNodeCount,
         metadataLabeledNodeCount: metadataLabelOverlay.labeledNodeCount,
+        metadataMarkedNodeCount: metadataMarkerOverlay.markedNodeCount,
         showInternalNodeLabels,
         showBootstrapLabels,
         figureStyles,
@@ -1308,6 +1365,13 @@ export default function App() {
       setMetadataContinuousMaxInput,
       setMetadataLabelsEnabled,
       setMetadataLabelColumn,
+      setMetadataMarkersEnabled,
+      setMetadataMarkerColumn,
+      setMetadataMarkerSizePx,
+      setMetadataLabelMaxCount,
+      setMetadataLabelMinSpacingPx,
+      setMetadataLabelOffsetXPx,
+      setMetadataLabelOffsetYPx,
       setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale", value: string | number) => {
         updateFigureStyle(labelClass, field, value as FontFamilyKey | number);
       },
@@ -1385,7 +1449,15 @@ export default function App() {
     metadataKeyColumn,
     metadataLabelColumn,
     metadataLabelOverlay.labeledNodeCount,
+    metadataLabelMaxCount,
+    metadataLabelMinSpacingPx,
+    metadataLabelOffsetXPx,
+    metadataLabelOffsetYPx,
     metadataLabelsEnabled,
+    metadataMarkerColumn,
+    metadataMarkerOverlay.markedNodeCount,
+    metadataMarkerSizePx,
+    metadataMarkersEnabled,
     metadataOverlay.coloredNodeCount,
     metadataOverlay.matchedNodeCount,
     metadataOverlay.matchedRowCount,
@@ -1852,6 +1924,14 @@ export default function App() {
                   Show metadata text labels
                 </label>
                 <label>
+                  <input
+                    type="checkbox"
+                    checked={metadataMarkersEnabled}
+                    onChange={(event) => setMetadataMarkersEnabled(event.target.checked)}
+                  />
+                  Show metadata markers
+                </label>
+                <label>
                   Key column
                   <select value={metadataKeyColumn} onChange={(event) => setMetadataKeyColumn(event.target.value)}>
                     {metadataColumns.map((column) => (
@@ -1875,6 +1955,14 @@ export default function App() {
                 <label>
                   Label column
                   <select value={metadataLabelColumn} onChange={(event) => setMetadataLabelColumn(event.target.value)}>
+                    {metadataColumns.map((column) => (
+                      <option key={column} value={column}>{column}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Marker column
+                  <select value={metadataMarkerColumn} onChange={(event) => setMetadataMarkerColumn(event.target.value)}>
                     {metadataColumns.map((column) => (
                       <option key={column} value={column}>{column}</option>
                     ))}
@@ -1949,11 +2037,80 @@ export default function App() {
                     </label>
                   </>
                 ) : null}
+                {metadataLabelsEnabled ? (
+                  <>
+                    <label>
+                      Metadata label max count
+                      <input
+                        type="range"
+                        min={20}
+                        max={600}
+                        step={10}
+                        value={metadataLabelMaxCount}
+                        onChange={(event) => setMetadataLabelMaxCount(Number(event.target.value))}
+                      />
+                    </label>
+                    <div className="figure-style-value">{metadataLabelMaxCount.toLocaleString()}</div>
+                    <label>
+                      Metadata label spacing
+                      <input
+                        type="range"
+                        min={0}
+                        max={28}
+                        step={1}
+                        value={metadataLabelMinSpacingPx}
+                        onChange={(event) => setMetadataLabelMinSpacingPx(Number(event.target.value))}
+                      />
+                    </label>
+                    <div className="figure-style-value">{metadataLabelMinSpacingPx}px</div>
+                    <label>
+                      Metadata label X offset
+                      <input
+                        type="range"
+                        min={-36}
+                        max={36}
+                        step={1}
+                        value={metadataLabelOffsetXPx}
+                        onChange={(event) => setMetadataLabelOffsetXPx(Number(event.target.value))}
+                      />
+                    </label>
+                    <div className="figure-style-value">{metadataLabelOffsetXPx}px</div>
+                    <label>
+                      Metadata label Y offset
+                      <input
+                        type="range"
+                        min={-36}
+                        max={36}
+                        step={1}
+                        value={metadataLabelOffsetYPx}
+                        onChange={(event) => setMetadataLabelOffsetYPx(Number(event.target.value))}
+                      />
+                    </label>
+                    <div className="figure-style-value">{metadataLabelOffsetYPx}px</div>
+                  </>
+                ) : null}
+                {metadataMarkersEnabled ? (
+                  <>
+                    <label>
+                      Marker size
+                      <input
+                        type="range"
+                        min={4}
+                        max={20}
+                        step={1}
+                        value={metadataMarkerSizePx}
+                        onChange={(event) => setMetadataMarkerSizePx(Number(event.target.value))}
+                      />
+                    </label>
+                    <div className="figure-style-value">{metadataMarkerSizePx}px</div>
+                  </>
+                ) : null}
                 <div className="metadata-summary">
                   <span>Matched rows: {metadataOverlay.matchedRowCount.toLocaleString()}</span>
                   <span>Matched nodes: {metadataOverlay.matchedNodeCount.toLocaleString()}</span>
                   <span>Colored branches: {metadataOverlay.coloredNodeCount.toLocaleString()}</span>
                   <span>Metadata labels: {metadataLabelOverlay.labeledNodeCount.toLocaleString()}</span>
+                  <span>Metadata markers: {metadataMarkerOverlay.markedNodeCount.toLocaleString()}</span>
                 </div>
                 {metadataOverlay.unmappedRowCount > 0 ? (
                   <p className="status-line">
@@ -2115,6 +2272,13 @@ export default function App() {
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
           metadataLabels={metadataLabelsEnabled && metadataLabelOverlay.hasAny ? metadataLabelOverlay.labels : null}
           metadataLabelVersion={metadataLabelsEnabled ? metadataLabelOverlay.version : ""}
+          metadataMarkers={metadataMarkersEnabled && metadataMarkerOverlay.hasAny ? metadataMarkerOverlay.markers : null}
+          metadataMarkerVersion={metadataMarkersEnabled ? metadataMarkerOverlay.version : ""}
+          metadataMarkerSizePx={metadataMarkerSizePx}
+          metadataLabelMaxCount={metadataLabelMaxCount}
+          metadataLabelMinSpacingPx={metadataLabelMinSpacingPx}
+          metadataLabelOffsetXPx={metadataLabelOffsetXPx}
+          metadataLabelOffsetYPx={metadataLabelOffsetYPx}
           showInternalNodeLabels={showInternalNodeLabels}
           showBootstrapLabels={showBootstrapLabels}
           figureStyles={figureStyles}
