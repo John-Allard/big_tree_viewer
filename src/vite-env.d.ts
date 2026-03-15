@@ -20,6 +20,8 @@ declare global {
       setTaxonomyColorJitterForTest: (value: number) => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setShowIntermediateScaleTicks: (visible: boolean) => void;
+      setExtendRectScaleToTick: (visible: boolean) => void;
+      setShowScaleZeroTick: (visible: boolean) => void;
       setScaleTickIntervalInput: (value: string) => void;
       setMetadataEnabled: (visible: boolean) => void;
       setSearchQuery: (query: string) => void;

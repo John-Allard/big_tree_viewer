@@ -156,6 +156,8 @@ const DEFAULT_TAXONOMY_COLOR_JITTER = 1;
 const DEFAULT_BRANCH_THICKNESS_SCALE = 1;
 const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
 const DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS = true;
+const DEFAULT_EXTEND_RECT_SCALE_TO_TICK = false;
+const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
 const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
@@ -493,6 +495,8 @@ export default function App() {
   const [showTimeStripes, setShowTimeStripes] = useState(true);
   const [showScaleBars, setShowScaleBars] = useState(true);
   const [showIntermediateScaleTicks, setShowIntermediateScaleTicks] = useState(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
+  const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
+  const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
   const [scaleTickIntervalInput, setScaleTickIntervalInput] = useState("");
   const [showGenusLabels, setShowGenusLabels] = useState(true);
   const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
@@ -1323,6 +1327,8 @@ export default function App() {
     setTaxonomyRankVisibility({});
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
     setShowIntermediateScaleTicks(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
+    setExtendRectScaleToTick(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
+    setShowScaleZeroTick(DEFAULT_SHOW_SCALE_ZERO_TICK);
     setScaleTickIntervalInput("");
     setActiveLabelStylePopover(null);
     setVisualResetRequest((current) => current + 1);
@@ -1376,6 +1382,8 @@ export default function App() {
         figureStyles,
         branchThicknessScale,
         showIntermediateScaleTicks,
+        extendRectScaleToTick,
+        showScaleZeroTick,
         scaleTickInterval,
         maxDepth: tree?.maxDepth ?? null,
         rootAge: tree?.rootAge ?? null,
@@ -1415,6 +1423,8 @@ export default function App() {
       setTaxonomyColorJitterForTest: setTaxonomyColorJitter,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
       setShowIntermediateScaleTicks,
+      setExtendRectScaleToTick,
+      setShowScaleZeroTick,
       setScaleTickIntervalInput,
       setMetadataEnabled,
       setSearchQuery,
@@ -1536,7 +1546,9 @@ export default function App() {
     metadataOverlay.coloredNodeCount,
     metadataOverlay.matchedNodeCount,
     metadataOverlay.matchedRowCount,
+    extendRectScaleToTick,
     scaleTickInterval,
+    showScaleZeroTick,
     showIntermediateScaleTicks,
     metadataTable,
     metadataValueColumn,
@@ -1947,6 +1959,22 @@ export default function App() {
                           onChange={(event) => setShowIntermediateScaleTicks(event.target.checked)}
                         />
                         Show fading subdivision ticks
+                      </label>
+                      <label className="label-style-inline-toggle">
+                        <input
+                          type="checkbox"
+                          checked={extendRectScaleToTick}
+                          onChange={(event) => setExtendRectScaleToTick(event.target.checked)}
+                        />
+                        Extend rectangular scale to next tick
+                      </label>
+                      <label className="label-style-inline-toggle">
+                        <input
+                          type="checkbox"
+                          checked={showScaleZeroTick}
+                          onChange={(event) => setShowScaleZeroTick(event.target.checked)}
+                        />
+                        Show zero tick
                       </label>
                     </>
                   )}
@@ -2411,6 +2439,8 @@ export default function App() {
           showScaleBars={showScaleBars}
           scaleTickInterval={scaleTickInterval}
           showIntermediateScaleTicks={showIntermediateScaleTicks}
+          extendRectScaleToTick={extendRectScaleToTick}
+          showScaleZeroTick={showScaleZeroTick}
           showGenusLabels={showGenusLabels && !taxonomyEnabled}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}

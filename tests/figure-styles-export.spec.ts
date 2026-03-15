@@ -281,6 +281,81 @@ test("scale settings support explicit tick interval and disabling fading subdivi
   expect(svg).not.toContain(">300 mya<");
 });
 
+test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:275,B:275):275,(C:275,D:275):275)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowIntermediateScaleTicks(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setScaleTickIntervalInput("200");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setExtendRectScaleToTick(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowScaleZeroTick(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain(">0 mya<");
+  expect(svg).toContain(">200 mya<");
+  expect(svg).toContain(">400 mya<");
+  expect(svg).toContain(">600 mya<");
+});
+
+test("branch hover clears when the pointer leaves or the view is panned", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, `(Eschrichtius_robustus:0.0255005437,((((Balaenoptera_physalus:0.01418474,Balaenoptera_omurai:0.0159458974):0.0125670305,((((Balaenoptera_edeni:0.0043849524,Balaenoptera_ricei:0.0058099046):0.0030451356,Balaenoptera_brydei:0.0042225818):0.0024446814,Balaenoptera_borealis:0.0060860444):0.0123042734,Balaenoptera_musculus:0.0240853564):0.0012022186):0.0095518165,Megaptera_novaeangliae:0.0228219859):0.0020243086,(Balaenoptera_acutorostrata:0.0118619984,Balaenoptera_bonaerensis:0.0117498968):0.0128744291):0.0007187714);`);
+
+  const canvas = page.getByTestId("tree-canvas");
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+
+  const tipHitbox = await page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [];
+    const tip = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
+    if (!tip) {
+      return null;
+    }
+    return {
+      x: Number(tip.x),
+      y: Number(tip.y),
+      height: Number(tip.height ?? 0),
+    };
+  });
+  expect(tipHitbox).toBeTruthy();
+  const hoverX = (box?.x ?? 0) + (tipHitbox?.x ?? 0) - 14;
+  const hoverY = (box?.y ?? 0) + (tipHitbox?.y ?? 0) + ((tipHitbox?.height ?? 0) * 0.5);
+
+  await page.mouse.move(hoverX, hoverY);
+  await expect(page.locator(".hover-tooltip")).toBeVisible();
+
+  await page.mouse.move((box?.x ?? 0) + 12, (box?.y ?? 0) + 12);
+  await expect(page.locator(".hover-tooltip")).toBeHidden();
+
+  await page.mouse.move(hoverX, hoverY);
+  await expect(page.locator(".hover-tooltip")).toBeVisible();
+  await page.mouse.down();
+  await page.mouse.move(hoverX + 80, hoverY + 30, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.locator(".hover-tooltip")).toBeHidden();
+});
+
+test("non-ultrametric trees still render a scale bar", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:1,B:2):1,(C:1.5,D:3):0.5)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain(">1<");
+  expect(svg).toContain(">2<");
+  expect(svg).not.toContain("mya");
+});
+
 test("visual options only mark hidden label sections when they are actually disabled and can reset style defaults", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(() => {

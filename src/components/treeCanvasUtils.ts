@@ -128,7 +128,7 @@ export function buildStripeBoundaries(extent: number, levels: StripeLevel[]): St
     if (alpha <= 0) {
       continue;
     }
-    const count = Math.floor(extent / level.step);
+    const count = Math.ceil(extent / level.step);
     if (count > maxBoundariesPerLevel) {
       continue;
     }

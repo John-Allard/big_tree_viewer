@@ -14,6 +14,8 @@ export interface TreeCanvasProps {
   showScaleBars: boolean;
   scaleTickInterval: number | null;
   showIntermediateScaleTicks: boolean;
+  extendRectScaleToTick: boolean;
+  showScaleZeroTick: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
   taxonomyBranchColoringEnabled: boolean;
