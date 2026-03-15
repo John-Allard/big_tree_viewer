@@ -164,47 +164,59 @@ const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
 function LabelStyleSection({
   labelClass,
   settings,
+  isOpen,
   disabled,
   disabledReason,
   extraControls,
+  onToggle,
   onUpdate,
 }: {
   labelClass: LabelStyleClass;
   settings: LabelStyleSettings;
+  isOpen: boolean;
   disabled: boolean;
   disabledReason?: string;
   extraControls?: ReactNode;
+  onToggle: () => void;
   onUpdate: (
     labelClass: LabelStyleClass,
     field: keyof LabelStyleSettings,
     value: FontFamilyKey | number,
   ) => void;
 }): ReactNode {
-  const [isOpen, setIsOpen] = useSessionDisclosure(`label-style-${labelClass}`, false);
   const isTaxonomy = labelClass === "taxonomy";
   const supportsAxisOffsets = labelClass === "internalNode"
     || labelClass === "bootstrap"
     || labelClass === "nodeHeight"
     || labelClass === "scale";
   return (
-    <div className={`label-style-section${disabled ? " disabled" : ""}`}>
+    <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
         type="button"
-        className="label-style-toggle"
+        className="label-style-gear"
         aria-expanded={disabled ? false : isOpen}
-        onClick={() => {
-          if (!disabled) {
-            setIsOpen(!isOpen);
-          }
-        }}
+        aria-haspopup="dialog"
+        aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}
+        title={disabled && disabledReason ? `${LABEL_STYLE_CLASS_LABELS[labelClass]} settings unavailable: ${disabledReason}` : `${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}
+        onClick={onToggle}
         disabled={disabled}
       >
-        <span className={`section-toggle-mark${isOpen && !disabled ? " open" : ""}`}>▸</span>
-        <span>{LABEL_STYLE_CLASS_LABELS[labelClass]}</span>
-        {disabled && disabledReason ? <span className="label-style-state">{disabledReason}</span> : null}
+        <span aria-hidden="true">⚙</span>
       </button>
-      {disabled ? null : isOpen ? (
-        <div className="label-style-body">
+      {disabled || !isOpen ? null : (
+        <div className="label-style-popover" role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
+          <div className="label-style-popover-header">
+            <strong>{LABEL_STYLE_CLASS_LABELS[labelClass]}</strong>
+            <button
+              type="button"
+              className="label-style-popover-close"
+              aria-label={`Close ${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}
+              onClick={onToggle}
+            >
+              ×
+            </button>
+          </div>
+          <div className="label-style-body">
           <label>
             Font family
             <select
@@ -288,7 +300,8 @@ function LabelStyleSection({
           )}
           {extraControls}
         </div>
-      ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -483,6 +496,7 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [visualResetRequest, setVisualResetRequest] = useState(0);
+  const [activeLabelStylePopover, setActiveLabelStylePopover] = useState<LabelStyleClass | null>(null);
   const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
   const [metadataTable, setMetadataTable] = useState<ParsedMetadataTable | null>(null);
   const [metadataFileName, setMetadataFileName] = useState("");
@@ -521,6 +535,30 @@ export default function App() {
       setShowGenusLabels(false);
     }
   }, [showGenusLabels, taxonomyEnabled]);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || activeLabelStylePopover === null) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".label-style-popover-anchor")) {
+        return;
+      }
+      setActiveLabelStylePopover(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setActiveLabelStylePopover(null);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [activeLabelStylePopover]);
 
   const searchResults = useMemo(() => {
     const query = normalizeSearchQuery(searchQuery);
@@ -1254,6 +1292,7 @@ export default function App() {
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
     setTaxonomyRankVisibility({});
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
+    setActiveLabelStylePopover(null);
     setVisualResetRequest((current) => current + 1);
   }, []);
 
@@ -1685,73 +1724,190 @@ export default function App() {
 
         <PanelSection title="Visual Options" isOpen={visualOpen} onToggle={() => setVisualOpen(!visualOpen)}>
           <div className="option-list">
-            <label>
-              <input
-                type="checkbox"
-                checked={showGenusLabels}
-                onChange={(event) => setShowGenusLabels(event.target.checked)}
-                disabled={taxonomyEnabled}
-              />
-              Show genus labels
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={taxonomyEnabled}
-                onChange={(event) => setTaxonomyEnabled(event.target.checked)}
-                disabled={!taxonomyMap}
-              />
-              Show taxonomy overlays
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={taxonomyBranchColoringEnabled}
-                onChange={(event) => setTaxonomyBranchColoringEnabled(event.target.checked)}
-                disabled={!taxonomyEnabled}
-              />
-              Color taxonomy branches
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={showInternalNodeLabels}
-                onChange={(event) => setShowInternalNodeLabels(event.target.checked)}
-              />
-              Show internal node labels
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={showBootstrapLabels}
-                onChange={(event) => setShowBootstrapLabels(event.target.checked)}
-              />
-              Show bootstrap labels
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={showNodeHeightLabels}
-                onChange={(event) => setShowNodeHeightLabels(event.target.checked)}
-              />
-              Show node height labels
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={showScaleBars}
-                onChange={(event) => setShowScaleBars(event.target.checked)}
-              />
-              Show scale bars
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={showTimeStripes}
-                onChange={(event) => setShowTimeStripes(event.target.checked)}
-              />
-              Show time stripes
-            </label>
+            <div className="visual-option-row">
+              <span className="visual-option-static-label">Tip labels</span>
+              <div className="visual-option-actions">
+                <LabelStyleSection
+                  labelClass="tip"
+                  settings={figureStyles.tip}
+                  isOpen={activeLabelStylePopover === "tip"}
+                  disabled={false}
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "tip" ? null : "tip")}
+                  onUpdate={updateFigureStyle}
+                />
+              </div>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showGenusLabels}
+                  onChange={(event) => setShowGenusLabels(event.target.checked)}
+                  disabled={taxonomyEnabled}
+                />
+                Show genus labels
+              </label>
+              <div className="visual-option-actions">
+                {taxonomyEnabled ? <span className="label-style-state">Taxonomy On</span> : !showGenusLabels ? <span className="label-style-state">Hidden</span> : null}
+                <LabelStyleSection
+                  labelClass="genus"
+                  settings={figureStyles.genus}
+                  isOpen={activeLabelStylePopover === "genus"}
+                  disabled={taxonomyEnabled || !showGenusLabels}
+                  disabledReason={taxonomyEnabled ? "Taxonomy On" : "Hidden"}
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "genus" ? null : "genus")}
+                  onUpdate={updateFigureStyle}
+                />
+              </div>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={taxonomyEnabled}
+                  onChange={(event) => setTaxonomyEnabled(event.target.checked)}
+                  disabled={!taxonomyMap}
+                />
+                Show taxonomy overlays
+              </label>
+              <div className="visual-option-actions">
+                {!taxonomyEnabled ? <span className="label-style-state">Hidden</span> : null}
+                <LabelStyleSection
+                  labelClass="taxonomy"
+                  settings={figureStyles.taxonomy}
+                  isOpen={activeLabelStylePopover === "taxonomy"}
+                  disabled={!taxonomyEnabled}
+                  disabledReason="Hidden"
+                  extraControls={(
+                    <>
+                      <label>
+                        Color jitter
+                        <input
+                          type="range"
+                          min={0}
+                          max={4}
+                          step={0.05}
+                          value={taxonomyColorJitter}
+                          onChange={(event) => setTaxonomyColorJitter(Number(event.target.value))}
+                        />
+                      </label>
+                      <div className="figure-style-value">x{taxonomyColorJitter.toFixed(2)}</div>
+                    </>
+                  )}
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "taxonomy" ? null : "taxonomy")}
+                  onUpdate={updateFigureStyle}
+                />
+              </div>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={taxonomyBranchColoringEnabled}
+                  onChange={(event) => setTaxonomyBranchColoringEnabled(event.target.checked)}
+                  disabled={!taxonomyEnabled}
+                />
+                Color taxonomy branches
+              </label>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showInternalNodeLabels}
+                  onChange={(event) => setShowInternalNodeLabels(event.target.checked)}
+                />
+                Show internal node labels
+              </label>
+              <div className="visual-option-actions">
+                {!showInternalNodeLabels ? <span className="label-style-state">Hidden</span> : null}
+                <LabelStyleSection
+                  labelClass="internalNode"
+                  settings={figureStyles.internalNode}
+                  isOpen={activeLabelStylePopover === "internalNode"}
+                  disabled={!showInternalNodeLabels}
+                  disabledReason="Hidden"
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "internalNode" ? null : "internalNode")}
+                  onUpdate={updateFigureStyle}
+                />
+              </div>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showBootstrapLabels}
+                  onChange={(event) => setShowBootstrapLabels(event.target.checked)}
+                />
+                Show bootstrap labels
+              </label>
+              <div className="visual-option-actions">
+                {!showBootstrapLabels ? <span className="label-style-state">Hidden</span> : null}
+                <LabelStyleSection
+                  labelClass="bootstrap"
+                  settings={figureStyles.bootstrap}
+                  isOpen={activeLabelStylePopover === "bootstrap"}
+                  disabled={!showBootstrapLabels}
+                  disabledReason="Hidden"
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "bootstrap" ? null : "bootstrap")}
+                  onUpdate={updateFigureStyle}
+                />
+              </div>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showNodeHeightLabels}
+                  onChange={(event) => setShowNodeHeightLabels(event.target.checked)}
+                />
+                Show node height labels
+              </label>
+              <div className="visual-option-actions">
+                {!showNodeHeightLabels ? <span className="label-style-state">Hidden</span> : null}
+                <LabelStyleSection
+                  labelClass="nodeHeight"
+                  settings={figureStyles.nodeHeight}
+                  isOpen={activeLabelStylePopover === "nodeHeight"}
+                  disabled={!showNodeHeightLabels}
+                  disabledReason="Hidden"
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "nodeHeight" ? null : "nodeHeight")}
+                  onUpdate={updateFigureStyle}
+                />
+              </div>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showScaleBars}
+                  onChange={(event) => setShowScaleBars(event.target.checked)}
+                />
+                Show scale bars
+              </label>
+              <div className="visual-option-actions">
+                {!showScaleBars ? <span className="label-style-state">Hidden</span> : null}
+                <LabelStyleSection
+                  labelClass="scale"
+                  settings={figureStyles.scale}
+                  isOpen={activeLabelStylePopover === "scale"}
+                  disabled={!showScaleBars}
+                  disabledReason="Hidden"
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "scale" ? null : "scale")}
+                  onUpdate={updateFigureStyle}
+                />
+              </div>
+            </div>
+            <div className="visual-option-row">
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showTimeStripes}
+                  onChange={(event) => setShowTimeStripes(event.target.checked)}
+                />
+                Show time stripes
+              </label>
+            </div>
           </div>
           <div className="visual-options-controls">
             <label>
@@ -1771,72 +1927,6 @@ export default function App() {
             <button type="button" className="secondary visual-options-reset" onClick={resetFigureStyles}>
               Reset Defaults
             </button>
-          </div>
-          <div className="figure-style-grid">
-            <LabelStyleSection
-              labelClass="tip"
-              settings={figureStyles.tip}
-              disabled={false}
-              onUpdate={updateFigureStyle}
-            />
-            <LabelStyleSection
-              labelClass="genus"
-              settings={figureStyles.genus}
-              disabled={taxonomyEnabled || !showGenusLabels}
-              disabledReason={taxonomyEnabled ? "Taxonomy On" : "Hidden"}
-              onUpdate={updateFigureStyle}
-            />
-            <LabelStyleSection
-              labelClass="taxonomy"
-              settings={figureStyles.taxonomy}
-              disabled={!taxonomyEnabled}
-              disabledReason="Hidden"
-              extraControls={(
-                <>
-                  <label>
-                    Color jitter
-                    <input
-                      type="range"
-                      min={0}
-                      max={4}
-                      step={0.05}
-                      value={taxonomyColorJitter}
-                      onChange={(event) => setTaxonomyColorJitter(Number(event.target.value))}
-                    />
-                  </label>
-                  <div className="figure-style-value">x{taxonomyColorJitter.toFixed(2)}</div>
-                </>
-              )}
-              onUpdate={updateFigureStyle}
-            />
-            <LabelStyleSection
-              labelClass="internalNode"
-              settings={figureStyles.internalNode}
-              disabled={!showInternalNodeLabels}
-              disabledReason="Hidden"
-              onUpdate={updateFigureStyle}
-            />
-            <LabelStyleSection
-              labelClass="bootstrap"
-              settings={figureStyles.bootstrap}
-              disabled={!showBootstrapLabels}
-              disabledReason="Hidden"
-              onUpdate={updateFigureStyle}
-            />
-            <LabelStyleSection
-              labelClass="nodeHeight"
-              settings={figureStyles.nodeHeight}
-              disabled={!showNodeHeightLabels}
-              disabledReason="Hidden"
-              onUpdate={updateFigureStyle}
-            />
-            <LabelStyleSection
-              labelClass="scale"
-              settings={figureStyles.scale}
-              disabled={!showScaleBars}
-              disabledReason="Hidden"
-              onUpdate={updateFigureStyle}
-            />
           </div>
         </PanelSection>
 

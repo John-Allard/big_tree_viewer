@@ -256,11 +256,11 @@ test("visual options only mark hidden label sections when they are actually disa
   });
 
   await page.getByRole("button", { name: "Visual Options" }).click();
-  const bootstrapSection = page.locator(".label-style-toggle").filter({ hasText: "Bootstrap labels" });
-  const nodeHeightSection = page.locator(".label-style-toggle").filter({ hasText: "Node height labels" });
-  await expect(bootstrapSection).toBeVisible();
-  await expect(bootstrapSection).not.toContainText("Hidden");
-  await expect(nodeHeightSection).toContainText("Hidden");
+  const bootstrapRow = page.locator(".visual-option-row").filter({ hasText: "Show bootstrap labels" });
+  const nodeHeightRow = page.locator(".visual-option-row").filter({ hasText: "Show node height labels" });
+  await expect(bootstrapRow).toBeVisible();
+  await expect(bootstrapRow).not.toContainText("Hidden");
+  await expect(nodeHeightRow).toContainText("Hidden");
 
   await page.getByRole("button", { name: "Reset Defaults" }).click();
 
