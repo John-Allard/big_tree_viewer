@@ -54,6 +54,27 @@ export function formatAgeNumber(value: number): string {
   return value.toFixed(1);
 }
 
+export function formatScaleNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  if (Math.abs(value) < 1e-12) {
+    return "0";
+  }
+  const abs = Math.abs(value);
+  if (abs >= 100) {
+    return value.toFixed(0);
+  }
+  if (abs >= 10) {
+    return value.toFixed(1).replace(/\.0$/, "");
+  }
+  if (abs >= 1) {
+    return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  const decimals = Math.min(6, Math.max(3, Math.ceil(-Math.log10(abs)) + 1));
+  return value.toFixed(decimals).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 export function nodeHeightValue(tree: TreeModel, node: number): number {
   if (tree.isUltrametric) {
     return Math.max(0, tree.rootAge - tree.buffers.depth[node]);
@@ -124,7 +145,7 @@ export function buildStripeBoundaries(extent: number, levels: StripeLevel[]): St
     if (!Number.isFinite(level.step) || level.step <= 0) {
       continue;
     }
-    const alpha = levelIndex === 0 ? 1 : level.alpha * 0.82;
+    const alpha = levelIndex === 0 ? 1 : level.alpha;
     if (alpha <= 0) {
       continue;
     }

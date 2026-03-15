@@ -55,6 +55,7 @@ import {
   displayNodeName,
   estimateLabelWidth,
   formatAgeNumber,
+  formatScaleNumber,
   nodeHeightValue,
   normalizeRotation,
   pickCircularConnectorChild,
@@ -66,6 +67,8 @@ import {
   wrapPositive,
 } from "./treeCanvasUtils";
 import type { LayoutOrder, TreeModel, ViewMode } from "../types/tree";
+
+const SOLID_SCALE_TICK_ALPHA_THRESHOLD = 0.6;
 
 function arcIntersectsViewport(
   centerX: number,
@@ -2593,7 +2596,7 @@ export default function TreeCanvas({
       return;
     }
     const scaleLabelText = (value: number): string => (
-      tree.isUltrametric ? `${formatAgeNumber(value)} mya` : formatAgeNumber(value)
+      tree.isUltrametric ? `${formatAgeNumber(value)} mya` : formatScaleNumber(value)
     );
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
@@ -2689,14 +2692,15 @@ export default function TreeCanvas({
       const treeDrawBottom = size.height - axisBarHeight;
       const stripeExtent = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const stripeLevels = buildStripeLevels(Math.max(1e-9, maxX - minX), camera.scaleX, scaleTickInterval);
-      const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
-      const visibleScaleBoundaries = showIntermediateScaleTicks
-        ? stripeBoundaries
-        : stripeBoundaries.filter((boundary) => boundary.alpha >= 0.999);
       const rectScaleStep = scaleTickInterval ?? stripeLevels[0]?.step ?? 0;
       const rectScaleExtent = extendRectScaleToTick && rectScaleStep > 0
         ? Math.max(stripeExtent, Math.ceil(stripeExtent / rectScaleStep) * rectScaleStep)
         : stripeExtent;
+      const rectStripeExtent = tree.isUltrametric ? rectScaleExtent : stripeExtent;
+      const stripeBoundaries = buildStripeBoundaries(rectStripeExtent, stripeLevels);
+      const visibleScaleBoundaries = showIntermediateScaleTicks
+        ? stripeBoundaries
+        : stripeBoundaries.filter((boundary) => boundary.alpha >= SOLID_SCALE_TICK_ALPHA_THRESHOLD);
       const rectScaleBoundaries = [...visibleScaleBoundaries];
       if (showScaleZeroTick) {
         rectScaleBoundaries.push({ value: 0, alpha: 1 });
@@ -2739,8 +2743,8 @@ export default function TreeCanvas({
           if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
             return;
           }
-          for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
-            const next = Math.min(stripeExtent, start + step);
+          for (let start = 0, index = 0; start < rectStripeExtent; start += step, index += 1) {
+            const next = Math.min(rectStripeExtent, start + step);
             const left = tree.isUltrametric
               ? worldToScreenRect(camera, tree.rootAge - next, 0).x
               : worldToScreenRect(camera, start, 0).x;
@@ -4059,15 +4063,21 @@ export default function TreeCanvas({
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.beginPath();
-        const axisStart = worldToScreenRect(camera, stripeExtent - rectScaleExtent, 0).x;
-        const axisEnd = worldToScreenRect(camera, stripeExtent, 0).x;
+        const axisStart = tree.isUltrametric
+          ? worldToScreenRect(camera, stripeExtent - rectScaleExtent, 0).x
+          : worldToScreenRect(camera, 0, 0).x;
+        const axisEnd = tree.isUltrametric
+          ? worldToScreenRect(camera, stripeExtent, 0).x
+          : worldToScreenRect(camera, stripeExtent, 0).x;
         ctx.moveTo(axisStart, axisY);
         ctx.lineTo(axisEnd, axisY);
         pushSceneLine(axisStart, axisY, axisEnd, axisY, "#6b7280", 1);
         if (displayedRectScaleBoundaries.length > 0) {
           for (let index = 0; index < displayedRectScaleBoundaries.length; index += 1) {
             const boundary = displayedRectScaleBoundaries[index];
-            const x = worldToScreenRect(camera, stripeExtent - boundary.value, 0).x;
+            const x = tree.isUltrametric
+              ? worldToScreenRect(camera, stripeExtent - boundary.value, 0).x
+              : worldToScreenRect(camera, boundary.value, 0).x;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
             ctx.moveTo(x, axisY);
             ctx.lineTo(x, axisY + (4 + (3 * boundary.alpha)));
@@ -4077,7 +4087,9 @@ export default function TreeCanvas({
           ctx.stroke();
           for (let index = 0; index < displayedRectScaleBoundaries.length; index += 1) {
             const boundary = displayedRectScaleBoundaries[index];
-            const x = worldToScreenRect(camera, stripeExtent - boundary.value, 0).x;
+            const x = tree.isUltrametric
+              ? worldToScreenRect(camera, stripeExtent - boundary.value, 0).x
+              : worldToScreenRect(camera, boundary.value, 0).x;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
             ctx.fillText(scaleLabelText(boundary.value), x, axisY + 8);
             pushSceneText(
@@ -4112,7 +4124,7 @@ export default function TreeCanvas({
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
       const visibleScaleBoundaries = showIntermediateScaleTicks
         ? stripeBoundaries
-        : stripeBoundaries.filter((boundary) => boundary.alpha >= 0.999);
+        : stripeBoundaries.filter((boundary) => boundary.alpha >= SOLID_SCALE_TICK_ALPHA_THRESHOLD);
       const circularScaleBoundaries = showScaleZeroTick
         ? [...visibleScaleBoundaries, { value: 0, alpha: 1 }]
         : visibleScaleBoundaries;
@@ -6054,7 +6066,9 @@ export default function TreeCanvas({
           ctx.textAlign = Math.cos(labelTheta + rotationAngle) >= 0 ? "left" : "right";
           for (let index = 0; index < displayedCircularScaleBoundaries.length; index += 1) {
             const boundary = displayedCircularScaleBoundaries[index];
-            const radius = Math.max(0, stripeExtent - boundary.value) + (10 / camera.scale);
+            const radius = tree.isUltrametric
+              ? Math.max(0, stripeExtent - boundary.value) + (10 / camera.scale)
+              : Math.max(0, boundary.value) + (10 / camera.scale);
             const point = polarToCartesian(radius, labelTheta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);

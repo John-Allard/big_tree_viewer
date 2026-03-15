@@ -281,6 +281,25 @@ test("scale settings support explicit tick interval and disabling fading subdivi
   expect(svg).not.toContain(">300 mya<");
 });
 
+test("solid subdivision ticks remain when fading ticks are hidden", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:300,B:300):300,(C:300,D:300):300)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowIntermediateScaleTicks(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setScaleTickIntervalInput("400");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain(">200 mya<");
+  expect(svg).toContain(">400 mya<");
+  expect(svg).not.toContain(">100 mya<");
+  expect(svg).not.toContain(">300 mya<");
+});
+
 test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A:275,B:275):275,(C:275,D:275):275)Root;");
@@ -340,20 +359,24 @@ test("branch hover clears when the pointer leaves or the view is panned", async 
   await expect(page.locator(".hover-tooltip")).toBeHidden();
 });
 
-test("non-ultrametric trees still render a scale bar", async ({ page }) => {
+test("non-ultrametric scale bars use root-to-tip branch-length units with useful precision", async ({ page }) => {
   await waitForViewer(page);
-  await loadTreeFromPaste(page, "((A:1,B:2):1,(C:1.5,D:3):0.5)Root;");
+  await loadTreeFromPaste(page, "((A:0.005,B:0.01):0.002,(C:0.012,D:0.018):0.003)Root;");
 
   const svg = await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowIntermediateScaleTicks(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setScaleTickIntervalInput("0.005");
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
   });
 
-  expect(svg).toContain(">1<");
-  expect(svg).toContain(">2<");
+  expect(svg).toContain(">0.005<");
+  expect(svg).toContain(">0.01<");
+  expect(svg).toContain(">0.015<");
   expect(svg).not.toContain("mya");
+  expect(svg).not.toContain(">0.0<");
 });
 
 test("visual options only mark hidden label sections when they are actually disabled and can reset style defaults", async ({ page }) => {
