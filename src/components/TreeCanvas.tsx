@@ -6252,6 +6252,11 @@ export default function TreeCanvas({
           const centerScaleBarTheta = showCircularCenterRadialScaleBar
             ? centerScaleTheta + ((2.5 * Math.PI) / 180)
             : centerScaleTheta;
+          const centerScaleBarTangentX = -Math.sin(centerScaleBarTheta + rotationAngle);
+          const centerScaleBarTangentY = Math.cos(centerScaleBarTheta + rotationAngle);
+          const centerScaleLabelOffsetPx = showCircularCenterRadialScaleBar
+            ? Math.max((scaleFontSize * 0.72) + 3, scaleFontSize)
+            : 0;
           const rotatedLabelDegrees = (centerScaleBarTheta + rotationAngle) * 180 / Math.PI;
           const rotatedLabelOnRightSide = Math.cos(centerScaleBarTheta + rotationAngle) >= 0;
           const rotatedLabelRadians = normalizeRotation(rotatedLabelOnRightSide ? rotatedLabelDegrees : rotatedLabelDegrees + 180) * Math.PI / 180;
@@ -6263,22 +6268,28 @@ export default function TreeCanvas({
             const radius = tree.isUltrametric
               ? Math.max(0, stripeExtent - boundary.value) + (showCircularCenterRadialScaleBar ? 0 : (10 / camera.scale))
               : Math.max(0, boundary.value) + (showCircularCenterRadialScaleBar ? 0 : (10 / camera.scale));
-            const point = polarToCartesian(radius, centerScaleTheta);
+            const point = polarToCartesian(radius, showCircularCenterRadialScaleBar ? centerScaleBarTheta : centerScaleTheta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
+            const labelX = showCircularCenterRadialScaleBar
+              ? screen.x - (centerScaleBarTangentX * centerScaleLabelOffsetPx)
+              : screen.x;
+            const labelY = showCircularCenterRadialScaleBar
+              ? screen.y - (centerScaleBarTangentY * centerScaleLabelOffsetPx)
+              : screen.y;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
             if (showCircularCenterRadialScaleBar) {
               ctx.save();
-              ctx.translate(screen.x, screen.y);
+              ctx.translate(labelX, labelY);
               ctx.rotate(rotatedLabelRadians);
               ctx.fillText(scaleLabelText(boundary.value), 0, 0);
               ctx.restore();
             } else {
-              ctx.fillText(scaleLabelText(boundary.value), screen.x, screen.y);
+              ctx.fillText(scaleLabelText(boundary.value), labelX, labelY);
             }
             pushSceneText(
               scaleLabelText(boundary.value),
-              screen.x,
-              screen.y,
+              labelX,
+              labelY,
               "#6b7280",
               scaleFontSize,
               labelFontFamilies.scale,
@@ -6291,8 +6302,6 @@ export default function TreeCanvas({
             const startPoint = worldToScreenCircular(camera, 0, 0);
             const endWorld = polarToCartesian(stripeExtent, centerScaleBarTheta);
             const endPoint = worldToScreenCircular(camera, endWorld.x, endWorld.y);
-            const tangentX = -Math.sin(centerScaleBarTheta + rotationAngle);
-            const tangentY = Math.cos(centerScaleBarTheta + rotationAngle);
             ctx.globalAlpha = 0.82;
             ctx.strokeStyle = "#6b7280";
             ctx.lineWidth = 1;
@@ -6308,13 +6317,19 @@ export default function TreeCanvas({
               const tickWorld = polarToCartesian(radius, centerScaleBarTheta);
               const tickScreen = worldToScreenCircular(camera, tickWorld.x, tickWorld.y);
               const halfTick = (4 + (3 * boundary.alpha)) * 0.5;
-              ctx.moveTo(tickScreen.x - (tangentX * halfTick), tickScreen.y - (tangentY * halfTick));
-              ctx.lineTo(tickScreen.x + (tangentX * halfTick), tickScreen.y + (tangentY * halfTick));
+              ctx.moveTo(
+                tickScreen.x - (centerScaleBarTangentX * halfTick),
+                tickScreen.y - (centerScaleBarTangentY * halfTick),
+              );
+              ctx.lineTo(
+                tickScreen.x + (centerScaleBarTangentX * halfTick),
+                tickScreen.y + (centerScaleBarTangentY * halfTick),
+              );
               pushSceneLine(
-                tickScreen.x - (tangentX * halfTick),
-                tickScreen.y - (tangentY * halfTick),
-                tickScreen.x + (tangentX * halfTick),
-                tickScreen.y + (tangentY * halfTick),
+                tickScreen.x - (centerScaleBarTangentX * halfTick),
+                tickScreen.y - (centerScaleBarTangentY * halfTick),
+                tickScreen.x + (centerScaleBarTangentX * halfTick),
+                tickScreen.y + (centerScaleBarTangentY * halfTick),
                 "#6b7280",
                 1,
                 0.35 + (0.65 * boundary.alpha),

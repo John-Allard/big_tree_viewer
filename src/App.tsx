@@ -170,6 +170,7 @@ const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
 const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
+type VisualPopoverId = LabelStyleClass | "timeStripes";
 
 function LabelStyleSection({
   labelClass,
@@ -329,6 +330,57 @@ function LabelStyleSection({
           )}
           {extraControls}
         </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsPopoverButton({
+  title,
+  isOpen,
+  disabled,
+  disabledReason,
+  onToggle,
+  children,
+}: {
+  title: string;
+  isOpen: boolean;
+  disabled: boolean;
+  disabledReason?: string;
+  onToggle: () => void;
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
+      <button
+        type="button"
+        className="label-style-gear"
+        aria-expanded={disabled ? false : isOpen}
+        aria-haspopup="dialog"
+        aria-label={`${title} settings`}
+        title={disabled && disabledReason ? `${title} settings unavailable: ${disabledReason}` : `${title} settings`}
+        onClick={onToggle}
+        disabled={disabled}
+      >
+        <span aria-hidden="true">⚙</span>
+      </button>
+      {disabled || !isOpen ? null : (
+        <div className="label-style-popover" role="dialog" aria-label={`${title} settings`}>
+          <div className="label-style-popover-header">
+            <strong>{title}</strong>
+            <button
+              type="button"
+              className="label-style-popover-close"
+              aria-label={`Close ${title} settings`}
+              onClick={onToggle}
+            >
+              ×
+            </button>
+          </div>
+          <div className="label-style-body">
+            {children}
+          </div>
         </div>
       )}
     </div>
@@ -538,7 +590,7 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [visualResetRequest, setVisualResetRequest] = useState(0);
-  const [activeLabelStylePopover, setActiveLabelStylePopover] = useState<LabelStyleClass | null>(null);
+  const [activeLabelStylePopover, setActiveLabelStylePopover] = useState<VisualPopoverId | null>(null);
   const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
   const [metadataTable, setMetadataTable] = useState<ParsedMetadataTable | null>(null);
   const [metadataFileName, setMetadataFileName] = useState("");
@@ -786,6 +838,12 @@ export default function App() {
     () => (useAutoCircularCenterScaleAngle ? (order === "asc" ? 5 : -5) : circularCenterScaleAngleDegrees),
     [circularCenterScaleAngleDegrees, order, useAutoCircularCenterScaleAngle],
   );
+  const handleCircularCenterScaleAngleAutoChange = useCallback((enabled: boolean) => {
+    if (!enabled) {
+      setCircularCenterScaleAngleDegrees(effectiveCircularCenterScaleAngleDegrees);
+    }
+    setUseAutoCircularCenterScaleAngle(enabled);
+  }, [effectiveCircularCenterScaleAngleDegrees]);
   const metadataColumns = metadataTable?.columns ?? [];
   const metadataValueColumnSupportsContinuous = useMemo(
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
@@ -2063,6 +2121,14 @@ export default function App() {
                         />
                         Show zero tick
                       </label>
+                      <label className="label-style-inline-toggle">
+                        <input
+                          type="checkbox"
+                          checked={useAutoCircularCenterScaleAngle}
+                          onChange={(event) => handleCircularCenterScaleAngleAutoChange(event.target.checked)}
+                        />
+                        Auto angle from tip ordering
+                      </label>
                       <label>
                         Circular center scale angle
                         <input
@@ -2070,6 +2136,7 @@ export default function App() {
                           min={-180}
                           max={180}
                           step={1}
+                          disabled={useAutoCircularCenterScaleAngle}
                           value={effectiveCircularCenterScaleAngleDegrees}
                           onChange={(event) => {
                             setUseAutoCircularCenterScaleAngle(false);
@@ -2117,36 +2184,42 @@ export default function App() {
                 />
                 Show time stripes
               </label>
+              <div className="visual-option-actions">
+                <SettingsPopoverButton
+                  title="Time stripes"
+                  isOpen={activeLabelStylePopover === "timeStripes"}
+                  disabled={!showTimeStripes}
+                  disabledReason="Hidden"
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "timeStripes" ? null : "timeStripes")}
+                >
+                  <label>
+                    Stripe style
+                    <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as "bands" | "dashed")}>
+                      <option value="bands">Shaded bands</option>
+                      <option value="dashed">Dashed guides</option>
+                    </select>
+                  </label>
+                  {timeStripeStyle === "dashed" ? (
+                    <>
+                      <label>
+                        Stripe line weight
+                        <input
+                          type="range"
+                          min={0.5}
+                          max={4}
+                          step={0.1}
+                          value={timeStripeLineWeight}
+                          onChange={(event) => setTimeStripeLineWeight(Number(event.target.value))}
+                        />
+                      </label>
+                      <div className="figure-style-value">{timeStripeLineWeight.toFixed(1)}px</div>
+                    </>
+                  ) : null}
+                </SettingsPopoverButton>
+              </div>
             </div>
           </div>
           <div className="visual-options-controls">
-            {showTimeStripes ? (
-              <>
-                <label>
-                  Stripe style
-                  <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as "bands" | "dashed")}>
-                    <option value="bands">Shaded bands</option>
-                    <option value="dashed">Dashed guides</option>
-                  </select>
-                </label>
-                {timeStripeStyle === "dashed" ? (
-                  <>
-                    <label>
-                      Stripe line weight
-                      <input
-                        type="range"
-                        min={0.5}
-                        max={4}
-                        step={0.1}
-                        value={timeStripeLineWeight}
-                        onChange={(event) => setTimeStripeLineWeight(Number(event.target.value))}
-                      />
-                    </label>
-                    <div className="figure-style-value">{timeStripeLineWeight.toFixed(1)}px</div>
-                  </>
-                ) : null}
-              </>
-            ) : null}
             {showNodeErrorBars ? (
               <>
                 <label>

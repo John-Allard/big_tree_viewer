@@ -81,6 +81,15 @@ test("label style popovers stay open while interacting with the tree and close o
   await expect(page.getByRole("dialog", { name: "Tip labels settings" })).toHaveCount(0);
 });
 
+test("time stripe settings live in a dedicated popover next to the toggle", async ({ page }) => {
+  await waitForViewer(page);
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Time stripes settings" }).click();
+  await expect(page.getByRole("dialog", { name: "Time stripes settings" })).toBeVisible();
+  await expect(page.getByText("Stripe style")).toBeVisible();
+});
+
 test("download newick exports the active tree in the current tab", async ({ page }) => {
   await waitForViewer(page);
   const pastedNewick = "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;";
