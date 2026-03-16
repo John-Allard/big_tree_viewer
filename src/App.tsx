@@ -158,7 +158,7 @@ const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
 const DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS = true;
 const DEFAULT_EXTEND_RECT_SCALE_TO_TICK = false;
 const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
-const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = 5;
+const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = -5;
 const DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR = false;
 const DEFAULT_TIME_STRIPE_STYLE = "bands";
 const DEFAULT_TIME_STRIPE_LINE_WEIGHT = 1.1;
@@ -505,6 +505,7 @@ export default function App() {
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
   const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
   const [scaleTickIntervalInput, setScaleTickIntervalInput] = useState("");
+  const [useAutoCircularCenterScaleAngle, setUseAutoCircularCenterScaleAngle] = useState(true);
   const [circularCenterScaleAngleDegrees, setCircularCenterScaleAngleDegrees] = useState(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
   const [showCircularCenterRadialScaleBar, setShowCircularCenterRadialScaleBar] = useState(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
   const [circularCenterScaleTickIntervalInput, setCircularCenterScaleTickIntervalInput] = useState("");
@@ -778,6 +779,16 @@ export default function App() {
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }, [circularCenterScaleTickIntervalInput]);
+  const effectiveCircularCenterScaleAngleDegrees = useMemo(
+    () => (useAutoCircularCenterScaleAngle ? (order === "asc" ? 5 : -5) : circularCenterScaleAngleDegrees),
+    [circularCenterScaleAngleDegrees, order, useAutoCircularCenterScaleAngle],
+  );
+  const handleCircularCenterScaleAngleAutoChange = useCallback((enabled: boolean) => {
+    if (!enabled) {
+      setCircularCenterScaleAngleDegrees(effectiveCircularCenterScaleAngleDegrees);
+    }
+    setUseAutoCircularCenterScaleAngle(enabled);
+  }, [effectiveCircularCenterScaleAngleDegrees]);
   const metadataColumns = metadataTable?.columns ?? [];
   const metadataValueColumnSupportsContinuous = useMemo(
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
@@ -1353,6 +1364,7 @@ export default function App() {
     setExtendRectScaleToTick(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
     setShowScaleZeroTick(DEFAULT_SHOW_SCALE_ZERO_TICK);
     setScaleTickIntervalInput("");
+    setUseAutoCircularCenterScaleAngle(true);
     setCircularCenterScaleAngleDegrees(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
     setShowCircularCenterRadialScaleBar(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
     setCircularCenterScaleTickIntervalInput("");
@@ -1416,7 +1428,8 @@ export default function App() {
         extendRectScaleToTick,
         showScaleZeroTick,
         scaleTickInterval,
-        circularCenterScaleAngleDegrees,
+        circularCenterScaleAngleDegrees: effectiveCircularCenterScaleAngleDegrees,
+        circularCenterScaleAngleAuto: useAutoCircularCenterScaleAngle,
         showCircularCenterRadialScaleBar,
         circularCenterScaleTickInterval,
         timeStripeStyle,
@@ -1466,7 +1479,16 @@ export default function App() {
       setExtendRectScaleToTick,
       setShowScaleZeroTick,
       setScaleTickIntervalInput,
-      setCircularCenterScaleAngleDegrees,
+      setCircularCenterScaleAngleDegrees: (value: number) => {
+        setUseAutoCircularCenterScaleAngle(false);
+        setCircularCenterScaleAngleDegrees(value);
+      },
+      setUseAutoCircularCenterScaleAngle: (enabled: boolean) => {
+        if (!enabled) {
+          setCircularCenterScaleAngleDegrees(effectiveCircularCenterScaleAngleDegrees);
+        }
+        setUseAutoCircularCenterScaleAngle(enabled);
+      },
       setShowCircularCenterRadialScaleBar,
       setCircularCenterScaleTickIntervalInput,
       setTimeStripeStyle: (value: "bands" | "dashed") => setTimeStripeStyle(value),
@@ -1597,12 +1619,13 @@ export default function App() {
     extendRectScaleToTick,
     errorBarCapSizePx,
     errorBarThicknessPx,
-    circularCenterScaleAngleDegrees,
+    effectiveCircularCenterScaleAngleDegrees,
     circularCenterScaleTickInterval,
     scaleTickInterval,
     showScaleZeroTick,
     showIntermediateScaleTicks,
     showCircularCenterRadialScaleBar,
+    useAutoCircularCenterScaleAngle,
     showNodeErrorBars,
     metadataTable,
     metadataValueColumn,
@@ -2044,17 +2067,29 @@ export default function App() {
                         Show zero tick
                       </label>
                       <label>
+                        <input
+                          type="checkbox"
+                          checked={useAutoCircularCenterScaleAngle}
+                          onChange={(event) => handleCircularCenterScaleAngleAutoChange(event.target.checked)}
+                        />
+                        Auto angle from tip ordering
+                      </label>
+                      <label>
                         Circular center scale angle
                         <input
                           type="range"
                           min={-180}
                           max={180}
                           step={1}
-                          value={circularCenterScaleAngleDegrees}
-                          onChange={(event) => setCircularCenterScaleAngleDegrees(Number(event.target.value))}
+                          disabled={useAutoCircularCenterScaleAngle}
+                          value={effectiveCircularCenterScaleAngleDegrees}
+                          onChange={(event) => {
+                            setUseAutoCircularCenterScaleAngle(false);
+                            setCircularCenterScaleAngleDegrees(Number(event.target.value));
+                          }}
                         />
                       </label>
-                      <div className="figure-style-value">{circularCenterScaleAngleDegrees.toFixed(0)} deg</div>
+                      <div className="figure-style-value">{effectiveCircularCenterScaleAngleDegrees.toFixed(0)} deg</div>
                       <label>
                         Circular center tick interval
                         <input
@@ -2597,7 +2632,7 @@ export default function App() {
           showIntermediateScaleTicks={showIntermediateScaleTicks}
           extendRectScaleToTick={extendRectScaleToTick}
           showScaleZeroTick={showScaleZeroTick}
-          circularCenterScaleAngleDegrees={circularCenterScaleAngleDegrees}
+          circularCenterScaleAngleDegrees={effectiveCircularCenterScaleAngleDegrees}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
           circularCenterScaleTickInterval={circularCenterScaleTickInterval}
           showGenusLabels={showGenusLabels && !taxonomyEnabled}

@@ -24,6 +24,7 @@ declare global {
       setShowScaleZeroTick: (visible: boolean) => void;
       setScaleTickIntervalInput: (value: string) => void;
       setCircularCenterScaleAngleDegrees: (value: number) => void;
+      setUseAutoCircularCenterScaleAngle: (enabled: boolean) => void;
       setShowCircularCenterRadialScaleBar: (visible: boolean) => void;
       setCircularCenterScaleTickIntervalInput: (value: string) => void;
       setTimeStripeStyle: (value: "bands" | "dashed") => void;

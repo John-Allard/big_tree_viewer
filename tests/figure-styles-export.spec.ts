@@ -341,6 +341,102 @@ test("circular center scale supports manual angle and radial bar controls", asyn
   expect(debug?.showCenterRadialScaleBar).toBe(true);
 });
 
+test("circular center scale auto angle tracks ordering until manually overridden", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");
+
+  const autoDesc = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setUseAutoCircularCenterScaleAngle(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("desc");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return {
+      state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+      debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular ?? null,
+    };
+  }) as {
+    state?: { circularCenterScaleAngleDegrees?: number; circularCenterScaleAngleAuto?: boolean };
+    debug?: { centerScaleAngleDegrees?: number };
+  };
+
+  expect(autoDesc.state?.circularCenterScaleAngleAuto).toBe(true);
+  expect(autoDesc.state?.circularCenterScaleAngleDegrees).toBe(-5);
+  expect(autoDesc.debug?.centerScaleAngleDegrees).toBe(-5);
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("asc");
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as { circularCenterScaleAngleDegrees?: number; circularCenterScaleAngleAuto?: boolean } | undefined;
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as { centerScaleAngleDegrees?: number } | undefined;
+    return state?.circularCenterScaleAngleAuto === true
+      && state?.circularCenterScaleAngleDegrees === 5
+      && debug?.centerScaleAngleDegrees === 5;
+  });
+  const autoAsc = await page.evaluate(() => {
+    return {
+      state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+      debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular ?? null,
+    };
+  }) as {
+    state?: { circularCenterScaleAngleDegrees?: number; circularCenterScaleAngleAuto?: boolean };
+    debug?: { centerScaleAngleDegrees?: number };
+  };
+
+  expect(autoAsc.state?.circularCenterScaleAngleAuto).toBe(true);
+  expect(autoAsc.state?.circularCenterScaleAngleDegrees).toBe(5);
+  expect(autoAsc.debug?.centerScaleAngleDegrees).toBe(5);
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleAngleDegrees(30);
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as { circularCenterScaleAngleDegrees?: number; circularCenterScaleAngleAuto?: boolean } | undefined;
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as { centerScaleAngleDegrees?: number } | undefined;
+    return state?.circularCenterScaleAngleAuto === false
+      && state?.circularCenterScaleAngleDegrees === 30
+      && debug?.centerScaleAngleDegrees === 30;
+  });
+  const manual = await page.evaluate(() => {
+    return {
+      state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+      debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular ?? null,
+    };
+  }) as {
+    state?: { circularCenterScaleAngleDegrees?: number; circularCenterScaleAngleAuto?: boolean };
+    debug?: { centerScaleAngleDegrees?: number };
+  };
+
+  expect(manual.state?.circularCenterScaleAngleAuto).toBe(false);
+  expect(manual.state?.circularCenterScaleAngleDegrees).toBe(30);
+  expect(manual.debug?.centerScaleAngleDegrees).toBe(30);
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("desc");
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as { circularCenterScaleAngleDegrees?: number; circularCenterScaleAngleAuto?: boolean } | undefined;
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as { centerScaleAngleDegrees?: number } | undefined;
+    return state?.circularCenterScaleAngleAuto === false
+      && state?.circularCenterScaleAngleDegrees === 30
+      && debug?.centerScaleAngleDegrees === 30;
+  });
+  const manualAfterOrderChange = await page.evaluate(() => {
+    return {
+      state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+      debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular ?? null,
+    };
+  }) as {
+    state?: { circularCenterScaleAngleDegrees?: number; circularCenterScaleAngleAuto?: boolean };
+    debug?: { centerScaleAngleDegrees?: number };
+  };
+
+  expect(manualAfterOrderChange.state?.circularCenterScaleAngleAuto).toBe(false);
+  expect(manualAfterOrderChange.state?.circularCenterScaleAngleDegrees).toBe(30);
+  expect(manualAfterOrderChange.debug?.centerScaleAngleDegrees).toBe(30);
+});
+
 test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A:275,B:275):275,(C:275,D:275):275)Root;");

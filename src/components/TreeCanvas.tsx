@@ -4297,7 +4297,7 @@ export default function TreeCanvas({
               ? "visible-segments"
               : "full-tree";
       const showCentralTimeLabels = showScaleBars && visibleCircleFraction >= 0.58;
-      const centerScaleTheta = (circularCenterScaleAngleDegrees * Math.PI) / 180;
+      const centerScaleTheta = (-circularCenterScaleAngleDegrees * Math.PI) / 180;
       const circularScaleBar = showScaleBars && !showCentralTimeLabels
         ? buildCircularScaleBar(
           centerPoint.x,
@@ -6460,10 +6460,13 @@ export default function TreeCanvas({
     searchMatchSet,
     errorBarCapSizePx,
     errorBarThicknessPx,
+    circularCenterScaleAngleDegrees,
+    circularCenterScaleTickInterval,
     extendRectScaleToTick,
     scaleLabelFontSize,
     scaleTickInterval,
     showBootstrapLabels,
+    showCircularCenterRadialScaleBar,
     showGenusLabels,
     showIntermediateScaleTicks,
     showInternalNodeLabels,
