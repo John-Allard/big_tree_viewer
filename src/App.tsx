@@ -587,6 +587,9 @@ export default function App() {
       if (target?.closest(".label-style-popover-anchor")) {
         return;
       }
+      if (!target?.closest(".control-panel")) {
+        return;
+      }
       setActiveLabelStylePopover(null);
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -783,12 +786,6 @@ export default function App() {
     () => (useAutoCircularCenterScaleAngle ? (order === "asc" ? 5 : -5) : circularCenterScaleAngleDegrees),
     [circularCenterScaleAngleDegrees, order, useAutoCircularCenterScaleAngle],
   );
-  const handleCircularCenterScaleAngleAutoChange = useCallback((enabled: boolean) => {
-    if (!enabled) {
-      setCircularCenterScaleAngleDegrees(effectiveCircularCenterScaleAngleDegrees);
-    }
-    setUseAutoCircularCenterScaleAngle(enabled);
-  }, [effectiveCircularCenterScaleAngleDegrees]);
   const metadataColumns = metadataTable?.columns ?? [];
   const metadataValueColumnSupportsContinuous = useMemo(
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
@@ -2067,21 +2064,12 @@ export default function App() {
                         Show zero tick
                       </label>
                       <label>
-                        <input
-                          type="checkbox"
-                          checked={useAutoCircularCenterScaleAngle}
-                          onChange={(event) => handleCircularCenterScaleAngleAutoChange(event.target.checked)}
-                        />
-                        Auto angle from tip ordering
-                      </label>
-                      <label>
                         Circular center scale angle
                         <input
                           type="range"
                           min={-180}
                           max={180}
                           step={1}
-                          disabled={useAutoCircularCenterScaleAngle}
                           value={effectiveCircularCenterScaleAngleDegrees}
                           onChange={(event) => {
                             setUseAutoCircularCenterScaleAngle(false);
@@ -2090,6 +2078,9 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">{effectiveCircularCenterScaleAngleDegrees.toFixed(0)} deg</div>
+                      <p className="figure-style-help">
+                        Follows tip ordering until you move this control. Use Reset Defaults to restore automatic behavior.
+                      </p>
                       <label>
                         Circular center tick interval
                         <input

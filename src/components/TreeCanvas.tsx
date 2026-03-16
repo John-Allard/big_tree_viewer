@@ -6249,16 +6249,32 @@ export default function TreeCanvas({
         ctx.font = fontSpec("scale", scaleFontSize);
         ctx.textBaseline = "middle";
         if (showCentralTimeLabels) {
-          ctx.textAlign = Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "left" : "right";
+          const centerScaleBarTheta = showCircularCenterRadialScaleBar
+            ? centerScaleTheta + ((2.5 * Math.PI) / 180)
+            : centerScaleTheta;
+          const rotatedLabelDegrees = (centerScaleBarTheta + rotationAngle) * 180 / Math.PI;
+          const rotatedLabelOnRightSide = Math.cos(centerScaleBarTheta + rotationAngle) >= 0;
+          const rotatedLabelRadians = normalizeRotation(rotatedLabelOnRightSide ? rotatedLabelDegrees : rotatedLabelDegrees + 180) * Math.PI / 180;
+          ctx.textAlign = showCircularCenterRadialScaleBar
+            ? "center"
+            : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "left" : "right";
           for (let index = 0; index < displayedCircularCenterScaleBoundaries.length; index += 1) {
             const boundary = displayedCircularCenterScaleBoundaries[index];
             const radius = tree.isUltrametric
-              ? Math.max(0, stripeExtent - boundary.value) + (10 / camera.scale)
-              : Math.max(0, boundary.value) + (10 / camera.scale);
+              ? Math.max(0, stripeExtent - boundary.value) + (showCircularCenterRadialScaleBar ? 0 : (10 / camera.scale))
+              : Math.max(0, boundary.value) + (showCircularCenterRadialScaleBar ? 0 : (10 / camera.scale));
             const point = polarToCartesian(radius, centerScaleTheta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
-            ctx.fillText(scaleLabelText(boundary.value), screen.x, screen.y);
+            if (showCircularCenterRadialScaleBar) {
+              ctx.save();
+              ctx.translate(screen.x, screen.y);
+              ctx.rotate(rotatedLabelRadians);
+              ctx.fillText(scaleLabelText(boundary.value), 0, 0);
+              ctx.restore();
+            } else {
+              ctx.fillText(scaleLabelText(boundary.value), screen.x, screen.y);
+            }
             pushSceneText(
               scaleLabelText(boundary.value),
               screen.x,
@@ -6266,17 +6282,17 @@ export default function TreeCanvas({
               "#6b7280",
               scaleFontSize,
               labelFontFamilies.scale,
-              Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "start" : "end",
-              undefined,
+              showCircularCenterRadialScaleBar ? "middle" : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "start" : "end",
+              showCircularCenterRadialScaleBar ? rotatedLabelRadians : undefined,
               labelFontStyles.scale,
             );
           }
           if (showCircularCenterRadialScaleBar) {
             const startPoint = worldToScreenCircular(camera, 0, 0);
-            const endWorld = polarToCartesian(stripeExtent, centerScaleTheta);
+            const endWorld = polarToCartesian(stripeExtent, centerScaleBarTheta);
             const endPoint = worldToScreenCircular(camera, endWorld.x, endWorld.y);
-            const tangentX = -Math.sin(centerScaleTheta + rotationAngle);
-            const tangentY = Math.cos(centerScaleTheta + rotationAngle);
+            const tangentX = -Math.sin(centerScaleBarTheta + rotationAngle);
+            const tangentY = Math.cos(centerScaleBarTheta + rotationAngle);
             ctx.globalAlpha = 0.82;
             ctx.strokeStyle = "#6b7280";
             ctx.lineWidth = 1;
@@ -6289,7 +6305,7 @@ export default function TreeCanvas({
             for (let index = 0; index < displayedCircularCenterScaleBoundaries.length; index += 1) {
               const boundary = displayedCircularCenterScaleBoundaries[index];
               const radius = tree.isUltrametric ? Math.max(0, stripeExtent - boundary.value) : Math.max(0, boundary.value);
-              const tickWorld = polarToCartesian(radius, centerScaleTheta);
+              const tickWorld = polarToCartesian(radius, centerScaleBarTheta);
               const tickScreen = worldToScreenCircular(camera, tickWorld.x, tickWorld.y);
               const halfTick = (4 + (3 * boundary.alpha)) * 0.5;
               ctx.moveTo(tickScreen.x - (tangentX * halfTick), tickScreen.y - (tangentY * halfTick));
@@ -6616,13 +6632,13 @@ export default function TreeCanvas({
       draw();
       return;
     }
+    if (!currentCamera || treeChanged || fitRequested) {
+      fitCamera();
+      return;
+    }
     if (currentCamera && previousViewMode !== viewMode) {
       cameraRef.current = convertCameraForViewMode(currentCamera);
       draw();
-      return;
-    }
-    if (!currentCamera || treeChanged || fitRequested) {
-      fitCamera();
       return;
     }
     draw();

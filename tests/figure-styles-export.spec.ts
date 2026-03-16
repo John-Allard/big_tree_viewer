@@ -67,6 +67,20 @@ test("tip labels can export with bold and italic styling", async ({ page }) => {
   expect(svg).toContain("font-weight=\"700\"");
 });
 
+test("label style popovers stay open while interacting with the tree and close on sidebar clicks", async ({ page }) => {
+  await waitForViewer(page);
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Tip labels settings" }).click();
+  await expect(page.getByRole("dialog", { name: "Tip labels settings" })).toBeVisible();
+
+  await page.locator("[data-testid=tree-canvas]").click({ position: { x: 32, y: 32 } });
+  await expect(page.getByRole("dialog", { name: "Tip labels settings" })).toBeVisible();
+
+  await page.getByRole("heading", { name: "Big Tree Viewer" }).click();
+  await expect(page.getByRole("dialog", { name: "Tip labels settings" })).toHaveCount(0);
+});
+
 test("download newick exports the active tree in the current tab", async ({ page }) => {
   await waitForViewer(page);
   const pastedNewick = "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;";
@@ -435,6 +449,50 @@ test("circular center scale auto angle tracks ordering until manually overridden
   expect(manualAfterOrderChange.state?.circularCenterScaleAngleAuto).toBe(false);
   expect(manualAfterOrderChange.state?.circularCenterScaleAngleDegrees).toBe(30);
   expect(manualAfterOrderChange.debug?.centerScaleAngleDegrees).toBe(30);
+});
+
+test("switching to circular view and fitting in the same turn produces a real fit view", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const result = await page.evaluate(() => ({
+    state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+    camera: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera?.() ?? null,
+    debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular ?? null,
+  })) as {
+    state?: { viewMode?: string; taxonomyEnabled?: boolean };
+    camera?: { kind?: string; scale?: number } | null;
+    debug?: { visibleCircleFraction?: number | null; branchRenderMode?: string | null } | null;
+  };
+
+  expect(result.state?.viewMode).toBe("circular");
+  expect(result.state?.taxonomyEnabled).toBe(true);
+  expect(result.camera?.kind).toBe("circular");
+  expect(Number(result.debug?.visibleCircleFraction ?? 0)).toBeGreaterThan(0.9);
+  expect(result.debug?.branchRenderMode).toBeTruthy();
+});
+
+test("circular radial scale bar offsets below and rotates center labels", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowCircularCenterRadialScaleBar(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleTickIntervalInput("200");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain(">200 mya<");
+  expect(svg).toContain('text-anchor="middle"');
+  expect(svg).toContain('transform="rotate(');
 });
 
 test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {
