@@ -7,7 +7,7 @@ import {
   type LabelStyleClass,
 } from "../lib/figureStyles";
 import { putSharedSubtreePayload } from "../lib/taxonomyCache";
-import type { SharedSubtreeStoragePayload, SharedSubtreeTaxonomyEntry } from "../lib/sharedSubtreePayload";
+import type { SharedSubtreeStoragePayload, SharedSubtreeTaxonomyEntry, SharedSubtreeVisualPayload } from "../lib/sharedSubtreePayload";
 import { distanceToSegmentSquared } from "../lib/spatialIndex";
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
@@ -157,10 +157,12 @@ function buildSharedSubtreeStoragePayload(
   rootNode: number,
   taxonomyMap: TaxonomyMapPayload | null,
   taxonomyEnabled: boolean,
+  visual: SharedSubtreeVisualPayload,
 ): SharedSubtreeStoragePayload {
   const payload: SharedSubtreeStoragePayload = {
-    version: 1,
+    version: 2,
     newick: serializeSubtreeToNewick(tree, rootNode),
+    visual,
   };
   if (!taxonomyEnabled || !taxonomyMap) {
     return payload;
@@ -1782,6 +1784,7 @@ export default function TreeCanvas({
   extendRectScaleToTick,
   showScaleZeroTick,
   circularCenterScaleAngleDegrees,
+  useAutoCircularCenterScaleAngle,
   showCircularCenterRadialScaleBar,
   showGenusLabels,
   taxonomyEnabled,
@@ -7529,7 +7532,35 @@ export default function TreeCanvas({
       return;
     }
     const key = `big-tree-viewer:subtree:${crypto.randomUUID()}`;
-    const payload = buildSharedSubtreeStoragePayload(tree, node, taxonomyMap, taxonomyEnabled);
+    const payload = buildSharedSubtreeStoragePayload(tree, node, taxonomyMap, taxonomyEnabled, {
+      viewMode,
+      order,
+      zoomAxisMode,
+      circularRotationDegrees: circularRotation,
+      showTimeStripes,
+      timeStripeStyle,
+      timeStripeLineWeight,
+      showScaleBars,
+      scaleTickInterval,
+      showIntermediateScaleTicks,
+      extendRectScaleToTick,
+      showScaleZeroTick,
+      useAutoCircularCenterScaleAngle,
+      circularCenterScaleAngleDegrees,
+      showCircularCenterRadialScaleBar,
+      showGenusLabels,
+      showInternalNodeLabels,
+      showBootstrapLabels,
+      showNodeHeightLabels,
+      showNodeErrorBars,
+      errorBarThicknessPx,
+      errorBarCapSizePx,
+      figureStyles,
+      taxonomyEnabled,
+      taxonomyBranchColoringEnabled,
+      taxonomyColorJitter,
+      branchThicknessScale,
+    });
     try {
       await putSharedSubtreePayload(key, payload);
     } catch {
@@ -7543,7 +7574,37 @@ export default function TreeCanvas({
     const url = new URL(window.location.href);
     url.searchParams.set("subtree", key);
     window.open(url.toString(), "_blank", "noopener");
-  }, [taxonomyEnabled, taxonomyMap, tree]);
+  }, [
+    branchThicknessScale,
+    circularCenterScaleAngleDegrees,
+    circularRotation,
+    errorBarCapSizePx,
+    errorBarThicknessPx,
+    extendRectScaleToTick,
+    figureStyles,
+    order,
+    scaleTickInterval,
+    showBootstrapLabels,
+    showCircularCenterRadialScaleBar,
+    showGenusLabels,
+    showIntermediateScaleTicks,
+    showInternalNodeLabels,
+    showNodeErrorBars,
+    showNodeHeightLabels,
+    showScaleBars,
+    showScaleZeroTick,
+    showTimeStripes,
+    taxonomyBranchColoringEnabled,
+    taxonomyColorJitter,
+    taxonomyEnabled,
+    taxonomyMap,
+    timeStripeLineWeight,
+    timeStripeStyle,
+    tree,
+    useAutoCircularCenterScaleAngle,
+    viewMode,
+    zoomAxisMode,
+  ]);
 
   const handleContextOpenSubtreeInNewTab = useCallback(() => {
     if (!contextMenu || contextMenu.kind !== "node") {
@@ -7906,6 +7967,40 @@ export default function TreeCanvas({
         return result;
       },
       getLabelHitboxes: () => labelHitsRef.current.map((hitbox) => ({ ...hitbox })),
+      buildSharedSubtreePayloadForTest: (node: number) => {
+        if (!tree) {
+          return null;
+        }
+        return buildSharedSubtreeStoragePayload(tree, node, taxonomyMap, taxonomyEnabled, {
+          viewMode,
+          order,
+          zoomAxisMode,
+          circularRotationDegrees: circularRotation,
+          showTimeStripes,
+          timeStripeStyle,
+          timeStripeLineWeight,
+          showScaleBars,
+          scaleTickInterval,
+          showIntermediateScaleTicks,
+          extendRectScaleToTick,
+          showScaleZeroTick,
+          useAutoCircularCenterScaleAngle,
+          circularCenterScaleAngleDegrees,
+          showCircularCenterRadialScaleBar,
+          showGenusLabels,
+          showInternalNodeLabels,
+          showBootstrapLabels,
+          showNodeHeightLabels,
+          showNodeErrorBars,
+          errorBarThicknessPx,
+          errorBarCapSizePx,
+          figureStyles,
+          taxonomyEnabled,
+          taxonomyBranchColoringEnabled,
+          taxonomyColorJitter,
+          branchThicknessScale,
+        });
+      },
       zoomToSubtreeTarget,
     };
     return () => {
@@ -7919,15 +8014,41 @@ export default function TreeCanvas({
     fitCamera,
     getEffectiveBranchColors,
     order,
+    branchThicknessScale,
+    circularCenterScaleAngleDegrees,
+    circularRotation,
+    errorBarCapSizePx,
+    errorBarThicknessPx,
+    extendRectScaleToTick,
+    figureStyles,
     rectClampPadding,
+    scaleTickInterval,
+    showBootstrapLabels,
+    showCircularCenterRadialScaleBar,
+    showGenusLabels,
+    showIntermediateScaleTicks,
+    showInternalNodeLabels,
+    showNodeErrorBars,
+    showNodeHeightLabels,
+    showScaleBars,
+    showScaleZeroTick,
+    showTimeStripes,
     size.height,
     size.width,
     startPanBenchmark,
     stopPanBenchmark,
     setManualBranchColor,
     setManualSubtreeColor,
+    taxonomyBranchColoringEnabled,
+    taxonomyColorJitter,
+    taxonomyEnabled,
+    taxonomyMap,
     tree,
+    timeStripeLineWeight,
+    timeStripeStyle,
+    useAutoCircularCenterScaleAngle,
     viewMode,
+    zoomAxisMode,
     zoomToSubtreeTarget,
   ]);
 

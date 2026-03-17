@@ -33,6 +33,7 @@ import {
   parseSharedSubtreeStoragePayload,
   rebuildSharedSubtreeTaxonomyMap,
   type SharedSubtreeTaxonomyPayload,
+  type SharedSubtreeVisualPayload,
 } from "./lib/sharedSubtreePayload";
 import { buildTaxonomyBlocksForOrderedLeaves } from "./lib/taxonomyBlocks";
 import {
@@ -553,6 +554,7 @@ export default function App() {
   const pendingTreeSignatureRef = useRef<string | null>(null);
   const pendingTreeLabelRef = useRef("");
   const pendingSharedSubtreeTaxonomyRef = useRef<SharedSubtreeTaxonomyPayload | null>(null);
+  const pendingSharedSubtreeVisualRef = useRef<SharedSubtreeVisualPayload | null>(null);
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
   const [loadedTreeLabel, setLoadedTreeLabel] = useState("tree");
@@ -641,6 +643,38 @@ export default function App() {
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
   const handleHoverChange = useCallback(() => {}, []);
+
+  const applySharedSubtreeVisualSettings = useCallback((visual: SharedSubtreeVisualPayload): void => {
+    setViewMode(visual.viewMode);
+    setOrder(visual.order);
+    setZoomAxisMode(visual.zoomAxisMode);
+    setCircularRotationDegrees(visual.circularRotationDegrees);
+    setShowTimeStripes(visual.showTimeStripes);
+    setTimeStripeStyle(visual.timeStripeStyle);
+    setTimeStripeLineWeight(visual.timeStripeLineWeight);
+    setShowScaleBars(visual.showScaleBars);
+    setScaleTickIntervalInput(visual.scaleTickInterval === null ? "" : String(visual.scaleTickInterval));
+    setShowIntermediateScaleTicks(visual.showIntermediateScaleTicks);
+    setExtendRectScaleToTick(visual.extendRectScaleToTick);
+    setShowScaleZeroTick(visual.showScaleZeroTick);
+    setUseAutoCircularCenterScaleAngle(visual.useAutoCircularCenterScaleAngle);
+    setCircularCenterScaleAngleDegrees(visual.circularCenterScaleAngleDegrees);
+    setShowCircularCenterRadialScaleBar(visual.showCircularCenterRadialScaleBar);
+    setShowGenusLabels(visual.showGenusLabels);
+    setShowInternalNodeLabels(visual.showInternalNodeLabels);
+    setShowBootstrapLabels(visual.showBootstrapLabels);
+    setShowNodeHeightLabels(visual.showNodeHeightLabels);
+    setShowNodeErrorBars(visual.showNodeErrorBars);
+    setErrorBarThicknessPx(visual.errorBarThicknessPx);
+    setErrorBarCapSizePx(visual.errorBarCapSizePx);
+    setFigureStyles(visual.figureStyles);
+    setTaxonomyEnabled(visual.taxonomyEnabled);
+    setTaxonomyBranchColoringEnabled(visual.taxonomyBranchColoringEnabled);
+    setTaxonomyColorJitter(visual.taxonomyColorJitter);
+    setBranchThicknessScale(visual.branchThicknessScale);
+    setUseAutomaticTaxonomyRankVisibility(true);
+    setTaxonomyRankVisibility({});
+  }, []);
 
   useEffect(() => {
     if (taxonomyEnabled && showGenusLabels) {
@@ -1138,9 +1172,13 @@ export default function App() {
     }
     const payload = parseSharedSubtreeStoragePayload(raw);
     pendingSharedSubtreeTaxonomyRef.current = payload.taxonomy ?? null;
+    pendingSharedSubtreeVisualRef.current = payload.visual ?? null;
+    if (payload.visual) {
+      applySharedSubtreeVisualSettings(payload.visual);
+    }
     await parseText(payload.newick, "shared subtree");
     return true;
-  }, [parseText]);
+  }, [applySharedSubtreeVisualSettings, parseText]);
 
   const loadExample = async (): Promise<void> => {
     setLoadState({
@@ -1207,18 +1245,22 @@ export default function App() {
     }
     setFitRequest((value) => value + 1);
     const inheritedSubtreeTaxonomy = pendingSharedSubtreeTaxonomyRef.current;
+    const inheritedSubtreeVisual = pendingSharedSubtreeVisualRef.current;
     if (inheritedSubtreeTaxonomy) {
       pendingSharedSubtreeTaxonomyRef.current = null;
+      pendingSharedSubtreeVisualRef.current = null;
       const rebuilt = rebuildSharedSubtreeTaxonomyMap(tree, inheritedSubtreeTaxonomy);
       if (rebuilt) {
         setTaxonomyMap(rebuilt);
-        setTaxonomyEnabled(true);
+        setTaxonomyEnabled(inheritedSubtreeVisual?.taxonomyEnabled ?? true);
         setTaxonomyStatus(`Loaded shared taxonomy mapping for this subtree (${rebuilt.mappedCount.toLocaleString()} mapped tips).`);
         setTaxonomyError(null);
         void putCachedTaxonomyMapping(treeSignature, rebuilt);
         return;
       }
     }
+    const inheritedTaxonomyEnabled = inheritedSubtreeVisual?.taxonomyEnabled;
+    pendingSharedSubtreeVisualRef.current = null;
     setTaxonomyMap(null);
     setTaxonomyEnabled(false);
     let cancelled = false;
@@ -1228,7 +1270,7 @@ export default function App() {
         return;
       }
       setTaxonomyMap(cached);
-      setTaxonomyEnabled(true);
+      setTaxonomyEnabled(inheritedTaxonomyEnabled ?? true);
       setTaxonomyStatus(`Loaded cached taxonomy mapping for this tree (${cached.mappedCount.toLocaleString()} mapped tips).`);
       setTaxonomyError(null);
     })();
@@ -1989,7 +2031,6 @@ export default function App() {
                 Show genus labels
               </label>
               <div className="visual-option-actions">
-                {taxonomyEnabled ? <span className="label-style-state">Taxonomy On</span> : null}
                 <LabelStyleSection
                   labelClass="genus"
                   settings={figureStyles.genus}
@@ -2907,6 +2948,7 @@ export default function App() {
           extendRectScaleToTick={extendRectScaleToTick}
           showScaleZeroTick={showScaleZeroTick}
           circularCenterScaleAngleDegrees={effectiveCircularCenterScaleAngleDegrees}
+          useAutoCircularCenterScaleAngle={useAutoCircularCenterScaleAngle}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
           showGenusLabels={showGenusLabels && !taxonomyEnabled}
           taxonomyEnabled={taxonomyEnabled}

@@ -356,9 +356,9 @@ test("tip context menu exposes copy tip name action", async ({ page }) => {
   const tipPoint = await page.evaluate(() => {
     const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
     const canvas = document.querySelector("canvas");
-    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy");
     if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
-      throw new Error("Tip label hitbox unavailable.");
+      throw new Error("Taxonomy label hitbox unavailable.");
     }
     const rect = canvas.getBoundingClientRect();
     return {
@@ -446,9 +446,9 @@ test("custom color input does not dismiss the context menu before selection", as
   const tipPoint = await page.evaluate(() => {
     const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
     const canvas = document.querySelector("canvas");
-    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy");
     if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
-      throw new Error("Tip label hitbox unavailable.");
+      throw new Error("Taxonomy label hitbox unavailable.");
     }
     const rect = canvas.getBoundingClientRect();
     return {
@@ -469,37 +469,44 @@ test("opening a subtree in a new tab inherits the loaded taxonomy mapping", asyn
   await waitForViewer(page);
   await enableMockTaxonomy(page);
   await page.evaluate(async () => {
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setUseAutoCircularCenterScaleAngle(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleAngleDegrees(23);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setBranchThicknessScaleForTest(1.8);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyBranchColoringEnabled(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyColorJitterForTest(1.6);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "bold", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("order", false);
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
-    if (!camera || camera.kind !== "rect") {
-      throw new Error("Rectangular camera unavailable.");
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable.");
     }
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
-      scaleY: Math.max(Number(camera.scaleY) * 14, 10),
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale: Math.max(Number(camera.scale) * 3.5, 240),
     });
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
 
-  const tipPoint = await page.evaluate(() => {
-    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
-    const canvas = document.querySelector("canvas");
-    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
-    if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
-      throw new Error("Tip label hitbox unavailable.");
+  const subtreeKey = `big-tree-viewer:subtree:carry-${Date.now()}`;
+  await page.evaluate((key) => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    const targetNode = leafNodes[0];
+    if (typeof targetNode !== "number") {
+      throw new Error("Leaf node unavailable for subtree payload test.");
     }
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: rect.left + Number(tipHit.x) + (Number(tipHit.width) * 0.5),
-      y: rect.top + Number(tipHit.y) + (Number(tipHit.height) * 0.5),
-    };
-  });
+    const payload = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildSharedSubtreePayloadForTest(targetNode);
+    if (!payload) {
+      throw new Error("Shared subtree payload unavailable.");
+    }
+    window.localStorage.setItem(key, JSON.stringify(payload));
+  }, subtreeKey);
 
-  await page.mouse.click(tipPoint.x, tipPoint.y, { button: "right" });
-  const popupPromise = context.waitForEvent("page");
-  await page.getByRole("button", { name: "Open Subtree In New Tab" }).click();
-  const popup = await popupPromise;
+  const popup = await context.newPage();
+  await popup.goto(`/?subtree=${encodeURIComponent(subtreeKey)}`);
   await waitForViewerReady(popup);
   await popup.waitForFunction(() => {
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
@@ -510,10 +517,30 @@ test("opening a subtree in a new tab inherits the loaded taxonomy mapping", asyn
     taxonomyEnabled?: boolean;
     taxonomyMappedCount?: number;
     treeLoaded?: boolean;
+    viewMode?: string;
+    branchThicknessScale?: number;
+    taxonomyBranchColoringEnabled?: boolean;
+    taxonomyColorJitter?: number;
+    taxonomyRankVisibilityAuto?: boolean;
+    circularCenterScaleAngleAuto?: boolean;
+    circularCenterScaleAngleDegrees?: number;
+    figureStyles?: {
+      tip?: {
+        bold?: boolean;
+      };
+    };
   } | null;
   expect(Boolean(popupState?.treeLoaded)).toBe(true);
   expect(Boolean(popupState?.taxonomyEnabled)).toBe(true);
   expect(Number(popupState?.taxonomyMappedCount ?? 0)).toBeGreaterThan(0);
+  expect(popupState?.viewMode).toBe("circular");
+  expect(popupState?.branchThicknessScale).toBeCloseTo(1.8, 4);
+  expect(popupState?.taxonomyBranchColoringEnabled).toBe(false);
+  expect(popupState?.taxonomyColorJitter).toBeCloseTo(1.6, 4);
+  expect(popupState?.taxonomyRankVisibilityAuto).toBe(true);
+  expect(popupState?.circularCenterScaleAngleAuto).toBe(false);
+  expect(popupState?.circularCenterScaleAngleDegrees).toBeCloseTo(23, 4);
+  expect(Boolean(popupState?.figureStyles?.tip?.bold)).toBe(true);
   await popup.close();
 });
 

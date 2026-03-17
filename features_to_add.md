@@ -12,6 +12,7 @@ These are in place and do not need to stay on the active backlog:
 - zoom to subtree
 - zoom to parent subtree
 - open subtree in a new browser tab
+- subtree tabs inheriting taxonomy mappings and visual settings from the parent tab
 - basic node / branch context menu
 - tip-name copy from the node context menu
 - taxonomy-label context menu actions:
@@ -24,6 +25,8 @@ These are in place and do not need to stay on the active backlog:
 - richer continuous-metadata controls: palette presets, signed transforms, and clampable ranges
 - metadata text-label annotations from external tabular data
 - metadata marker annotations from external tabular data
+- metadata feature-specific detail controls for branch colors, text labels, and markers
+- per-category metadata marker color and shape overrides
 - metadata label density and placement controls
 - figure-style controls for font family, size, and offset by label class
 - true vector, annotation-aware SVG export for the current view
@@ -38,6 +41,7 @@ These are in place and do not need to stay on the active backlog:
 - taxonomy rank visibility controls
 - configurable scale bars for ultrametric and non-ultrametric trees
 - explicit tick interval control, zero tick, fit-extension, and stripe style options
+- circular center-scale angle controls and optional radial center scale bar
 - node interval / HPD error-bar parsing from BEAST- and MrBayes-style annotations
 - node error-bar rendering with visual controls and density-aware display
 
@@ -66,9 +70,8 @@ These are in place and do not need to stay on the active backlog:
 
 ### 5. Scale Bar and Figure Controls
 
-- Add richer circular scale bar customization.
-- Add richer rectangular scale bar customization.
-- Support scale label font-size control.
+- Add richer circular scale bar customization beyond the current center-angle and radial-bar controls.
+- Add richer rectangular scale bar customization beyond the current extent / tick controls.
 - Support scale line / tick styling controls for figure generation.
 - Keep time stripes and scale bars independently configurable.
 

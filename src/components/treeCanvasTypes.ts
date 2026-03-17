@@ -19,6 +19,7 @@ export interface TreeCanvasProps {
   extendRectScaleToTick: boolean;
   showScaleZeroTick: boolean;
   circularCenterScaleAngleDegrees: number;
+  useAutoCircularCenterScaleAngle: boolean;
   showCircularCenterRadialScaleBar: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;

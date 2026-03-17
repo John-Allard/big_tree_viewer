@@ -88,6 +88,7 @@ declare global {
       setCircularCamera: (partial: Record<string, unknown>) => void;
       getLeafIndexMap: () => Record<number, number> | null;
       getLabelHitboxes: () => Array<Record<string, unknown>>;
+      buildSharedSubtreePayloadForTest: (node: number) => Record<string, unknown> | null;
       zoomToSubtreeTarget: (node: number) => void;
       setManualBranchColor: (node: number, color: string) => void;
       clearManualBranchColor: (node: number) => void;
