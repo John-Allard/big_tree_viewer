@@ -25,6 +25,7 @@ import {
   type MetadataContinuousTransform,
   type MetadataColorOverlayResult,
   type MetadataLabelOverlayResult,
+  type MetadataMarkerShape,
   type MetadataMarkerOverlayResult,
   type ParsedMetadataTable,
 } from "./lib/metadataColors";
@@ -170,11 +171,21 @@ const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
 const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
-type VisualPopoverId = LabelStyleClass | "timeStripes";
+type VisualPopoverId =
+  | LabelStyleClass
+  | "timeStripes"
+  | "metadataBranchColors"
+  | "metadataLabels"
+  | "metadataMarkers";
+
+function disabledControlTitle(reason?: string): string | undefined {
+  return reason ? `Disabled: ${reason}` : undefined;
+}
 
 function LabelStyleSection({
   labelClass,
   settings,
+  viewMode,
   isOpen,
   disabled,
   disabledReason,
@@ -184,6 +195,7 @@ function LabelStyleSection({
 }: {
   labelClass: LabelStyleClass;
   settings: LabelStyleSettings;
+  viewMode: ViewMode;
   isOpen: boolean;
   disabled: boolean;
   disabledReason?: string;
@@ -196,9 +208,11 @@ function LabelStyleSection({
   ) => void;
 }): ReactNode {
   const isTaxonomy = labelClass === "taxonomy";
+  const isScale = labelClass === "scale";
   const supportsAxisOffsets = labelClass === "internalNode"
     || labelClass === "bootstrap"
     || labelClass === "nodeHeight";
+  const usePolarOffsets = supportsAxisOffsets && viewMode === "circular";
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -285,10 +299,10 @@ function LabelStyleSection({
               </label>
               <div className="figure-style-value">x{(settings.bandThicknessScale ?? 1).toFixed(2)}</div>
             </>
-          ) : supportsAxisOffsets ? (
+          ) : isScale ? null : supportsAxisOffsets ? (
             <>
               <label>
-                X offset
+                {usePolarOffsets ? "Tangential offset" : "X offset"}
                 <input
                   type="range"
                   min={-24}
@@ -300,7 +314,7 @@ function LabelStyleSection({
               </label>
               <div className="figure-style-value">{settings.offsetXPx}px</div>
               <label>
-                Y offset
+                {usePolarOffsets ? "Radial offset" : "Y offset"}
                 <input
                   type="range"
                   min={-24}
@@ -557,10 +571,10 @@ export default function App() {
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
   const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
   const [scaleTickIntervalInput, setScaleTickIntervalInput] = useState("");
+  const [useAutomaticTaxonomyRankVisibility, setUseAutomaticTaxonomyRankVisibility] = useState(true);
   const [useAutoCircularCenterScaleAngle, setUseAutoCircularCenterScaleAngle] = useState(true);
   const [circularCenterScaleAngleDegrees, setCircularCenterScaleAngleDegrees] = useState(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
   const [showCircularCenterRadialScaleBar, setShowCircularCenterRadialScaleBar] = useState(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
-  const [circularCenterScaleTickIntervalInput, setCircularCenterScaleTickIntervalInput] = useState("");
   const [timeStripeStyle, setTimeStripeStyle] = useState<"bands" | "dashed">(DEFAULT_TIME_STRIPE_STYLE);
   const [timeStripeLineWeight, setTimeStripeLineWeight] = useState(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
@@ -593,6 +607,8 @@ export default function App() {
   const [activeLabelStylePopover, setActiveLabelStylePopover] = useState<VisualPopoverId | null>(null);
   const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
   const [metadataTable, setMetadataTable] = useState<ParsedMetadataTable | null>(null);
+  const [metadataRawText, setMetadataRawText] = useState("");
+  const [metadataFirstRowIsHeader, setMetadataFirstRowIsHeader] = useState(true);
   const [metadataFileName, setMetadataFileName] = useState("");
   const [metadataEnabled, setMetadataEnabled] = useState(false);
   const [metadataKeyColumn, setMetadataKeyColumn] = useState("");
@@ -608,6 +624,8 @@ export default function App() {
   const [metadataLabelColumn, setMetadataLabelColumn] = useState("");
   const [metadataMarkersEnabled, setMetadataMarkersEnabled] = useState(false);
   const [metadataMarkerColumn, setMetadataMarkerColumn] = useState("");
+  const [metadataCategoryColorOverrides, setMetadataCategoryColorOverrides] = useState<Record<string, string>>({});
+  const [metadataMarkerStyleOverrides, setMetadataMarkerStyleOverrides] = useState<Record<string, { color?: string; shape?: MetadataMarkerShape }>>({});
   const [metadataMarkerSizePx, setMetadataMarkerSizePx] = useState(DEFAULT_METADATA_MARKER_SIZE_PX);
   const [metadataLabelMaxCount, setMetadataLabelMaxCount] = useState(DEFAULT_METADATA_LABEL_MAX_COUNT);
   const [metadataLabelMinSpacingPx, setMetadataLabelMinSpacingPx] = useState(DEFAULT_METADATA_LABEL_MIN_SPACING_PX);
@@ -826,14 +844,6 @@ export default function App() {
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }, [scaleTickIntervalInput]);
-  const circularCenterScaleTickInterval = useMemo(() => {
-    const trimmed = circularCenterScaleTickIntervalInput.trim();
-    if (!trimmed) {
-      return null;
-    }
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-  }, [circularCenterScaleTickIntervalInput]);
   const effectiveCircularCenterScaleAngleDegrees = useMemo(
     () => (useAutoCircularCenterScaleAngle ? (order === "asc" ? 5 : -5) : circularCenterScaleAngleDegrees),
     [circularCenterScaleAngleDegrees, order, useAutoCircularCenterScaleAngle],
@@ -882,6 +892,7 @@ export default function App() {
         continuousTransform: metadataContinuousTransform,
         continuousMin: metadataContinuousMin,
         continuousMax: metadataContinuousMax,
+        categoricalColorOverrides: metadataCategoryColorOverrides,
       },
     );
   }, [
@@ -891,6 +902,7 @@ export default function App() {
     metadataContinuousMin,
     metadataContinuousPalette,
     metadataContinuousTransform,
+    metadataCategoryColorOverrides,
     metadataKeyColumn,
     metadataReverseScale,
     metadataTable,
@@ -918,14 +930,39 @@ export default function App() {
       metadataTable.rows,
       metadataKeyColumn,
       metadataMarkerColumn,
+      {
+        categoryStyleOverrides: metadataMarkerStyleOverrides,
+      },
     );
-  }, [metadataKeyColumn, metadataMarkerColumn, metadataTable, tree]);
+  }, [metadataKeyColumn, metadataMarkerColumn, metadataMarkerStyleOverrides, metadataTable, tree]);
   const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(taxonomyMap?.activeRanks ?? [])].sort(
       (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
     ),
     [taxonomyMap],
   );
+  const handleAutomaticTaxonomyRankVisibilityChange = useCallback((enabled: boolean) => {
+    if (!enabled) {
+      const renderDebug = (window as typeof window & {
+        __BIG_TREE_VIEWER_RENDER_DEBUG__?: {
+          rect?: { taxonomyVisibleRanks?: string[] };
+          circular?: { taxonomyVisibleRanks?: string[] };
+        } | null;
+      }).__BIG_TREE_VIEWER_RENDER_DEBUG__;
+      const visibleRanks = (
+        viewMode === "circular"
+          ? renderDebug?.circular?.taxonomyVisibleRanks
+          : renderDebug?.rect?.taxonomyVisibleRanks
+      ) ?? [];
+      const nextVisibility: Partial<Record<TaxonomyRank, boolean>> = {};
+      for (let index = 0; index < availableTaxonomyRanks.length; index += 1) {
+        const rank = availableTaxonomyRanks[index];
+        nextVisibility[rank] = visibleRanks.includes(rank);
+      }
+      setTaxonomyRankVisibility(nextVisibility);
+    }
+    setUseAutomaticTaxonomyRankVisibility(enabled);
+  }, [availableTaxonomyRanks, viewMode]);
   useEffect(() => {
     if (metadataColorMode === "continuous" && !metadataValueColumnSupportsContinuous) {
       setMetadataColorMode("categorical");
@@ -1212,6 +1249,8 @@ export default function App() {
 
   const clearMetadata = useCallback((): void => {
     setMetadataTable(null);
+    setMetadataRawText("");
+    setMetadataFirstRowIsHeader(true);
     setMetadataFileName("");
     setMetadataEnabled(false);
     setMetadataKeyColumn("");
@@ -1227,6 +1266,8 @@ export default function App() {
     setMetadataLabelColumn("");
     setMetadataMarkersEnabled(false);
     setMetadataMarkerColumn("");
+    setMetadataCategoryColorOverrides({});
+    setMetadataMarkerStyleOverrides({});
     setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
     setMetadataLabelMaxCount(DEFAULT_METADATA_LABEL_MAX_COUNT);
     setMetadataLabelMinSpacingPx(DEFAULT_METADATA_LABEL_MIN_SPACING_PX);
@@ -1236,15 +1277,17 @@ export default function App() {
     setMetadataError(null);
   }, []);
 
-  const importMetadataText = useCallback((text: string, label: string): void => {
+  const applyMetadataText = useCallback((text: string, label: string, firstRowIsHeader: boolean): void => {
     try {
-      const table = parseMetadataTable(text);
+      const table = parseMetadataTable(text, firstRowIsHeader);
       if (table.columns.length < 2) {
         throw new Error("Metadata file must include at least two columns: one key column and one value column.");
       }
       const defaultKeyColumn = table.columns[0];
       const defaultValueColumn = table.columns[1];
       setMetadataTable(table);
+      setMetadataRawText(text);
+      setMetadataFirstRowIsHeader(firstRowIsHeader);
       setMetadataFileName(label);
       setMetadataEnabled(true);
       setMetadataKeyColumn(defaultKeyColumn);
@@ -1260,6 +1303,8 @@ export default function App() {
       setMetadataContinuousMaxInput("");
       setMetadataMarkersEnabled(false);
       setMetadataMarkerColumn(table.columns[3] ?? table.columns[1]);
+      setMetadataCategoryColorOverrides({});
+      setMetadataMarkerStyleOverrides({});
       setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
       setMetadataLabelMaxCount(DEFAULT_METADATA_LABEL_MAX_COUNT);
       setMetadataLabelMinSpacingPx(DEFAULT_METADATA_LABEL_MIN_SPACING_PX);
@@ -1273,6 +1318,10 @@ export default function App() {
       setMetadataStatus("");
     }
   }, [clearMetadata]);
+
+  const importMetadataText = useCallback((text: string, label: string): void => {
+    applyMetadataText(text, label, metadataFirstRowIsHeader);
+  }, [applyMetadataText, metadataFirstRowIsHeader]);
 
   const onMetadataFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -1413,6 +1462,7 @@ export default function App() {
     setFigureStyles(cloneDefaultFigureStyles());
     setTaxonomyColorJitter(DEFAULT_TAXONOMY_COLOR_JITTER);
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
+    setUseAutomaticTaxonomyRankVisibility(true);
     setTaxonomyRankVisibility({});
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
     setShowIntermediateScaleTicks(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
@@ -1422,7 +1472,6 @@ export default function App() {
     setUseAutoCircularCenterScaleAngle(true);
     setCircularCenterScaleAngleDegrees(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
     setShowCircularCenterRadialScaleBar(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
-    setCircularCenterScaleTickIntervalInput("");
     setTimeStripeStyle(DEFAULT_TIME_STRIPE_STYLE);
     setTimeStripeLineWeight(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
     setShowNodeErrorBars(DEFAULT_SHOW_NODE_ERROR_BARS);
@@ -1486,7 +1535,7 @@ export default function App() {
         circularCenterScaleAngleDegrees: effectiveCircularCenterScaleAngleDegrees,
         circularCenterScaleAngleAuto: useAutoCircularCenterScaleAngle,
         showCircularCenterRadialScaleBar,
-        circularCenterScaleTickInterval,
+        taxonomyRankVisibilityAuto: useAutomaticTaxonomyRankVisibility,
         timeStripeStyle,
         timeStripeLineWeight,
         showNodeErrorBars,
@@ -1523,10 +1572,14 @@ export default function App() {
       setTaxonomyEnabled,
       setTaxonomyBranchColoringEnabled,
       setTaxonomyRankVisibilityForTest: (rank: TaxonomyRank, visible: boolean) => {
+        setUseAutomaticTaxonomyRankVisibility(false);
         setTaxonomyRankVisibility((current) => ({
           ...current,
           [rank]: visible,
         }));
+      },
+      setTaxonomyRankVisibilityAutoForTest: (enabled: boolean) => {
+        setUseAutomaticTaxonomyRankVisibility(enabled);
       },
       setTaxonomyColorJitterForTest: setTaxonomyColorJitter,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
@@ -1545,7 +1598,6 @@ export default function App() {
         setUseAutoCircularCenterScaleAngle(enabled);
       },
       setShowCircularCenterRadialScaleBar,
-      setCircularCenterScaleTickIntervalInput,
       setTimeStripeStyle: (value: "bands" | "dashed") => setTimeStripeStyle(value),
       setTimeStripeLineWeight,
       setShowNodeErrorBars,
@@ -1675,12 +1727,12 @@ export default function App() {
     errorBarCapSizePx,
     errorBarThicknessPx,
     effectiveCircularCenterScaleAngleDegrees,
-    circularCenterScaleTickInterval,
     scaleTickInterval,
     showScaleZeroTick,
     showIntermediateScaleTicks,
     showCircularCenterRadialScaleBar,
     useAutoCircularCenterScaleAngle,
+    useAutomaticTaxonomyRankVisibility,
     showNodeErrorBars,
     metadataTable,
     metadataValueColumn,
@@ -1846,6 +1898,7 @@ export default function App() {
               className={zoomAxisMode === "both" ? "active" : ""}
               onClick={() => setZoomAxisMode("both")}
               disabled={viewMode === "circular"}
+              title={disabledControlTitle(viewMode === "circular" ? "Circular mode always zooms both axes together." : undefined)}
             >
               Zoom Both
             </button>
@@ -1854,6 +1907,7 @@ export default function App() {
               className={zoomAxisMode === "x" ? "active" : ""}
               onClick={() => setZoomAxisMode("x")}
               disabled={viewMode === "circular"}
+              title={disabledControlTitle(viewMode === "circular" ? "Circular mode always zooms both axes together." : undefined)}
             >
               Zoom X
             </button>
@@ -1862,6 +1916,7 @@ export default function App() {
               className={zoomAxisMode === "y" ? "active" : ""}
               onClick={() => setZoomAxisMode("y")}
               disabled={viewMode === "circular"}
+              title={disabledControlTitle(viewMode === "circular" ? "Circular mode always zooms both axes together." : undefined)}
             >
               Zoom Y
             </button>
@@ -1914,6 +1969,7 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="tip"
                   settings={figureStyles.tip}
+                  viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "tip"}
                   disabled={false}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "tip" ? null : "tip")}
@@ -1922,12 +1978,13 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title={disabledControlTitle(taxonomyEnabled ? "Turn off taxonomy overlays to show genus labels." : undefined)}>
                 <input
                   type="checkbox"
                   checked={showGenusLabels}
                   onChange={(event) => setShowGenusLabels(event.target.checked)}
                   disabled={taxonomyEnabled}
+                  title={disabledControlTitle(taxonomyEnabled ? "Turn off taxonomy overlays to show genus labels." : undefined)}
                 />
                 Show genus labels
               </label>
@@ -1936,21 +1993,23 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="genus"
                   settings={figureStyles.genus}
+                  viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "genus"}
                   disabled={taxonomyEnabled || !showGenusLabels}
-                  disabledReason={taxonomyEnabled ? "Taxonomy On" : "Hidden"}
+                  disabledReason={taxonomyEnabled ? "Turn off taxonomy overlays to edit genus labels." : "Enable genus labels first."}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "genus" ? null : "genus")}
                   onUpdate={updateFigureStyle}
                 />
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title={disabledControlTitle(!taxonomyMap ? "Run taxonomy mapping first." : undefined)}>
                 <input
                   type="checkbox"
                   checked={taxonomyEnabled}
                   onChange={(event) => setTaxonomyEnabled(event.target.checked)}
                   disabled={!taxonomyMap}
+                  title={disabledControlTitle(!taxonomyMap ? "Run taxonomy mapping first." : undefined)}
                 />
                 Show taxonomy overlays
               </label>
@@ -1958,9 +2017,10 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="taxonomy"
                   settings={figureStyles.taxonomy}
+                  viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "taxonomy"}
                   disabled={!taxonomyEnabled}
-                  disabledReason="Hidden"
+                  disabledReason="Turn on taxonomy overlays first."
                   extraControls={(
                     <>
                       <label>
@@ -1975,6 +2035,55 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">x{taxonomyColorJitter.toFixed(2)}</div>
+                      <label className="label-style-inline-toggle">
+                        <input
+                          type="checkbox"
+                          checked={taxonomyBranchColoringEnabled}
+                          onChange={(event) => setTaxonomyBranchColoringEnabled(event.target.checked)}
+                        />
+                        Taxonomy branch coloring
+                      </label>
+                      {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
+                        <>
+                          <label className="label-style-inline-toggle">
+                            <input
+                              type="checkbox"
+                              checked={useAutomaticTaxonomyRankVisibility}
+                              onChange={(event) => handleAutomaticTaxonomyRankVisibilityChange(event.target.checked)}
+                            />
+                            Automatic visible ranks
+                          </label>
+                          <div className="taxonomy-rank-controls">
+                            <div className="taxonomy-rank-controls-title">Visible taxonomy ranks</div>
+                            <div className="taxonomy-rank-checkboxes">
+                              {availableTaxonomyRanks.map((rank) => (
+                                <label
+                                  key={rank}
+                                  className="taxonomy-rank-checkbox"
+                                  title={disabledControlTitle(
+                                    useAutomaticTaxonomyRankVisibility
+                                      ? "Turn off automatic visible ranks to choose ranks manually."
+                                      : undefined,
+                                  )}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={taxonomyRankVisibility[rank] !== false}
+                                    disabled={useAutomaticTaxonomyRankVisibility}
+                                    onChange={(event) => {
+                                      setTaxonomyRankVisibility((current) => ({
+                                        ...current,
+                                        [rank]: event.target.checked,
+                                      }));
+                                    }}
+                                  />
+                                  {taxonomyRankLabel(rank)}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      ) : null}
                     </>
                   )}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "taxonomy" ? null : "taxonomy")}
@@ -1983,18 +2092,7 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
-                <input
-                  type="checkbox"
-                  checked={taxonomyBranchColoringEnabled}
-                  onChange={(event) => setTaxonomyBranchColoringEnabled(event.target.checked)}
-                  disabled={!taxonomyEnabled}
-                />
-                Color taxonomy branches
-              </label>
-            </div>
-            <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined)}>
                 <input
                   type="checkbox"
                   checked={showInternalNodeLabels}
@@ -2006,9 +2104,10 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="internalNode"
                   settings={figureStyles.internalNode}
+                  viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "internalNode"}
                   disabled={!showInternalNodeLabels}
-                  disabledReason="Hidden"
+                  disabledReason="Enable internal node labels first."
                   onToggle={() => setActiveLabelStylePopover((current) => current === "internalNode" ? null : "internalNode")}
                   onUpdate={updateFigureStyle}
                 />
@@ -2027,9 +2126,10 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="bootstrap"
                   settings={figureStyles.bootstrap}
+                  viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "bootstrap"}
                   disabled={!showBootstrapLabels}
-                  disabledReason="Hidden"
+                  disabledReason="Enable bootstrap labels first."
                   onToggle={() => setActiveLabelStylePopover((current) => current === "bootstrap" ? null : "bootstrap")}
                   onUpdate={updateFigureStyle}
                 />
@@ -2048,9 +2148,10 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="nodeHeight"
                   settings={figureStyles.nodeHeight}
+                  viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "nodeHeight"}
                   disabled={!showNodeHeightLabels}
-                  disabledReason="Hidden"
+                  disabledReason="Enable node height labels first."
                   onToggle={() => setActiveLabelStylePopover((current) => current === "nodeHeight" ? null : "nodeHeight")}
                   onUpdate={updateFigureStyle}
                 />
@@ -2063,6 +2164,7 @@ export default function App() {
                   checked={showNodeErrorBars}
                   disabled={(tree?.nodeIntervalCount ?? 0) === 0}
                   onChange={(event) => setShowNodeErrorBars(event.target.checked)}
+                  title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined)}
                 />
                 Show node error bars
               </label>
@@ -2080,9 +2182,10 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="scale"
                   settings={figureStyles.scale}
+                  viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "scale"}
                   disabled={!showScaleBars}
-                  disabledReason="Hidden"
+                  disabledReason="Enable scale bars first."
                   extraControls={(
                     <>
                       <label>
@@ -2145,21 +2248,6 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">{effectiveCircularCenterScaleAngleDegrees.toFixed(0)} deg</div>
-                      <p className="figure-style-help">
-                        Follows tip ordering until you move this control. Use Reset Defaults to restore automatic behavior.
-                      </p>
-                      <label>
-                        Circular center tick interval
-                        <input
-                          type="number"
-                          min={0}
-                          step="any"
-                          value={circularCenterScaleTickIntervalInput}
-                          placeholder="reuse main"
-                          onChange={(event) => setCircularCenterScaleTickIntervalInput(event.target.value)}
-                        />
-                      </label>
-                      <p className="figure-style-help">Leave blank to reuse the main scale tick spacing.</p>
                       <label className="label-style-inline-toggle">
                         <input
                           type="checkbox"
@@ -2189,7 +2277,7 @@ export default function App() {
                   title="Time stripes"
                   isOpen={activeLabelStylePopover === "timeStripes"}
                   disabled={!showTimeStripes}
-                  disabledReason="Hidden"
+                  disabledReason="Enable time stripes first."
                   onToggle={() => setActiveLabelStylePopover((current) => current === "timeStripes" ? null : "timeStripes")}
                 >
                   <label>
@@ -2270,40 +2358,36 @@ export default function App() {
 
         <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)}>
           <div className="search-controls">
-            {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
-              <div className="taxonomy-rank-controls">
-                <div className="taxonomy-rank-controls-title">Visible taxonomy ranks</div>
-                <div className="taxonomy-rank-checkboxes">
-                  {availableTaxonomyRanks.map((rank) => (
-                    <label key={rank} className="taxonomy-rank-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={taxonomyRankVisibility[rank] !== false}
-                        onChange={(event) => {
-                          setTaxonomyRankVisibility((current) => ({
-                            ...current,
-                            [rank]: event.target.checked,
-                          }));
-                        }}
-                      />
-                      {taxonomyRankLabel(rank)}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ) : null}
             {taxonomyCached ? (
               <p className="status-line">Taxonomy cache found.</p>
             ) : (
               <div className="button-row">
-                <button type="button" className="secondary" disabled={taxonomyLoading} onClick={() => void downloadTaxonomy()}>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={taxonomyLoading}
+                  title={disabledControlTitle(taxonomyLoading ? "Taxonomy download already in progress." : undefined)}
+                  onClick={() => void downloadTaxonomy()}
+                >
                   Download Taxonomy
                 </button>
               </div>
             )}
             {taxonomyCached ? (
               <div className="button-row">
-                <button type="button" className="secondary" disabled={taxonomyLoading || !tree} onClick={() => void runTaxonomyMapping()}>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={taxonomyLoading || !tree}
+                  title={disabledControlTitle(
+                    taxonomyLoading
+                      ? "Taxonomy mapping is already running."
+                      : !tree
+                        ? "Load a tree first."
+                        : undefined,
+                  )}
+                  onClick={() => void runTaxonomyMapping()}
+                >
                   Run Taxonomy Mapping
                 </button>
               </div>
@@ -2335,138 +2419,218 @@ export default function App() {
                 <p className="status-line">
                   {metadataFileName || "metadata"}: {metadataTable.rows.length.toLocaleString()} rows, {metadataTable.columns.length.toLocaleString()} columns
                 </p>
-                <label>
+                <label className="metadata-inline-toggle">
                   <input
                     type="checkbox"
-                    checked={metadataEnabled}
-                    onChange={(event) => setMetadataEnabled(event.target.checked)}
+                    checked={metadataFirstRowIsHeader}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setMetadataFirstRowIsHeader(checked);
+                      if (metadataRawText && metadataFileName) {
+                        applyMetadataText(metadataRawText, metadataFileName, checked);
+                      }
+                    }}
                   />
-                  Enable metadata branch colors
+                  Treat first line as a header
                 </label>
                 <label>
-                  <input
-                    type="checkbox"
-                    checked={metadataLabelsEnabled}
-                    onChange={(event) => setMetadataLabelsEnabled(event.target.checked)}
-                  />
-                  Show metadata text labels
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={metadataMarkersEnabled}
-                    onChange={(event) => setMetadataMarkersEnabled(event.target.checked)}
-                  />
-                  Show metadata markers
-                </label>
-                <label>
-                  Key column
+                  Match tree labels by column
                   <select value={metadataKeyColumn} onChange={(event) => setMetadataKeyColumn(event.target.value)}>
                     {metadataColumns.map((column) => (
                       <option key={column} value={column}>{column}</option>
                     ))}
                   </select>
                 </label>
-                <label>
-                  Value column
-                  <select value={metadataValueColumn} onChange={(event) => {
-                    const nextColumn = event.target.value;
-                    setMetadataValueColumn(nextColumn);
-                    setMetadataColorMode(metadataColumnLooksContinuous(metadataTable.rows, nextColumn) ? "continuous" : "categorical");
-                  }}
+                <div className="metadata-toggle-row">
+                  <label className="metadata-inline-toggle metadata-toggle-main">
+                    <input
+                      type="checkbox"
+                      checked={metadataEnabled}
+                      onChange={(event) => setMetadataEnabled(event.target.checked)}
+                    />
+                    Enable metadata branch colors
+                  </label>
+                  <SettingsPopoverButton
+                    title="Metadata branch colors"
+                    isOpen={activeLabelStylePopover === "metadataBranchColors"}
+                    disabled={!metadataEnabled}
+                    disabledReason="Enable metadata branch colors first."
+                    onToggle={() => setActiveLabelStylePopover((current) => current === "metadataBranchColors" ? null : "metadataBranchColors")}
                   >
-                    {metadataColumns.map((column) => (
-                      <option key={column} value={column}>{column}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Label column
-                  <select value={metadataLabelColumn} onChange={(event) => setMetadataLabelColumn(event.target.value)}>
-                    {metadataColumns.map((column) => (
-                      <option key={column} value={column}>{column}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Marker column
-                  <select value={metadataMarkerColumn} onChange={(event) => setMetadataMarkerColumn(event.target.value)}>
-                    {metadataColumns.map((column) => (
-                      <option key={column} value={column}>{column}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Apply colors to
-                  <select value={metadataApplyScope} onChange={(event) => setMetadataApplyScope(event.target.value as MetadataApplyScope)}>
-                    <option value="branch">Matched branches</option>
-                    <option value="subtree">Matched subtrees</option>
-                  </select>
-                </label>
-                <label>
-                  Color mode
-                  <select
-                    value={metadataColorMode}
-                    onChange={(event) => setMetadataColorMode(event.target.value as MetadataColorMode)}
-                  >
-                    <option value="categorical">Categorical</option>
-                    <option value="continuous" disabled={!metadataValueColumnSupportsContinuous}>Continuous</option>
-                  </select>
-                </label>
-                {metadataColorMode === "continuous" ? (
-                  <>
                     <label>
-                      Palette
-                      <select
-                        value={metadataContinuousPalette}
-                        onChange={(event) => setMetadataContinuousPalette(event.target.value as MetadataContinuousPalette)}
+                      Color by column
+                      <select value={metadataValueColumn} onChange={(event) => {
+                        const nextColumn = event.target.value;
+                        setMetadataValueColumn(nextColumn);
+                        setMetadataColorMode(metadataColumnLooksContinuous(metadataTable.rows, nextColumn) ? "continuous" : "categorical");
+                      }}
                       >
-                        {Object.entries(METADATA_CONTINUOUS_PALETTES).map(([key, palette]) => (
-                          <option key={key} value={key}>{palette.label}</option>
+                        {metadataColumns.map((column) => (
+                          <option key={column} value={column}>{column}</option>
                         ))}
                       </select>
                     </label>
                     <label>
-                      Transform
-                      <select
-                        value={metadataContinuousTransform}
-                        onChange={(event) => setMetadataContinuousTransform(event.target.value as MetadataContinuousTransform)}
-                      >
-                        <option value="linear">Linear</option>
-                        <option value="sqrt">Signed square root</option>
-                        <option value="log">Signed log1p</option>
+                      Apply colors to
+                      <select value={metadataApplyScope} onChange={(event) => setMetadataApplyScope(event.target.value as MetadataApplyScope)}>
+                        <option value="branch">Matched branches</option>
+                        <option value="subtree">Matched subtrees</option>
                       </select>
                     </label>
                     <label>
-                      Clamp minimum
-                      <input
-                        type="number"
-                        value={metadataContinuousMinInput}
-                        placeholder="auto"
-                        onChange={(event) => setMetadataContinuousMinInput(event.target.value)}
-                      />
+                      Color mode
+                      <select
+                        value={metadataColorMode}
+                        onChange={(event) => setMetadataColorMode(event.target.value as MetadataColorMode)}
+                      >
+                        <option value="categorical">Categorical</option>
+                        <option value="continuous" disabled={!metadataValueColumnSupportsContinuous}>Continuous</option>
+                      </select>
+                    </label>
+                    {metadataColorMode === "continuous" ? (
+                      <>
+                        <label>
+                          Palette
+                          <select
+                            value={metadataContinuousPalette}
+                            onChange={(event) => setMetadataContinuousPalette(event.target.value as MetadataContinuousPalette)}
+                          >
+                            {Object.entries(METADATA_CONTINUOUS_PALETTES).map(([key, palette]) => (
+                              <option key={key} value={key}>{palette.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Transform
+                          <select
+                            value={metadataContinuousTransform}
+                            onChange={(event) => setMetadataContinuousTransform(event.target.value as MetadataContinuousTransform)}
+                          >
+                            <option value="linear">Linear</option>
+                            <option value="sqrt">Signed square root</option>
+                            <option value="log">Signed log1p</option>
+                          </select>
+                        </label>
+                        <label>
+                          Clamp minimum
+                          <input
+                            type="number"
+                            value={metadataContinuousMinInput}
+                            placeholder="auto"
+                            onChange={(event) => setMetadataContinuousMinInput(event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Clamp maximum
+                          <input
+                            type="number"
+                            value={metadataContinuousMaxInput}
+                            placeholder="auto"
+                            onChange={(event) => setMetadataContinuousMaxInput(event.target.value)}
+                          />
+                        </label>
+                        <label className="metadata-inline-toggle">
+                          <input
+                            type="checkbox"
+                            checked={metadataReverseScale}
+                            onChange={(event) => setMetadataReverseScale(event.target.checked)}
+                          />
+                          Reverse continuous scale
+                        </label>
+                      </>
+                    ) : null}
+                    {metadataColorMode === "categorical" && metadataOverlay.categoryLegend.length > 0 ? (
+                      <div className="metadata-legend" data-testid="metadata-legend">
+                        {metadataOverlay.categoryLegend.map((item) => (
+                          <div key={item.label} className="metadata-legend-item">
+                            <div className="metadata-legend-item-controls">
+                              <input
+                                className="metadata-legend-swatch-input"
+                                type="color"
+                                aria-label={`Set metadata branch color for ${item.label}`}
+                                value={item.color}
+                                onChange={(event) => {
+                                  setMetadataCategoryColorOverrides((current) => ({
+                                    ...current,
+                                    [item.label]: event.target.value,
+                                  }));
+                                }}
+                              />
+                            </div>
+                            <span className="metadata-legend-label">{item.label}</span>
+                            <span className="metadata-legend-count">{item.count.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {metadataColorMode === "continuous" && metadataOverlay.continuousLegend ? (
+                      <div className="metadata-gradient-legend" data-testid="metadata-gradient-legend">
+                        <div
+                          className="metadata-gradient-bar"
+                          style={{
+                            background: metadataOverlay.continuousLegend.gradientCss,
+                          }}
+                        />
+                        <div className="metadata-gradient-labels">
+                          <span>{formatNumber(metadataOverlay.continuousLegend.min)}</span>
+                          <span>{formatNumber(metadataOverlay.continuousLegend.max)}</span>
+                        </div>
+                        <div className="metadata-gradient-labels">
+                          <span>data {formatNumber(metadataOverlay.continuousLegend.actualMin)}</span>
+                          <span>{METADATA_CONTINUOUS_PALETTES[metadataOverlay.continuousLegend.palette].label} · {metadataOverlay.continuousLegend.transform}</span>
+                          <span>data {formatNumber(metadataOverlay.continuousLegend.actualMax)}</span>
+                        </div>
+                      </div>
+                    ) : null}
+                  </SettingsPopoverButton>
+                </div>
+                <div className="metadata-toggle-row">
+                  <label className="metadata-inline-toggle metadata-toggle-main">
+                    <input
+                      type="checkbox"
+                      checked={metadataLabelsEnabled}
+                      onChange={(event) => setMetadataLabelsEnabled(event.target.checked)}
+                    />
+                    Show metadata text labels
+                  </label>
+                  <SettingsPopoverButton
+                    title="Metadata text labels"
+                    isOpen={activeLabelStylePopover === "metadataLabels"}
+                    disabled={!metadataLabelsEnabled}
+                    disabledReason="Enable metadata text labels first."
+                    onToggle={() => setActiveLabelStylePopover((current) => current === "metadataLabels" ? null : "metadataLabels")}
+                  >
+                    <label>
+                      Text label column
+                      <select value={metadataLabelColumn} onChange={(event) => setMetadataLabelColumn(event.target.value)}>
+                        {metadataColumns.map((column) => (
+                          <option key={column} value={column}>{column}</option>
+                        ))}
+                      </select>
                     </label>
                     <label>
-                      Clamp maximum
-                      <input
-                        type="number"
-                        value={metadataContinuousMaxInput}
-                        placeholder="auto"
-                        onChange={(event) => setMetadataContinuousMaxInput(event.target.value)}
-                      />
+                      Font family
+                      <select
+                        value={figureStyles.internalNode.fontFamily}
+                        onChange={(event) => updateFigureStyle("internalNode", "fontFamily", event.target.value as FontFamilyKey)}
+                      >
+                        {FONT_FAMILY_OPTIONS.map((option) => (
+                          <option key={option.key} value={option.key}>{option.label}</option>
+                        ))}
+                      </select>
                     </label>
                     <label>
+                      Size scale
                       <input
-                        type="checkbox"
-                        checked={metadataReverseScale}
-                        onChange={(event) => setMetadataReverseScale(event.target.checked)}
+                        type="range"
+                        min={0.6}
+                        max={1.8}
+                        step={0.05}
+                        value={figureStyles.internalNode.sizeScale}
+                        onChange={(event) => updateFigureStyle("internalNode", "sizeScale", Number(event.target.value))}
                       />
-                      Reverse continuous scale
                     </label>
-                  </>
-                ) : null}
-                {metadataLabelsEnabled ? (
-                  <>
+                    <div className="figure-style-value">x{figureStyles.internalNode.sizeScale.toFixed(2)}</div>
                     <label>
                       Metadata label max count
                       <input
@@ -2515,10 +2679,32 @@ export default function App() {
                       />
                     </label>
                     <div className="figure-style-value">{metadataLabelOffsetYPx}px</div>
-                  </>
-                ) : null}
-                {metadataMarkersEnabled ? (
-                  <>
+                  </SettingsPopoverButton>
+                </div>
+                <div className="metadata-toggle-row">
+                  <label className="metadata-inline-toggle metadata-toggle-main">
+                    <input
+                      type="checkbox"
+                      checked={metadataMarkersEnabled}
+                      onChange={(event) => setMetadataMarkersEnabled(event.target.checked)}
+                    />
+                    Show metadata markers
+                  </label>
+                  <SettingsPopoverButton
+                    title="Metadata markers"
+                    isOpen={activeLabelStylePopover === "metadataMarkers"}
+                    disabled={!metadataMarkersEnabled}
+                    disabledReason="Enable metadata markers first."
+                    onToggle={() => setActiveLabelStylePopover((current) => current === "metadataMarkers" ? null : "metadataMarkers")}
+                  >
+                    <label>
+                      Marker category column
+                      <select value={metadataMarkerColumn} onChange={(event) => setMetadataMarkerColumn(event.target.value)}>
+                        {metadataColumns.map((column) => (
+                          <option key={column} value={column}>{column}</option>
+                        ))}
+                      </select>
+                    </label>
                     <label>
                       Marker size
                       <input
@@ -2531,14 +2717,68 @@ export default function App() {
                       />
                     </label>
                     <div className="figure-style-value">{metadataMarkerSizePx}px</div>
-                  </>
-                ) : null}
+                    {metadataMarkerOverlay.legend.length > 0 ? (
+                      <div className="metadata-legend" data-testid="metadata-marker-legend">
+                        {metadataMarkerOverlay.legend.map((item) => (
+                          <div key={item.label} className="metadata-legend-item">
+                            <div className="metadata-legend-item-controls">
+                              <input
+                                className="metadata-legend-swatch-input"
+                                type="color"
+                                aria-label={`Set metadata marker color for ${item.label}`}
+                                value={item.color}
+                                onChange={(event) => {
+                                  setMetadataMarkerStyleOverrides((current) => ({
+                                    ...current,
+                                    [item.label]: {
+                                      ...current[item.label],
+                                      color: event.target.value,
+                                    },
+                                  }));
+                                }}
+                              />
+                              <select
+                                className="metadata-shape-select"
+                                aria-label={`Set metadata marker shape for ${item.label}`}
+                                value={item.shape}
+                                onChange={(event) => {
+                                  setMetadataMarkerStyleOverrides((current) => ({
+                                    ...current,
+                                    [item.label]: {
+                                      ...current[item.label],
+                                      shape: event.target.value as MetadataMarkerShape,
+                                    },
+                                  }));
+                                }}
+                              >
+                                <option value="circle">Circle</option>
+                                <option value="square">Square</option>
+                                <option value="diamond">Diamond</option>
+                                <option value="triangle">Triangle</option>
+                              </select>
+                            </div>
+                            <span className="metadata-legend-label">{item.label}</span>
+                            <span className="metadata-legend-count">{item.count.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </SettingsPopoverButton>
+                </div>
                 <div className="metadata-summary">
                   <span>Matched rows: {metadataOverlay.matchedRowCount.toLocaleString()}</span>
-                  <span>Matched nodes: {metadataOverlay.matchedNodeCount.toLocaleString()}</span>
-                  <span>Colored branches: {metadataOverlay.coloredNodeCount.toLocaleString()}</span>
-                  <span>Metadata labels: {metadataLabelOverlay.labeledNodeCount.toLocaleString()}</span>
-                  <span>Metadata markers: {metadataMarkerOverlay.markedNodeCount.toLocaleString()}</span>
+                  {metadataOverlay.matchedNodeCount !== metadataOverlay.matchedRowCount ? (
+                    <span>Matched nodes: {metadataOverlay.matchedNodeCount.toLocaleString()}</span>
+                  ) : null}
+                  {metadataEnabled && metadataOverlay.coloredNodeCount !== metadataOverlay.matchedNodeCount ? (
+                    <span>Colored nodes: {metadataOverlay.coloredNodeCount.toLocaleString()}</span>
+                  ) : null}
+                  {metadataLabelsEnabled && metadataLabelOverlay.labeledNodeCount !== metadataOverlay.matchedNodeCount ? (
+                    <span>Text labels: {metadataLabelOverlay.labeledNodeCount.toLocaleString()}</span>
+                  ) : null}
+                  {metadataMarkersEnabled && metadataMarkerOverlay.markedNodeCount !== metadataOverlay.matchedNodeCount ? (
+                    <span>Markers: {metadataMarkerOverlay.markedNodeCount.toLocaleString()}</span>
+                  ) : null}
                 </div>
                 {metadataOverlay.unmappedRowCount > 0 ? (
                   <p className="status-line">
@@ -2549,36 +2789,6 @@ export default function App() {
                   <p className="status-line">
                     Invalid numeric rows: {metadataOverlay.invalidValueRowCount.toLocaleString()}
                   </p>
-                ) : null}
-                {metadataColorMode === "categorical" && metadataOverlay.categoryLegend.length > 0 ? (
-                  <div className="metadata-legend" data-testid="metadata-legend">
-                    {metadataOverlay.categoryLegend.map((item) => (
-                      <div key={item.label} className="metadata-legend-item">
-                        <span className="metadata-legend-swatch" style={{ backgroundColor: item.color }} />
-                        <span className="metadata-legend-label">{item.label}</span>
-                        <span className="metadata-legend-count">{item.count.toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {metadataColorMode === "continuous" && metadataOverlay.continuousLegend ? (
-                  <div className="metadata-gradient-legend" data-testid="metadata-gradient-legend">
-                    <div
-                      className="metadata-gradient-bar"
-                      style={{
-                        background: metadataOverlay.continuousLegend.gradientCss,
-                      }}
-                    />
-                    <div className="metadata-gradient-labels">
-                      <span>{formatNumber(metadataOverlay.continuousLegend.min)}</span>
-                      <span>{formatNumber(metadataOverlay.continuousLegend.max)}</span>
-                    </div>
-                    <div className="metadata-gradient-labels">
-                      <span>data {formatNumber(metadataOverlay.continuousLegend.actualMin)}</span>
-                      <span>{METADATA_CONTINUOUS_PALETTES[metadataOverlay.continuousLegend.palette].label} · {metadataOverlay.continuousLegend.transform}</span>
-                      <span>data {formatNumber(metadataOverlay.continuousLegend.actualMax)}</span>
-                    </div>
-                  </div>
                 ) : null}
               </>
             ) : null}
@@ -2698,11 +2908,11 @@ export default function App() {
           showScaleZeroTick={showScaleZeroTick}
           circularCenterScaleAngleDegrees={effectiveCircularCenterScaleAngleDegrees}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
-          circularCenterScaleTickInterval={circularCenterScaleTickInterval}
           showGenusLabels={showGenusLabels && !taxonomyEnabled}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
           taxonomyColorJitter={taxonomyColorJitter}
+          useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
           taxonomyRankVisibility={taxonomyRankVisibility}
           taxonomyMap={taxonomyMap}
           metadataBranchColors={metadataEnabled && metadataOverlay.hasAny ? metadataOverlay.colors : null}

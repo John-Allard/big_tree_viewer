@@ -327,6 +327,23 @@ button.secondary {
   font-size: 0.9rem;
 }
 
+.metadata-inline-toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.metadata-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.metadata-toggle-main {
+  flex: 1 1 auto;
+}
+
 .search-controls label > input[type="checkbox"] {
   width: auto;
   margin-right: 0.45rem;
@@ -350,18 +367,31 @@ button.secondary {
 
 .metadata-legend-item {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.55rem;
   align-items: center;
   color: #334155;
   font-size: 0.88rem;
 }
 
-.metadata-legend-swatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
+.metadata-legend-item-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.metadata-legend-swatch-input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
   border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.metadata-shape-select {
+  width: auto;
+  min-width: 6.4rem;
 }
 
 .metadata-legend-label {
@@ -734,10 +764,10 @@ button.secondary {
 .tree-context-menu-custom-color {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.6rem;
   color: #475569;
   font-size: 0.78rem;
+  flex-wrap: wrap;
 }
 
 .tree-context-menu-custom-color input[type="color"] {
@@ -747,6 +777,16 @@ button.secondary {
   border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 999px;
   background: transparent;
+}
+
+.tree-context-menu-custom-color input[type="text"] {
+  min-width: 6.5rem;
+  flex: 1 1 6.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 8px;
+  padding: 0.28rem 0.45rem;
+  background: #fff;
+  color: #334155;
 }
 
 .tree-context-menu-clear {

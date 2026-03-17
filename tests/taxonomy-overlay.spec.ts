@@ -856,7 +856,7 @@ test("taxonomy label hover shows taxonomy tooltip details instead of branch metr
   await expect(tooltip).not.toContainText("Branch:");
 });
 
-test("taxonomy rank controls in the taxonomy section filter visible ranks", async ({ page }) => {
+test("taxonomy rank controls in taxonomy visual settings filter visible ranks", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
     const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
@@ -901,11 +901,13 @@ test("taxonomy rank controls in the taxonomy section filter visible ranks", asyn
     taxonomyVisibleRanks?: string[];
   });
   expect(rectDebug.taxonomyVisibleRanks ?? []).not.toContain("class");
-  await page.getByRole("button", { name: "Taxonomy" }).click();
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Taxonomy labels settings" }).click();
   await expect(page.getByText("Visible taxonomy ranks")).toBeVisible();
-  await expect(page.getByLabel("Class")).not.toBeChecked();
-  await expect(page.getByLabel("Order")).toBeChecked();
-  await expect(page.getByLabel("Family")).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Automatic visible ranks" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Class" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Order" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Family" })).toBeChecked();
 });
 
 test("taxonomy overlays can stay visible while taxonomy branch coloring is disabled", async ({ page }) => {

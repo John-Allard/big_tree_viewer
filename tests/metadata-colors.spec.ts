@@ -12,6 +12,13 @@ async function waitForViewer(page: Page): Promise<void> {
   });
 }
 
+async function ensureMetadataPanelOpen(page: Page): Promise<void> {
+  const toggle = page.locator(".panel-section .section-toggle").filter({ hasText: "Metadata" }).first();
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+}
+
 async function loadLabeledTree(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Paste Newick" }).click();
   await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("((A:1,B:1)CladeOne:1,(C:1,D:1)CladeTwo:1)Root;");
@@ -136,6 +143,8 @@ test("continuous metadata mapping shows a gradient legend and distinct colors", 
   }));
 
   expect(result.state?.metadataColorMode).toBe("continuous");
+  await ensureMetadataPanelOpen(page);
+  await page.getByRole("button", { name: "Metadata branch colors settings" }).click();
   await expect(page.getByTestId("metadata-gradient-legend")).toBeVisible();
   expect(result.colors[sample[0].node]).not.toBe(result.colors[sample[2].node]);
 });
@@ -172,7 +181,8 @@ test("continuous metadata controls support palette, transform, and clamp setting
 
   expect(result.state?.metadataContinuousMin).toBe(-25);
   expect(result.state?.metadataContinuousMax).toBe(25);
-  await page.getByRole("button", { name: /Metadata/ }).click();
+  await ensureMetadataPanelOpen(page);
+  await page.getByRole("button", { name: "Metadata branch colors settings" }).click();
   await expect(page.getByTestId("metadata-gradient-legend")).toContainText("Viridis");
   await expect(page.getByTestId("metadata-gradient-legend")).toContainText("sqrt");
   expect(result.colors[sample[0].node]).not.toBe(result.colors[sample[1].node]);
@@ -322,4 +332,39 @@ test("metadata colors override taxonomy colors and manual colors override metada
   expect(seed.taxonomyColor).not.toBeNull();
   expect(result.metadataColor).not.toBe(seed.taxonomyColor);
   expect(manualColor).toBe("#dc2626");
+});
+
+test("metadata markers expose per-category styling and align tip anchors across shapes", async ({ page }) => {
+  await waitForViewer(page);
+  await loadLabeledTree(page);
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(
+      "label,group,marker\nA,One,Present\nB,One,Absent\n",
+      "binary-markers.csv",
+    );
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataEnabled(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataMarkersEnabled(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataMarkerColumn("marker");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataMarkerSizePx(12);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+  });
+  await page.getByRole("button", { name: /Metadata/ }).click();
+  await page.getByRole("button", { name: "Metadata markers settings" }).click();
+  await page.getByLabel("Set metadata marker shape for Present").selectOption("circle");
+  await page.getByLabel("Set metadata marker shape for Absent").selectOption("square");
+  const svg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
+
+  const circleMatch = svg.match(/<path[^>]*d="M ([^ ]+) ([^ ]+) A ([^ ]+) \3 0 1 1 [^"]*"[^>]*fill="#2563eb"/);
+  const squareMatch = svg.match(/<path[^>]*d="M ([^ ]+) ([^ ]+) L ([^ ]+) \2 L \3 ([^ ]+) L \1 \4 Z"[^>]*fill="#16a34a"/);
+  expect(circleMatch).not.toBeNull();
+  expect(squareMatch).not.toBeNull();
+
+  const circleStartX = Number(circleMatch?.[1]);
+  const circleRadius = Number(circleMatch?.[3]);
+  const circleCenterX = circleStartX - circleRadius;
+  const squareLeftX = Number(squareMatch?.[1]);
+  const squareRightX = Number(squareMatch?.[3]);
+  const squareCenterX = (squareLeftX + squareRightX) * 0.5;
+  expect(Math.abs(circleCenterX - squareCenterX)).toBeLessThan(0.75);
 });

@@ -347,7 +347,6 @@ test("circular center scale supports manual angle and radial bar controls", asyn
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleAngleDegrees(90);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowCircularCenterRadialScaleBar(true);
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleTickIntervalInput("200");
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     return window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular ?? null;
@@ -493,7 +492,6 @@ test("circular radial scale bar offsets below and rotates center labels", async 
   const svg = await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowCircularCenterRadialScaleBar(true);
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularCenterScaleTickIntervalInput("200");
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";

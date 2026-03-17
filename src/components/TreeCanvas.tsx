@@ -111,6 +111,25 @@ function isNumericInternalLabel(value: string): boolean {
   return /^[+-]?\d+(?:\.\d+)?$/.test(value.trim());
 }
 
+function applyCircularPointLabelOffset(
+  x: number,
+  y: number,
+  theta: number,
+  rotationAngle: number,
+  tangentialOffsetPx: number,
+  radialOffsetPx: number,
+): { x: number; y: number } {
+  const renderedTheta = theta + rotationAngle;
+  const tangentX = -Math.sin(renderedTheta);
+  const tangentY = Math.cos(renderedTheta);
+  const radialX = Math.cos(renderedTheta);
+  const radialY = Math.sin(renderedTheta);
+  return {
+    x: x + (tangentX * tangentialOffsetPx) + (radialX * radialOffsetPx),
+    y: y + (tangentY * tangentialOffsetPx) + (radialY * radialOffsetPx),
+  };
+}
+
 function collectSubtreeLeafNodes(tree: TreeModel, rootNode: number): number[] {
   const leaves: number[] = [];
   const stack = [rootNode];
@@ -283,6 +302,44 @@ function drawMetadataMarker(
   ctx.lineTo(x + radius, y + radius);
   ctx.lineTo(x - radius, y + radius);
   ctx.closePath();
+}
+
+function metadataRectMarkerScreenPosition(
+  tree: TreeModel,
+  node: number,
+  centerY: number,
+  camera: RectCamera,
+  sizePx: number,
+): { x: number; y: number } {
+  const isLeaf = tree.buffers.firstChild[node] < 0;
+  const tipDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
+  const xDepth = isLeaf ? tipDepth : tree.buffers.depth[node];
+  const screen = worldToScreenRect(camera, xDepth, centerY);
+  const outwardOffsetPx = isLeaf ? Math.max(1, sizePx * 0.25) : 0;
+  return {
+    x: Math.round(screen.x + outwardOffsetPx),
+    y: Math.round(screen.y),
+  };
+}
+
+function metadataCircularMarkerScreenPosition(
+  tree: TreeModel,
+  node: number,
+  theta: number,
+  camera: CircularCamera,
+  sizePx: number,
+): { x: number; y: number } {
+  const isLeaf = tree.buffers.firstChild[node] < 0;
+  const tipRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+  const worldRadius = isLeaf
+    ? tipRadius + (Math.max(1, sizePx * 0.25) / Math.max(camera.scale, 0.001))
+    : tree.buffers.depth[node];
+  const point = polarToCartesian(worldRadius, theta);
+  const screen = worldToScreenCircular(camera, point.x, point.y);
+  return {
+    x: Math.round(screen.x),
+    y: Math.round(screen.y),
+  };
 }
 
 function escapeSvgText(value: string): string {
@@ -1726,11 +1783,11 @@ export default function TreeCanvas({
   showScaleZeroTick,
   circularCenterScaleAngleDegrees,
   showCircularCenterRadialScaleBar,
-  circularCenterScaleTickInterval,
   showGenusLabels,
   taxonomyEnabled,
   taxonomyBranchColoringEnabled,
   taxonomyColorJitter,
+  useAutomaticTaxonomyRankVisibility,
   taxonomyRankVisibility,
   taxonomyMap,
   metadataBranchColors,
@@ -1835,6 +1892,7 @@ export default function TreeCanvas({
   const [manualSubtreeColorAssignments, setManualSubtreeColorAssignments] = useState<Map<number, string>>(() => new Map());
   const [taxonomyRootColorAssignments, setTaxonomyRootColorAssignments] = useState<Map<string, string>>(() => new Map());
   const [contextMenuColorMode, setContextMenuColorMode] = useState<"branch" | "subtree" | "taxonomy-root" | null>(null);
+  const [contextMenuCustomColor, setContextMenuCustomColor] = useState("#2563eb");
   const nativeColorPickerActiveRef = useRef(false);
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
   const [contextMenu, setContextMenu] = useState<(
@@ -1877,6 +1935,30 @@ export default function TreeCanvas({
       setContextMenuColorMode(null);
     }
   }, [contextMenu]);
+  useEffect(() => {
+    if (!contextMenu || !contextMenuColorMode) {
+      return;
+    }
+    if (contextMenu.kind === "node") {
+      if (contextMenuColorMode === "branch") {
+        setContextMenuCustomColor(manualBranchColorAssignments.get(contextMenu.node) ?? "#2563eb");
+        return;
+      }
+      if (contextMenuColorMode === "subtree") {
+        setContextMenuCustomColor(manualSubtreeColorAssignments.get(contextMenu.node) ?? "#2563eb");
+        return;
+      }
+    }
+    if (contextMenu.kind === "taxonomy" && contextMenuColorMode === "taxonomy-root") {
+      setContextMenuCustomColor(taxonomyRootColorAssignments.get(contextMenu.name) ?? "#2563eb");
+    }
+  }, [
+    contextMenu,
+    contextMenuColorMode,
+    manualBranchColorAssignments,
+    manualSubtreeColorAssignments,
+    taxonomyRootColorAssignments,
+  ]);
   const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(
     () => sortTaxonomyRanksForDisplay(
       (taxonomyMap ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]).filter(
@@ -2136,7 +2218,9 @@ export default function TreeCanvas({
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
     const tipBandWidthPx = interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx);
     if (taxonomyEnabled && taxonomyBlocks) {
-      const visibleRanks = taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks);
+      const visibleRanks = useAutomaticTaxonomyRankVisibility
+        ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
+        : taxonomyActiveRanks;
       const taxonomyMetricBaseSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
       const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
       const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
@@ -2196,6 +2280,9 @@ export default function TreeCanvas({
   ]);
 
   const rectVisibleTaxonomyRanksForScaleY = useCallback((scaleY: number): TaxonomyRank[] => {
+    if (!useAutomaticTaxonomyRankVisibility) {
+      return taxonomyActiveRanks;
+    }
     const effectiveZoom = rectTaxonomyZoom(scaleY);
     const visibleRanks = taxonomyVisibleRanksForZoom(effectiveZoom, taxonomyActiveRanks);
     const hasClass = visibleRanks.includes("class");
@@ -2204,7 +2291,7 @@ export default function TreeCanvas({
       return visibleRanks;
     }
     return taxonomyActiveRanks.filter((rank) => visibleRanks.includes(rank) || rank === "order");
-  }, [rectTaxonomyZoom, taxonomyActiveRanks]);
+  }, [rectTaxonomyZoom, taxonomyActiveRanks, useAutomaticTaxonomyRankVisibility]);
 
   const rectClampPadding = useCallback((camera: RectCamera) => {
     const microTipFontSize = scaleLabelFontSize("tip", Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34)));
@@ -4013,13 +4100,13 @@ export default function TreeCanvas({
           if (x < minX || x > maxX || y < minY || y > maxY) {
             continue;
           }
-          const screen = worldToScreenRect(camera, x, y);
+          const { x: markerX, y: markerY } = metadataRectMarkerScreenPosition(tree, node, y, camera, metadataMarkerSizePx);
           ctx.fillStyle = marker.color;
           ctx.strokeStyle = "rgba(255,255,255,0.92)";
-          drawMetadataMarker(ctx, marker.shape, screen.x, screen.y, metadataMarkerSizePx);
+          drawMetadataMarker(ctx, marker.shape, markerX, markerY, metadataMarkerSizePx);
           ctx.fill();
           ctx.stroke();
-          pushScenePath(metadataMarkerPath(marker.shape, screen.x, screen.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
+          pushScenePath(metadataMarkerPath(marker.shape, markerX, markerY, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
           visibleMarkers += 1;
         }
       }
@@ -4213,7 +4300,7 @@ export default function TreeCanvas({
       const circularCenterScaleLevels = buildStripeLevels(
         visibleRadius,
         camera.scale,
-        circularCenterScaleTickInterval ?? scaleTickInterval,
+        scaleTickInterval,
       );
       const circularCenterScaleBoundariesRaw = buildStripeBoundaries(stripeExtent, circularCenterScaleLevels);
       const circularCenterVisibleBoundaries = showIntermediateScaleTicks
@@ -4240,7 +4327,9 @@ export default function TreeCanvas({
       );
       const circularCachePrepStartTime = performance.now();
       let visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
-        ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
+        ? (useAutomaticTaxonomyRankVisibility
+          ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
+          : taxonomyActiveRanks)
         : [];
       const visibleCircleFraction = fullyVisibleRadiusPx / Math.max(1e-9, stripeExtent * camera.scale);
       const fitLikeCircular = fitCameraForMode("circular");
@@ -4248,7 +4337,7 @@ export default function TreeCanvas({
         ? camera.scale <= (fitLikeCircular.scale * 1.35)
         : false;
       const lockTaxonomyLabelsToClade = nearCircularFit || visibleCircleFraction >= 0.5;
-      if (visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 2) {
+      if (useAutomaticTaxonomyRankVisibility && visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 2) {
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
       const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
@@ -5859,8 +5948,16 @@ export default function TreeCanvas({
           const radius = tree.buffers.depth[node] + (14 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
-          const labelX = screen.x + figureStyles[labelClass].offsetXPx;
-          const labelY = screen.y + figureStyles[labelClass].offsetYPx;
+          const offsetPoint = applyCircularPointLabelOffset(
+            screen.x,
+            screen.y,
+            theta,
+            rotationAngle,
+            figureStyles[labelClass].offsetXPx,
+            figureStyles[labelClass].offsetYPx,
+          );
+          const labelX = offsetPoint.x;
+          const labelY = offsetPoint.y;
           if (labelX < -40 || labelX > size.width + 40 || labelY < -40 || labelY > size.height + 40) {
             continue;
           }
@@ -6024,7 +6121,7 @@ export default function TreeCanvas({
       }
       timing.taxonomyOverlayMs += performance.now() - circularTaxonomyOverlayStartTime;
 
-      if (showNodeHeightLabels && camera.scale > 12) {
+      if (showNodeHeightLabels && camera.scale > 4.5) {
         const fontSize = scaleLabelFontSize("nodeHeight", Math.max(8, Math.min(12, camera.scale * 0.045)));
         const labels: ScreenLabel[] = [];
         ctx.font = `${fontSize}px ${labelFontFamilies.nodeHeight}`;
@@ -6034,12 +6131,28 @@ export default function TreeCanvas({
           if (tree.buffers.firstChild[node] < 0) {
             continue;
           }
+          const parent = tree.buffers.parent[node];
           const theta = thetaFor(layout.center, node, tree.leafCount);
           const radius = tree.buffers.depth[node] + (10 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
-          const labelX = screen.x + figureStyles.nodeHeight.offsetXPx;
-          const labelY = screen.y + figureStyles.nodeHeight.offsetYPx;
+          const subtreeSpanPx = Math.max(0, (layout.max[node] - layout.min[node])) * angularSpacingPx;
+          const branchSpanPx = parent >= 0
+            ? Math.max(0, (tree.buffers.depth[node] - tree.buffers.depth[parent]) * camera.scale)
+            : 0;
+          if (camera.scale <= 7 && subtreeSpanPx < 10 && branchSpanPx < 14) {
+            continue;
+          }
+          const offsetPoint = applyCircularPointLabelOffset(
+            screen.x,
+            screen.y,
+            theta,
+            rotationAngle,
+            figureStyles.nodeHeight.offsetXPx,
+            figureStyles.nodeHeight.offsetYPx - 5,
+          );
+          const labelX = offsetPoint.x;
+          const labelY = offsetPoint.y;
           if (
             labelX < -40 || labelX > size.width + 40 ||
             labelY < -40 || labelY > size.height + 40
@@ -6091,17 +6204,18 @@ export default function TreeCanvas({
             continue;
           }
           const theta = thetaFor(layout.center, node, tree.leafCount);
-          const point = polarToCartesian(tree.buffers.depth[node], theta);
-          const screen = worldToScreenCircular(camera, point.x, point.y);
+          const screen = metadataCircularMarkerScreenPosition(tree, node, theta, camera, metadataMarkerSizePx);
           if (screen.x < -20 || screen.x > size.width + 20 || screen.y < -20 || screen.y > size.height + 20) {
             continue;
           }
+          const markerX = screen.x;
+          const markerY = screen.y;
           ctx.fillStyle = marker.color;
           ctx.strokeStyle = "rgba(255,255,255,0.92)";
-          drawMetadataMarker(ctx, marker.shape, screen.x, screen.y, metadataMarkerSizePx);
+          drawMetadataMarker(ctx, marker.shape, markerX, markerY, metadataMarkerSizePx);
           ctx.fill();
           ctx.stroke();
-          pushScenePath(metadataMarkerPath(marker.shape, screen.x, screen.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
+          pushScenePath(metadataMarkerPath(marker.shape, markerX, markerY, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
           visibleMarkers += 1;
         }
       }
@@ -6492,7 +6606,6 @@ export default function TreeCanvas({
     errorBarCapSizePx,
     errorBarThicknessPx,
     circularCenterScaleAngleDegrees,
-    circularCenterScaleTickInterval,
     extendRectScaleToTick,
     scaleLabelFontSize,
     scaleTickInterval,
@@ -7652,7 +7765,10 @@ export default function TreeCanvas({
             aria-label={`Set ${scope} color ${swatch.label}`}
             title={swatch.label}
             disabled={disabled}
-            onClick={() => applyContextColor(scope, swatch.color)}
+            onClick={() => {
+              setContextMenuCustomColor(swatch.color);
+              applyContextColor(scope, swatch.color);
+            }}
           />
         ))}
       </div>
@@ -7663,7 +7779,7 @@ export default function TreeCanvas({
         <span>Custom color</span>
         <input
           type="color"
-          value={normalizeColorInput(selectedColor ?? "#2563eb") ?? "#2563eb"}
+          value={normalizeColorInput(contextMenuCustomColor) ?? normalizeColorInput(selectedColor ?? "#2563eb") ?? "#2563eb"}
           disabled={disabled}
           aria-label={`Choose custom ${scope} color`}
           onFocus={() => {
@@ -7676,7 +7792,25 @@ export default function TreeCanvas({
             nativeColorPickerActiveRef.current = true;
             event.stopPropagation();
           }}
-          onChange={(event) => applyContextColor(scope, event.target.value)}
+          onChange={(event) => {
+            setContextMenuCustomColor(event.target.value);
+            applyContextColor(scope, event.target.value);
+          }}
+        />
+        <input
+          type="text"
+          value={contextMenuCustomColor}
+          disabled={disabled}
+          aria-label={`Custom ${scope} color hex`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onChange={(event) => setContextMenuCustomColor(event.target.value)}
+          onBlur={() => {
+            const normalized = normalizeColorInput(contextMenuCustomColor);
+            if (normalized) {
+              setContextMenuCustomColor(normalized);
+              applyContextColor(scope, normalized);
+            }
+          }}
         />
       </label>
     </div>

@@ -10,6 +10,7 @@ export interface ParsedMetadataTable {
   columns: string[];
   rows: Array<Record<string, string>>;
   delimiter: "," | "\t" | ";";
+  firstRowIsHeader: boolean;
 }
 
 export interface MetadataLegendCategoryItem {
@@ -75,6 +76,10 @@ export interface MetadataMarkerOverlayResult {
   version: string;
 }
 
+export interface MetadataMarkerOverlayOptions {
+  categoryStyleOverrides?: Record<string, Partial<Pick<MetadataMarkerStyle, "color" | "shape">>>;
+}
+
 export interface MetadataColorOverlayOptions {
   mode: MetadataColorMode;
   scope: MetadataApplyScope;
@@ -83,6 +88,7 @@ export interface MetadataColorOverlayOptions {
   continuousTransform: MetadataContinuousTransform;
   continuousMin: number | null;
   continuousMax: number | null;
+  categoricalColorOverrides?: Record<string, string>;
 }
 
 const CATEGORICAL_PALETTE = [
@@ -318,14 +324,19 @@ function applySubtreeColor(tree: TreeModel, colors: Array<string | null>, node: 
   return colored;
 }
 
-export function parseMetadataTable(text: string): ParsedMetadataTable {
+export function parseMetadataTable(text: string, firstRowIsHeader = true): ParsedMetadataTable {
   const delimiter = detectDelimiter(text);
   const rawRows = parseDelimitedRows(text, delimiter);
-  if (rawRows.length < 2) {
-    throw new Error("Metadata file must contain a header row and at least one data row.");
+  if (rawRows.length < (firstRowIsHeader ? 2 : 1)) {
+    throw new Error(firstRowIsHeader
+      ? "Metadata file must contain a header row and at least one data row."
+      : "Metadata file must contain at least one data row.");
   }
-  const columns = rawRows[0].map((value, index) => value.trim() || `column_${index + 1}`);
-  const rows = rawRows.slice(1)
+  const widestRowLength = rawRows.reduce((max, row) => Math.max(max, row.length), 0);
+  const columns = firstRowIsHeader
+    ? rawRows[0].map((value, index) => value.trim() || `column_${index + 1}`)
+    : Array.from({ length: widestRowLength }, (_, index) => `column_${index + 1}`);
+  const rows = (firstRowIsHeader ? rawRows.slice(1) : rawRows)
     .filter((row) => row.some((value) => value.trim().length > 0))
     .map((row) => {
       const record: Record<string, string> = {};
@@ -341,20 +352,31 @@ export function parseMetadataTable(text: string): ParsedMetadataTable {
     columns,
     rows,
     delimiter,
+    firstRowIsHeader,
   };
 }
 
 export function metadataColumnLooksContinuous(rows: Array<Record<string, string>>, column: string): boolean {
   let numericCount = 0;
+  let integerOnly = true;
+  const uniqueValues = new Set<string>();
   for (let index = 0; index < rows.length; index += 1) {
     const raw = rows[index][column] ?? "";
-    if (!raw.trim()) {
+    const trimmed = raw.trim();
+    if (!trimmed) {
       continue;
     }
-    if (!Number.isFinite(Number(raw))) {
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric)) {
       return false;
     }
+    integerOnly = integerOnly && Number.isInteger(numeric);
     numericCount += 1;
+    uniqueValues.add(trimmed);
+  }
+  const binaryLikeIntegerSet = Array.from(uniqueValues).every((value) => value === "-1" || value === "0" || value === "1");
+  if (numericCount > 0 && integerOnly && (uniqueValues.size <= 2 || binaryLikeIntegerSet)) {
+    return false;
   }
   return numericCount > 0;
 }
@@ -374,6 +396,7 @@ export function buildMetadataColorOverlay(
     continuousTransform,
     continuousMin,
     continuousMax,
+    categoricalColorOverrides = {},
   } = options;
   const colors = new Array<string | null>(tree.nodeCount).fill(null);
   const byName = buildNodeLookup(tree);
@@ -398,7 +421,7 @@ export function buildMetadataColorOverlay(
         continue;
       }
       matchedRowCount += 1;
-      const color = categoryColors.get(value) ?? categoricalColor(categoryColors.size);
+      const color = categoryColors.get(value) ?? categoricalColorOverrides[value] ?? categoricalColor(categoryColors.size);
       categoryColors.set(value, color);
       categoryCounts.set(value, (categoryCounts.get(value) ?? 0) + nodes.length);
       for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
@@ -564,7 +587,9 @@ export function buildMetadataMarkerOverlay(
   rows: Array<Record<string, string>>,
   keyColumn: string,
   markerColumn: string,
+  options: MetadataMarkerOverlayOptions = {},
 ): MetadataMarkerOverlayResult {
+  const { categoryStyleOverrides = {} } = options;
   const markers = new Array<MetadataMarkerStyle | null>(tree.nodeCount).fill(null);
   const byName = buildNodeLookup(tree);
   const categoryStyles = new Map<string, MetadataMarkerStyle>();
@@ -588,9 +613,10 @@ export function buildMetadataMarkerOverlay(
     let style = categoryStyles.get(value);
     if (!style) {
       const categoryIndex = categoryStyles.size;
+      const override = categoryStyleOverrides[value] ?? {};
       style = {
-        color: categoricalColor(categoryIndex),
-        shape: categoricalMarkerShape(categoryIndex),
+        color: override.color ?? categoricalColor(categoryIndex),
+        shape: override.shape ?? categoricalMarkerShape(categoryIndex),
         label: value,
       };
       categoryStyles.set(value, style);

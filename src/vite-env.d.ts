@@ -17,6 +17,7 @@ declare global {
         rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus",
         visible: boolean,
       ) => void;
+      setTaxonomyRankVisibilityAutoForTest: (enabled: boolean) => void;
       setTaxonomyColorJitterForTest: (value: number) => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setShowIntermediateScaleTicks: (visible: boolean) => void;
@@ -26,7 +27,6 @@ declare global {
       setCircularCenterScaleAngleDegrees: (value: number) => void;
       setUseAutoCircularCenterScaleAngle: (enabled: boolean) => void;
       setShowCircularCenterRadialScaleBar: (visible: boolean) => void;
-      setCircularCenterScaleTickIntervalInput: (value: string) => void;
       setTimeStripeStyle: (value: "bands" | "dashed") => void;
       setTimeStripeLineWeight: (value: number) => void;
       setShowNodeErrorBars: (visible: boolean) => void;

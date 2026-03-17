@@ -20,11 +20,11 @@ export interface TreeCanvasProps {
   showScaleZeroTick: boolean;
   circularCenterScaleAngleDegrees: number;
   showCircularCenterRadialScaleBar: boolean;
-  circularCenterScaleTickInterval: number | null;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
   taxonomyBranchColoringEnabled: boolean;
   taxonomyColorJitter: number;
+  useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyMap: TaxonomyMapPayload | null;
   metadataBranchColors: Array<string | null> | null;
