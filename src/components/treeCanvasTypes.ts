@@ -58,6 +58,7 @@ export interface TreeCanvasProps {
   exportSvgRequest: number;
   visualResetRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
+  onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;
   onViewModeChange?: (mode: ViewMode) => void;
 }
 

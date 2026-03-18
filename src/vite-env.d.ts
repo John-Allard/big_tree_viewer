@@ -66,6 +66,7 @@ declare global {
       setMockTaxonomy: () => void;
       cacheMockTaxonomy: () => Promise<void>;
       clearTaxonomy: () => void;
+      rerootOnNodeForTest: (node: number, mode: "branch" | "child" | "parent") => void;
       requestSearchFocus: () => void;
       requestFit: () => void;
     };

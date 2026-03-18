@@ -1823,6 +1823,7 @@ export default function TreeCanvas({
   exportSvgRequest,
   visualResetRequest,
   onHoverChange,
+  onRerootRequest,
   onViewModeChange,
 }: TreeCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -1895,6 +1896,7 @@ export default function TreeCanvas({
   const [manualSubtreeColorAssignments, setManualSubtreeColorAssignments] = useState<Map<number, string>>(() => new Map());
   const [taxonomyRootColorAssignments, setTaxonomyRootColorAssignments] = useState<Map<string, string>>(() => new Map());
   const [contextMenuColorMode, setContextMenuColorMode] = useState<"branch" | "subtree" | "taxonomy-root" | null>(null);
+  const [contextMenuRootMenuOpen, setContextMenuRootMenuOpen] = useState(false);
   const [contextMenuCustomColor, setContextMenuCustomColor] = useState("#2563eb");
   const nativeColorPickerActiveRef = useRef(false);
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
@@ -1928,14 +1930,17 @@ export default function TreeCanvas({
     setTaxonomyRootColorAssignments(new Map());
     setContextMenu(null);
     setContextMenuColorMode(null);
+    setContextMenuRootMenuOpen(false);
   }, [tree]);
   useEffect(() => {
     setTaxonomyRootColorAssignments(new Map());
     setContextMenuColorMode(null);
+    setContextMenuRootMenuOpen(false);
   }, [taxonomyMap, visualResetRequest]);
   useEffect(() => {
     if (!contextMenu) {
       setContextMenuColorMode(null);
+      setContextMenuRootMenuOpen(false);
     }
   }, [contextMenu]);
   useEffect(() => {
@@ -7649,6 +7654,14 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [contextMenu, copyTextToClipboard]);
 
+  const handleContextReroot = useCallback((mode: "branch" | "child" | "parent") => {
+    if (!contextMenu || contextMenu.kind !== "node" || !onRerootRequest) {
+      return;
+    }
+    onRerootRequest(contextMenu.node, mode);
+    setContextMenu(null);
+  }, [contextMenu, onRerootRequest]);
+
   const handleContextCopyTaxonomyName = useCallback(() => {
     if (!contextMenu || contextMenu.kind !== "taxonomy") {
       return;
@@ -8130,6 +8143,44 @@ export default function TreeCanvas({
                   Copy Tip Name
                 </button>
               ) : null}
+              <div className="tree-context-menu-section">
+                <button
+                  type="button"
+                  className="tree-context-menu-item"
+                  disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                  onClick={() => setContextMenuRootMenuOpen((current) => !current)}
+                >
+                  Root
+                </button>
+                {contextMenuRootMenuOpen ? (
+                  <div className="tree-context-menu-swatch-panel">
+                    <button
+                      type="button"
+                      className="tree-context-menu-item"
+                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                      onClick={() => handleContextReroot("branch")}
+                    >
+                      Root On Branch
+                    </button>
+                    <button
+                      type="button"
+                      className="tree-context-menu-item"
+                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                      onClick={() => handleContextReroot("child")}
+                    >
+                      Root On Child
+                    </button>
+                    <button
+                      type="button"
+                      className="tree-context-menu-item"
+                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                      onClick={() => handleContextReroot("parent")}
+                    >
+                      Root On Parent
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <button type="button" className="tree-context-menu-item" onClick={handleContextOpenSubtreeInNewTab}>
                 Open Subtree In New Tab
               </button>

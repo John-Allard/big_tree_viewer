@@ -43,6 +43,7 @@ import {
   putCachedTaxonomyArchive,
   putCachedTaxonomyMapping,
 } from "./lib/taxonomyCache";
+import { rerootTreePayload, type RerootMode } from "./lib/rerootTree";
 import { normalizeImportedTreeText } from "./lib/treeImport";
 import type { WorkerResponse } from "./types/messages";
 import { TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "./types/taxonomy";
@@ -555,6 +556,8 @@ export default function App() {
   const pendingTreeLabelRef = useRef("");
   const pendingSharedSubtreeTaxonomyRef = useRef<SharedSubtreeTaxonomyPayload | null>(null);
   const pendingSharedSubtreeVisualRef = useRef<SharedSubtreeVisualPayload | null>(null);
+  const pendingTreeReplacementTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
+  const pendingTreeReplacementTaxonomyEnabledRef = useRef<boolean | null>(null);
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
   const [loadedTreeLabel, setLoadedTreeLabel] = useState("tree");
@@ -675,6 +678,40 @@ export default function App() {
     setUseAutomaticTaxonomyRankVisibility(true);
     setTaxonomyRankVisibility({});
   }, []);
+
+  const rerootCurrentTree = useCallback((node: number, mode: RerootMode): void => {
+    if (!tree) {
+      return;
+    }
+    const rerootedPayload = rerootTreePayload(tree, node, mode);
+    if (!rerootedPayload) {
+      return;
+    }
+    const nextTree = buildTreeModel(rerootedPayload);
+    const nextTaxonomyMap = taxonomyMap
+      ? rebuildSharedSubtreeTaxonomyMap(nextTree, {
+        version: taxonomyMap.version,
+        mappedCount: taxonomyMap.tipRanks.length,
+        totalTips: taxonomyMap.totalTips,
+        activeRanks: [...taxonomyMap.activeRanks],
+        tipEntries: taxonomyMap.tipRanks.map((tip) => ({
+          name: tree.names[tip.node] ?? "",
+          ranks: tip.ranks,
+          taxIds: tip.taxIds,
+        })),
+      })
+      : null;
+    pendingTreeReplacementTaxonomyRef.current = nextTaxonomyMap;
+    pendingTreeReplacementTaxonomyEnabledRef.current = taxonomyEnabled && Boolean(nextTaxonomyMap);
+    setTree(nextTree);
+    setTreeSignature((current) => `${current ?? "tree"}:reroot:${mode}:${node}:${Date.now()}`);
+    setLoadedTreeLabel((current) => (current.includes("(rerooted)") ? current : `${current} (rerooted)`));
+    setLoadState({
+      loading: false,
+      message: `Tree rerooted on the ${mode}.`,
+      error: null,
+    });
+  }, [taxonomyEnabled, taxonomyMap, tree]);
 
   useEffect(() => {
     if (taxonomyEnabled && showGenusLabels) {
@@ -1244,6 +1281,19 @@ export default function App() {
       return;
     }
     setFitRequest((value) => value + 1);
+    if (pendingTreeReplacementTaxonomyRef.current !== undefined) {
+      const replacementTaxonomy = pendingTreeReplacementTaxonomyRef.current;
+      const replacementEnabled = pendingTreeReplacementTaxonomyEnabledRef.current;
+      pendingTreeReplacementTaxonomyRef.current = undefined;
+      pendingTreeReplacementTaxonomyEnabledRef.current = null;
+      setTaxonomyMap(replacementTaxonomy ?? null);
+      setTaxonomyEnabled(replacementEnabled ?? false);
+      setTaxonomyStatus(replacementTaxonomy
+        ? `Updated taxonomy mapping after reroot (${replacementTaxonomy.mappedCount.toLocaleString()} mapped tips).`
+        : "");
+      setTaxonomyError(null);
+      return;
+    }
     const inheritedSubtreeTaxonomy = pendingSharedSubtreeTaxonomyRef.current;
     const inheritedSubtreeVisual = pendingSharedSubtreeVisualRef.current;
     if (inheritedSubtreeTaxonomy) {
@@ -1704,6 +1754,9 @@ export default function App() {
         setTaxonomyMap(null);
         setTaxonomyEnabled(false);
       },
+      rerootOnNodeForTest: (node: number, mode: RerootMode) => {
+        rerootCurrentTree(node, mode);
+      },
       requestSearchFocus: () => setFocusNodeRequest((value) => value + 1),
       requestFit: () => setFitRequest((value) => value + 1),
     };
@@ -1781,6 +1834,7 @@ export default function App() {
     order,
     branchThicknessScale,
     figureStyles,
+    rerootCurrentTree,
     runTaxonomyMapping,
     searchQuery,
     searchResults,
@@ -2987,6 +3041,7 @@ export default function App() {
           exportSvgRequest={exportSvgRequest}
           visualResetRequest={visualResetRequest}
           onHoverChange={handleHoverChange}
+          onRerootRequest={rerootCurrentTree}
           onViewModeChange={setViewMode}
         />
       </main>
