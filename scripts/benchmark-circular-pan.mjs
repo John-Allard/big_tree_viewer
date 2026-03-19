@@ -92,7 +92,7 @@ async function main() {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     }, options.taxonomy);
 
-    const canvas = page.locator("canvas");
+    const canvas = page.getByTestId("tree-canvas");
     const box = await canvas.boundingBox();
     if (!box) {
       throw new Error("Canvas not found.");

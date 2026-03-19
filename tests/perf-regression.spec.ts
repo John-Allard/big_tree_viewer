@@ -23,6 +23,9 @@ const PAN_DRAW_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_DRAW_P95_MAX_MS"
 const PAN_BRANCH_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BRANCH_P95_MAX_MS", 2);
 const PAN_TAXONOMY_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_TAXONOMY_P95_MAX_MS", 12);
 const PAN_FRAME_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_FRAME_P95_MAX_MS", 35);
+const PAN_BROAD_DRAW_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_DRAW_P95_MAX_MS", 12);
+const PAN_BROAD_TAXONOMY_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_TAXONOMY_P95_MAX_MS", 12);
+const PAN_BROAD_FRAME_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_FRAME_P95_MAX_MS", 36);
 
 async function settleFrames(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -104,6 +107,45 @@ async function movePointerToCircularCenter(page: Page): Promise<void> {
     return { x: Number(camera.translateX), y: Number(camera.translateY) };
   });
   await page.mouse.move(center.x, center.y);
+}
+
+async function runCircularPanBenchmark(
+  page: Page,
+  label: string,
+  dragDx: number,
+  dragDy: number,
+  steps: number,
+): Promise<{
+  branchRenderModes?: string[];
+  drawTotalMsP95?: number;
+  branchBaseMsP95?: number;
+  taxonomyOverlayMsP95?: number;
+  frameDeltaMsP95?: number;
+} | null> {
+  await page.evaluate((benchmarkLabel) => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.startPanBenchmark(benchmarkLabel);
+  }, label);
+
+  await movePointerToCircularCenter(page);
+  const center = await page.evaluate(() => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable.");
+    }
+    return { x: Number(camera.translateX), y: Number(camera.translateY) };
+  });
+  await page.mouse.down();
+  await page.mouse.move(center.x + dragDx, center.y + dragDy, { steps });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+
+  return page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.stopPanBenchmark?.() as {
+    branchRenderModes?: string[];
+    drawTotalMsP95?: number;
+    branchBaseMsP95?: number;
+    taxonomyOverlayMsP95?: number;
+    frameDeltaMsP95?: number;
+  } | null);
 }
 
 async function readCircularPerfSnapshot(page: Page): Promise<{
@@ -214,30 +256,7 @@ test.describe("local circular perf regression", () => {
     await configureCircularPerfScene(page);
     await settleFrames(page);
 
-    await page.evaluate(() => {
-      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.startPanBenchmark("local-perf-pan");
-    });
-
-    await movePointerToCircularCenter(page);
-    const center = await page.evaluate(() => {
-      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
-      if (!camera || camera.kind !== "circular") {
-        throw new Error("Circular camera unavailable.");
-      }
-      return { x: Number(camera.translateX), y: Number(camera.translateY) };
-    });
-    await page.mouse.down();
-    await page.mouse.move(center.x + 160, center.y + 40, { steps: 24 });
-    await page.mouse.up();
-    await page.waitForTimeout(150);
-
-    const benchmark = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.stopPanBenchmark?.() as {
-      branchRenderModes?: string[];
-      drawTotalMsP95?: number;
-      branchBaseMsP95?: number;
-      taxonomyOverlayMsP95?: number;
-      frameDeltaMsP95?: number;
-    } | null);
+    const benchmark = await runCircularPanBenchmark(page, "local-perf-pan", 160, 40, 24);
 
     expect(benchmark).not.toBeNull();
     expect(benchmark?.branchRenderModes ?? []).toEqual(["taxonomy-cached-bitmap"]);
@@ -245,6 +264,30 @@ test.describe("local circular perf regression", () => {
     expect(Number(benchmark?.branchBaseMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_BRANCH_P95_MAX_MS);
     expect(Number(benchmark?.taxonomyOverlayMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_TAXONOMY_P95_MAX_MS);
     expect(Number(benchmark?.frameDeltaMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_FRAME_P95_MAX_MS);
+  });
+
+  test("broader circular pan with taxonomy labels stays interactive on cached branches", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configureCircularPerfScene(page);
+    await settleFrames(page);
+
+    const benchmark = await runCircularPanBenchmark(page, "local-perf-pan-broad", 480, 120, 24);
+    const snapshot = await readCircularPerfSnapshot(page);
+
+    expect(benchmark).not.toBeNull();
+    expect(benchmark?.branchRenderModes ?? []).toEqual(["taxonomy-cached-bitmap"]);
+    expect((snapshot.circular?.taxonomyVisibleRanks ?? []).length).toBeGreaterThan(0);
+    expect(Number(snapshot.circular?.taxonomyArcCount ?? 0)).toBeGreaterThan(100);
+    expect(Number(snapshot.circular?.taxonomyPlacedLabelCount ?? 0)).toBeGreaterThan(0);
+    expect(Number(benchmark?.drawTotalMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_BROAD_DRAW_P95_MAX_MS);
+    expect(Number(benchmark?.branchBaseMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_BRANCH_P95_MAX_MS);
+    expect(Number(benchmark?.taxonomyOverlayMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_BROAD_TAXONOMY_P95_MAX_MS);
+    expect(Number(benchmark?.frameDeltaMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_BROAD_FRAME_P95_MAX_MS);
   });
 
   test("figure style changes do not break cached circular taxonomy fit-view zoom", async ({ page }) => {
@@ -293,30 +336,7 @@ test.describe("local circular perf regression", () => {
     });
     await settleFrames(page);
 
-    await page.evaluate(() => {
-      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.startPanBenchmark("local-perf-pan-styled");
-    });
-
-    await movePointerToCircularCenter(page);
-    const center = await page.evaluate(() => {
-      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
-      if (!camera || camera.kind !== "circular") {
-        throw new Error("Circular camera unavailable.");
-      }
-      return { x: Number(camera.translateX), y: Number(camera.translateY) };
-    });
-    await page.mouse.down();
-    await page.mouse.move(center.x + 160, center.y + 40, { steps: 24 });
-    await page.mouse.up();
-    await page.waitForTimeout(150);
-
-    const benchmark = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.stopPanBenchmark?.() as {
-      branchRenderModes?: string[];
-      drawTotalMsP95?: number;
-      branchBaseMsP95?: number;
-      taxonomyOverlayMsP95?: number;
-      frameDeltaMsP95?: number;
-    } | null);
+    const benchmark = await runCircularPanBenchmark(page, "local-perf-pan-styled", 160, 40, 24);
 
     expect(benchmark).not.toBeNull();
     expect(benchmark?.branchRenderModes ?? []).toEqual(["taxonomy-cached-bitmap"]);
