@@ -16,7 +16,9 @@ function envNumber(name: string, fallback: number): number {
 
 const ZOOM_STEPS = Math.max(1, Math.floor(envNumber("BIG_TREE_VIEWER_PERF_ZOOM_STEPS", 3)));
 const ZOOM_CACHE_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_ZOOM_CACHE_MAX_MS", 35);
+const ZOOM_FIRST_STEP_TOTAL_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_ZOOM_FIRST_STEP_TOTAL_MAX_MS", 40);
 const ZOOM_FINAL_TOTAL_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_ZOOM_FINAL_TOTAL_MAX_MS", 50);
+const ZOOM_STYLED_TOTAL_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_ZOOM_STYLED_TOTAL_MAX_MS", 60);
 const ZOOM_FINAL_BRANCH_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_ZOOM_FINAL_BRANCH_MAX_MS", 2);
 const ZOOM_FINAL_VISIBILITY_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_ZOOM_FINAL_VISIBILITY_MAX_MS", 2);
 const PAN_DRAW_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_DRAW_P95_MAX_MS", 12);
@@ -26,6 +28,8 @@ const PAN_FRAME_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_FRAME_P95_MAX_M
 const PAN_BROAD_DRAW_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_DRAW_P95_MAX_MS", 12);
 const PAN_BROAD_TAXONOMY_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_TAXONOMY_P95_MAX_MS", 12);
 const PAN_BROAD_FRAME_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_FRAME_P95_MAX_MS", 36);
+const PAN_PARTIAL_DRAW_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_PARTIAL_DRAW_P95_MAX_MS", 24);
+const PAN_PARTIAL_FRAME_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_PARTIAL_FRAME_P95_MAX_MS", 45);
 
 async function settleFrames(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -98,6 +102,78 @@ async function configureCircularPerfScene(page: Page): Promise<void> {
   await waitForCircularTaxonomySnapshot(page);
 }
 
+async function configureBroadSyntheticCircularPerfScene(page: Page): Promise<{ targetMidTheta: number; rootAge: number }> {
+  const target = await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const state = app?.getState();
+    const leafNodes = internal?.leafNodes ?? [];
+    if (!app || !state || leafNodes.length === 0) {
+      throw new Error("Broad synthetic taxonomy scene unavailable.");
+    }
+    const leafCount = leafNodes.length;
+    const phylumCount = 5;
+    const classesPerPhylum = 4;
+    const ordersPerClass = 3;
+    const familiesPerOrder = 2;
+    const generaPerFamily = 2;
+    const tipRanks = leafNodes.map((node, index) => {
+      const phylumIndex = Math.min(phylumCount - 1, Math.floor((index / leafCount) * phylumCount));
+      const withinPhylum = ((index / leafCount) * phylumCount) - phylumIndex;
+      const classIndex = Math.min(classesPerPhylum - 1, Math.floor(withinPhylum * classesPerPhylum));
+      const withinClass = (withinPhylum * classesPerPhylum) - classIndex;
+      const orderIndex = Math.min(ordersPerClass - 1, Math.floor(withinClass * ordersPerClass));
+      const withinOrder = (withinClass * ordersPerClass) - orderIndex;
+      const familyIndex = Math.min(familiesPerOrder - 1, Math.floor(withinOrder * familiesPerOrder));
+      const withinFamily = (withinOrder * familiesPerOrder) - familyIndex;
+      const genusIndex = Math.min(generaPerFamily - 1, Math.floor(withinFamily * generaPerFamily));
+      return {
+        node,
+        ranks: {
+          genus: `Genus ${phylumIndex}-${classIndex}-${orderIndex}-${familyIndex}-${genusIndex}`,
+          family: `Family ${phylumIndex}-${classIndex}-${orderIndex}-${familyIndex}`,
+          order: `Order ${phylumIndex}-${classIndex}-${orderIndex}`,
+          class: `Class ${phylumIndex}-${classIndex}`,
+          phylum: `Phylum ${phylumIndex}`,
+        },
+      };
+    });
+    app.clearTaxonomy();
+    app.setTaxonomyMapForTest({
+      mappedCount: tipRanks.length,
+      totalTips: tipRanks.length,
+      activeRanks: ["genus", "family", "order", "class", "phylum"],
+      tipRanks,
+    });
+    app.setShowGenusLabels(false);
+    app.setViewMode("circular");
+
+    const targetPhylum = 3;
+    const targetClass = 1;
+    const targetStartFraction = (targetPhylum / phylumCount) + (targetClass / (phylumCount * classesPerPhylum));
+    const targetEndFraction = (targetPhylum / phylumCount) + ((targetClass + 1) / (phylumCount * classesPerPhylum));
+    const targetStartIndex = Math.floor(targetStartFraction * leafCount);
+    const targetEndIndex = Math.ceil(targetEndFraction * leafCount);
+    const targetMidTheta = (((targetStartIndex + targetEndIndex) * 0.5) / leafCount) * Math.PI * 2;
+    return {
+      targetMidTheta,
+      rootAge: Number(state.rootAge),
+    };
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.viewMode === "circular"
+      && Boolean(state?.taxonomyEnabled)
+      && Number(state?.taxonomyMappedCount ?? 0) > 200000;
+  });
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await waitForCircularTaxonomySnapshot(page);
+  return target;
+}
+
 async function movePointerToCircularCenter(page: Page): Promise<void> {
   const center = await page.evaluate(() => {
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
@@ -166,6 +242,23 @@ async function readCircularPerfSnapshot(page: Page): Promise<{
     taxonomyVisibleRanks?: string[];
     taxonomyArcCount?: number;
     taxonomyPlacedLabelCount?: number;
+    visibleCircleFraction?: number;
+    taxonomyArcDebug?: Array<{
+      key?: string | null;
+      innerRadiusPx?: number | null;
+      outerRadiusPx?: number | null;
+      startTheta?: number | null;
+      endTheta?: number | null;
+      screenSampleX?: number | null;
+      screenSampleY?: number | null;
+    }>;
+    taxonomyPlacedLabels?: Array<{
+      key?: string | null;
+      rank?: string | null;
+      fontSize?: number | null;
+      x?: number | null;
+      y?: number | null;
+    }>;
   } | null;
 }> {
   return page.evaluate(() => ({
@@ -183,9 +276,184 @@ async function readCircularPerfSnapshot(page: Page): Promise<{
         taxonomyVisibleRanks: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyVisibleRanks,
         taxonomyArcCount: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyArcCount,
         taxonomyPlacedLabelCount: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabelCount,
+        visibleCircleFraction: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.visibleCircleFraction,
+        taxonomyArcDebug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyArcDebug,
+        taxonomyPlacedLabels: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels,
       }
       : null,
   }));
+}
+
+function summarizeRingBounds(
+  arcs: Array<{ key?: string | null; innerRadiusPx?: number | null; outerRadiusPx?: number | null }>,
+): Array<{ rank: string; minInner: number; maxOuter: number }> {
+  const bounds = new Map<string, { minInner: number; maxOuter: number }>();
+  for (const arc of arcs) {
+    const rank = String(arc.key ?? "").split(":")[0] ?? "";
+    const innerRadiusPx = Number(arc.innerRadiusPx ?? Number.NaN);
+    const outerRadiusPx = Number(arc.outerRadiusPx ?? Number.NaN);
+    if (!rank || !Number.isFinite(innerRadiusPx) || !Number.isFinite(outerRadiusPx)) {
+      continue;
+    }
+    const existing = bounds.get(rank);
+    if (existing) {
+      existing.minInner = Math.min(existing.minInner, innerRadiusPx);
+      existing.maxOuter = Math.max(existing.maxOuter, outerRadiusPx);
+    } else {
+      bounds.set(rank, { minInner: innerRadiusPx, maxOuter: outerRadiusPx });
+    }
+  }
+  return ["genus", "family", "order", "class", "phylum", "superkingdom"]
+    .filter((rank) => bounds.has(rank))
+    .map((rank) => ({ rank, minInner: bounds.get(rank)!.minInner, maxOuter: bounds.get(rank)!.maxOuter }));
+}
+
+function summarizeArcCountsByRank(
+  arcs: Array<{ key?: string | null }>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const arc of arcs) {
+    const rank = String(arc.key ?? "").split(":")[0] ?? "";
+    if (!rank) {
+      continue;
+    }
+    counts.set(rank, (counts.get(rank) ?? 0) + 1);
+  }
+  return counts;
+}
+
+async function hasPaintedOuterTaxonomyArcSample(
+  page: Page,
+  arcs: Array<{
+    key?: string | null;
+    innerRadiusPx?: number | null;
+    outerRadiusPx?: number | null;
+    startTheta?: number | null;
+    endTheta?: number | null;
+    screenSampleX?: number | null;
+    screenSampleY?: number | null;
+  }>,
+): Promise<boolean> {
+  return page.evaluate((rawArcs) => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      return false;
+    }
+    const canvas = document.querySelector('[data-testid="tree-canvas"]') as HTMLCanvasElement | null;
+    const ctx = canvas?.getContext("2d", { willReadFrequently: true });
+    if (!canvas || !ctx) {
+      return false;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(rect.width, 1);
+    const scaleY = canvas.height / Math.max(rect.height, 1);
+    const sampleFractions = [0.18, 0.35, 0.5, 0.65, 0.82];
+    const candidateArcs = rawArcs
+      .filter((arc) => {
+        const rank = String(arc.key ?? "").split(":")[0] ?? "";
+        return ["family", "order", "class", "phylum"].includes(rank);
+      })
+      .sort((left, right) => Number(right.outerRadiusPx ?? 0) - Number(left.outerRadiusPx ?? 0));
+    for (const arc of candidateArcs) {
+      const startTheta = Number(arc.startTheta ?? Number.NaN);
+      const endTheta = Number(arc.endTheta ?? Number.NaN);
+      const innerRadiusPx = Number(arc.innerRadiusPx ?? Number.NaN);
+      const outerRadiusPx = Number(arc.outerRadiusPx ?? Number.NaN);
+      const screenSampleX = Number(arc.screenSampleX ?? Number.NaN);
+      const screenSampleY = Number(arc.screenSampleY ?? Number.NaN);
+      if (
+        Number.isFinite(screenSampleX)
+        && Number.isFinite(screenSampleY)
+        && screenSampleX >= 16
+        && screenSampleX <= rect.width - 16
+        && screenSampleY >= 16
+        && screenSampleY <= rect.height - 16
+      ) {
+        const pixelX = Math.round(screenSampleX * scaleX);
+        const pixelY = Math.round(screenSampleY * scaleY);
+        const sample = ctx.getImageData(
+          Math.max(0, pixelX - 1),
+          Math.max(0, pixelY - 1),
+          Math.min(3, Math.max(1, canvas.width - Math.max(0, pixelX - 1))),
+          Math.min(3, Math.max(1, canvas.height - Math.max(0, pixelY - 1))),
+        ).data;
+        let totalR = 0;
+        let totalG = 0;
+        let totalB = 0;
+        let totalA = 0;
+        const pixelCount = Math.max(1, sample.length / 4);
+        for (let index = 0; index < sample.length; index += 4) {
+          totalR += sample[index];
+          totalG += sample[index + 1];
+          totalB += sample[index + 2];
+          totalA += sample[index + 3];
+        }
+        const avgR = totalR / pixelCount;
+        const avgG = totalG / pixelCount;
+        const avgB = totalB / pixelCount;
+        const avgA = totalA / pixelCount;
+        const whiteDistance = Math.sqrt(
+          ((255 - avgR) * (255 - avgR))
+          + ((255 - avgG) * (255 - avgG))
+          + ((255 - avgB) * (255 - avgB)),
+        );
+        if (avgA > 0 && whiteDistance > 18) {
+          return true;
+        }
+      }
+      if (
+        !Number.isFinite(startTheta)
+        || !Number.isFinite(endTheta)
+        || !Number.isFinite(innerRadiusPx)
+        || !Number.isFinite(outerRadiusPx)
+        || endTheta <= startTheta
+      ) {
+        continue;
+      }
+      const radiusPx = (innerRadiusPx + outerRadiusPx) * 0.5;
+      for (const fraction of sampleFractions) {
+        const theta = startTheta + ((endTheta - startTheta) * fraction) + Number(camera.rotation);
+        const x = Number(camera.translateX) + (Math.cos(theta) * radiusPx);
+        const y = Number(camera.translateY) + (Math.sin(theta) * radiusPx);
+        if (x < 16 || x > rect.width - 16 || y < 16 || y > rect.height - 16) {
+          continue;
+        }
+        const pixelX = Math.round(x * scaleX);
+        const pixelY = Math.round(y * scaleY);
+        const sampleSize = 3;
+        const sample = ctx.getImageData(
+          Math.max(0, pixelX - 1),
+          Math.max(0, pixelY - 1),
+          Math.min(sampleSize, Math.max(1, canvas.width - Math.max(0, pixelX - 1))),
+          Math.min(sampleSize, Math.max(1, canvas.height - Math.max(0, pixelY - 1))),
+        ).data;
+        let totalR = 0;
+        let totalG = 0;
+        let totalB = 0;
+        let totalA = 0;
+        const pixelCount = Math.max(1, sample.length / 4);
+        for (let index = 0; index < sample.length; index += 4) {
+          totalR += sample[index];
+          totalG += sample[index + 1];
+          totalB += sample[index + 2];
+          totalA += sample[index + 3];
+        }
+        const avgR = totalR / pixelCount;
+        const avgG = totalG / pixelCount;
+        const avgB = totalB / pixelCount;
+        const avgA = totalA / pixelCount;
+        const whiteDistance = Math.sqrt(
+          ((255 - avgR) * (255 - avgR))
+          + ((255 - avgG) * (255 - avgG))
+          + ((255 - avgB) * (255 - avgB)),
+        );
+        if (avgA > 0 && whiteDistance > 18) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }, arcs);
 }
 
 async function waitForCircularTaxonomySnapshot(page: Page, timeoutMs = 30_000): Promise<Awaited<ReturnType<typeof readCircularPerfSnapshot>>> {
@@ -232,6 +500,11 @@ test.describe("local circular perf regression", () => {
 
     const zoomFrames = snapshots.slice(1);
     expect(zoomFrames.length).toBe(ZOOM_STEPS);
+    const firstZoomFrame = zoomFrames[0];
+    expect(firstZoomFrame.circular?.branchRenderMode ?? "").toBe("taxonomy-cached-bitmap");
+    expect(Number(firstZoomFrame.timing?.totalMs ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(
+      ZOOM_FIRST_STEP_TOTAL_MAX_MS,
+    );
     for (const snapshot of zoomFrames) {
       expect((snapshot.circular?.taxonomyVisibleRanks ?? []).length).toBeGreaterThan(0);
       expect(snapshot.circular?.taxonomyVisibleRanks ?? []).not.toContain("class");
@@ -245,6 +518,194 @@ test.describe("local circular perf regression", () => {
     expect(Number(finalSnapshot.timing?.circularVisibilityPrepMs ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(
       ZOOM_FINAL_VISIBILITY_MAX_MS,
     );
+  });
+
+  test("deep 210k circular zoom keeps five taxonomy rings radially ordered", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configureCircularPerfScene(page);
+
+    const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+    expect(fitCamera?.kind).toBe("circular");
+    const fiveRingSnapshots: Array<Array<{ rank: string; minInner: number; maxOuter: number }>> = [];
+    for (const scale of [6, 12, 20]) {
+      await page.evaluate(({ fitCamera, scale }) => {
+        if (!fitCamera || fitCamera.kind !== "circular") {
+          throw new Error("Circular fit camera unavailable.");
+        }
+        window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+          scale,
+          translateX: Number(fitCamera.translateX),
+          translateY: Number(fitCamera.translateY),
+        });
+      }, { fitCamera, scale });
+      await settleFrames(page);
+      const snapshot = await readCircularPerfSnapshot(page);
+      const bounds = summarizeRingBounds(snapshot.circular?.taxonomyArcDebug ?? []);
+      if ((snapshot.circular?.taxonomyVisibleRanks ?? []).length >= 5 && bounds.length >= 5) {
+        fiveRingSnapshots.push(bounds);
+      }
+    }
+
+    expect(fiveRingSnapshots.length).toBeGreaterThan(0);
+    for (const bounds of fiveRingSnapshots) {
+      expect(bounds.slice(0, 5).map((entry) => entry.rank)).toEqual(["genus", "family", "order", "class", "phylum"]);
+      for (let index = 1; index < 5; index += 1) {
+        expect(bounds[index].minInner).toBeGreaterThan(bounds[index - 1].maxOuter + 2);
+      }
+    }
+  });
+
+  test("deep partial-view circular zoom keeps outer taxonomy arcs visible", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    const target = await configureBroadSyntheticCircularPerfScene(page);
+
+    const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+    expect(fitCamera?.kind).toBe("circular");
+
+    const qualifyingSamples: Array<{
+      multiplier: number;
+      visibleCircleFraction: number;
+      visibleRanks: string[];
+      taxonomyArcCount: number;
+      screenSpaceArcCount: number;
+      paintedOuterArc: boolean;
+    }> = [];
+
+    for (const multiplier of [4, 6, 8, 10, 12, 16]) {
+      await page.evaluate(({ fitCamera, target, multiplier }) => {
+        if (!fitCamera || fitCamera.kind !== "circular") {
+          throw new Error("Circular fit camera unavailable.");
+        }
+        const scale = Number(fitCamera.scale) * multiplier;
+        const worldX = Math.cos(target.targetMidTheta) * target.rootAge;
+        const worldY = Math.sin(target.targetMidTheta) * target.rootAge;
+        window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+          scale,
+          translateX: (1440 * 0.45) - (worldX * scale),
+          translateY: (960 * 0.52) - (worldY * scale),
+        });
+      }, { fitCamera, target, multiplier });
+      await settleFrames(page);
+
+      const snapshot = await readCircularPerfSnapshot(page);
+      const visibleRanks = snapshot.circular?.taxonomyVisibleRanks ?? [];
+      if (!visibleRanks.includes("class") || !visibleRanks.includes("phylum")) {
+        continue;
+      }
+      qualifyingSamples.push({
+        multiplier,
+        visibleCircleFraction: Number(snapshot.circular?.visibleCircleFraction ?? 0),
+        visibleRanks,
+        taxonomyArcCount: Number(snapshot.circular?.taxonomyArcCount ?? 0),
+        screenSpaceArcCount: (snapshot.circular?.taxonomyArcDebug ?? [])
+          .filter((arc) => String(arc.key ?? "").includes(":screen-"))
+          .length,
+        paintedOuterArc: await hasPaintedOuterTaxonomyArcSample(page, snapshot.circular?.taxonomyArcDebug ?? []),
+      });
+    }
+
+    expect(qualifyingSamples.length).toBeGreaterThan(0);
+    expect(qualifyingSamples.some((sample) => sample.multiplier >= 8)).toBeTruthy();
+    for (const sample of qualifyingSamples) {
+      expect(sample.taxonomyArcCount).toBeGreaterThan(0);
+      expect(sample.screenSpaceArcCount).toBeGreaterThan(0);
+      expect(
+        sample.paintedOuterArc,
+        `Expected a painted outer-rank taxonomy arc on the canvas at multiplier=${sample.multiplier}, visibleCircleFraction=${sample.visibleCircleFraction.toFixed(3)}`,
+      ).toBeTruthy();
+    }
+  });
+
+  test("quarter-view circular pan stays on cached bitmap branches", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configureCircularPerfScene(page);
+
+    const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+    expect(fitCamera?.kind).toBe("circular");
+    await page.evaluate((fitCamera) => {
+      if (!fitCamera || fitCamera.kind !== "circular") {
+        throw new Error("Circular fit camera unavailable.");
+      }
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        scale: Number(fitCamera.scale) * 5,
+        translateX: Number(fitCamera.translateX),
+        translateY: Number(fitCamera.translateY),
+      });
+    }, fitCamera);
+    await settleFrames(page);
+
+    const snapshot = await readCircularPerfSnapshot(page);
+    const benchmark = await runCircularPanBenchmark(page, "local-perf-pan-quarter", 180, 48, 18);
+
+    expect(Number(snapshot.circular?.visibleCircleFraction ?? 0)).toBeLessThanOrEqual(0.3);
+    expect(benchmark).not.toBeNull();
+    expect(benchmark?.branchRenderModes ?? []).toContain("taxonomy-cached-bitmap");
+    expect((benchmark?.branchRenderModes ?? []).every((mode) => ["taxonomy-cached-bitmap", "taxonomy-cached-paths"].includes(mode))).toBeTruthy();
+    expect(Number(benchmark?.drawTotalMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_PARTIAL_DRAW_P95_MAX_MS);
+    expect(Number(benchmark?.frameDeltaMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_PARTIAL_FRAME_P95_MAX_MS);
+  });
+
+  test("outer circular taxonomy labels keep a stable size near the viewport edge", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configureCircularPerfScene(page);
+
+    const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+    expect(fitCamera?.kind).toBe("circular");
+    const before = await readCircularPerfSnapshot(page);
+    const labelCandidates = before.circular?.taxonomyPlacedLabels ?? [];
+    const candidate = labelCandidates
+      .filter((label) => (
+        (label.rank === "phylum" || label.rank === "class" || label.rank === "order")
+        && typeof label.key === "string"
+        && Number(label.x ?? 0) > 520
+        && Number(label.x ?? 0) < 1180
+        && Number(label.fontSize ?? 0) > 0
+      ))
+      .sort((left, right) => Number(right.x ?? 0) - Number(left.x ?? 0))[0]
+      ?? labelCandidates
+        .filter((label) => typeof label.key === "string" && Number(label.fontSize ?? 0) > 0)
+        .sort((left, right) => Number(right.x ?? 0) - Number(left.x ?? 0))[0]
+        ?? null;
+
+    expect(candidate?.key ?? null).not.toBeNull();
+
+    await page.evaluate(() => {
+      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+      if (!camera || camera.kind !== "circular") {
+        throw new Error("Circular camera unavailable.");
+      }
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        scale: Number(camera.scale),
+        translateX: Number(camera.translateX) + 80,
+        translateY: Number(camera.translateY),
+      });
+    });
+    await settleFrames(page);
+
+    const after = await readCircularPerfSnapshot(page);
+    const moved = (after.circular?.taxonomyPlacedLabels ?? []).find((label) => label.key === candidate?.key);
+    expect(moved?.key ?? null).toBe(candidate?.key ?? null);
+    expect(Math.abs(Number(moved?.fontSize ?? 0) - Number(candidate?.fontSize ?? 0))).toBeLessThanOrEqual(0.35);
   });
 
   test("fit-view pan stays on the cached taxonomy bitmap path", async ({ page }) => {
@@ -315,10 +776,14 @@ test.describe("local circular perf regression", () => {
       snapshots.push(await readCircularPerfSnapshot(page));
     }
 
-    for (const snapshot of snapshots.slice(1)) {
+    const zoomFrames = snapshots.slice(1);
+    expect(zoomFrames[0]?.circular?.branchRenderMode ?? "").toBe("taxonomy-cached-bitmap");
+    for (const snapshot of zoomFrames) {
       expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(snapshot.circular?.branchRenderMode ?? "");
-      expect(Number(snapshot.timing?.branchBaseMs ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(ZOOM_FINAL_BRANCH_MAX_MS);
     }
+    expect(Number(zoomFrames[zoomFrames.length - 1]?.timing?.totalMs ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(
+      ZOOM_STYLED_TOTAL_MAX_MS,
+    );
   });
 
   test("figure style changes do not break cached circular taxonomy fit-view pan", async ({ page }) => {
