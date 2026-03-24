@@ -2018,7 +2018,23 @@ function sampleVisibleScreenSpaceCircularRibbonRuns(
 
   const avgRadiusPx = (innerRadiusPx + outerRadiusPx) * 0.5;
   const approxSpanPx = spanTheta * avgRadiusPx;
-  const sampleCount = Math.max(16, Math.min(256, Math.ceil(approxSpanPx / 24)));
+  const maxSagittaPx = 0.2;
+  const maxThetaStepFromCurvature = outerRadiusPx > 0
+    ? Math.max(
+      1e-4,
+      2 * Math.acos(Math.max(-1, Math.min(1, 1 - (maxSagittaPx / outerRadiusPx)))),
+    )
+    : Math.PI / 8;
+  const sampleCount = Math.max(
+    16,
+    Math.min(
+      2048,
+      Math.max(
+        Math.ceil(approxSpanPx / 24),
+        Math.ceil(spanTheta / maxThetaStepFromCurvature),
+      ),
+    ),
+  );
   const thetas: number[] = [];
   const outerPoints: Array<{ x: number; y: number }> = [];
   const innerPoints: Array<{ x: number; y: number }> = [];
@@ -6207,8 +6223,7 @@ export default function TreeCanvas({
               });
               continue;
             }
-            const radialTextOffsetPx = ((ascent - descent) * 0.5)
-              + ((Math.sin(renderedTheta) >= 0 ? -1 : 1) * Math.max(0.5, ringWidthPx * 0.04));
+            const radialTextOffsetPx = (ascent - descent) * 0.5;
             const searchMatchRange = findSearchMatchRange(block.label, searchQuery);
             const searchHighlightColor = searchMatchRange
               ? (activeSearchTaxonomyKey === blockKey ? "#c2410c" : "#2563eb")

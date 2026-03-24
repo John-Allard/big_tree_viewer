@@ -1578,11 +1578,7 @@ test("circular taxonomy labels stay centered in their rings after reload and rec
     const labels = (debug.taxonomyPlacedLabels ?? [])
       .filter((label) => label.rank && label.clipArc)
       .map((label) => {
-        const rotation = Number(label.rotation ?? 0);
-        const offsetY = Number(label.offsetY ?? 0);
-        const renderedCenterX = Number(label.x) - (Math.sin(rotation) * offsetY);
-        const renderedCenterY = Number(label.y) + (Math.cos(rotation) * offsetY);
-        const radiusPx = Math.hypot(renderedCenterX - camera.translateX, renderedCenterY - camera.translateY);
+        const radiusPx = Math.hypot(Number(label.x) - camera.translateX, Number(label.y) - camera.translateY);
         const ringInnerPx = Number(label.clipArc?.innerRadiusPx ?? 0);
         const ringOuterPx = Number(label.clipArc?.outerRadiusPx ?? 0);
         const ringMidPx = (ringInnerPx + ringOuterPx) * 0.5;
@@ -1603,6 +1599,101 @@ test("circular taxonomy labels stay centered in their rings after reload and rec
   expect(ringAlignment.labelCount).toBeGreaterThan(0);
   expect(ringAlignment.maxRadiusDeltaPx).toBeLessThan(18);
   expect(ringAlignment.violations).toEqual([]);
+});
+
+test("left-side circular taxonomy labels stay radially centered at moderate zoom", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for circular label-centering test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        order: index < 20
+          ? "Passeriformes"
+          : index < 60
+            ? "Carnivora"
+            : "Primates",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 9,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["order"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("order", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("family", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("genus", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("phylum", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("superkingdom", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyPlacedLabels?: Array<{ text: string; x: number; y: number; clipArc?: { innerRadiusPx: number; outerRadiusPx: number } | null }>;
+    } | undefined;
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable for label-centering test.");
+    }
+    const anchor = (debug?.taxonomyPlacedLabels ?? [])
+      .filter((entry) => entry.clipArc && Number(entry.x) < Number(camera.translateX))
+      .sort((left, right) => Math.abs(Number(left.y) - Number(camera.translateY)) - Math.abs(Number(right.y) - Number(camera.translateY)))[0];
+    if (!anchor) {
+      throw new Error("Left-side taxonomy anchor unavailable.");
+    }
+    const worldDx = (Number(anchor.x) - Number(camera.translateX)) / Number(camera.scale);
+    const worldDy = (Number(anchor.y) - Number(camera.translateY)) / Number(camera.scale);
+    const worldX = (worldDx * Number(camera.rotationCos)) + (worldDy * Number(camera.rotationSin));
+    const worldY = (-worldDx * Number(camera.rotationSin)) + (worldDy * Number(camera.rotationCos));
+    const scale = Number(camera.scale) * 2.4;
+    const rotatedX = (worldX * Number(camera.rotationCos)) - (worldY * Number(camera.rotationSin));
+    const rotatedY = (worldX * Number(camera.rotationSin)) + (worldY * Number(camera.rotationCos));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale,
+      translateX: Number(anchor.x) - (rotatedX * scale),
+      translateY: Number(anchor.y) - (rotatedY * scale),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const leftLabel = await page.evaluate(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyPlacedLabels?: Array<{
+        text: string;
+        x: number;
+        y: number;
+        clipArc?: { innerRadiusPx: number; outerRadiusPx: number } | null;
+      }>;
+    } | undefined;
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!debug || !camera || camera.kind !== "circular") {
+      throw new Error("Circular taxonomy debug unavailable.");
+    }
+    const label = (debug.taxonomyPlacedLabels ?? [])
+      .filter((entry) => entry.clipArc && Number(entry.x) < Number(camera.translateX))
+      .sort((left, right) => Math.abs(Number(left.y) - Number(camera.translateY)) - Math.abs(Number(right.y) - Number(camera.translateY)))[0];
+    if (!label || !label.clipArc) {
+      throw new Error("Left-side taxonomy label unavailable.");
+    }
+    const radiusPx = Math.hypot(Number(label.x) - camera.translateX, Number(label.y) - camera.translateY);
+    const ringInnerPx = Number(label.clipArc.innerRadiusPx);
+    const ringOuterPx = Number(label.clipArc.outerRadiusPx);
+    return {
+      text: label.text,
+      radiusDeltaPx: Math.abs(radiusPx - ((ringInnerPx + ringOuterPx) * 0.5)),
+      ringWidthPx: ringOuterPx - ringInnerPx,
+    };
+  });
+
+  expect(leftLabel.radiusDeltaPx).toBeLessThan(Math.max(4, (leftLabel.ringWidthPx * 0.18)));
 });
 
 test("circular taxonomy labels persist once a visible arc can fit them", async ({ page }) => {

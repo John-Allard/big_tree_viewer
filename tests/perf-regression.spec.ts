@@ -829,8 +829,12 @@ test.describe("local circular perf regression", () => {
       const probes = [
         { name: "phylum-top", rank: "phylum", theta: -Math.PI / 2 },
         { name: "phylum-bottom", rank: "phylum", theta: Math.PI / 2 },
+        { name: "phylum-right", rank: "phylum", theta: 0 },
+        { name: "phylum-left", rank: "phylum", theta: Math.PI },
         { name: "class-top", rank: "class", theta: -Math.PI / 2 },
         { name: "class-bottom", rank: "class", theta: Math.PI / 2 },
+        { name: "class-right", rank: "class", theta: 0 },
+        { name: "class-left", rank: "class", theta: Math.PI },
       ];
       return probes.map((probe) => {
         const arc = (debug.taxonomyArcDebug ?? [])
