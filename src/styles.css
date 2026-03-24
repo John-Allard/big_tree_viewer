@@ -607,6 +607,17 @@ button.secondary {
   color: #334155;
 }
 
+.view-zoom-hint {
+  margin: 0.35rem 0 0;
+  color: #64748b;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.view-zoom-hint-mobile {
+  display: none;
+}
+
 .status-error {
   color: #b91c1c;
 }
@@ -842,5 +853,13 @@ button.secondary {
 
   .app-shell.sidebar-hidden .control-panel {
     display: none;
+  }
+
+  .view-zoom-hint-desktop {
+    display: none;
+  }
+
+  .view-zoom-hint-mobile {
+    display: inline;
   }
 }

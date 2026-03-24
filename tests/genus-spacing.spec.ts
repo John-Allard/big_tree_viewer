@@ -28,6 +28,7 @@ async function readRectDebug(page: Page): Promise<{
   tipVisible: boolean;
   tipBandFontSize: number;
   tipBandWidthPx: number;
+  tipLabelMaxRightPx?: number | null;
   tipSideX: number;
   genusGapPx: number | null;
   genusBandX: number | null;
@@ -40,6 +41,7 @@ async function readRectDebug(page: Page): Promise<{
     tipVisible: boolean;
     tipBandFontSize: number;
     tipBandWidthPx: number;
+    tipLabelMaxRightPx?: number | null;
     tipSideX: number;
     genusGapPx: number | null;
     genusBandX: number | null;
@@ -93,5 +95,21 @@ test("rectangular genus band remains smooth and monotonic", async ({ page }) => 
   for (let index = 1; index < zoomOffsets.length; index += 1) {
     expect(zoomOffsets[index]).toBeGreaterThanOrEqual(zoomOffsets[index - 1] - 0.2);
     expect(zoomOffsets[index] - zoomOffsets[index - 1]).toBeLessThan(13);
+  }
+});
+
+test("rectangular genus band stays outside rendered tip labels at high zoom", async ({ page }) => {
+  await waitForViewer(page);
+  await configureRectangularView(page);
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "sizeScale", 1.45);
+  });
+
+  for (const scaleY of [4.5, 7, 10, 13]) {
+    await setRectScaleY(page, scaleY);
+    const debug = await readRectDebug(page);
+    expect(debug.microVisible).toBeTruthy();
+    expect(Number(debug.genusBandX ?? 0)).toBeGreaterThan(Number(debug.tipLabelMaxRightPx ?? 0) + 6);
   }
 });

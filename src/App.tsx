@@ -2022,6 +2022,10 @@ export default function App() {
               Fit View
             </button>
           </div>
+          <p className="view-zoom-hint">
+            <span className="view-zoom-hint-desktop">Push + to zoom in and - to zoom out.</span>
+            <span className="view-zoom-hint-mobile">Pinch to zoom.</span>
+          </p>
           {viewMode === "circular" ? (
             <div className="rotation-controls">
               <label htmlFor="circular-rotation">Rotation</label>

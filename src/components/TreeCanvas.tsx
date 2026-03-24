@@ -122,6 +122,17 @@ function isNumericInternalLabel(value: string): boolean {
   return /^[+-]?\d+(?:\.\d+)?$/.test(value.trim());
 }
 
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  const editable = target.closest("input, textarea, select, [contenteditable='true']");
+  return editable instanceof HTMLElement;
+}
+
 function applyCircularPointLabelOffset(
   x: number,
   y: number,
@@ -2926,6 +2937,40 @@ export default function TreeCanvas({
     pendingCircularTaxonomyRefitRef.current = viewMode === "circular" && taxonomyEnabled && !taxonomyBlocks;
   }, [fitCameraForMode, taxonomyBlocks, taxonomyEnabled, viewMode]);
 
+  const zoomAtPoint = useCallback((localX: number, localY: number, zoom: number): void => {
+    if (!tree || !Number.isFinite(zoom) || zoom <= 0) {
+      return;
+    }
+    const camera = cameraRef.current;
+    if (!camera) {
+      return;
+    }
+    if (camera.kind === "rect") {
+      const world = screenToWorldRect(camera, localX, localY);
+      const fit = fitRectCamera(size.width, size.height, tree);
+      const minScaleX = fit.scaleX * 0.55;
+      const minScaleY = fit.scaleY * 0.55;
+      if (zoomAxisMode !== "y") {
+        camera.scaleX = Math.max(minScaleX, camera.scaleX * zoom);
+        camera.translateX = localX - (world.x * camera.scaleX);
+      }
+      if (zoomAxisMode !== "x") {
+        camera.scaleY = Math.max(minScaleY, camera.scaleY * zoom);
+        camera.translateY = localY - (world.y * camera.scaleY);
+      }
+      clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
+    } else {
+      const world = screenToWorldCircular(camera, localX, localY);
+      const fit = fitCircularCamera(size.width, size.height, tree, camera.rotation);
+      const minScale = fit.scale * 0.55;
+      camera.scale = Math.max(minScale, camera.scale * zoom);
+      const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
+      camera.translateX = localX - (rotated.x * camera.scale);
+      camera.translateY = localY - (rotated.y * camera.scale);
+      finalizeCircularCamera(camera);
+    }
+  }, [finalizeCircularCamera, rectClampPadding, size.height, size.width, tree, zoomAxisMode]);
+
   const getTaxonomyBranchColors = useCallback((orderKey: LayoutOrder, visibleRanks: TaxonomyRank[]): string[] | null => {
     if (!tree || !taxonomyConsensus || !taxonomyBlocks || visibleRanks.length === 0) {
       return null;
@@ -3736,7 +3781,15 @@ export default function TreeCanvas({
         }
       }
 
-      let visibleTipLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
+      let visibleTipLabels: Array<{
+        node: number;
+        text: string;
+        x: number;
+        y: number;
+        width: number;
+        fittedFontSize: number;
+        renderedWidth: number;
+      }> = [];
       const tipFontSize = scaleLabelFontSize("tip", Math.max(6.5, Math.min(22, camera.scaleY * 0.58)));
       const microTipFontSize = scaleLabelFontSize("tip", Math.max(4.2, Math.min(6.25, camera.scaleY * 0.34)));
       const readableBandProgress = smoothstep01((camera.scaleY - 2.7) / Math.max(1e-6, 4.2 - 2.7));
@@ -3759,7 +3812,18 @@ export default function TreeCanvas({
       const startLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, minY - 2);
       const endLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, maxY + 2.000001);
       const visibleLeafRanges = [{ startIndex: startLeafIndex, endIndex: endLeafIndex }];
-      const measuredLabels: Array<{ node: number; text: string; x: number; y: number; width: number }> = [];
+      const renderedTipFontSize = tipLabelsVisible ? tipFontSize : microTipFontSize;
+      const needsExactTipLabelEnvelope = microTipLabelsVisible && !taxonomyEnabled && showGenusLabels;
+      let tipLabelMaxRightPx = tipSideX + globalTipLabelSpacePx;
+      const measuredLabels: Array<{
+        node: number;
+        text: string;
+        x: number;
+        y: number;
+        width: number;
+        fittedFontSize: number;
+        renderedWidth: number;
+      }> = [];
       const needTipEnvelope = tipLabelCueVisible || camera.scaleY > 2.35;
       if (needTipEnvelope) {
         ctx.font = fontSpec("tip", tipFontSize);
@@ -3775,13 +3839,35 @@ export default function TreeCanvas({
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
           const x = screen.x + 8 + figureStyles.tip.offsetPx;
           const width = ctx.measureText(text).width;
-          measuredLabels.push({ node, text, x, y: screen.y, width });
+          const fittedFontSize = Math.max(
+            4,
+            Math.min(
+              renderedTipFontSize,
+              renderedTipFontSize * Math.min(1, globalTipLabelSpacePx / Math.max(1e-6, width)),
+            ),
+          );
+          const renderedWidth = width * (fittedFontSize / Math.max(1e-6, tipFontSize));
+          if (needsExactTipLabelEnvelope) {
+            tipLabelMaxRightPx = Math.max(tipLabelMaxRightPx, x + renderedWidth);
+          }
+          measuredLabels.push({ node, text, x, y: screen.y, width, fittedFontSize, renderedWidth });
         }
       }
       const maxVisibleLabels = 5200;
       if (microTipLabelsVisible && measuredLabels.length <= maxVisibleLabels) {
-        visibleTipLabels = measuredLabels.map(({ node, text, x, y, width }) => ({ node, text, x, y, width }));
+        visibleTipLabels = measuredLabels.map(({ node, text, x, y, width, fittedFontSize, renderedWidth }) => ({
+          node,
+          text,
+          x,
+          y,
+          width,
+          fittedFontSize,
+          renderedWidth,
+        }));
       }
+      const effectiveTipLabelSpacePx = needsExactTipLabelEnvelope
+        ? Math.max(globalTipLabelSpacePx, tipLabelMaxRightPx - tipSideX)
+        : globalTipLabelSpacePx;
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
       const taxonomyOverlayStartTime = performance.now();
@@ -3796,7 +3882,7 @@ export default function TreeCanvas({
         const placedKeys: string[] = [];
         const renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }> = [];
         let taxonomyConnectorSegmentCount = 0;
-        let bandCursorX = tipSideX + globalTipLabelSpacePx + 18;
+        let bandCursorX = tipSideX + effectiveTipLabelSpacePx + 18;
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
         const preservedKeys = previousTaxonomyState
           && previousTaxonomyState.tree === tree
@@ -4093,7 +4179,8 @@ export default function TreeCanvas({
           microVisible: microTipLabelsVisible,
           tipVisible: tipLabelsVisible,
           tipBandFontSize,
-          tipBandWidthPx: globalTipLabelSpacePx,
+          tipBandWidthPx: effectiveTipLabelSpacePx,
+          tipLabelMaxRightPx,
           tipSideX,
           genusGapPx: null,
           genusBandX: bandXs[0] ?? null,
@@ -4178,7 +4265,7 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const genusBandX = tipSideX + globalTipLabelSpacePx + genusGapPx;
+        const genusBandX = tipSideX + effectiveTipLabelSpacePx + genusGapPx;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -4300,7 +4387,8 @@ export default function TreeCanvas({
           microVisible: microTipLabelsVisible,
           tipVisible: tipLabelsVisible,
           tipBandFontSize,
-          tipBandWidthPx: globalTipLabelSpacePx,
+          tipBandWidthPx: effectiveTipLabelSpacePx,
+          tipLabelMaxRightPx,
           tipSideX,
           genusGapPx,
           genusBandX,
@@ -4344,7 +4432,8 @@ export default function TreeCanvas({
           microVisible: microTipLabelsVisible,
           tipVisible: tipLabelsVisible,
           tipBandFontSize,
-          tipBandWidthPx: globalTipLabelSpacePx,
+          tipBandWidthPx: effectiveTipLabelSpacePx,
+          tipLabelMaxRightPx,
           tipSideX,
           genusGapPx: null,
           genusBandX: null,
@@ -4373,18 +4462,11 @@ export default function TreeCanvas({
       timing.taxonomyOverlayMs += performance.now() - taxonomyOverlayStartTime;
 
       if (visibleTipLabels.length > 0) {
-        const renderTipFontSize = tipLabelsVisible ? tipFontSize : microTipFontSize;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         for (let index = 0; index < visibleTipLabels.length; index += 1) {
           const label = visibleTipLabels[index];
-          const fittedFontSize = Math.max(
-            4,
-            Math.min(
-              renderTipFontSize,
-              renderTipFontSize * Math.min(1, globalTipLabelSpacePx / Math.max(1e-6, label.width)),
-            ),
-          );
+          const fittedFontSize = label.fittedFontSize;
           ctx.font = fontSpec("tip", fittedFontSize);
           if (tipLabelsVisible) {
             const highlightColor = label.node === activeSearchNode
@@ -4421,7 +4503,7 @@ export default function TreeCanvas({
               text: label.text,
               x: label.x,
               y: label.y - (fittedFontSize * 0.55),
-              width: Math.min(globalTipLabelSpacePx, ctx.measureText(label.text).width),
+              width: label.renderedWidth,
               height: fittedFontSize * 1.1,
             });
           } else {
@@ -7385,6 +7467,17 @@ export default function TreeCanvas({
     viewMode,
   ]);
 
+  const zoomAtViewportCenter = useCallback((zoom: number): void => {
+    hoverRef.current = null;
+    updateHoverTooltip(null);
+    onHoverChange(null);
+    if (!cameraRef.current) {
+      fitCamera();
+    }
+    zoomAtPoint(size.width * 0.5, size.height * 0.5, zoom);
+    draw();
+  }, [draw, fitCamera, onHoverChange, size.height, size.width, updateHoverTooltip, zoomAtPoint]);
+
   const buildCurrentSvgString = useCallback((): string | null => {
     if (!tree || !cache) {
       return null;
@@ -7742,6 +7835,30 @@ export default function TreeCanvas({
   }, [draw, fitRequest]);
 
   useEffect(() => {
+    if (!tree || typeof window === "undefined") {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableEventTarget(event.target)) {
+        return;
+      }
+      if (event.key === "+" || event.code === "NumpadAdd") {
+        event.preventDefault();
+        zoomAtViewportCenter(1.2);
+        return;
+      }
+      if (event.key === "-" || event.code === "NumpadSubtract") {
+        event.preventDefault();
+        zoomAtViewportCenter(1 / 1.2);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [tree, zoomAtViewportCenter]);
+
+  useEffect(() => {
     if (exportSvgRequest === 0 || handledExportRequestRef.current === exportSvgRequest) {
       return;
     }
@@ -8023,37 +8140,6 @@ export default function TreeCanvas({
         updateHoverTooltip(hover);
         onHoverChange(hover);
         drawHoverHighlightOverlay();
-      }
-    };
-
-    const zoomAtPoint = (localX: number, localY: number, zoom: number): void => {
-      const camera = cameraRef.current;
-      if (!camera) {
-        return;
-      }
-      if (camera.kind === "rect") {
-        const world = screenToWorldRect(camera, localX, localY);
-        const fit = fitRectCamera(size.width, size.height, tree);
-        const minScaleX = fit.scaleX * 0.55;
-        const minScaleY = fit.scaleY * 0.55;
-        if (zoomAxisMode !== "y") {
-          camera.scaleX = Math.max(minScaleX, camera.scaleX * zoom);
-          camera.translateX = localX - (world.x * camera.scaleX);
-        }
-        if (zoomAxisMode !== "x") {
-          camera.scaleY = Math.max(minScaleY, camera.scaleY * zoom);
-          camera.translateY = localY - (world.y * camera.scaleY);
-        }
-        clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
-      } else {
-        const world = screenToWorldCircular(camera, localX, localY);
-        const fit = fitCircularCamera(size.width, size.height, tree, camera.rotation);
-        const minScale = fit.scale * 0.55;
-        camera.scale = Math.max(minScale, camera.scale * zoom);
-        const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
-        camera.translateX = localX - (rotated.x * camera.scale);
-        camera.translateY = localY - (rotated.y * camera.scale);
-        finalizeCircularCamera(camera);
       }
     };
 
@@ -8346,7 +8432,7 @@ export default function TreeCanvas({
     toggleCollapsedNode,
     tree,
     updateHoverTooltip,
-    zoomAxisMode,
+    zoomAtPoint,
   ]);
 
   const handleContextZoomToSubtree = useCallback(() => {
