@@ -1537,6 +1537,74 @@ test("cached taxonomy mapping restores across reload for the same tree", async (
   });
 });
 
+test("circular taxonomy labels stay centered in their rings after reload and rectangular-to-circular switch", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.cacheMockTaxonomy();
+  });
+
+  await page.reload();
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.treeLoaded) && Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularRotationDegreesForTest(90);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const ringAlignment = await page.evaluate(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyPlacedLabels?: Array<{
+        text: string;
+        rank?: string | null;
+        x: number;
+        y: number;
+        rotation?: number | null;
+        offsetY?: number | null;
+        clipArc?: { innerRadiusPx: number; outerRadiusPx: number } | null;
+      }>;
+    } | undefined;
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!debug || !camera || camera.kind !== "circular") {
+      throw new Error("Circular taxonomy debug unavailable.");
+    }
+    const labels = (debug.taxonomyPlacedLabels ?? [])
+      .filter((label) => label.rank && label.clipArc)
+      .map((label) => {
+        const rotation = Number(label.rotation ?? 0);
+        const offsetY = Number(label.offsetY ?? 0);
+        const renderedCenterX = Number(label.x) - (Math.sin(rotation) * offsetY);
+        const renderedCenterY = Number(label.y) + (Math.cos(rotation) * offsetY);
+        const radiusPx = Math.hypot(renderedCenterX - camera.translateX, renderedCenterY - camera.translateY);
+        const ringInnerPx = Number(label.clipArc?.innerRadiusPx ?? 0);
+        const ringOuterPx = Number(label.clipArc?.outerRadiusPx ?? 0);
+        const ringMidPx = (ringInnerPx + ringOuterPx) * 0.5;
+        return {
+          text: label.text,
+          rank: label.rank ?? null,
+          radiusDeltaPx: Math.abs(radiusPx - ringMidPx),
+          ringWidthPx: ringOuterPx - ringInnerPx,
+        };
+      });
+    return {
+      labelCount: labels.length,
+      maxRadiusDeltaPx: labels.reduce((best, label) => Math.max(best, label.radiusDeltaPx), 0),
+      violations: labels.filter((label) => label.radiusDeltaPx > ((label.ringWidthPx * 0.42) + 2)),
+    };
+  });
+
+  expect(ringAlignment.labelCount).toBeGreaterThan(0);
+  expect(ringAlignment.maxRadiusDeltaPx).toBeLessThan(18);
+  expect(ringAlignment.violations).toEqual([]);
+});
+
 test("circular taxonomy labels persist once a visible arc can fit them", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
@@ -1603,6 +1671,114 @@ test("circular taxonomy labels persist once a visible arc can fit them", async (
   });
 
   expect(secondDebug.taxonomyLabelKeys ?? []).toContain("class:ArcLabelTarget");
+});
+
+test("circular taxonomy labels return after sliding offscreen and back", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for circular label return test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        class: index < 40 ? "ArcLabelTarget" : "OtherClass",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 3,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const baseCamera = await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    const canvas = document.querySelector("canvas");
+    const currentCamera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!leafNodes || !state || !(canvas instanceof HTMLCanvasElement) || !currentCamera || currentCamera.kind !== "circular") {
+      throw new Error("Circular label return setup unavailable.");
+    }
+    const radiusWorld = Number(state.isUltrametric ? state.rootAge : state.maxDepth);
+    const rect = canvas.getBoundingClientRect();
+    const theta = ((20 / leafNodes.length) * Math.PI * 2);
+    const scale = Math.max(Number(currentCamera.scale) * 80, 18);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale,
+      translateX: (rect.width * 0.45) - (Math.cos(theta) * radiusWorld * scale),
+      translateY: rect.height * 0.58,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const updatedCamera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!updatedCamera || updatedCamera.kind !== "circular") {
+      throw new Error("Updated circular camera unavailable.");
+    }
+    return {
+      scale: Number(updatedCamera.scale),
+      translateX: Number(updatedCamera.translateX),
+      translateY: Number(updatedCamera.translateY),
+    };
+  });
+
+  const initiallyVisible = await page.evaluate(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyLabelKeys?: string[];
+    } | undefined;
+    return debug?.taxonomyLabelKeys ?? [];
+  });
+  expect(initiallyVisible).toContain("class:ArcLabelTarget");
+
+  let hiddenDelta: number | null = null;
+  for (const deltaX of [260, 420, 620, 860]) {
+    await page.evaluate(async ({ camera, translateDeltaX }) => {
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        scale: Number(camera.scale),
+        translateX: Number(camera.translateX) + Number(translateDeltaX),
+        translateY: Number(camera.translateY),
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, {
+      camera: baseCamera,
+      translateDeltaX: deltaX,
+    });
+
+    const hidden = await page.evaluate(() => {
+      const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+        taxonomyLabelKeys?: string[];
+      } | undefined;
+      return debug?.taxonomyLabelKeys ?? [];
+    });
+    if (!hidden.includes("class:ArcLabelTarget")) {
+      hiddenDelta = deltaX;
+      break;
+    }
+  }
+  expect(hiddenDelta).not.toBeNull();
+
+  await page.evaluate(async (camera) => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale: Number(camera.scale),
+      translateX: Number(camera.translateX),
+      translateY: Number(camera.translateY),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  }, baseCamera);
+
+  const returned = await page.evaluate(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyLabelKeys?: string[];
+    } | undefined;
+    return debug?.taxonomyLabelKeys ?? [];
+  });
+  expect(returned).toContain("class:ArcLabelTarget");
 });
 
 test("single unmapped interlopers do not split taxonomy continuity", async ({ page }) => {

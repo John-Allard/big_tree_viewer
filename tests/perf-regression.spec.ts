@@ -689,23 +689,183 @@ test.describe("local circular perf regression", () => {
 
     expect(candidate?.key ?? null).not.toBeNull();
 
-    await page.evaluate(() => {
-      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    for (const deltaX of [80, 120, 160]) {
+      await page.evaluate(({ baseCamera, translateDeltaX }) => {
+        if (!baseCamera || baseCamera.kind !== "circular") {
+          throw new Error("Circular camera unavailable.");
+        }
+        window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+          scale: Number(baseCamera.scale),
+          translateX: Number(baseCamera.translateX) + Number(translateDeltaX),
+          translateY: Number(baseCamera.translateY),
+        });
+      }, {
+        baseCamera: fitCamera,
+        translateDeltaX: deltaX,
+      });
+      await settleFrames(page);
+
+      const after = await readCircularPerfSnapshot(page);
+      const moved = (after.circular?.taxonomyPlacedLabels ?? []).find((label) => label.key === candidate?.key);
+      expect(moved?.key ?? null).toBe(candidate?.key ?? null);
+      expect(Math.abs(Number(moved.fontSize ?? 0) - Number(candidate?.fontSize ?? 0))).toBeLessThanOrEqual(0.35);
+    }
+  });
+
+  test("slightly zoomed circular outer taxonomy rings stay filled on the vertical midline", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await page.evaluate(async () => {
+      const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+      const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+      const leafNodes = internal?.leafNodes ?? [];
+      if (!app || leafNodes.length < 1000) {
+        throw new Error("Broad circular taxonomy seam scene unavailable.");
+      }
+      const tipRanks = leafNodes.map((node, index) => {
+        const fraction = index / leafNodes.length;
+        const phylum = fraction < 0.5 ? "Phylum A" : "Phylum B";
+        const classRank = fraction < 0.25
+          ? "Class A"
+          : fraction < 0.5
+            ? "Class B"
+            : fraction < 0.75
+              ? "Class C"
+              : "Class D";
+        return {
+          node,
+          ranks: {
+            class: classRank,
+            phylum,
+          },
+        };
+      });
+      app.setTaxonomyMapForTest({
+        version: 3,
+        mappedCount: tipRanks.length,
+        totalTips: tipRanks.length,
+        activeRanks: ["class", "phylum"],
+        tipRanks,
+      });
+      app.setTaxonomyRankVisibilityAutoForTest(false);
+      app.setTaxonomyRankVisibilityForTest("class", true);
+      app.setTaxonomyRankVisibilityForTest("phylum", true);
+      app.setShowGenusLabels(false);
+      app.setViewMode("circular");
+      app.setCircularRotationDegreesForTest(30);
+      app.requestFit();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    await settleFrames(page);
+
+    const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+    expect(fitCamera?.kind).toBe("circular");
+    await page.evaluate((camera) => {
       if (!camera || camera.kind !== "circular") {
         throw new Error("Circular camera unavailable.");
       }
       window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
-        scale: Number(camera.scale),
-        translateX: Number(camera.translateX) + 80,
+        scale: Number(camera.scale) * 1.08,
+        translateX: Number(camera.translateX),
         translateY: Number(camera.translateY),
       });
-    });
+    }, fitCamera);
     await settleFrames(page);
 
-    const after = await readCircularPerfSnapshot(page);
-    const moved = (after.circular?.taxonomyPlacedLabels ?? []).find((label) => label.key === candidate?.key);
-    expect(moved?.key ?? null).toBe(candidate?.key ?? null);
-    expect(Math.abs(Number(moved?.fontSize ?? 0) - Number(candidate?.fontSize ?? 0))).toBeLessThanOrEqual(0.35);
+    const seamSamples = await page.evaluate(() => {
+      const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+        taxonomyArcDebug?: Array<{
+          key?: string | null;
+          startTheta?: number | null;
+          endTheta?: number | null;
+          innerRadiusPx?: number | null;
+          outerRadiusPx?: number | null;
+        }>;
+      } | undefined;
+      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+      const canvas = document.querySelector("canvas");
+      if (!debug || !camera || camera.kind !== "circular" || !(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("Circular seam probe unavailable.");
+      }
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) {
+        throw new Error("2D context unavailable.");
+      }
+      const wrapPositive = (angle: number): number => {
+        const fullTurn = Math.PI * 2;
+        let normalized = angle % fullTurn;
+        if (normalized < 0) {
+          normalized += fullTurn;
+        }
+        return normalized;
+      };
+      const renderedSpanContains = (
+        startTheta: number,
+        endTheta: number,
+        targetTheta: number,
+      ): boolean => {
+        let start = wrapPositive(startTheta + Number(camera.rotation));
+        let end = wrapPositive(endTheta + Number(camera.rotation));
+        let target = wrapPositive(targetTheta);
+        if (end < start) {
+          end += Math.PI * 2;
+        }
+        if (target < start) {
+          target += Math.PI * 2;
+        }
+        return target >= start && target <= end;
+      };
+      const background = [251, 252, 254, 255];
+      const colorDistance = (rgba: Uint8ClampedArray): number => Math.hypot(
+        rgba[0] - background[0],
+        rgba[1] - background[1],
+        rgba[2] - background[2],
+        rgba[3] - background[3],
+      );
+      const probes = [
+        { name: "phylum-top", rank: "phylum", theta: -Math.PI / 2 },
+        { name: "phylum-bottom", rank: "phylum", theta: Math.PI / 2 },
+        { name: "class-top", rank: "class", theta: -Math.PI / 2 },
+        { name: "class-bottom", rank: "class", theta: Math.PI / 2 },
+      ];
+      return probes.map((probe) => {
+        const arc = (debug.taxonomyArcDebug ?? [])
+          .filter((entry) => (
+            String(entry.key ?? "").startsWith(`${probe.rank}:`)
+            && Number.isFinite(Number(entry.innerRadiusPx ?? Number.NaN))
+            && Number.isFinite(Number(entry.outerRadiusPx ?? Number.NaN))
+            && Number.isFinite(Number(entry.startTheta ?? Number.NaN))
+            && Number.isFinite(Number(entry.endTheta ?? Number.NaN))
+            && renderedSpanContains(Number(entry.startTheta ?? 0), Number(entry.endTheta ?? 0), probe.theta)
+          ))
+          .sort((left, right) => Number(right.outerRadiusPx ?? 0) - Number(left.outerRadiusPx ?? 0))[0];
+        if (!arc) {
+          throw new Error(`No ${probe.rank} arc crosses ${probe.name}.`);
+        }
+        const radiusPx = (Number(arc.innerRadiusPx ?? 0) + Number(arc.outerRadiusPx ?? 0)) * 0.5;
+        const sampleX = Math.round(Number(camera.translateX) + (Math.cos(probe.theta) * radiusPx));
+        const sampleY = Math.round(Number(camera.translateY) + (Math.sin(probe.theta) * radiusPx));
+        let maxDistance = 0;
+        for (const dx of [-1, 0, 1]) {
+          for (const dy of [-1, 0, 1]) {
+            const x = Math.max(0, Math.min(canvas.width - 1, sampleX + dx));
+            const y = Math.max(0, Math.min(canvas.height - 1, sampleY + dy));
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            maxDistance = Math.max(maxDistance, colorDistance(pixel));
+          }
+        }
+        return {
+          name: probe.name,
+          maxDistance,
+        };
+      });
+    });
+
+    expect(seamSamples.every((sample) => Number(sample.maxDistance ?? 0) > 18)).toBeTruthy();
   });
 
   test("fit-view pan stays on the cached taxonomy bitmap path", async ({ page }) => {

@@ -822,6 +822,30 @@ function viewportScaleForCenteredRotatedLabel(
   return Math.max(0, Math.min(1, scaleX, scaleY));
 }
 
+function centeredRotatedLabelIntersectsViewport(
+  x: number,
+  y: number,
+  widthPx: number,
+  heightPx: number,
+  rotation: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  marginPx: number,
+): boolean {
+  const halfWidth = widthPx * 0.5;
+  const halfHeight = heightPx * 0.5;
+  const cos = Math.abs(Math.cos(rotation));
+  const sin = Math.abs(Math.sin(rotation));
+  const extentX = (cos * halfWidth) + (sin * halfHeight);
+  const extentY = (sin * halfWidth) + (cos * halfHeight);
+  return (
+    x + extentX >= -marginPx
+    && x - extentX <= viewportWidth + marginPx
+    && y + extentY >= -marginPx
+    && y - extentY <= viewportHeight + marginPx
+  );
+}
+
 function intersectWrappedAngularIntervals(
   startA: number,
   endA: number,
@@ -2028,7 +2052,7 @@ function sampleVisibleScreenSpaceCircularRibbonRuns(
     if (!closesRun && !reachesEnd) {
       continue;
     }
-    const runEndIndex = closesRun ? sampleIndex - 1 : sampleIndex;
+    const runEndIndex = sampleIndex;
     const visibleOuterPoints = outerPoints.slice(runStartIndex, runEndIndex + 1);
     const visibleInnerPoints = innerPoints.slice(runStartIndex, runEndIndex + 1);
     if (visibleOuterPoints.length >= 2 && visibleInnerPoints.length >= 2) {
@@ -5675,6 +5699,7 @@ export default function TreeCanvas({
                   x: label.x,
                   y: label.y,
                   fontSize: label.fontSize ?? 0,
+                  offsetY: label.offsetY ?? 0,
                   rotation: label.rotation ?? 0,
                   color: label.color ?? null,
                   searchHighlightColor: label.searchHighlightColor ?? null,
@@ -5865,9 +5890,7 @@ export default function TreeCanvas({
                 if (candidateArcLengthPx < 0.8) {
                   continue;
                 }
-                const angularGapPx = candidateArcLengthPx < 8
-                  ? 0
-                  : Math.max(0.2, Math.min(2.2, Math.min(candidateArcLengthPx * 0.04, ringWidthPx * 0.08)));
+                const angularGapPx = 0;
                 const gapTheta = Math.min(
                   ((angularGapPx / Math.max(lineRadiusPx, 1e-6)) * 0.5),
                   Math.max(0, candidateSpanTheta * 0.26),
@@ -5993,14 +6016,15 @@ export default function TreeCanvas({
                     end: visibleRun.endTheta,
                   }))
                   : [];
-                const visibleSpans = lockTaxonomyLabelsToClade
+                const lockCladeLabelToCenter = lockTaxonomyLabelsToClade && ringFullyVisible;
+                const visibleSpans = lockCladeLabelToCenter
                   ? []
                   : (
                     useScreenSpaceRibbonGeometry
                       ? screenVisibleSpans
                       : visibleTaxonomyLabelSpans(renderedWrappedStart, renderedWrappedEnd, ringVisibleSpans)
                   );
-                const fallbackViewportSpan = !lockTaxonomyLabelsToClade && !useScreenSpaceRibbonGeometry && blockSegments.length === 1
+                const fallbackViewportSpan = !lockCladeLabelToCenter && !useScreenSpaceRibbonGeometry && blockSegments.length === 1
                   && wrappedAngleWithinInterval(viewportCenterRenderedTheta, renderedWrappedStart, renderedWrappedEnd)
                   ? ringVisibleSpans.reduce<{ start: number; end: number } | null>((best, span) => {
                     if (!best || (span.end - span.start) > (best.end - best.start)) {
@@ -6108,20 +6132,6 @@ export default function TreeCanvas({
             const tangentDegrees = (renderedTheta * 180 / Math.PI) + 90;
             const onRightSide = Math.cos(renderedTheta) >= 0;
             const rotation = normalizeRotation(onRightSide ? tangentDegrees : tangentDegrees + 180);
-            const labelPointVisible = ringFullyVisible || isScreenPointVisible(labelPoint.x, labelPoint.y, size.width, size.height, 18);
-            if (!labelPointVisible) {
-              pushTaxonomyCandidateDebug({
-                rank,
-                label: block.label,
-                accepted: false,
-                reason: "offscreen",
-                arcLengthPx: bestLabelCandidate.arcLengthPx,
-                fontSize: fitFontSize,
-                x: labelPoint.x,
-                y: labelPoint.y,
-              });
-              continue;
-            }
             const rotationRadians = rotation * Math.PI / 180;
             let low = minFontSize;
             let high = Math.min(30, fitFontSize);
@@ -6140,19 +6150,9 @@ export default function TreeCanvas({
               const candidateCurvaturePenaltyPx = candidateHalfWidthPx < lineRadiusPx
                 ? lineRadiusPx - Math.sqrt(Math.max(0, (lineRadiusPx * lineRadiusPx) - (candidateHalfWidthPx * candidateHalfWidthPx)))
                 : availableRadialPx + 1;
-              const viewportScale = viewportScaleForCenteredRotatedLabel(
-                labelPoint.x,
-                labelPoint.y,
-                candidateMetrics.width,
-                candidateRadialHeightPx,
-                rotationRadians,
-                size.width,
-                size.height,
-                2,
-              );
               const fits = candidateMetrics.width <= (availableArcPx + 0.5)
                 && (candidateRadialHeightPx + candidateCurvaturePenaltyPx) <= (availableRadialPx + overflowTolerancePx)
-                && viewportScale >= 0.999;
+                ;
               if (fits) {
                 bestFitFontSize = candidateFontSize;
                 bestTextWidthPx = candidateMetrics.width;
@@ -6184,8 +6184,31 @@ export default function TreeCanvas({
             textMetrics = ctx.measureText(block.label);
             const ascent = textMetrics.actualBoundingBoxAscent || (finalFontSize * 0.72);
             const descent = textMetrics.actualBoundingBoxDescent || (finalFontSize * 0.28);
+            const labelIntersectsViewport = centeredRotatedLabelIntersectsViewport(
+              labelPoint.x,
+              labelPoint.y,
+              textMetrics.width,
+              ascent + descent,
+              rotationRadians,
+              size.width,
+              size.height,
+              2,
+            );
+            if (!labelIntersectsViewport) {
+              pushTaxonomyCandidateDebug({
+                rank,
+                label: block.label,
+                accepted: false,
+                reason: "offscreen",
+                arcLengthPx: bestLabelCandidate.arcLengthPx,
+                fontSize: finalFontSize,
+                x: labelPoint.x,
+                y: labelPoint.y,
+              });
+              continue;
+            }
             const radialTextOffsetPx = ((ascent - descent) * 0.5)
-              + ((Math.sin(bestLabelCandidate.theta) >= 0 ? -1 : 1) * Math.max(0.5, ringWidthPx * 0.04));
+              + ((Math.sin(renderedTheta) >= 0 ? -1 : 1) * Math.max(0.5, ringWidthPx * 0.04));
             const searchMatchRange = findSearchMatchRange(block.label, searchQuery);
             const searchHighlightColor = searchMatchRange
               ? (activeSearchTaxonomyKey === blockKey ? "#c2410c" : "#2563eb")
@@ -6317,6 +6340,7 @@ export default function TreeCanvas({
                 x: label.x,
                 y: label.y,
                 fontSize: label.fontSize ?? 0,
+                offsetY: label.offsetY ?? 0,
                 rotation: label.rotation ?? 0,
                 color: label.color ?? null,
                 searchHighlightColor: label.searchHighlightColor ?? null,
