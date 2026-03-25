@@ -6252,7 +6252,6 @@ export default function TreeCanvas({
               });
               continue;
             }
-            const radialTextOffsetPx = (ascent - descent) * 0.5;
             const searchMatchRange = findSearchMatchRange(block.label, searchQuery);
             const searchHighlightColor = searchMatchRange
               ? (activeSearchTaxonomyKey === blockKey ? "#c2410c" : "#2563eb")
@@ -6275,7 +6274,10 @@ export default function TreeCanvas({
               firstNode: primaryLabelSegment.firstNode,
               lastNode: primaryLabelSegment.lastNode,
               taxonomyTipCount: totalTipCount,
-              offsetY: radialTextOffsetPx,
+              // Circular taxonomy label anchors already sit on the ring midpoint and the draw pass uses
+              // textBaseline="middle", so any extra baseline compensation here creates direction-dependent
+              // radial drift once the label is rotated around the circle.
+              offsetY: 0,
               clipArc: {
                 innerRadiusPx: ringInnerPx,
                 outerRadiusPx: ringInnerPx + ringWidthPx,
@@ -6964,6 +6966,7 @@ export default function TreeCanvas({
       for (let index = 0; index < circularGenusLabels.length; index += 1) {
         const label = circularGenusLabels[index];
         ctx.font = `${label.fontSize ?? circularGenusBaseFontSize}px ${label.rank ? labelFontFamilies.taxonomy : labelFontFamilies.genus}`;
+        ctx.textBaseline = "middle";
         const labelMetrics = ctx.measureText(label.text);
         ctx.save();
         if (label.clipArc && !label.clipArc.skipClip) {

@@ -1578,7 +1578,11 @@ test("circular taxonomy labels stay centered in their rings after reload and rec
     const labels = (debug.taxonomyPlacedLabels ?? [])
       .filter((label) => label.rank && label.clipArc)
       .map((label) => {
-        const radiusPx = Math.hypot(Number(label.x) - camera.translateX, Number(label.y) - camera.translateY);
+        const rotation = Number(label.rotation ?? 0);
+        const baselineOffset = Number(label.offsetY ?? 0);
+        const renderedCenterX = Number(label.x) + (-Math.sin(rotation) * baselineOffset);
+        const renderedCenterY = Number(label.y) + (Math.cos(rotation) * baselineOffset);
+        const radiusPx = Math.hypot(renderedCenterX - camera.translateX, renderedCenterY - camera.translateY);
         const ringInnerPx = Number(label.clipArc?.innerRadiusPx ?? 0);
         const ringOuterPx = Number(label.clipArc?.outerRadiusPx ?? 0);
         const ringMidPx = (ringInnerPx + ringOuterPx) * 0.5;
@@ -1587,17 +1591,20 @@ test("circular taxonomy labels stay centered in their rings after reload and rec
           rank: label.rank ?? null,
           radiusDeltaPx: Math.abs(radiusPx - ringMidPx),
           ringWidthPx: ringOuterPx - ringInnerPx,
+          baselineOffset,
         };
       });
     return {
       labelCount: labels.length,
       maxRadiusDeltaPx: labels.reduce((best, label) => Math.max(best, label.radiusDeltaPx), 0),
-      violations: labels.filter((label) => label.radiusDeltaPx > ((label.ringWidthPx * 0.42) + 2)),
+      maxBaselineOffsetPx: labels.reduce((best, label) => Math.max(best, Math.abs(label.baselineOffset)), 0),
+      violations: labels.filter((label) => label.radiusDeltaPx > Math.max(2.5, (label.ringWidthPx * 0.08) + 0.5)),
     };
   });
 
   expect(ringAlignment.labelCount).toBeGreaterThan(0);
-  expect(ringAlignment.maxRadiusDeltaPx).toBeLessThan(18);
+  expect(ringAlignment.maxRadiusDeltaPx).toBeLessThan(4);
+  expect(ringAlignment.maxBaselineOffsetPx).toBeLessThan(0.1);
   expect(ringAlignment.violations).toEqual([]);
 });
 
