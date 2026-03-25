@@ -53,7 +53,7 @@ export const FONT_FAMILY_OPTIONS: Array<{ key: FontFamilyKey; label: string; css
 export const LABEL_STYLE_CLASS_LABELS: Record<LabelStyleClass, string> = {
   tip: "Tip labels",
   genus: "Genus labels",
-  taxonomy: "Taxonomy labels",
+  taxonomy: "Taxonomy overlays",
   internalNode: "Internal node labels",
   bootstrap: "Bootstrap labels",
   nodeHeight: "Node height labels",

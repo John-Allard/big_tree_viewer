@@ -2179,6 +2179,7 @@ export default function TreeCanvas({
   useAutomaticTaxonomyRankVisibility,
   taxonomyRankVisibility,
   taxonomyMap,
+  taxonomyColorSourceMap,
   metadataBranchColors,
   metadataBranchColorVersion,
   metadataLabels,
@@ -2417,24 +2418,24 @@ export default function TreeCanvas({
     manualSubtreeColorAssignments,
     taxonomyRootColorAssignments,
   ]);
-  const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(
-    () => sortTaxonomyRanksForDisplay(
+  const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(() => {
+    return sortTaxonomyRanksForDisplay(
       (taxonomyMap ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]).filter(
         (rank) => taxonomyRankVisibility[rank] !== false,
       ),
-    ),
-    [taxonomyMap, taxonomyRankVisibility],
-  );
+    );
+  }, [taxonomyMap, taxonomyRankVisibility]);
+  const effectiveTaxonomyColorSourceMap = taxonomyColorSourceMap ?? taxonomyMap;
   const taxonomyOutermostRank = taxonomyActiveRanks[taxonomyActiveRanks.length - 1] ?? null;
   const taxonomyColors = useMemo(() => (
-    taxonomyMap
+    effectiveTaxonomyColorSourceMap
       ? buildTaxonomyColorMap(
-        taxonomyMap,
+        effectiveTaxonomyColorSourceMap,
         taxonomyRootColorAssignments,
         Math.max(0, Math.min(4, taxonomyColorJitter)),
       )
       : null
-  ), [taxonomyColorJitter, taxonomyMap, taxonomyRootColorAssignments]);
+  ), [effectiveTaxonomyColorSourceMap, taxonomyColorJitter, taxonomyRootColorAssignments]);
   const taxonomyTaxIdsByRank = useMemo(() => buildTaxonomyTaxIdLookup(taxonomyMap), [taxonomyMap]);
   const taxonomyBlocks = useMemo<TaxonomyBlocksByOrder | null>(() => {
     if (!cache || !taxonomyMap) {
@@ -2576,6 +2577,18 @@ export default function TreeCanvas({
     }
     return maxCharacters;
   }, [cache]);
+  const displayTipLabelForView = useCallback((node: number): string => (
+    displayLabelText(tree?.names[node] ?? "", `tip-${node}`)
+  ), [tree]);
+  const displayNodeNameForView = useCallback((node: number): string => {
+    if (!tree) {
+      return `tip-${node}`;
+    }
+    return displayNodeName(tree, node);
+  }, [tree]);
+  const descendantTipCountForView = useCallback((node: number): number => (
+    tree?.buffers.leafCount[node] ?? 0
+  ), [tree]);
 
   const collapsedView = useMemo(() => {
     if (!tree || !cache) {
@@ -2605,6 +2618,31 @@ export default function TreeCanvas({
         }
       });
     }
+    const center = new Float64Array(baseLayout.center);
+    const keepNodes = new Uint8Array(tree.nodeCount);
+    const markAncestorsVisible = (node: number): void => {
+      let current = node;
+      while (current >= 0 && !keepNodes[current]) {
+        keepNodes[current] = 1;
+        current = tree.buffers.parent[current];
+      }
+    };
+    for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
+      if (!hiddenNodes[visibleCollapsedNodes[index]]) {
+        markAncestorsVisible(visibleCollapsedNodes[index]);
+      }
+    }
+    for (let index = 0; index < tree.leafNodes.length; index += 1) {
+      const node = tree.leafNodes[index];
+      if (!hiddenNodes[node]) {
+        markAncestorsVisible(node);
+      }
+    }
+    for (let node = 0; node < tree.nodeCount; node += 1) {
+      if (!keepNodes[node]) {
+        hiddenNodes[node] = 1;
+      }
+    }
     if (visibleCollapsedNodes.length === 0) {
       return {
         hiddenNodes,
@@ -2612,7 +2650,6 @@ export default function TreeCanvas({
         layout: baseLayout,
       };
     }
-    const center = new Float64Array(baseLayout.center);
     const postorder: number[] = [];
     const stack: number[] = [tree.root];
     while (stack.length > 0) {
@@ -3880,7 +3917,7 @@ export default function TreeCanvas({
             continue;
           }
           const y = layout.center[node];
-          const text = displayLabelText(tree.names[node] || "", `tip-${node}`);
+          const text = displayTipLabelForView(node);
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
           const x = screen.x + 8 + figureStyles.tip.offsetPx;
           const width = ctx.measureText(text).width;
@@ -5584,7 +5621,7 @@ export default function TreeCanvas({
             ) {
               continue;
             }
-            const text = displayLabelText(tree.names[node] || "", `tip-${node}`);
+            const text = displayTipLabelForView(node);
             const width = ctx.measureText(text).width;
             circularVisibleTipLabels.push({ node, theta, x: screen.x, y: screen.y, text, width });
             maxVisibleTipLabelWidth = Math.max(maxVisibleTipLabelWidth, width);
@@ -7527,6 +7564,7 @@ export default function TreeCanvas({
     size.width,
     timeStripeLineWeight,
     timeStripeStyle,
+    displayTipLabelForView,
     taxonomyActiveRanks,
     taxonomyBlocks,
     taxonomyBranchColoringEnabled,
@@ -7998,8 +8036,8 @@ export default function TreeCanvas({
           parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
           parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
           childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
-          name: displayNodeName(tree, node),
-          descendantTipCount: tree.buffers.leafCount[node],
+          name: displayNodeNameForView(node),
+          descendantTipCount: descendantTipCountForView(node),
           screenX,
           screenY,
           targetKind,
@@ -8589,7 +8627,9 @@ export default function TreeCanvas({
     circularClampExtraRadiusPx,
     collapsedNodes,
     collapsedView,
+    descendantTipCountForView,
     draw,
+    displayNodeNameForView,
     isBranchHoverEnabled,
     markPanBenchmarkInput,
     onHoverChange,

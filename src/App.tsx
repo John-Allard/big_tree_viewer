@@ -35,6 +35,8 @@ import {
   type SharedSubtreeTaxonomyPayload,
   type SharedSubtreeVisualPayload,
 } from "./lib/sharedSubtreePayload";
+import { deriveCollapsibleTaxonomyRanks } from "./lib/taxonomyActiveRanks";
+import { buildTaxonomyCollapsedTreePayload } from "./lib/taxonomyCollapse";
 import { buildTaxonomyBlocksForOrderedLeaves } from "./lib/taxonomyBlocks";
 import {
   getCachedTaxonomyArchive,
@@ -46,7 +48,7 @@ import {
 import { rerootTreePayload, type RerootMode } from "./lib/rerootTree";
 import { normalizeImportedTreeText } from "./lib/treeImport";
 import type { WorkerResponse } from "./types/messages";
-import { TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "./types/taxonomy";
+import { TAXONOMY_RANKS, type TaxonomyCollapseRank, type TaxonomyMapPayload, type TaxonomyRank } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
@@ -173,6 +175,7 @@ const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
 const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
+const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
 type VisualPopoverId =
   | LabelStyleClass
   | "timeStripes"
@@ -539,6 +542,28 @@ function buildTreeModel(payload: WorkerTreePayload): TreeModel {
   };
 }
 
+function filterTaxonomyRanksForCollapse(
+  taxonomyMap: TaxonomyMapPayload,
+  collapseRank: TaxonomyRank,
+  highestCollapsibleRank: TaxonomyRank | null,
+): TaxonomyRank[] {
+  const activeRanks = new Set<TaxonomyRank>(taxonomyMap.activeRanks);
+  const keepCollapsedRank = collapseRank === highestCollapsibleRank;
+  if (keepCollapsedRank) {
+    activeRanks.add(collapseRank);
+  }
+  const collapseIndex = TAXONOMY_RANKS.indexOf(collapseRank);
+  return TAXONOMY_RANKS.filter((rank, rankIndex) => {
+    if (!activeRanks.has(rank)) {
+      return false;
+    }
+    if (rank === collapseRank) {
+      return keepCollapsedRank;
+    }
+    return rankIndex < collapseIndex;
+  });
+}
+
 async function computeTreeSignature(text: string): Promise<string> {
   const encoded = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest("SHA-256", encoded);
@@ -644,7 +669,42 @@ export default function App() {
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
+  const [taxonomyCollapseRank, setTaxonomyCollapseRank] = useState<TaxonomyCollapseRank>(DEFAULT_TAXONOMY_COLLAPSE_RANK);
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
+  const collapsibleTaxonomyRanks = useMemo<TaxonomyRank[]>(
+    () => taxonomyMap ? deriveCollapsibleTaxonomyRanks(taxonomyMap.tipRanks.map((tip) => tip.ranks)) : [],
+    [taxonomyMap],
+  );
+  const highestCollapsibleTaxonomyRank = collapsibleTaxonomyRanks[collapsibleTaxonomyRanks.length - 1] ?? null;
+  const taxonomyCollapseActiveRank = useMemo<TaxonomyRank | null>(() => {
+    if (!taxonomyMap || taxonomyCollapseRank === "species") {
+      return null;
+    }
+    return collapsibleTaxonomyRanks.includes(taxonomyCollapseRank) ? taxonomyCollapseRank : null;
+  }, [collapsibleTaxonomyRanks, taxonomyCollapseRank, taxonomyMap]);
+  const collapsedTaxonomyView = useMemo(() => {
+    if (!tree || !taxonomyMap || !taxonomyCollapseActiveRank) {
+      return null;
+    }
+    const collapsedPayload = buildTaxonomyCollapsedTreePayload(tree, taxonomyMap, taxonomyCollapseActiveRank, order);
+    if (!collapsedPayload?.taxonomyMap) {
+      return null;
+    }
+    return {
+      tree: buildTreeModel(collapsedPayload.payload),
+      taxonomyMap: {
+        ...collapsedPayload.taxonomyMap,
+        activeRanks: filterTaxonomyRanksForCollapse(
+          collapsedPayload.taxonomyMap,
+          taxonomyCollapseActiveRank,
+          highestCollapsibleTaxonomyRank,
+        ),
+      },
+    };
+  }, [highestCollapsibleTaxonomyRank, order, taxonomyCollapseActiveRank, taxonomyMap, tree]);
+  const viewTree = collapsedTaxonomyView?.tree ?? tree;
+  const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
+  const taxonomyCollapseIsSynthetic = collapsedTaxonomyView !== null;
   const handleHoverChange = useCallback(() => {}, []);
 
   const applySharedSubtreeVisualSettings = useCallback((visual: SharedSubtreeVisualPayload): void => {
@@ -749,7 +809,7 @@ export default function App() {
   const searchResults = useMemo(() => {
     const query = normalizeSearchQuery(searchQuery);
     const queryKey = canonicalSearchKey(searchQuery);
-    if (!tree || !searchQuery.trim()) {
+    if (!viewTree || !searchQuery.trim()) {
       return [] as SearchResult[];
     }
     const exactTaxonomyResults: SearchResult[] = [];
@@ -766,7 +826,7 @@ export default function App() {
       }
       const result = {
         kind: "taxonomy",
-        node: lowestCommonAncestor(tree, firstNode, lastNode),
+        node: lowestCommonAncestor(viewTree, firstNode, lastNode),
         displayName: label,
         rank,
         key: `${rank}:${label}`,
@@ -782,9 +842,9 @@ export default function App() {
       });
     };
 
-    if (taxonomyEnabled && taxonomyMap) {
-      const orderedLeaves = computeOrderedLeaves(tree, order);
-      const taxonomyBlocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, taxonomyMap, null);
+    if (taxonomyEnabled && viewTaxonomyMap) {
+      const orderedLeaves = computeOrderedLeaves(viewTree, order);
+      const taxonomyBlocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, viewTaxonomyMap, null);
       for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
         const rank = SEARCH_TAXONOMY_RANK_ORDER[rankIndex];
         const blocks = [...(taxonomyBlocks[rank] ?? [])].sort((left, right) => (
@@ -809,8 +869,8 @@ export default function App() {
     } else {
       const exactGenusResults: SearchResult[] = [];
       const partialGenusResults: Array<SearchResult & { rankOrder: number; orderIndex: number }> = [];
-      const orderedLeaves = computeOrderedLeaves(tree, order);
-      const genusBlocks = computeGenusBlocks(tree, orderedLeaves);
+      const orderedLeaves = computeOrderedLeaves(viewTree, order);
+      const genusBlocks = computeGenusBlocks(viewTree, orderedLeaves);
       for (let index = 0; index < genusBlocks.length; index += 1) {
         const block = genusBlocks[index];
         if (!matchesSearchQuery(block.label, query)) {
@@ -838,12 +898,12 @@ export default function App() {
     const exactLeafMatches: number[] = [];
     const exactInternalMatches: number[] = [];
     const partialNodeMatches: number[] = [];
-    for (let node = 0; node < tree.nodeCount; node += 1) {
-      const rawName = (tree.names[node] || "").trim();
+    for (let node = 0; node < viewTree.nodeCount; node += 1) {
+      const rawName = (viewTree.names[node] || "").trim();
       if (!rawName) {
         continue;
       }
-      const isInternal = tree.buffers.firstChild[node] >= 0;
+      const isInternal = viewTree.buffers.firstChild[node] >= 0;
       if (isInternal && isNumericInternalLabel(rawName)) {
         continue;
       }
@@ -860,8 +920,8 @@ export default function App() {
     }
     const sortNodes = (nodes: number[]): void => {
       nodes.sort((left, right) => (
-        tree.layouts[order].center[left] - tree.layouts[order].center[right]
-        || tree.buffers.depth[left] - tree.buffers.depth[right]
+        viewTree.layouts[order].center[left] - viewTree.layouts[order].center[right]
+        || viewTree.buffers.depth[left] - viewTree.buffers.depth[right]
         || left - right
       ));
     };
@@ -889,11 +949,11 @@ export default function App() {
       results.push({
         kind: "node",
         node,
-        displayName: normalizeSearchTarget(tree.names[node] || "").replaceAll("_", " ") || `node-${node}`,
+        displayName: normalizeSearchTarget(viewTree.names[node] || "").replaceAll("_", " ") || `node-${node}`,
       });
     }
     return results;
-  }, [order, searchQuery, taxonomyEnabled, taxonomyMap, tree]);
+  }, [order, searchQuery, taxonomyEnabled, viewTaxonomyMap, viewTree]);
 
   const searchMatches = useMemo(
     () => searchResults.filter((result) => result.kind === "node").map((result) => result.node),
@@ -1006,11 +1066,12 @@ export default function App() {
       },
     );
   }, [metadataKeyColumn, metadataMarkerColumn, metadataMarkerStyleOverrides, metadataTable, tree]);
+  const metadataOverlaysSuppressed = taxonomyCollapseIsSynthetic;
   const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
-    () => [...(taxonomyMap?.activeRanks ?? [])].sort(
+    () => [...(viewTaxonomyMap?.activeRanks ?? [])].sort(
       (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
     ),
-    [taxonomyMap],
+    [viewTaxonomyMap],
   );
   const handleAutomaticTaxonomyRankVisibilityChange = useCallback((enabled: boolean) => {
     if (!enabled) {
@@ -1039,6 +1100,14 @@ export default function App() {
       setMetadataColorMode("categorical");
     }
   }, [metadataColorMode, metadataValueColumnSupportsContinuous]);
+  useEffect(() => {
+    if (taxonomyCollapseRank === "species") {
+      return;
+    }
+    if (!collapsibleTaxonomyRanks.includes(taxonomyCollapseRank)) {
+      setTaxonomyCollapseRank(DEFAULT_TAXONOMY_COLLAPSE_RANK);
+    }
+  }, [collapsibleTaxonomyRanks, taxonomyCollapseRank]);
 
   useEffect(() => {
     if (searchResults.length === 0) {
@@ -1556,6 +1625,7 @@ export default function App() {
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
     setUseAutomaticTaxonomyRankVisibility(true);
     setTaxonomyRankVisibility({});
+    setTaxonomyCollapseRank(DEFAULT_TAXONOMY_COLLAPSE_RANK);
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
     setShowIntermediateScaleTicks(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
     setExtendRectScaleToTick(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
@@ -1589,8 +1659,10 @@ export default function App() {
         taxonomyEnabled,
         taxonomyBranchColoringEnabled,
         taxonomyRankVisibility,
+        collapsibleTaxonomyRanks,
+        taxonomyCollapseRank,
         taxonomyColorJitter,
-        taxonomyMappedCount: taxonomyMap?.mappedCount ?? 0,
+        taxonomyMappedCount: viewTaxonomyMap?.mappedCount ?? 0,
         metadataEnabled,
         metadataFileName,
         metadataRowCount: metadataTable?.rows.length ?? 0,
@@ -1633,10 +1705,10 @@ export default function App() {
         showNodeErrorBars,
         errorBarThicknessPx,
         errorBarCapSizePx,
-        nodeIntervalCount: tree?.nodeIntervalCount ?? 0,
-        maxDepth: tree?.maxDepth ?? null,
-        rootAge: tree?.rootAge ?? null,
-        isUltrametric: tree?.isUltrametric ?? false,
+        nodeIntervalCount: viewTree?.nodeIntervalCount ?? 0,
+        maxDepth: viewTree?.maxDepth ?? null,
+        rootAge: viewTree?.rootAge ?? null,
+        isUltrametric: viewTree?.isUltrametric ?? false,
         searchQuery,
         activeSearchIndex,
         activeSearchResult: activeSearchResult
@@ -1673,6 +1745,7 @@ export default function App() {
       setTaxonomyRankVisibilityAutoForTest: (enabled: boolean) => {
         setUseAutomaticTaxonomyRankVisibility(enabled);
       },
+      setTaxonomyCollapseRankForTest: setTaxonomyCollapseRank,
       setTaxonomyColorJitterForTest: setTaxonomyColorJitter,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
       setShowIntermediateScaleTicks,
@@ -1736,7 +1809,7 @@ export default function App() {
         }
         await runTaxonomyMapping();
       },
-      getTaxonomyMapForTest: () => taxonomyMap,
+      getTaxonomyMapForTest: () => viewTaxonomyMap,
       setMockTaxonomy: () => {
         if (!tree) {
           return;
@@ -1769,11 +1842,11 @@ export default function App() {
         nextSibling?: number[];
       };
     }).__BIG_TREE_VIEWER_APP_TEST_INTERNAL__ = {
-      leafNodes: tree ? Array.from(tree.leafNodes) : [],
-      names: tree ? Array.from(tree.names) : [],
-      parent: tree ? Array.from(tree.buffers.parent) : [],
-      firstChild: tree ? Array.from(tree.buffers.firstChild) : [],
-      nextSibling: tree ? Array.from(tree.buffers.nextSibling) : [],
+      leafNodes: viewTree ? Array.from(viewTree.leafNodes) : [],
+      names: viewTree ? Array.from(viewTree.names) : [],
+      parent: viewTree ? Array.from(viewTree.buffers.parent) : [],
+      firstChild: viewTree ? Array.from(viewTree.buffers.firstChild) : [],
+      nextSibling: viewTree ? Array.from(viewTree.buffers.nextSibling) : [],
     };
     return () => {
       delete window.__BIG_TREE_VIEWER_APP_TEST__;
@@ -1844,11 +1917,15 @@ export default function App() {
     timeStripeLineWeight,
     timeStripeStyle,
     taxonomyBranchColoringEnabled,
+    collapsibleTaxonomyRanks,
+    taxonomyCollapseRank,
     taxonomyColorJitter,
     taxonomyEnabled,
     taxonomyRankVisibility,
     taxonomyMap,
     tree,
+    viewTree,
+    viewTaxonomyMap,
     treeSignature,
     updateFigureStyle,
     viewMode,
@@ -2493,6 +2570,20 @@ export default function App() {
             ) : null}
             {taxonomyStatus ? <p className="status-line">{taxonomyStatus}</p> : null}
             {taxonomyError ? <p className="status-error">{taxonomyError}</p> : null}
+            {taxonomyMap ? (
+              <label>
+                Collapse mapped tips to
+                <select
+                  value={taxonomyCollapseRank}
+                  onChange={(event) => setTaxonomyCollapseRank(event.target.value as TaxonomyCollapseRank)}
+                >
+                  <option value="species">Species</option>
+                  {collapsibleTaxonomyRanks.map((rank) => (
+                    <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
         </PanelSection>
 
@@ -2969,19 +3060,19 @@ export default function App() {
         </PanelSection>
 
         <PanelSection title="Stats" isOpen={statsOpen} onToggle={() => setStatsOpen(!statsOpen)}>
-          {tree ? (
+          {viewTree ? (
             <div>
               <dl className="stats-list">
                 <dt>Tips</dt>
-                <dd>{tree.leafCount.toLocaleString()}</dd>
+                <dd>{viewTree.leafCount.toLocaleString()}</dd>
                 <dt>Nodes</dt>
-                <dd>{tree.nodeCount.toLocaleString()}</dd>
+                <dd>{viewTree.nodeCount.toLocaleString()}</dd>
                 <dt>Tree depth</dt>
-                <dd>{formatNumber(tree.maxDepth)}</dd>
+                <dd>{formatNumber(viewTree.maxDepth)}</dd>
                 <dt>Root age</dt>
-                <dd>{formatNumber(tree.rootAge)}</dd>
+                <dd>{formatNumber(viewTree.rootAge)}</dd>
                 <dt>Ultrametric</dt>
-                <dd>{tree.isUltrametric ? "Yes" : "No"}</dd>
+                <dd>{viewTree.isUltrametric ? "Yes" : "No"}</dd>
               </dl>
             </div>
           ) : (
@@ -2992,7 +3083,7 @@ export default function App() {
 
       <main className="viewer-panel">
         <TreeCanvas
-          tree={tree}
+          tree={viewTree}
           order={order}
           viewMode={viewMode}
           zoomAxisMode={viewMode === "circular" ? "both" : zoomAxisMode}
@@ -3008,18 +3099,19 @@ export default function App() {
           circularCenterScaleAngleDegrees={effectiveCircularCenterScaleAngleDegrees}
           useAutoCircularCenterScaleAngle={useAutoCircularCenterScaleAngle}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
-          showGenusLabels={showGenusLabels && !taxonomyEnabled}
+          showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
           taxonomyColorJitter={taxonomyColorJitter}
           useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
           taxonomyRankVisibility={taxonomyRankVisibility}
-          taxonomyMap={taxonomyMap}
-          metadataBranchColors={metadataEnabled && metadataOverlay.hasAny ? metadataOverlay.colors : null}
+          taxonomyMap={viewTaxonomyMap}
+          taxonomyColorSourceMap={taxonomyMap}
+          metadataBranchColors={metadataEnabled && !metadataOverlaysSuppressed && metadataOverlay.hasAny ? metadataOverlay.colors : null}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
-          metadataLabels={metadataLabelsEnabled && metadataLabelOverlay.hasAny ? metadataLabelOverlay.labels : null}
+          metadataLabels={metadataLabelsEnabled && !metadataOverlaysSuppressed && metadataLabelOverlay.hasAny ? metadataLabelOverlay.labels : null}
           metadataLabelVersion={metadataLabelsEnabled ? metadataLabelOverlay.version : ""}
-          metadataMarkers={metadataMarkersEnabled && metadataMarkerOverlay.hasAny ? metadataMarkerOverlay.markers : null}
+          metadataMarkers={metadataMarkersEnabled && !metadataOverlaysSuppressed && metadataMarkerOverlay.hasAny ? metadataMarkerOverlay.markers : null}
           metadataMarkerVersion={metadataMarkersEnabled ? metadataMarkerOverlay.version : ""}
           metadataMarkerSizePx={metadataMarkerSizePx}
           metadataLabelMaxCount={metadataLabelMaxCount}
@@ -3045,7 +3137,7 @@ export default function App() {
           exportSvgRequest={exportSvgRequest}
           visualResetRequest={visualResetRequest}
           onHoverChange={handleHoverChange}
-          onRerootRequest={rerootCurrentTree}
+          onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={setViewMode}
         />
       </main>

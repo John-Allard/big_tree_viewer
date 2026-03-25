@@ -18,6 +18,7 @@ declare global {
         visible: boolean,
       ) => void;
       setTaxonomyRankVisibilityAutoForTest: (enabled: boolean) => void;
+      setTaxonomyCollapseRankForTest: (rank: "species" | "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setTaxonomyColorJitterForTest: (value: number) => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setShowIntermediateScaleTicks: (visible: boolean) => void;

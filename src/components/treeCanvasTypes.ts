@@ -28,6 +28,7 @@ export interface TreeCanvasProps {
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyMap: TaxonomyMapPayload | null;
+  taxonomyColorSourceMap?: TaxonomyMapPayload | null;
   metadataBranchColors: Array<string | null> | null;
   metadataBranchColorVersion: string;
   metadataLabels: Array<string | null> | null;

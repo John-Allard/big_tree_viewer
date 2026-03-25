@@ -10,6 +10,7 @@ export const TAXONOMY_RANKS = [
 ] as const;
 
 export type TaxonomyRank = typeof TAXONOMY_RANKS[number];
+export type TaxonomyCollapseRank = TaxonomyRank | "species";
 
 export interface TaxonomyTipRanks {
   node: number;

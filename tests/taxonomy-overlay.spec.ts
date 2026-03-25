@@ -2318,3 +2318,198 @@ test("opening the real mapped Pongo taxonomy subtree in a new tab keeps genus as
   expect(popupResult.circularPlacedLabels.map((label) => label.text)).toContain("Pongo");
   await popup.close();
 });
+
+test("taxonomy rank collapse reduces contiguous genus runs to one visible tip each and removes the genus ring", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 40) {
+      throw new Error("Leaf nodes unavailable for taxonomy collapse test.");
+    }
+    const mappedLeafNodes = leafNodes.slice(0, 40);
+    const tipRanks = mappedLeafNodes.map((node, index) => {
+      let genus = `SoloGenus${index}`;
+      let family = "OtherFamily";
+      let order = "OtherOrder";
+      if (index < 4) {
+        genus = "Rattus";
+        family = "Muridae";
+        order = "Rodentia";
+      } else if (index < 8) {
+        genus = "Mus";
+        family = "Muridae";
+        order = "Rodentia";
+      } else if (index < 12) {
+        genus = "Rattus";
+        family = "Muridae";
+        order = "Rodentia";
+      } else if (index < 16) {
+        genus = "Canis";
+        family = "Canidae";
+        order = "Carnivora";
+      } else if (index < 20) {
+        genus = "Vulpes";
+        family = "Canidae";
+        order = "Carnivora";
+      } else if (index < 24) {
+        genus = "Felis";
+        family = "Felidae";
+        order = "Carnivora";
+      }
+      return {
+        node,
+        ranks: {
+          genus,
+          family,
+          order,
+          class: "Mammalia",
+        },
+      };
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 11,
+      mappedCount: mappedLeafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["genus", "family", "order", "class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("genus", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("family", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("order", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("phylum", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("superkingdom", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyCollapseRankForTest("genus");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable for taxonomy collapse test.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 18, 22),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const collapseState = await page.evaluate(() => {
+    const appState = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      taxonomyCollapseRank?: string;
+    } | undefined;
+    const taxonomyMap = window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() as {
+      activeRanks?: string[];
+    } | null | undefined;
+    const internalTree = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const tipTexts = (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [])
+      .filter((hitbox) => hitbox.labelKind === "tip")
+      .map((hitbox) => String(hitbox.text ?? ""));
+    return {
+      taxonomyCollapseRank: appState?.taxonomyCollapseRank ?? null,
+      taxonomyActiveRanks: taxonomyMap?.activeRanks ?? [],
+      leafCount: internalTree?.leafNodes.length ?? 0,
+      treeNames: internalTree?.names ?? [],
+      tipTexts,
+    };
+  });
+
+  expect(collapseState.taxonomyCollapseRank).toBe("genus");
+  expect(collapseState.taxonomyActiveRanks).toContain("family");
+  expect(collapseState.taxonomyActiveRanks).not.toContain("genus");
+  expect(collapseState.leafCount).toBeLessThan(40);
+  expect(collapseState.treeNames).toContain("Rattus-1");
+  expect(collapseState.treeNames).toContain("Rattus-2");
+  expect(collapseState.treeNames).toContain("Mus");
+  expect(collapseState.tipTexts).toContain("Rattus-1");
+  expect(collapseState.tipTexts).toContain("Mus");
+});
+
+test("taxonomy rank collapse uses selected rank labels instead of tip binomials", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 12) {
+      throw new Error("Leaf nodes unavailable for taxonomy collapse label test.");
+    }
+    const mappedLeafNodes = leafNodes.slice(0, 12);
+    const tipRanks = mappedLeafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        genus: index < 4 ? "Rattus" : index < 8 ? "Mus" : "Canis",
+        family: index < 8 ? "Muridae" : "Canidae",
+        order: index < 8 ? "Rodentia" : "Carnivora",
+        class: "Mammalia",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 12,
+      mappedCount: mappedLeafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["genus", "family", "order", "class"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyCollapseRankForTest("order");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const collapseState = await page.evaluate(() => {
+    const internalTree = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const leafNames = (internalTree?.names ?? []).filter((_, index) => (internalTree?.firstChild?.[index] ?? -1) < 0);
+    return {
+      leafNames,
+    };
+  });
+
+  expect(collapseState.leafNames).toContain("Rodentia");
+  expect(collapseState.leafNames).toContain("Carnivora");
+  expect(collapseState.leafNames.some((name) => /Rattus|Mus|Canis/.test(name))).toBe(false);
+});
+
+test("taxonomy rank collapse list only includes ranks with real subdivision in the mapped tree", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 12) {
+      throw new Error("Leaf nodes unavailable for taxonomy collapse availability test.");
+    }
+    const mappedLeafNodes = leafNodes.slice(0, 12);
+    const tipRanks = mappedLeafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        genus: index < 4 ? "Rattus" : index < 8 ? "Mus" : "Canis",
+        family: index < 8 ? "Muridae" : "Canidae",
+        order: index < 8 ? "Rodentia" : "Carnivora",
+        class: "Mammalia",
+        phylum: "Chordata",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 13,
+      mappedCount: mappedLeafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["genus", "family", "order", "class", "phylum"],
+      tipRanks,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const collapseState = await page.evaluate(() => {
+    const appState = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      collapsibleTaxonomyRanks?: string[];
+    } | undefined;
+    return {
+      collapsibleTaxonomyRanks: appState?.collapsibleTaxonomyRanks ?? [],
+    };
+  });
+
+  expect(collapseState.collapsibleTaxonomyRanks).toContain("genus");
+  expect(collapseState.collapsibleTaxonomyRanks).toContain("family");
+  expect(collapseState.collapsibleTaxonomyRanks).toContain("order");
+  expect(collapseState.collapsibleTaxonomyRanks).not.toContain("class");
+  expect(collapseState.collapsibleTaxonomyRanks).not.toContain("phylum");
+});
