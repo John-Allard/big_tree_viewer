@@ -700,6 +700,7 @@ export default function App() {
           highestCollapsibleTaxonomyRank,
         ),
       },
+      sourceNodeByNode: collapsedPayload.sourceNodeByNode,
     };
   }, [highestCollapsibleTaxonomyRank, order, taxonomyCollapseActiveRank, taxonomyMap, tree]);
   const viewTree = collapsedTaxonomyView?.tree ?? tree;
@@ -733,10 +734,11 @@ export default function App() {
     setFigureStyles(visual.figureStyles);
     setTaxonomyEnabled(visual.taxonomyEnabled);
     setTaxonomyBranchColoringEnabled(visual.taxonomyBranchColoringEnabled);
+    setUseAutomaticTaxonomyRankVisibility(visual.useAutomaticTaxonomyRankVisibility);
+    setTaxonomyRankVisibility(visual.taxonomyRankVisibility);
+    setTaxonomyCollapseRank(visual.taxonomyCollapseRank);
     setTaxonomyColorJitter(visual.taxonomyColorJitter);
     setBranchThicknessScale(visual.branchThicknessScale);
-    setUseAutomaticTaxonomyRankVisibility(true);
-    setTaxonomyRankVisibility({});
   }, []);
 
   const rerootCurrentTree = useCallback((node: number, mode: RerootMode): void => {
@@ -1101,13 +1103,13 @@ export default function App() {
     }
   }, [metadataColorMode, metadataValueColumnSupportsContinuous]);
   useEffect(() => {
-    if (taxonomyCollapseRank === "species") {
+    if (!taxonomyMap || taxonomyCollapseRank === "species") {
       return;
     }
     if (!collapsibleTaxonomyRanks.includes(taxonomyCollapseRank)) {
       setTaxonomyCollapseRank(DEFAULT_TAXONOMY_COLLAPSE_RANK);
     }
-  }, [collapsibleTaxonomyRanks, taxonomyCollapseRank]);
+  }, [collapsibleTaxonomyRanks, taxonomyCollapseRank, taxonomyMap]);
 
   useEffect(() => {
     if (searchResults.length === 0) {
@@ -3105,8 +3107,12 @@ export default function App() {
           taxonomyColorJitter={taxonomyColorJitter}
           useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
           taxonomyRankVisibility={taxonomyRankVisibility}
+          taxonomyCollapseRank={taxonomyCollapseRank}
           taxonomyMap={viewTaxonomyMap}
           taxonomyColorSourceMap={taxonomyMap}
+          sharedSubtreeSourceTree={tree}
+          sharedSubtreeSourceTaxonomyMap={taxonomyMap}
+          sharedSubtreeSourceNodeByViewNode={collapsedTaxonomyView?.sourceNodeByNode ?? null}
           metadataBranchColors={metadataEnabled && !metadataOverlaysSuppressed && metadataOverlay.hasAny ? metadataOverlay.colors : null}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
           metadataLabels={metadataLabelsEnabled && !metadataOverlaysSuppressed && metadataLabelOverlay.hasAny ? metadataLabelOverlay.labels : null}

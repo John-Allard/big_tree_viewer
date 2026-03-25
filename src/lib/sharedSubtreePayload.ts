@@ -1,5 +1,5 @@
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
-import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
+import type { TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
@@ -52,6 +52,9 @@ export type SharedSubtreeVisualPayload = {
   figureStyles: FigureStyleSettings;
   taxonomyEnabled: boolean;
   taxonomyBranchColoringEnabled: boolean;
+  useAutomaticTaxonomyRankVisibility: boolean;
+  taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
+  taxonomyCollapseRank: TaxonomyCollapseRank;
   taxonomyColorJitter: number;
   branchThicknessScale: number;
 };
@@ -111,6 +114,16 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     return undefined;
   }
   const source = raw as Partial<SharedSubtreeVisualPayload>;
+  const parsedTaxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>> = {};
+  if (source.taxonomyRankVisibility && typeof source.taxonomyRankVisibility === "object") {
+    for (let index = 0; index < TAXONOMY_RANKS.length; index += 1) {
+      const rank = TAXONOMY_RANKS[index];
+      const value = source.taxonomyRankVisibility[rank];
+      if (typeof value === "boolean") {
+        parsedTaxonomyRankVisibility[rank] = value;
+      }
+    }
+  }
   return {
     viewMode: coerceEnum(source.viewMode, ["rectangular", "circular"] as const, "rectangular"),
     order: coerceEnum(source.order, ["asc", "desc", "input"] as const, "asc"),
@@ -137,6 +150,9 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     figureStyles: parseSharedFigureStyles(source.figureStyles),
     taxonomyEnabled: coerceBoolean(source.taxonomyEnabled, false),
     taxonomyBranchColoringEnabled: coerceBoolean(source.taxonomyBranchColoringEnabled, true),
+    useAutomaticTaxonomyRankVisibility: coerceBoolean(source.useAutomaticTaxonomyRankVisibility, true),
+    taxonomyRankVisibility: parsedTaxonomyRankVisibility,
+    taxonomyCollapseRank: coerceEnum(source.taxonomyCollapseRank, ["species", ...TAXONOMY_RANKS] as const, "species"),
     taxonomyColorJitter: coerceFiniteNumber(source.taxonomyColorJitter, 1),
     branchThicknessScale: coerceFiniteNumber(source.branchThicknessScale, 1),
   };

@@ -8,12 +8,14 @@ interface OutputNode {
   branchLength: number;
   depth: number;
   children: number[];
+  sourceNode: number;
 }
 
 interface CollapseChunk {
   displayName: string;
   representativeTip: TaxonomyTipRanks;
   maxLeafDepth: number;
+  sourceNode: number;
 }
 
 type CollapsedDescriptor =
@@ -23,6 +25,24 @@ type CollapsedDescriptor =
 export interface TaxonomyCollapsedTreePayload {
   payload: WorkerTreePayload;
   taxonomyMap: TaxonomyMapPayload | null;
+  sourceNodeByNode: Int32Array;
+}
+
+function lowestCommonAncestor(tree: TreeModel, leftNode: number, rightNode: number): number {
+  const ancestors = new Set<number>();
+  let current = leftNode;
+  while (current >= 0 && !ancestors.has(current)) {
+    ancestors.add(current);
+    current = tree.buffers.parent[current];
+  }
+  current = rightNode;
+  while (current >= 0) {
+    if (ancestors.has(current)) {
+      return current;
+    }
+    current = tree.buffers.parent[current];
+  }
+  return tree.root;
 }
 
 function collectBufferChildren(firstChild: Int32Array, nextSibling: Int32Array, node: number): number[] {
@@ -121,6 +141,7 @@ function buildPayloadFromOutput(
   const nodeIntervalLower = new Float64Array(nodeCount);
   const nodeIntervalUpper = new Float64Array(nodeCount);
   const names = new Array<string>(nodeCount);
+  const sourceNodeByNode = new Int32Array(nodeCount);
   const leafNodesArray: number[] = [];
   let maxDepth = 0;
 
@@ -136,6 +157,7 @@ function buildPayloadFromOutput(
     branchLength[node] = current.branchLength;
     depth[node] = current.depth;
     names[node] = current.name;
+    sourceNodeByNode[node] = current.sourceNode;
     if (current.children.length > 0) {
       firstChild[node] = current.children[0];
       for (let index = 0; index < current.children.length - 1; index += 1) {
@@ -280,7 +302,7 @@ function buildCollapseChunks(
     }
   }
 
-  const rawChunks: Array<{ label: string; representativeTip: TaxonomyTipRanks; maxLeafDepth: number; nodes: number[] }> = [];
+  const rawChunks: Array<{ label: string; representativeTip: TaxonomyTipRanks; maxLeafDepth: number; nodes: number[]; sourceNode: number }> = [];
   let index = 0;
   while (index < orderedIncludedLeaves.length) {
     const node = orderedIncludedLeaves[index];
@@ -312,6 +334,7 @@ function buildCollapseChunks(
       representativeTip: tip,
       maxLeafDepth,
       nodes,
+      sourceNode: nodes.reduce((currentLca, currentNode) => lowestCommonAncestor(tree, currentLca, currentNode)),
     });
     index = endIndex;
   }
@@ -335,12 +358,36 @@ function buildCollapseChunks(
       displayName,
       representativeTip: chunk.representativeTip,
       maxLeafDepth: chunk.maxLeafDepth,
+      sourceNode: chunk.sourceNode,
     });
     for (let nodeIndex = 0; nodeIndex < chunk.nodes.length; nodeIndex += 1) {
       chunkIndexByNode.set(chunk.nodes[nodeIndex], chunkIndex);
     }
   }
   return { chunks, chunkIndexByNode };
+}
+
+function renumberDuplicateLeafNames(output: OutputNode[]): void {
+  const leafIndices: number[] = [];
+  const countByName = new Map<string, number>();
+  for (let index = 0; index < output.length; index += 1) {
+    if (output[index].children.length > 0) {
+      continue;
+    }
+    leafIndices.push(index);
+    countByName.set(output[index].name, (countByName.get(output[index].name) ?? 0) + 1);
+  }
+  const ordinalByName = new Map<string, number>();
+  for (let index = 0; index < leafIndices.length; index += 1) {
+    const leafIndex = leafIndices[index];
+    const name = output[leafIndex].name;
+    if ((countByName.get(name) ?? 0) <= 1) {
+      continue;
+    }
+    const ordinal = (ordinalByName.get(name) ?? 0) + 1;
+    ordinalByName.set(name, ordinal);
+    output[leafIndex].name = `${name}-${ordinal}`;
+  }
 }
 
 function mergeAdjacentChunkDescriptors(descriptors: CollapsedDescriptor[]): CollapsedDescriptor[] {
@@ -432,6 +479,7 @@ export function buildTaxonomyCollapsedTreePayload(
         branchLength: parentOutputNode < 0 ? 0 : Math.max(0, nodeDepth - parentOutputDepth),
         depth: nodeDepth,
         children: [],
+        sourceNode: chunk.sourceNode,
       });
       syntheticTipRanks.push({
         node: outputNode,
@@ -449,6 +497,7 @@ export function buildTaxonomyCollapsedTreePayload(
       branchLength: parentOutputNode < 0 ? 0 : Math.max(0, nodeDepth - parentOutputDepth),
       depth: nodeDepth,
       children: [],
+      sourceNode: descriptor.sourceNode,
     });
     for (let index = 0; index < descriptor.children.length; index += 1) {
       const childOutputNode = appendDescriptor(descriptor.children[index], outputNode, nodeDepth);
@@ -471,13 +520,16 @@ export function buildTaxonomyCollapsedTreePayload(
       branchLength: 0,
       depth: 0,
       children: [],
+      sourceNode: tree.root,
     });
     output[0].children.push(appendDescriptor(rootDescriptor, 0, 0));
   } else {
     appendDescriptor(rootDescriptor, -1, 0);
   }
 
+  renumberDuplicateLeafNames(output);
   const payload = buildPayloadFromOutput(tree, output);
+  const sourceNodeByNode = Int32Array.from(output, (node) => node.sourceNode);
   return {
     payload,
     taxonomyMap: {
@@ -487,5 +539,6 @@ export function buildTaxonomyCollapsedTreePayload(
       activeRanks: deriveActiveTaxonomyRanks(syntheticTipRanks.map((tip) => tip.ranks)),
       tipRanks: syntheticTipRanks,
     },
+    sourceNodeByNode,
   };
 }

@@ -2178,8 +2178,12 @@ export default function TreeCanvas({
   taxonomyColorJitter,
   useAutomaticTaxonomyRankVisibility,
   taxonomyRankVisibility,
+  taxonomyCollapseRank,
   taxonomyMap,
   taxonomyColorSourceMap,
+  sharedSubtreeSourceTree,
+  sharedSubtreeSourceTaxonomyMap,
+  sharedSubtreeSourceNodeByViewNode,
   metadataBranchColors,
   metadataBranchColorVersion,
   metadataLabels,
@@ -8668,8 +8672,11 @@ export default function TreeCanvas({
     if (typeof window === "undefined" || !tree) {
       return;
     }
+    const exportTree = sharedSubtreeSourceTree ?? tree;
+    const exportTaxonomyMap = sharedSubtreeSourceTaxonomyMap ?? taxonomyMap;
+    const exportNode = sharedSubtreeSourceNodeByViewNode?.[node] ?? node;
     const key = `big-tree-viewer:subtree:${crypto.randomUUID()}`;
-    const payload = buildSharedSubtreeStoragePayload(tree, node, taxonomyMap, taxonomyEnabled, {
+    const payload = buildSharedSubtreeStoragePayload(exportTree, exportNode, exportTaxonomyMap, taxonomyEnabled, {
       viewMode,
       order,
       zoomAxisMode,
@@ -8695,6 +8702,9 @@ export default function TreeCanvas({
       figureStyles,
       taxonomyEnabled,
       taxonomyBranchColoringEnabled,
+      useAutomaticTaxonomyRankVisibility,
+      taxonomyRankVisibility,
+      taxonomyCollapseRank,
       taxonomyColorJitter,
       branchThicknessScale,
     });
@@ -8732,13 +8742,19 @@ export default function TreeCanvas({
     showScaleZeroTick,
     showTimeStripes,
     taxonomyBranchColoringEnabled,
+    taxonomyCollapseRank,
     taxonomyColorJitter,
     taxonomyEnabled,
     taxonomyMap,
+    taxonomyRankVisibility,
+    sharedSubtreeSourceNodeByViewNode,
+    sharedSubtreeSourceTaxonomyMap,
+    sharedSubtreeSourceTree,
     timeStripeLineWeight,
     timeStripeStyle,
     tree,
     useAutoCircularCenterScaleAngle,
+    useAutomaticTaxonomyRankVisibility,
     viewMode,
     zoomAxisMode,
   ]);
@@ -9120,7 +9136,10 @@ export default function TreeCanvas({
         if (!tree) {
           return null;
         }
-        return buildSharedSubtreeStoragePayload(tree, node, taxonomyMap, taxonomyEnabled, {
+        const exportTree = sharedSubtreeSourceTree ?? tree;
+        const exportTaxonomyMap = sharedSubtreeSourceTaxonomyMap ?? taxonomyMap;
+        const exportNode = sharedSubtreeSourceNodeByViewNode?.[node] ?? node;
+        return buildSharedSubtreeStoragePayload(exportTree, exportNode, exportTaxonomyMap, taxonomyEnabled, {
           viewMode,
           order,
           zoomAxisMode,
@@ -9146,6 +9165,9 @@ export default function TreeCanvas({
           figureStyles,
           taxonomyEnabled,
           taxonomyBranchColoringEnabled,
+          useAutomaticTaxonomyRankVisibility,
+          taxonomyRankVisibility,
+          taxonomyCollapseRank,
           taxonomyColorJitter,
           branchThicknessScale,
         });
@@ -9189,13 +9211,19 @@ export default function TreeCanvas({
     setManualBranchColor,
     setManualSubtreeColor,
     taxonomyBranchColoringEnabled,
+    taxonomyCollapseRank,
     taxonomyColorJitter,
     taxonomyEnabled,
     taxonomyMap,
+    taxonomyRankVisibility,
     tree,
     timeStripeLineWeight,
     timeStripeStyle,
+    sharedSubtreeSourceNodeByViewNode,
+    sharedSubtreeSourceTaxonomyMap,
+    sharedSubtreeSourceTree,
     useAutoCircularCenterScaleAngle,
+    useAutomaticTaxonomyRankVisibility,
     viewMode,
     zoomAxisMode,
     zoomToSubtreeTarget,

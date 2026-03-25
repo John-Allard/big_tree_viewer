@@ -1,7 +1,7 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { FigureStyleSettings } from "../lib/figureStyles";
 import type { MetadataMarkerStyle } from "../lib/metadataColors";
-import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
+import type { TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
 
 export interface TreeCanvasProps {
@@ -27,8 +27,12 @@ export interface TreeCanvasProps {
   taxonomyColorJitter: number;
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
+  taxonomyCollapseRank: TaxonomyCollapseRank;
   taxonomyMap: TaxonomyMapPayload | null;
   taxonomyColorSourceMap?: TaxonomyMapPayload | null;
+  sharedSubtreeSourceTree?: TreeModel | null;
+  sharedSubtreeSourceTaxonomyMap?: TaxonomyMapPayload | null;
+  sharedSubtreeSourceNodeByViewNode?: Int32Array | null;
   metadataBranchColors: Array<string | null> | null;
   metadataBranchColorVersion: string;
   metadataLabels: Array<string | null> | null;
