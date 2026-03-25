@@ -886,6 +886,11 @@ function wrappedAngleWithinInterval(angle: number, start: number, end: number): 
   return normalizedAngle >= normalizedStart || normalizedAngle <= normalizedEnd;
 }
 
+function wrappedAnglesEqual(left: number, right: number, epsilon = 1e-6): boolean {
+  const delta = Math.abs(wrapPositive(left) - wrapPositive(right));
+  return delta <= epsilon || Math.abs(delta - (Math.PI * 2)) <= epsilon;
+}
+
 function isScreenPointVisible(x: number, y: number, width: number, height: number, margin = 12): boolean {
   return x >= -margin && x <= (width + margin) && y >= -margin && y <= (height + margin);
 }
@@ -5858,45 +5863,60 @@ export default function TreeCanvas({
                 renderedEndTheta += Math.PI * 2;
               }
               if (ringFullyVisible) {
-                return [{
-                  start: renderedStartTheta,
-                  end: renderedEndTheta,
-                  debugSuffix: `${segment.startIndex}:${segment.endIndex}:full`,
-                  screenPolygonPoints: undefined,
-                }];
+                return {
+                  segmentStartTheta: renderedStartTheta,
+                  segmentEndTheta: renderedEndTheta,
+                  visibleDrawSpans: [{
+                    start: renderedStartTheta,
+                    end: renderedEndTheta,
+                    debugSuffix: `${segment.startIndex}:${segment.endIndex}:full`,
+                    screenPolygonPoints: undefined,
+                  }],
+                };
               }
               if (useScreenSpaceRibbonGeometry) {
-                return sampleVisibleScreenSpaceCircularRibbonRuns(
-                  centerPoint.x,
-                  centerPoint.y,
-                  ringInnerPx,
-                  ringOuterPx,
-                  renderedStartTheta,
-                  renderedEndTheta,
-                  size.width,
-                  size.height,
-                  48,
-                ).map((visibleRun, visibleIndex) => ({
-                  start: visibleRun.startTheta,
-                  end: visibleRun.endTheta,
-                  debugSuffix: `${segment.startIndex}:${segment.endIndex}:screen-${visibleIndex}`,
-                  screenPolygonPoints: visibleRun.screenPolygonPoints,
-                }));
+                return {
+                  segmentStartTheta: renderedStartTheta,
+                  segmentEndTheta: renderedEndTheta,
+                  visibleDrawSpans: sampleVisibleScreenSpaceCircularRibbonRuns(
+                    centerPoint.x,
+                    centerPoint.y,
+                    ringInnerPx,
+                    ringOuterPx,
+                    renderedStartTheta,
+                    renderedEndTheta,
+                    size.width,
+                    size.height,
+                    48,
+                  ).map((visibleRun, visibleIndex) => ({
+                    start: visibleRun.startTheta,
+                    end: visibleRun.endTheta,
+                    debugSuffix: `${segment.startIndex}:${segment.endIndex}:screen-${visibleIndex}`,
+                    screenPolygonPoints: visibleRun.screenPolygonPoints,
+                  })),
+                };
               }
               const renderedWrappedStart = wrapPositive(renderedStartTheta);
               const renderedWrappedEnd = wrapPositive(renderedEndTheta);
-              return visibleTaxonomyLabelSpans(renderedWrappedStart, renderedWrappedEnd, ringVisibleSpans)
-                .slice()
-                .sort((left, right) => left.start - right.start)
-                .map((span, visibleIndex) => ({
-                  start: span.start,
-                  end: span.end,
-                  debugSuffix: `${segment.startIndex}:${segment.endIndex}:visible-${visibleIndex}`,
-                  screenPolygonPoints: undefined,
-                }));
+              return {
+                segmentStartTheta: renderedWrappedStart,
+                segmentEndTheta: renderedWrappedEnd,
+                visibleDrawSpans: visibleTaxonomyLabelSpans(renderedWrappedStart, renderedWrappedEnd, ringVisibleSpans)
+                  .slice()
+                  .sort((left, right) => left.start - right.start)
+                  .map((span, visibleIndex) => ({
+                    start: span.start,
+                    end: span.end,
+                    debugSuffix: `${segment.startIndex}:${segment.endIndex}:visible-${visibleIndex}`,
+                    screenPolygonPoints: undefined,
+                  })),
+              };
             });
             for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
-              const visibleDrawSpans = segmentVisibleDrawSpans[segmentIndex] ?? [];
+              const segmentDrawSpans = segmentVisibleDrawSpans[segmentIndex];
+              const visibleDrawSpans = segmentDrawSpans?.visibleDrawSpans ?? [];
+              const segmentStartTheta = segmentDrawSpans?.segmentStartTheta ?? 0;
+              const segmentEndTheta = segmentDrawSpans?.segmentEndTheta ?? 0;
               for (let visibleSpanIndex = 0; visibleSpanIndex < visibleDrawSpans.length; visibleSpanIndex += 1) {
                 const visibleDrawSpan = visibleDrawSpans[visibleSpanIndex];
                 const candidateSpanTheta = visibleDrawSpan.end >= visibleDrawSpan.start
@@ -5911,8 +5931,17 @@ export default function TreeCanvas({
                   ((angularGapPx / Math.max(lineRadiusPx, 1e-6)) * 0.5),
                   Math.max(0, candidateSpanTheta * 0.26),
                 );
-                const insetRenderedStart = visibleDrawSpan.start + gapTheta;
-                const insetRenderedEnd = visibleDrawSpan.end - gapTheta;
+                const spanStartsAtSegmentBoundary = wrappedAnglesEqual(visibleDrawSpan.start, segmentStartTheta);
+                const spanEndsAtSegmentBoundary = wrappedAnglesEqual(visibleDrawSpan.end, segmentEndTheta);
+                // Adjacent fills for a single ribbon can show a hairline seam when visibility clipping splits them
+                // at a shared boundary. Overlap only those clipped edges; preserve true taxon boundaries.
+                const clippedEdgeOverlapPx = Math.min(0.9, Math.max(0.35, ringWidthPx * 0.016));
+                const clippedEdgeOverlapTheta = Math.min(
+                  clippedEdgeOverlapPx / Math.max(lineRadiusPx, 1e-6),
+                  Math.max(0, candidateSpanTheta * 0.18),
+                );
+                const insetRenderedStart = visibleDrawSpan.start + (spanStartsAtSegmentBoundary ? gapTheta : -clippedEdgeOverlapTheta);
+                const insetRenderedEnd = visibleDrawSpan.end - (spanEndsAtSegmentBoundary ? gapTheta : -clippedEdgeOverlapTheta);
                 if (insetRenderedEnd <= insetRenderedStart) {
                   continue;
                 }
