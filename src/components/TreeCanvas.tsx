@@ -7949,6 +7949,7 @@ export default function TreeCanvas({
         return null;
       }
       const branchHoverEnabled = isBranchHoverEnabled(camera);
+      const tipDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       let hover: CanvasHoverInfo | null = null;
       const buildHoverInfo = (
         node: number,
@@ -8043,6 +8044,52 @@ export default function TreeCanvas({
         if (hover) {
           return hover;
         }
+
+        const tipScreenX = camera.translateX + (tipDepth * camera.scaleX);
+        if (localX <= tipScreenX - threshold) {
+          const candidates = cache.rectIndices[order].queryPoint(world.x, world.y, 1, 1);
+          bestDistance = Number.POSITIVE_INFINITY;
+          for (let index = 0; index < candidates.length; index += 1) {
+            const segment = candidates[index];
+            if (hiddenNodesRef.current?.[segment.node] || (segment.kind === "connector" && collapsedNodes.has(segment.node))) {
+              continue;
+            }
+            if (segment.kind === "stem" && tree.buffers.firstChild[segment.node] < 0) {
+              continue;
+            }
+            const start = worldToScreenRect(camera, segment.x1, segment.y1);
+            const end = worldToScreenRect(camera, segment.x2, segment.y2);
+            const visibleSpanPx = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+            if (visibleSpanPx < 1) {
+              continue;
+            }
+            const minScreenX = Math.min(start.x, end.x) - threshold;
+            const maxScreenX = Math.max(start.x, end.x) + threshold;
+            const minScreenY = Math.min(start.y, end.y) - threshold;
+            const maxScreenY = Math.max(start.y, end.y) + threshold;
+            if (localX < minScreenX || localX > maxScreenX || localY < minScreenY || localY > maxScreenY) {
+              continue;
+            }
+            const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              if (distance <= threshold) {
+                if (segment.kind === "connector") {
+                  const ownerNode = segment.node;
+                  const childNode = pickRectConnectorChild(children[ownerNode], layout.center, layout.center[ownerNode], world.y);
+                  if (childNode !== null) {
+                    hover = buildHoverInfo(childNode, "connector", localX, localY, segment, ownerNode);
+                  }
+                } else {
+                  hover = buildHoverInfo(segment.node, "stem", localX, localY);
+                }
+              }
+            }
+          }
+          if (hover) {
+            return hover;
+          }
+        }
       }
 
       if (camera.kind === "circular" && !branchHoverEnabled) {
@@ -8076,6 +8123,57 @@ export default function TreeCanvas({
         }
         if (hover) {
           return hover;
+        }
+
+        const tipRadiusPx = tipDepth * camera.scale;
+        const pointerRadiusPx = Math.hypot(localX - camera.translateX, localY - camera.translateY);
+        if (pointerRadiusPx <= tipRadiusPx - threshold) {
+          const radius = 6 / camera.scale;
+          const candidates = cache.circularIndices[order].query(world.x, world.y, radius, radius);
+          bestDistance = Number.POSITIVE_INFINITY;
+          for (let index = 0; index < candidates.length; index += 1) {
+            const segment = candidates[index];
+            if (hiddenNodesRef.current?.[segment.node] || (segment.kind === "connector" && collapsedNodes.has(segment.node))) {
+              continue;
+            }
+            if (segment.kind === "stem" && tree.buffers.firstChild[segment.node] < 0) {
+              continue;
+            }
+            const start = worldToScreenCircular(camera, segment.x1, segment.y1);
+            const end = worldToScreenCircular(camera, segment.x2, segment.y2);
+            const visibleSpanPx = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+            if (visibleSpanPx < 1) {
+              continue;
+            }
+            const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
+            if (distance < bestDistance && distance <= threshold) {
+              bestDistance = distance;
+              if (segment.kind === "connector") {
+                const ownerNode = segment.node;
+                const ownerTheta = thetaFor(layout.center, ownerNode, tree.leafCount);
+                const arcStart = thetaFor(layout.min, ownerNode, tree.leafCount);
+                const arcEnd = thetaFor(layout.max, ownerNode, tree.leafCount);
+                const arcLength = Math.max(0, arcEnd - arcStart);
+                const childNode = pickCircularConnectorChild(
+                  children[ownerNode],
+                  layout.center,
+                  hoverTheta,
+                  ownerTheta,
+                  tree.leafCount,
+                  arcStart,
+                  arcLength,
+                );
+                if (childNode !== null) {
+                  hover = buildHoverInfo(childNode, "connector", localX, localY, segment, ownerNode);
+                }
+              } else {
+                hover = buildHoverInfo(segment.node, "stem", localX, localY);
+              }
+            }
+          }
+          if (hover) {
+            return hover;
+          }
         }
       }
 
