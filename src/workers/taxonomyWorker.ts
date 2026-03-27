@@ -1,7 +1,11 @@
 /// <reference lib="webworker" />
 
 import { DecodeUTF8, Unzip, UnzipInflate } from "fflate";
-import { deriveActiveTaxonomyRanks } from "../lib/taxonomyActiveRanks";
+import {
+  addTaxonomyIndexEntry,
+  mapTipsWithContext,
+  normalizeTaxonomyName,
+} from "../lib/taxonomyNameResolver";
 import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
 type TaxonomyWorkerRequest =
@@ -15,15 +19,15 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-error"; message: string };
 
 const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
-const TAXONOMY_MAPPING_VERSION = 4;
+const TAXONOMY_MAPPING_VERSION = 5;
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };
 type ParsedTaxonomy = {
   nodes: Map<number, NodeInfo>;
   rankNames: Map<number, string>;
-  speciesIndex: Map<string, number>;
-  genusIndex: Map<string, number>;
+  speciesIndex: Map<string, number[]>;
+  genusIndex: Map<string, number[]>;
 };
 
 let parsedCache: ParsedTaxonomy | null = null;
@@ -34,29 +38,6 @@ function post(message: TaxonomyWorkerResponse, transfer?: Transferable[]): void 
     return;
   }
   self.postMessage(message);
-}
-
-function normalizeName(name: string): string {
-  return name.trim().toLowerCase().replaceAll("_", " ");
-}
-
-function candidateSpeciesNames(name: string): string[] {
-  const nm = normalizeName(name).replaceAll("|", " ").replaceAll(";", " ").replaceAll(",", " ");
-  const parts = nm.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {
-    return [];
-  }
-  const candidates = [parts.join(" "), parts.join("_")];
-  if (parts.length >= 2) {
-    const two = `${parts[0]} ${parts[1]}`;
-    candidates.push(two, two.replaceAll(" ", "_"));
-  }
-  return [...new Set(candidates)];
-}
-
-function extractGenus(name: string): string {
-  const parts = normalizeName(name).split(/\s+/).filter(Boolean);
-  return parts[0] ?? "";
 }
 
 function parseNodeLine(line: string, nodes: Map<number, NodeInfo>): void {
@@ -76,8 +57,8 @@ function parseScientificNameLine(
   line: string,
   nodes: Map<number, NodeInfo>,
   rankNames: Map<number, string>,
-  speciesIndex: Map<string, number>,
-  genusIndex: Map<string, number>,
+  speciesIndex: Map<string, number[]>,
+  genusIndex: Map<string, number[]>,
 ): void {
   const parts = line.split("|").map((part) => part.trim());
   if (parts.length < 4 || parts[3] !== "scientific name") {
@@ -90,13 +71,13 @@ function parseScientificNameLine(
   const scientificName = parts[1];
   const rank = nodes.get(taxId)?.rank ?? "";
   if (rank === "species") {
-    const normalized = normalizeName(scientificName);
-    speciesIndex.set(normalized, taxId);
-    speciesIndex.set(normalized.replaceAll(" ", "_"), taxId);
+    const normalized = normalizeTaxonomyName(scientificName);
+    addTaxonomyIndexEntry(speciesIndex, normalized, taxId);
+    addTaxonomyIndexEntry(speciesIndex, normalized.replaceAll(" ", "_"), taxId);
   } else if (rank === "genus") {
-    const normalized = normalizeName(scientificName);
-    genusIndex.set(normalized, taxId);
-    genusIndex.set(normalized.replaceAll(" ", "_"), taxId);
+    const normalized = normalizeTaxonomyName(scientificName);
+    addTaxonomyIndexEntry(genusIndex, normalized, taxId);
+    addTaxonomyIndexEntry(genusIndex, normalized.replaceAll(" ", "_"), taxId);
   }
   if ((TARGET_RANKS as string[]).includes(rank)) {
     rankNames.set(taxId, scientificName);
@@ -201,8 +182,8 @@ async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy
   const archiveBlob = archive instanceof Blob ? archive : new Blob([archive], { type: "application/zip" });
   const nodes = new Map<number, NodeInfo>();
   const rankNames = new Map<number, string>();
-  const speciesIndex = new Map<string, number>();
-  const genusIndex = new Map<string, number>();
+  const speciesIndex = new Map<string, number[]>();
+  const genusIndex = new Map<string, number[]>();
 
   await parseZipFileLines(archiveBlob, "nodes.dmp", "Parsing taxonomy nodes...", (line) => {
     parseNodeLine(line, nodes);
@@ -211,85 +192,13 @@ async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy
     parseScientificNameLine(line, nodes, rankNames, speciesIndex, genusIndex);
   });
 
-  parsedCache = { nodes, rankNames, speciesIndex, genusIndex };
-  return parsedCache;
-}
-
-function ancestorAtRank(taxId: number, rank: TaxonomyRank, taxonomy: ParsedTaxonomy, memo: Map<string, number | null>): number | null {
-  const key = `${taxId}:${rank}`;
-  if (memo.has(key)) {
-    return memo.get(key) ?? null;
-  }
-  let current = taxId;
-  const seen = new Set<number>();
-  while (current > 0 && !seen.has(current)) {
-    seen.add(current);
-    const node = taxonomy.nodes.get(current);
-    if (!node) {
-      break;
-    }
-    if (node.rank === rank) {
-      memo.set(key, current);
-      return current;
-    }
-    current = node.parentId;
-  }
-  memo.set(key, null);
-  return null;
+  const parsed = { nodes, rankNames, speciesIndex, genusIndex };
+  parsedCache = parsed;
+  return parsed;
 }
 
 function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTaxonomy): TaxonomyMapPayload {
-  const ancestorMemo = new Map<string, number | null>();
-  const tipRanks: TaxonomyMapPayload["tipRanks"] = [];
-  let mappedCount = 0;
-  for (let index = 0; index < tips.length; index += 1) {
-    const tip = tips[index];
-    let taxId: number | undefined;
-    const speciesCandidates = candidateSpeciesNames(tip.name);
-    for (let candidateIndex = 0; candidateIndex < speciesCandidates.length; candidateIndex += 1) {
-      const found = taxonomy.speciesIndex.get(speciesCandidates[candidateIndex]);
-      if (found) {
-        taxId = found;
-        break;
-      }
-    }
-    if (!taxId) {
-      taxId = taxonomy.genusIndex.get(extractGenus(tip.name));
-    }
-    if (!taxId) {
-      continue;
-    }
-    const ranks: Partial<Record<TaxonomyRank, string>> = {};
-    const taxIds: Partial<Record<TaxonomyRank, number>> = {};
-    let anyRank = false;
-    for (let rankIndex = 0; rankIndex < TARGET_RANKS.length; rankIndex += 1) {
-      const rank = TARGET_RANKS[rankIndex];
-      const ancestor = ancestorAtRank(taxId, rank, taxonomy, ancestorMemo);
-      if (!ancestor) {
-        continue;
-      }
-      const label = taxonomy.rankNames.get(ancestor);
-      if (!label) {
-        continue;
-      }
-      ranks[rank] = label;
-      taxIds[rank] = ancestor;
-      anyRank = true;
-    }
-    if (!anyRank) {
-      continue;
-    }
-    mappedCount += 1;
-    tipRanks.push({ node: tip.node, ranks, taxIds });
-  }
-  const activeRanks = deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
-  return {
-    version: TAXONOMY_MAPPING_VERSION,
-    mappedCount,
-    totalTips: tips.length,
-    activeRanks,
-    tipRanks,
-  };
+  return mapTipsWithContext(tips, taxonomy, TARGET_RANKS, TAXONOMY_MAPPING_VERSION);
 }
 
 self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerRequest>) => {

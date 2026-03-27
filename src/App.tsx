@@ -1559,10 +1559,12 @@ export default function App() {
       if (!archive) {
         throw new Error("Taxonomy cache not found. Download the taxonomy first.");
       }
-      const tips = Array.from(tree.leafNodes, (node) => ({
-        node,
-        name: tree.names[node] || "",
-      }));
+      const tips = Array.from(tree.leafNodes)
+        .sort((left, right) => tree.layouts.input.center[left] - tree.layouts.input.center[right])
+        .map((node) => ({
+          node,
+          name: tree.names[node] || "",
+        }));
       const response = await runTaxonomyWorker({
         type: "map-taxonomy",
         archive,
