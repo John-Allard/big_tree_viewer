@@ -129,8 +129,6 @@ export interface ScreenLabel {
   firstNode?: number;
   lastNode?: number;
   taxonomyTipCount?: number;
-  textWidthPx?: number;
-  lockViewportY?: boolean;
   clipArc?: {
     innerRadiusPx: number;
     outerRadiusPx: number;

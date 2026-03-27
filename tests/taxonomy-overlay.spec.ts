@@ -61,7 +61,7 @@ test("rectangular fit-view taxonomy keeps cached colored connectors visible", as
     taxonomyConnectorSegmentCount?: number;
   });
 
-  expect(rectDebug.branchRenderMode).toBe("taxonomy-cached-paths");
+  expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(rectDebug.branchRenderMode ?? "");
   expect((rectDebug.taxonomyVisibleRanks ?? []).length).toBeGreaterThanOrEqual(1);
   expect((rectDebug.taxonomyVisibleRanks ?? []).length).toBeLessThanOrEqual(2);
   expect(Number(rectDebug.taxonomyConnectorSegmentCount ?? 0)).toBeGreaterThan(0);
@@ -88,7 +88,7 @@ test("real mapped rectangular taxonomy adds order only after class is already vi
     taxonomyVisibleRanks?: string[];
   });
 
-  expect(rectDebug.branchRenderMode).toBe("taxonomy-cached-paths");
+  expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(rectDebug.branchRenderMode ?? "");
   expect(rectDebug.taxonomyVisibleRanks ?? []).toContain("class");
   expect(rectDebug.taxonomyVisibleRanks ?? []).not.toContain("order");
 
@@ -154,7 +154,7 @@ test("real mapped rectangular max zoom-out keeps coarse taxonomy overlays and co
   }));
 
   const coloredBranchCount = rectState.branchColors.filter((color: string) => color !== "#0f172a").length;
-  expect(rectState.debug?.branchRenderMode).toBe("taxonomy-cached-paths");
+  expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(rectState.debug?.branchRenderMode ?? "");
   expect(rectState.debug?.taxonomyVisibleRanks ?? []).toContain("class");
   expect(coloredBranchCount).toBeGreaterThan(0);
 });
@@ -224,6 +224,84 @@ test("rectangular taxonomy bands use outer-weighted widths and in-band vertical 
   expect(Number(rectDebug.taxonomyPlacedLabelCount ?? 0)).toBeGreaterThan(0);
   for (const label of rectDebug.taxonomyPlacedLabels ?? []) {
     expect(Math.abs(Math.abs(Number(label.rotation ?? 0)) - (Math.PI * 0.5))).toBeLessThan(0.001);
+  }
+});
+
+test("rectangular taxonomy labels stay centered in their ribbon bands after a fit-view pan", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 80) {
+      throw new Error("Leaf nodes unavailable for rectangular taxonomy pan label test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        phylum: index < 40 ? "Chordata" : "Arthropoda",
+        class: index < 20 ? "Mammalia" : index < 40 ? "Aves" : index < 60 ? "Insecta" : "Arachnida",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 3,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class", "phylum"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleY: Math.max(Number(camera.scaleY) * 10, 8),
+      translateY: Number(camera.translateY) + 120,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyVisibleRanks?: string[];
+      taxonomyPlacedLabelCount?: number;
+    } | undefined;
+    return Array.isArray(debug?.taxonomyVisibleRanks)
+      && debug.taxonomyVisibleRanks.length >= 2
+      && Number(debug.taxonomyPlacedLabelCount ?? 0) > 0;
+  });
+
+  const rectDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+    taxonomyVisibleRanks?: string[];
+    taxonomyBandXs?: number[];
+    taxonomyBandWidthsPx?: number[];
+    taxonomyPlacedLabels?: Array<{ rank?: string | null; x?: number | null }>;
+  });
+
+  const ranks = rectDebug.taxonomyVisibleRanks ?? [];
+  const bandXs = rectDebug.taxonomyBandXs ?? [];
+  const bandWidths = rectDebug.taxonomyBandWidthsPx ?? [];
+  const bandIndexByRank = new Map(ranks.map((rank, index) => [rank, index]));
+
+  expect(ranks.length).toBeGreaterThanOrEqual(2);
+  expect(bandXs.length).toBeGreaterThanOrEqual(ranks.length);
+  expect(bandWidths.length).toBeGreaterThanOrEqual(ranks.length);
+
+  for (const label of rectDebug.taxonomyPlacedLabels ?? []) {
+    const rank = label.rank ?? null;
+    if (!rank || !bandIndexByRank.has(rank)) {
+      continue;
+    }
+    const bandIndex = bandIndexByRank.get(rank) ?? -1;
+    const x = Number(label.x ?? Number.NaN);
+    const bandX = Number(bandXs[bandIndex] ?? Number.NaN);
+    const bandWidth = Number(bandWidths[bandIndex] ?? Number.NaN);
+    expect(Number.isFinite(x)).toBe(true);
+    expect(Number.isFinite(bandX)).toBe(true);
+    expect(Number.isFinite(bandWidth)).toBe(true);
+    expect(x).toBeGreaterThanOrEqual(bandX);
+    expect(x).toBeLessThanOrEqual(bandX + bandWidth);
   }
 });
 

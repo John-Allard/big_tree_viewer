@@ -30,6 +30,8 @@ const PAN_BROAD_TAXONOMY_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_
 const PAN_BROAD_FRAME_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_BROAD_FRAME_P95_MAX_MS", 36);
 const PAN_PARTIAL_DRAW_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_PARTIAL_DRAW_P95_MAX_MS", 24);
 const PAN_PARTIAL_FRAME_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_PAN_PARTIAL_FRAME_P95_MAX_MS", 45);
+const RECT_PAN_DRAW_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_RECT_PAN_DRAW_P95_MAX_MS", 5);
+const RECT_PAN_TAXONOMY_P95_MAX_MS = envNumber("BIG_TREE_VIEWER_PERF_RECT_PAN_TAXONOMY_P95_MAX_MS", 2);
 
 async function settleFrames(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -312,6 +314,49 @@ async function runCircularPanBenchmark(
       throw new Error("Circular camera unavailable.");
     }
     return { x: Number(camera.translateX), y: Number(camera.translateY) };
+  });
+  await page.mouse.down();
+  await page.mouse.move(center.x + dragDx, center.y + dragDy, { steps });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+
+  return page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.stopPanBenchmark?.() as {
+    branchRenderModes?: string[];
+    drawTotalMsP95?: number;
+    branchBaseMsP95?: number;
+    taxonomyOverlayMsP95?: number;
+    frameDeltaMsP95?: number;
+  } | null);
+}
+
+async function runRectPanBenchmark(
+  page: Page,
+  label: string,
+  dragDx: number,
+  dragDy: number,
+  steps: number,
+): Promise<{
+  branchRenderModes?: string[];
+  drawTotalMsP95?: number;
+  branchBaseMsP95?: number;
+  taxonomyOverlayMsP95?: number;
+  frameDeltaMsP95?: number;
+} | null> {
+  await page.evaluate((benchmarkLabel) => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.startPanBenchmark(benchmarkLabel);
+  }, label);
+
+  await movePointerToCanvasCenter(page);
+  const center = await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Canvas unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + (rect.width * 0.5),
+      y: rect.top + (rect.height * 0.5),
+    };
   });
   await page.mouse.down();
   await page.mouse.move(center.x + dragDx, center.y + dragDy, { steps });
@@ -653,6 +698,22 @@ test.describe("local circular perf regression", () => {
     expect(firstSteps.order).not.toBeNull();
     expect(Number(firstSteps.class)).toBeGreaterThan(0);
     expect(Number(firstSteps.order)).toBeGreaterThan(Number(firstSteps.class));
+  });
+
+  test("210k rectangular full-view taxonomy pan stays interactive on cached overlays", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configurePerfRankRevealScene(page, "rectangular");
+
+    const benchmark = await runRectPanBenchmark(page, "local-perf-pan-rect", 0, 180, 24);
+
+    expect(benchmark).not.toBeNull();
+    expect((benchmark?.branchRenderModes ?? []).every((mode) => ["taxonomy-cached-bitmap", "taxonomy-cached-paths"].includes(mode))).toBeTruthy();
+    expect(Number(benchmark?.drawTotalMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(RECT_PAN_DRAW_P95_MAX_MS);
+    expect(Number(benchmark?.taxonomyOverlayMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(RECT_PAN_TAXONOMY_P95_MAX_MS);
   });
 
   test("deep 210k circular zoom keeps five taxonomy rings radially ordered", async ({ page }) => {
