@@ -1215,14 +1215,17 @@ function buildCircularTaxonomyPaths(
   layout: TreeModel["layouts"][LayoutOrder],
   orderedChildren: number[][],
   branchColors: string[],
-): Map<string, Path2D> {
-  const paths = new Map<string, Path2D>();
-  const getPath = (color: string): Path2D => {
+): Map<string, CircularBranchPathCache> {
+  const paths = new Map<string, CircularBranchPathCache>();
+  const getPathCache = (color: string): CircularBranchPathCache => {
     const existing = paths.get(color);
     if (existing) {
       return existing;
     }
-    const created = new Path2D();
+    const created = {
+      stems: new Path2D(),
+      connectors: new Path2D(),
+    };
     paths.set(color, created);
     return created;
   };
@@ -1236,9 +1239,9 @@ function buildCircularTaxonomyPaths(
     const theta = thetaFor(layout.center, node, tree.leafCount);
     const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
     const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
-    const path = getPath(color);
-    path.moveTo(startWorld.x, startWorld.y);
-    path.lineTo(endWorld.x, endWorld.y);
+    const pathCache = getPathCache(color);
+    pathCache.stems.moveTo(startWorld.x, startWorld.y);
+    pathCache.stems.lineTo(endWorld.x, endWorld.y);
   }
 
   for (let ownerNode = 0; ownerNode < tree.nodeCount; ownerNode += 1) {
@@ -1262,9 +1265,9 @@ function buildCircularTaxonomyPaths(
       if (!arcSpan) {
         continue;
       }
-      const path = getPath(color);
-      path.moveTo(Math.cos(arcSpan.start) * radius, Math.sin(arcSpan.start) * radius);
-      path.arc(0, 0, radius, arcSpan.start, arcSpan.end, false);
+      const pathCache = getPathCache(color);
+      pathCache.connectors.moveTo(Math.cos(arcSpan.start) * radius, Math.sin(arcSpan.start) * radius);
+      pathCache.connectors.arc(0, 0, radius, arcSpan.start, arcSpan.end, false);
     }
   }
 
@@ -1275,16 +1278,19 @@ function buildCircularBranchPath(
   tree: TreeModel,
   layout: TreeModel["layouts"][LayoutOrder],
   orderedChildren: number[][],
-): Path2D {
-  const path = new Path2D();
+): CircularBranchPathCache {
+  const path = {
+    stems: new Path2D(),
+    connectors: new Path2D(),
+  };
   for (let node = 0; node < tree.nodeCount; node += 1) {
     const parent = tree.buffers.parent[node];
     if (parent >= 0) {
       const theta = thetaFor(layout.center, node, tree.leafCount);
       const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
       const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
-      path.moveTo(startWorld.x, startWorld.y);
-      path.lineTo(endWorld.x, endWorld.y);
+      path.stems.moveTo(startWorld.x, startWorld.y);
+      path.stems.lineTo(endWorld.x, endWorld.y);
     }
     const ordered = orderedChildren[node];
     if (ordered.length < 2) {
@@ -1300,8 +1306,8 @@ function buildCircularBranchPath(
     const arcEnd = thetaFor(layout.max, node, tree.leafCount);
     const arcLength = Math.max(0, arcEnd - arcStart);
     const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-    path.moveTo(Math.cos(arcAngles.start) * radius, Math.sin(arcAngles.start) * radius);
-    path.arc(0, 0, radius, arcAngles.start, arcAngles.end, false);
+    path.connectors.moveTo(Math.cos(arcAngles.start) * radius, Math.sin(arcAngles.start) * radius);
+    path.connectors.arc(0, 0, radius, arcAngles.start, arcAngles.end, false);
   }
   return path;
 }
@@ -1504,6 +1510,13 @@ type RectBranchPathCache = {
   stems: Path2D;
   connectors: Path2D;
 };
+
+type CircularBranchPathCache = {
+  stems: Path2D;
+  connectors: Path2D;
+};
+
+type CircularTaxonomyPathCache = Map<string, CircularBranchPathCache>;
 
 type RectTaxonomyPathCache = Map<string, RectBranchPathCache>;
 
@@ -2234,9 +2247,9 @@ export default function TreeCanvas({
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
   const taxonomyBranchColorsCacheRef = useRef<Map<string, string[]>>(new Map());
   const effectiveBranchColorsCacheRef = useRef<Map<string, string[]>>(new Map());
-  const circularTaxonomyPathCacheRef = useRef<Map<string, Map<string, Path2D>>>(new Map());
+  const circularTaxonomyPathCacheRef = useRef<Map<string, CircularTaxonomyPathCache>>(new Map());
   const rectTaxonomyPathCacheRef = useRef<Map<string, RectTaxonomyPathCache>>(new Map());
-  const circularBasePathCacheRef = useRef<Map<LayoutOrder, Path2D>>(new Map());
+  const circularBasePathCacheRef = useRef<Map<LayoutOrder, CircularBranchPathCache>>(new Map());
   const rectBasePathCacheRef = useRef<Map<LayoutOrder, RectBranchPathCache>>(new Map());
   const circularTaxonomyBitmapCacheRef = useRef<CircularTaxonomyBitmapCache | null>(null);
   const circularTaxonomyOverlayLayoutCacheRef = useRef<CircularTaxonomyOverlayLayoutCache | null>(null);
@@ -3113,7 +3126,7 @@ export default function TreeCanvas({
     layout: TreeModel["layouts"][LayoutOrder],
     cacheKey: string,
     branchColors: string[] | null,
-  ): Map<string, Path2D> | null => {
+  ): CircularTaxonomyPathCache | null => {
     if (!tree || !cache || !branchColors || !cacheKey) {
       return null;
     }
@@ -3130,7 +3143,7 @@ export default function TreeCanvas({
   const getCircularBasePath = useCallback((
     orderKey: LayoutOrder,
     layout: TreeModel["layouts"][LayoutOrder],
-  ): Path2D | null => {
+  ): CircularBranchPathCache | null => {
     if (!tree || !cache) {
       return null;
     }
@@ -3181,7 +3194,7 @@ export default function TreeCanvas({
   const getCircularTaxonomyBitmapCache = useCallback((
     orderKey: LayoutOrder,
     branchColorKey: string,
-    paths: Map<string, Path2D>,
+    paths: CircularTaxonomyPathCache,
     camera: CircularCamera,
   ): CircularTaxonomyBitmapCache | null => {
     if (typeof document === "undefined" || !tree) {
@@ -3228,11 +3241,12 @@ export default function TreeCanvas({
     ctx.scale(camera.scale, camera.scale);
     ctx.rotate(camera.rotation);
     ctx.lineCap = "butt";
-    paths.forEach((path, color) => {
+    paths.forEach((pathCache, color) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scale, 1e-6);
       ctx.globalAlpha = 0.95;
-      ctx.stroke(path);
+      ctx.stroke(pathCache.connectors);
+      ctx.stroke(pathCache.stems);
     });
     ctx.globalAlpha = 1;
     const built = {
@@ -5197,11 +5211,12 @@ export default function TreeCanvas({
         ctx.scale(camera.scale, camera.scale);
         ctx.rotate(rotationAngle);
         ctx.lineCap = "butt";
-        cachedCircularTaxonomyPaths.forEach((path, color) => {
+        cachedCircularTaxonomyPaths.forEach((pathCache, color) => {
           ctx.strokeStyle = color;
           ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scale, 1e-6);
           ctx.globalAlpha = 0.95;
-          ctx.stroke(path);
+          ctx.stroke(pathCache.connectors);
+          ctx.stroke(pathCache.stems);
         });
         ctx.globalAlpha = 1;
         ctx.restore();
@@ -5213,12 +5228,14 @@ export default function TreeCanvas({
         ctx.strokeStyle = BRANCH_COLOR;
         ctx.lineWidth = branchStrokeScale / Math.max(camera.scale, 1e-6);
         ctx.lineCap = "butt";
-        ctx.stroke(cachedCircularBasePath);
+        ctx.stroke(cachedCircularBasePath.connectors);
+        ctx.stroke(cachedCircularBasePath.stems);
         ctx.restore();
       } else if (!useColoredBranchRendering) {
         ctx.strokeStyle = BRANCH_COLOR;
         ctx.lineWidth = branchStrokeScale;
-        ctx.beginPath();
+        const connectorPath = new Path2D();
+        const stemPath = new Path2D();
         if (visibleCircularSegments) {
           const drawnConnectorNodes = new Set<number>();
           for (let index = 0; index < visibleCircularSegments.length; index += 1) {
@@ -5252,15 +5269,15 @@ export default function TreeCanvas({
               const arcEnd = thetaFor(layout.max, node, tree.leafCount);
               const arcLength = Math.max(0, arcEnd - arcStart);
               const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-              ctx.moveTo(
+              connectorPath.moveTo(
                 centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx,
                 centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx,
               );
-              ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
+              connectorPath.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
               pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, branchStrokeScale);
             } else {
-              ctx.moveTo(start.x, start.y);
-              ctx.lineTo(end.x, end.y);
+              stemPath.moveTo(start.x, start.y);
+              stemPath.lineTo(end.x, end.y);
               pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
             }
           }
@@ -5295,8 +5312,8 @@ export default function TreeCanvas({
               }
               circularConnectorKeys?.add(key);
             }
-            ctx.moveTo(startX, startY);
-            ctx.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
+            connectorPath.moveTo(startX, startY);
+            connectorPath.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
             pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, branchStrokeScale);
           }
           for (let node = 0; node < tree.nodeCount; node += 1) {
@@ -5322,12 +5339,14 @@ export default function TreeCanvas({
               }
               circularStemKeys?.add(key);
             }
-            ctx.moveTo(start.x, start.y);
-            ctx.lineTo(end.x, end.y);
+            stemPath.moveTo(start.x, start.y);
+            stemPath.lineTo(end.x, end.y);
             pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
           }
         }
-        ctx.stroke();
+        ctx.lineCap = "butt";
+        ctx.stroke(connectorPath);
+        ctx.stroke(stemPath);
       } else {
         const colorStemPaths = new Map<string, Array<[number, number, number, number]>>();
         const colorArcPaths = new Map<string, Array<{ radiusPx: number; start: number; end: number }>>();
@@ -5434,6 +5453,7 @@ export default function TreeCanvas({
           }
           ctx.strokeStyle = color;
           ctx.lineWidth = 1.2 * branchStrokeScale;
+          ctx.lineCap = "butt";
           ctx.globalAlpha = 0.95;
           ctx.stroke();
         });
@@ -5446,6 +5466,7 @@ export default function TreeCanvas({
           }
           ctx.strokeStyle = color;
           ctx.lineWidth = 1.2 * branchStrokeScale;
+          ctx.lineCap = "butt";
           ctx.globalAlpha = 0.95;
           ctx.stroke();
         });

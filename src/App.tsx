@@ -545,20 +545,15 @@ function buildTreeModel(payload: WorkerTreePayload): TreeModel {
 function filterTaxonomyRanksForCollapse(
   taxonomyMap: TaxonomyMapPayload,
   collapseRank: TaxonomyRank,
-  highestCollapsibleRank: TaxonomyRank | null,
 ): TaxonomyRank[] {
   const activeRanks = new Set<TaxonomyRank>(taxonomyMap.activeRanks);
-  const keepCollapsedRank = collapseRank === highestCollapsibleRank;
-  if (keepCollapsedRank) {
-    activeRanks.add(collapseRank);
-  }
   const collapseIndex = TAXONOMY_RANKS.indexOf(collapseRank);
   return TAXONOMY_RANKS.filter((rank, rankIndex) => {
     if (!activeRanks.has(rank)) {
       return false;
     }
     if (rank === collapseRank) {
-      return keepCollapsedRank;
+      return false;
     }
     return rankIndex < collapseIndex;
   });
@@ -675,7 +670,6 @@ export default function App() {
     () => taxonomyMap ? deriveCollapsibleTaxonomyRanks(taxonomyMap.tipRanks.map((tip) => tip.ranks)) : [],
     [taxonomyMap],
   );
-  const highestCollapsibleTaxonomyRank = collapsibleTaxonomyRanks[collapsibleTaxonomyRanks.length - 1] ?? null;
   const taxonomyCollapseActiveRank = useMemo<TaxonomyRank | null>(() => {
     if (!taxonomyMap || taxonomyCollapseRank === "species") {
       return null;
@@ -697,12 +691,11 @@ export default function App() {
         activeRanks: filterTaxonomyRanksForCollapse(
           collapsedPayload.taxonomyMap,
           taxonomyCollapseActiveRank,
-          highestCollapsibleTaxonomyRank,
         ),
       },
       sourceNodeByNode: collapsedPayload.sourceNodeByNode,
     };
-  }, [highestCollapsibleTaxonomyRank, order, taxonomyCollapseActiveRank, taxonomyMap, tree]);
+  }, [order, taxonomyCollapseActiveRank, taxonomyMap, tree]);
   const viewTree = collapsedTaxonomyView?.tree ?? tree;
   const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
   const taxonomyCollapseIsSynthetic = collapsedTaxonomyView !== null;

@@ -2633,6 +2633,8 @@ test("collapsed subtree sharing preserves collapse state and full taxonomy mappi
   expect(popupState.taxonomyRankVisibility.family).toBe(true);
   expect(popupState.taxonomyRankVisibility.genus).toBe(false);
   expect(popupState.hasGenusRanks).toBe(true);
+  expect(popupState.taxonomyActiveRanks).toHaveLength(0);
+  expect(popupState.taxonomyActiveRanks).not.toContain("order");
   expect(popupState.leafNames.some((name) => name === "Rodentia" || name.startsWith("Rodentia-"))).toBe(true);
   expect(popupState.leafNames.some((name) => name === "Carnivora" || name.startsWith("Carnivora-"))).toBe(true);
   await popup.close();
