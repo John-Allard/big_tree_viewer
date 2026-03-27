@@ -5,6 +5,7 @@ import {
   addTaxonomyIndexEntry,
   mapTipsWithContext,
   normalizeTaxonomyName,
+  TAXONOMY_SPECIES_INDEX_NAME_CLASSES,
 } from "../lib/taxonomyNameResolver";
 import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
@@ -19,7 +20,7 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-error"; message: string };
 
 const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
-const TAXONOMY_MAPPING_VERSION = 5;
+const TAXONOMY_MAPPING_VERSION = 6;
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };
@@ -53,7 +54,7 @@ function parseNodeLine(line: string, nodes: Map<number, NodeInfo>): void {
   nodes.set(taxId, { parentId, rank: parts[2] });
 }
 
-function parseScientificNameLine(
+function parseTaxonomyNameLine(
   line: string,
   nodes: Map<number, NodeInfo>,
   rankNames: Map<number, string>,
@@ -61,7 +62,7 @@ function parseScientificNameLine(
   genusIndex: Map<string, number[]>,
 ): void {
   const parts = line.split("|").map((part) => part.trim());
-  if (parts.length < 4 || parts[3] !== "scientific name") {
+  if (parts.length < 4) {
     return;
   }
   const taxId = Number.parseInt(parts[0], 10);
@@ -69,17 +70,18 @@ function parseScientificNameLine(
     return;
   }
   const scientificName = parts[1];
+  const nameClass = parts[3];
   const rank = nodes.get(taxId)?.rank ?? "";
-  if (rank === "species") {
+  if (rank === "species" && TAXONOMY_SPECIES_INDEX_NAME_CLASSES.has(nameClass)) {
     const normalized = normalizeTaxonomyName(scientificName);
     addTaxonomyIndexEntry(speciesIndex, normalized, taxId);
     addTaxonomyIndexEntry(speciesIndex, normalized.replaceAll(" ", "_"), taxId);
-  } else if (rank === "genus") {
+  } else if (rank === "genus" && nameClass === "scientific name") {
     const normalized = normalizeTaxonomyName(scientificName);
     addTaxonomyIndexEntry(genusIndex, normalized, taxId);
     addTaxonomyIndexEntry(genusIndex, normalized.replaceAll(" ", "_"), taxId);
   }
-  if ((TARGET_RANKS as string[]).includes(rank)) {
+  if (nameClass === "scientific name" && (TARGET_RANKS as string[]).includes(rank)) {
     rankNames.set(taxId, scientificName);
   }
 }
@@ -189,7 +191,7 @@ async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy
     parseNodeLine(line, nodes);
   });
   await parseZipFileLines(archiveBlob, "names.dmp", "Parsing taxonomy names...", (line) => {
-    parseScientificNameLine(line, nodes, rankNames, speciesIndex, genusIndex);
+    parseTaxonomyNameLine(line, nodes, rankNames, speciesIndex, genusIndex);
   });
 
   const parsed = { nodes, rankNames, speciesIndex, genusIndex };

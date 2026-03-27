@@ -10,6 +10,11 @@ export type ParsedTaxonomyForMapping = {
   genusIndex: Map<string, number[]>;
 };
 
+export const TAXONOMY_SPECIES_INDEX_NAME_CLASSES = new Set<string>([
+  "scientific name",
+  "synonym",
+]);
+
 export type TipTaxonomyRequest = {
   node: number;
   name: string;
@@ -37,7 +42,12 @@ const CONTEXT_RANK_WEIGHTS: Array<[TaxonomyRank, number]> = [
 ];
 
 export function normalizeTaxonomyName(name: string): string {
-  return name.trim().toLowerCase().replaceAll("_", " ");
+  return name
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/[[\]()"']/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 export function addTaxonomyIndexEntry(index: Map<string, number[]>, name: string, taxId: number): void {

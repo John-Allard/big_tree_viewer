@@ -67,7 +67,7 @@ test("rectangular fit-view taxonomy keeps cached colored connectors visible", as
   expect(Number(rectDebug.taxonomyConnectorSegmentCount ?? 0)).toBeGreaterThan(0);
 });
 
-test("real mapped rectangular fit-view starts with class and order taxonomy visible", async ({ page }) => {
+test("real mapped rectangular taxonomy adds order only after class is already visible", async ({ page }) => {
   test.setTimeout(60000);
   await waitForViewer(page);
   await page.evaluate(async () => {
@@ -90,7 +90,35 @@ test("real mapped rectangular fit-view starts with class and order taxonomy visi
 
   expect(rectDebug.branchRenderMode).toBe("taxonomy-cached-paths");
   expect(rectDebug.taxonomyVisibleRanks ?? []).toContain("class");
-  expect(rectDebug.taxonomyVisibleRanks ?? []).toContain("order");
+  expect(rectDebug.taxonomyVisibleRanks ?? []).not.toContain("order");
+
+  let orderVisible = false;
+  for (let step = 0; step < 8; step += 1) {
+    const point = await page.evaluate(() => {
+      const canvas = document.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("Canvas unavailable.");
+      }
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + (rect.width * 0.5),
+        y: rect.top + (rect.height * 0.5),
+      };
+    });
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.wheel(0, -100);
+    await page.evaluate(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    orderVisible = await page.evaluate(() => {
+      const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined;
+      return Array.isArray(debug?.taxonomyVisibleRanks) && debug.taxonomyVisibleRanks.includes("order");
+    });
+    if (orderVisible) {
+      break;
+    }
+  }
+  expect(orderVisible).toBe(true);
 });
 
 test("real mapped rectangular max zoom-out keeps coarse taxonomy overlays and colored branches", async ({ page }) => {

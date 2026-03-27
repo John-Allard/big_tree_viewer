@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   addTaxonomyIndexEntry,
   mapTipsWithContext,
+  normalizeTaxonomyName,
   type ParsedTaxonomyForMapping,
   type TaxonomyNodeInfo,
 } from "../src/lib/taxonomyNameResolver";
@@ -85,4 +86,49 @@ test("context-aware taxonomy resolver leaves cross-domain name collisions unmapp
 
   expect(payload.mappedCount).toBe(0);
   expect(payload.tipRanks).toHaveLength(0);
+});
+
+test("species synonym matches win before a conflicting genus fallback", async () => {
+  const nodes = new Map<number, TaxonomyNodeInfo>();
+  const rankNames = new Map<number, string>();
+  const speciesIndex = new Map<string, number[]>();
+  const genusIndex = new Map<string, number[]>();
+
+  const addNode = (taxId: number, parentId: number, rank: string, name?: string): void => {
+    nodes.set(taxId, { parentId, rank });
+    if (name) {
+      rankNames.set(taxId, name);
+    }
+  };
+
+  addNode(1, 1, "no rank");
+  addNode(2, 1, "superkingdom", "Eukaryota");
+
+  addNode(10, 2, "phylum", "Ascomycota");
+  addNode(11, 10, "class", "Leotiomycetes");
+  addNode(12, 11, "order", "Helotiales");
+  addNode(13, 12, "family", "Sclerotiniaceae");
+  addNode(14, 13, "species");
+
+  addNode(20, 2, "phylum", "Basidiomycota");
+  addNode(21, 20, "class", "Agaricomycetes");
+  addNode(22, 21, "order", "Agaricales");
+  addNode(23, 22, "family", "Typhulaceae");
+  addNode(24, 23, "genus", "Sclerotium");
+
+  addTaxonomyIndexEntry(speciesIndex, normalizeTaxonomyName("[Sclerotium] perniciosum"), 14);
+  addTaxonomyIndexEntry(speciesIndex, normalizeTaxonomyName("Sclerotium perniciosum"), 14);
+  addTaxonomyIndexEntry(genusIndex, "sclerotium", 24);
+
+  const payload = mapTipsWithContext([
+    { node: 300, name: "Sclerotium perniciosum" },
+  ], { nodes, rankNames, speciesIndex, genusIndex }, TARGET_RANKS, 99);
+
+  expect(payload.mappedCount).toBe(1);
+  expect(payload.tipRanks).toHaveLength(1);
+  expect(payload.tipRanks[0]?.ranks.phylum).toBe("Ascomycota");
+  expect(payload.tipRanks[0]?.ranks.class).toBe("Leotiomycetes");
+  expect(payload.tipRanks[0]?.ranks.order).toBe("Helotiales");
+  expect(payload.tipRanks[0]?.ranks.family).toBe("Sclerotiniaceae");
+  expect(payload.tipRanks[0]?.ranks.genus).toBeUndefined();
 });

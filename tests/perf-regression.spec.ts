@@ -174,6 +174,109 @@ async function configureBroadSyntheticCircularPerfScene(page: Page): Promise<{ t
   return target;
 }
 
+async function configurePerfRankRevealScene(page: Page, viewMode: "rectangular" | "circular"): Promise<void> {
+  await page.evaluate(async (mode) => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const leafNodes = internal?.leafNodes ?? [];
+    if (!app || leafNodes.length === 0) {
+      throw new Error("Perf rank reveal scene unavailable.");
+    }
+    const leafCount = leafNodes.length;
+    const phylumCount = 5;
+    const classesPerPhylum = 4;
+    const ordersPerClass = 3;
+    const tipRanks = leafNodes.map((node, index) => {
+      const phylumIndex = Math.min(phylumCount - 1, Math.floor((index / leafCount) * phylumCount));
+      const withinPhylum = ((index / leafCount) * phylumCount) - phylumIndex;
+      const classIndex = Math.min(classesPerPhylum - 1, Math.floor(withinPhylum * classesPerPhylum));
+      const withinClass = (withinPhylum * classesPerPhylum) - classIndex;
+      const orderIndex = Math.min(ordersPerClass - 1, Math.floor(withinClass * ordersPerClass));
+      return {
+        node,
+        ranks: {
+          order: `Order ${phylumIndex}-${classIndex}-${orderIndex}`,
+          class: `Class ${phylumIndex}-${classIndex}`,
+          phylum: `Phylum ${phylumIndex}`,
+        },
+      };
+    });
+    app.clearTaxonomy();
+    app.setTaxonomyMapForTest({
+      mappedCount: tipRanks.length,
+      totalTips: tipRanks.length,
+      activeRanks: ["order", "class", "phylum"],
+      tipRanks,
+    });
+    app.setShowGenusLabels(false);
+    app.setViewMode(mode);
+    app.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  }, viewMode);
+  await page.waitForFunction((mode) => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.viewMode === mode
+      && Boolean(state?.taxonomyEnabled)
+      && Number(state?.taxonomyMappedCount ?? 0) > 200000;
+  }, viewMode);
+  if (viewMode === "circular") {
+    await waitForCircularTaxonomySnapshot(page);
+    return;
+  }
+  await settleFrames(page);
+}
+
+async function movePointerToCanvasCenter(page: Page): Promise<void> {
+  const point = await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Canvas unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + (rect.width * 0.5),
+      y: rect.top + (rect.height * 0.5),
+    };
+  });
+  await page.mouse.move(point.x, point.y);
+}
+
+async function firstZoomStepsWithVisibleRanks(
+  page: Page,
+  viewMode: "rectangular" | "circular",
+  ranks: string[],
+  maxSteps: number,
+): Promise<Record<string, number | null>> {
+  const firstSteps = Object.fromEntries(ranks.map((rank) => [rank, null])) as Record<string, number | null>;
+  for (let step = 0; step <= maxSteps; step += 1) {
+    const visibleRanks = await page.evaluate((mode) => {
+      const debug = mode === "rectangular"
+        ? window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect
+        : window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular;
+      return Array.isArray(debug?.taxonomyVisibleRanks) ? debug.taxonomyVisibleRanks : [];
+    }, viewMode);
+    for (const rank of ranks) {
+      if (firstSteps[rank] === null && visibleRanks.includes(rank)) {
+        firstSteps[rank] = step;
+      }
+    }
+    if (ranks.every((rank) => firstSteps[rank] !== null)) {
+      return firstSteps;
+    }
+    if (step === maxSteps) {
+      break;
+    }
+    if (viewMode === "circular") {
+      await movePointerToCircularCenter(page);
+    } else {
+      await movePointerToCanvasCenter(page);
+    }
+    await page.mouse.wheel(0, -100);
+    await settleFrames(page);
+  }
+  return firstSteps;
+}
+
 async function movePointerToCircularCenter(page: Page): Promise<void> {
   const center = await page.evaluate(() => {
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
@@ -518,6 +621,38 @@ test.describe("local circular perf regression", () => {
     expect(Number(finalSnapshot.timing?.circularVisibilityPrepMs ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(
       ZOOM_FINAL_VISIBILITY_MAX_MS,
     );
+  });
+
+  test("210k rectangular taxonomy rank reveal adds class before order", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configurePerfRankRevealScene(page, "rectangular");
+
+    const firstSteps = await firstZoomStepsWithVisibleRanks(page, "rectangular", ["class", "order"], 24);
+
+    expect(firstSteps.class).not.toBeNull();
+    expect(firstSteps.order).not.toBeNull();
+    expect(Number(firstSteps.class)).toBeGreaterThan(0);
+    expect(Number(firstSteps.order)).toBeGreaterThan(Number(firstSteps.class));
+  });
+
+  test("210k circular taxonomy rank reveal adds class before order", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configurePerfRankRevealScene(page, "circular");
+
+    const firstSteps = await firstZoomStepsWithVisibleRanks(page, "circular", ["class", "order"], 24);
+
+    expect(firstSteps.class).not.toBeNull();
+    expect(firstSteps.order).not.toBeNull();
+    expect(Number(firstSteps.class)).toBeGreaterThan(0);
+    expect(Number(firstSteps.order)).toBeGreaterThan(Number(firstSteps.class));
   });
 
   test("deep 210k circular zoom keeps five taxonomy rings radially ordered", async ({ page }) => {

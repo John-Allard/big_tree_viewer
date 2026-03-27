@@ -7,7 +7,7 @@ const MAPPING_STORE_NAME = "mappings";
 const SUBTREE_STORE_NAME = "shared-subtrees";
 const ARCHIVE_KEY = "ncbi-taxdmp-zip";
 const LATEST_MAPPING_KEY = "latest-tree-mapping";
-const TAXONOMY_MAPPING_CACHE_VERSION = 3;
+const TAXONOMY_MAPPING_CACHE_VERSION = 4;
 
 interface CachedTaxonomyMappingRecord {
   version: number;

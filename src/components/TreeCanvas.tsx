@@ -229,8 +229,8 @@ const TAXONOMY_LAYER_THRESHOLDS: Record<TaxonomyRank, number> = {
   superkingdom: 0,
   phylum: 0,
   class: 0.03,
-  order: 0.018,
-  family: 0.04,
+  order: 0.045,
+  family: 0.1,
   genus: 0.35,
 };
 
@@ -578,7 +578,7 @@ function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]):
   if (zoom < 0.035 && visible.length > 1) {
     return visible.slice(-1);
   }
-  if (zoom < 0.12 && visible.length > 2) {
+  if (zoom < 0.12 && visible.length > 3) {
     return visible.slice(-2);
   }
   return visible;
@@ -771,13 +771,13 @@ function translateCircularOverlayArc(arc: CircularOverlayArc, _dx: number, _dy: 
 }
 
 function translateScreenLabel(label: ScreenLabel, dx: number, dy: number): ScreenLabel {
-  if (dx === 0 && dy === 0) {
+  if (dx === 0 && (dy === 0 || label.lockViewportY)) {
     return label;
   }
   return {
     ...label,
     x: label.x + dx,
-    y: label.y + dy,
+    y: label.lockViewportY ? label.y : label.y + dy,
   };
 }
 
@@ -1504,6 +1504,21 @@ type CircularTaxonomyOverlayLayoutCache = {
   taxonomyCandidateDebug: Array<Record<string, unknown>>;
   taxonomyTipBandOuterRadiusPx: number;
   taxonomyFirstRingInnerRadiusPx: number | null;
+};
+
+type RectTaxonomyOverlayLayoutCache = {
+  tree: TreeModel;
+  order: LayoutOrder;
+  signature: string;
+  translateX: number;
+  translateY: number;
+  bandXs: number[];
+  bandWidthsPx: number[];
+  blocks: Array<{ x: number; y: number; width: number; height: number; color: string }>;
+  labels: ScreenLabel[];
+  renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }>;
+  placedKeys: string[];
+  taxonomyConnectorSegmentCount: number;
 };
 
 type RectBranchPathCache = {
@@ -2253,6 +2268,7 @@ export default function TreeCanvas({
   const rectBasePathCacheRef = useRef<Map<LayoutOrder, RectBranchPathCache>>(new Map());
   const circularTaxonomyBitmapCacheRef = useRef<CircularTaxonomyBitmapCache | null>(null);
   const circularTaxonomyOverlayLayoutCacheRef = useRef<CircularTaxonomyOverlayLayoutCache | null>(null);
+  const rectTaxonomyOverlayLayoutCacheRef = useRef<RectTaxonomyOverlayLayoutCache | null>(null);
   const canvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const hoverCanvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const detailedRenderDebugEnabledRef = useRef(
@@ -2532,6 +2548,7 @@ export default function TreeCanvas({
     rectBasePathCacheRef.current.clear();
     circularTaxonomyBitmapCacheRef.current = null;
     circularTaxonomyOverlayLayoutCacheRef.current = null;
+    rectTaxonomyOverlayLayoutCacheRef.current = null;
   }, [branchThicknessScale, manualBranchColorVersion, metadataBranchColorVersion, metadataLabelVersion, metadataMarkerVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const labelFontFamilies = useMemo<Record<LabelStyleClass, string>>(() => ({
@@ -2939,13 +2956,7 @@ export default function TreeCanvas({
       return taxonomyActiveRanks;
     }
     const effectiveZoom = rectTaxonomyZoom(scaleY);
-    const visibleRanks = taxonomyVisibleRanksForZoom(effectiveZoom, taxonomyActiveRanks);
-    const hasClass = visibleRanks.includes("class");
-    const hasOrder = visibleRanks.includes("order");
-    if (!hasClass || hasOrder || effectiveZoom < TAXONOMY_LAYER_THRESHOLDS.order) {
-      return visibleRanks;
-    }
-    return taxonomyActiveRanks.filter((rank) => visibleRanks.includes(rank) || rank === "order");
+    return taxonomyVisibleRanksForZoom(effectiveZoom, taxonomyActiveRanks);
   }, [rectTaxonomyZoom, taxonomyActiveRanks, useAutomaticTaxonomyRankVisibility]);
 
   const rectClampPadding = useCallback((camera: RectCamera) => {
@@ -3971,13 +3982,175 @@ export default function TreeCanvas({
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
       const taxonomyOverlayStartTime = performance.now();
+      const rectTaxonomyOverlayFullyVisible = startLeafIndex === 0 && endLeafIndex >= orderedLeaves.length;
+      const visibleRectRankBlockCountsSignature = visibleTaxonomyRanks
+        .map((rank) => `${rank}:${taxonomyBlocks?.[order][rank]?.length ?? 0}`)
+        .join("|");
+      const rectTaxonomyOverlayLayoutSignature = taxonomyEnabled && taxonomyBlocks && visibleTaxonomyRanks.length > 0
+        && !exportCapture
+        && collapsedNodes.size === 0
+        && nearRectFit
+        && rectTaxonomyOverlayFullyVisible
+        ? [
+          order,
+          visibleTaxonomyRanks.join("|"),
+          size.width,
+          size.height,
+          camera.scaleX.toFixed(6),
+          camera.scaleY.toFixed(6),
+          visibleRectRankBlockCountsSignature,
+          taxonomyLabelSizeScale.toFixed(3),
+          taxonomyBandThicknessScale.toFixed(3),
+          labelFontFamilies.taxonomy,
+          activeSearchTaxonomyKey ?? "",
+          searchQuery.trim().toLowerCase(),
+        ].join(":")
+        : null;
+      const cachedRectTaxonomyOverlay = rectTaxonomyOverlayLayoutSignature
+        && rectTaxonomyOverlayLayoutCacheRef.current
+        && rectTaxonomyOverlayLayoutCacheRef.current.tree === tree
+        && rectTaxonomyOverlayLayoutCacheRef.current.order === order
+        && rectTaxonomyOverlayLayoutCacheRef.current.signature === rectTaxonomyOverlayLayoutSignature
+        ? rectTaxonomyOverlayLayoutCacheRef.current
+        : null;
       if (taxonomyEnabled && taxonomyBlocks) {
         const visibleRanks = visibleTaxonomyRanks;
         const baseFontSize = Math.max(8.5, Math.min(18, 8.5 + (camera.scaleY * 0.45)));
         const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (camera.scaleY * 0.45)));
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
+        if (cachedRectTaxonomyOverlay) {
+          const overlayDx = camera.translateX - cachedRectTaxonomyOverlay.translateX;
+          const overlayDy = camera.translateY - cachedRectTaxonomyOverlay.translateY;
+          const translatedBandXs = cachedRectTaxonomyOverlay.bandXs.map((x) => x + overlayDx);
+          const translatedLabels = cachedRectTaxonomyOverlay.labels.map((label) => translateScreenLabel(label, overlayDx, overlayDy));
+          for (let index = 0; index < cachedRectTaxonomyOverlay.blocks.length; index += 1) {
+            const block = cachedRectTaxonomyOverlay.blocks[index];
+            ctx.fillStyle = block.color;
+            ctx.fillRect(block.x + overlayDx, block.y + overlayDy, block.width, block.height);
+            pushSceneRect(block.x + overlayDx, block.y + overlayDy, block.width, block.height, block.color);
+          }
+          for (let index = 0; index < translatedLabels.length; index += 1) {
+            const label = translatedLabels[index];
+            ctx.font = `${label.fontSize ?? baseFontSize}px ${labelFontFamilies.taxonomy}`;
+            ctx.save();
+            ctx.translate(label.x, label.y);
+            ctx.rotate(label.rotation ?? 0);
+            drawHighlightedText(
+              ctx,
+              label.text,
+              0,
+              label.offsetY ?? 0,
+              "center",
+              label.color ?? "#0f172a",
+              label.searchHighlightColor ?? null,
+              label.searchMatchRange ?? null,
+            );
+            ctx.restore();
+            pushSceneText(
+              label.text,
+              label.x,
+              label.y + (label.offsetY ?? 0),
+              label.searchHighlightColor ?? label.color ?? "#0f172a",
+              label.fontSize ?? baseFontSize,
+              labelFontFamilies.taxonomy,
+              "middle",
+              label.rotation ?? 0,
+            );
+            labelHitsRef.current.push({
+              node: label.firstNode ?? 0,
+              kind: "rect",
+              source: "label",
+              labelKind: "taxonomy",
+              text: label.text,
+              taxonomyRank: label.rank,
+              taxonomyTaxId: label.taxId ?? null,
+              taxonomyFirstNode: label.firstNode,
+              taxonomyLastNode: label.lastNode,
+              taxonomyTipCount: label.taxonomyTipCount,
+              x: label.x - Math.max(10, (label.fontSize ?? baseFontSize) * 0.7),
+              y: label.y - ((label.textWidthPx ?? 0) * 0.5),
+              width: Math.max(20, (label.fontSize ?? baseFontSize) * 1.4),
+              height: Math.max(20, label.textWidthPx ?? 0),
+            });
+          }
+          renderDebug.rect = {
+            branchRenderMode: rectBranchRenderMode,
+            cueVisible: tipLabelCueVisible,
+            microVisible: microTipLabelsVisible,
+            tipVisible: tipLabelsVisible,
+            tipBandFontSize,
+            tipBandWidthPx: effectiveTipLabelSpacePx,
+            tipLabelMaxRightPx,
+            tipSideX,
+            genusGapPx: null,
+            genusBandX: translatedBandXs[0] ?? null,
+            genusBandOffsetPx: translatedBandXs.length > 0 ? translatedBandXs[0] - tipSideX : null,
+            connectorXs: translatedBandXs.slice(0, 12),
+            leafEdgeCenters: orderedLeaves.length > 0
+              ? {
+                topY: worldToScreenRect(camera, 0, layout.center[orderedLeaves[0]]).y,
+                bottomY: worldToScreenRect(camera, 0, layout.center[orderedLeaves[orderedLeaves.length - 1]]).y,
+              }
+              : null,
+            taxonomyVisibleRanks: visibleRanks,
+            taxonomyBandXs: translatedBandXs,
+            taxonomyBandWidthsPx: cachedRectTaxonomyOverlay.bandWidthsPx,
+            taxonomyConnectorSegmentCount: cachedRectTaxonomyOverlay.taxonomyConnectorSegmentCount,
+            taxonomyPlacedLabelCount: translatedLabels.length,
+            taxonomyRenderedBlocks: cachedRectTaxonomyOverlay.renderedBlocksDebug.map((block) => ({
+              ...block,
+              topY: block.topY + overlayDy,
+              bottomY: block.bottomY + overlayDy,
+            })),
+            taxonomyBlockCounts: Object.fromEntries(
+              TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[order][rank]?.length ?? 0]),
+            ),
+            taxonomyPlacedLabels: translatedLabels.map((label) => ({
+              key: label.key ?? null,
+              rank: label.rank ?? null,
+              text: label.text,
+              x: label.x,
+              y: label.y,
+              fontSize: label.fontSize ?? 0,
+              rotation: label.rotation ?? 0,
+              color: label.color ?? null,
+              searchHighlightColor: label.searchHighlightColor ?? null,
+            })),
+          };
+          genusLabelHistoryRef.current = {
+            tree,
+            viewMode: "rectangular",
+            order,
+            zoom: camera.scaleY,
+            visibleCenters: [],
+            peakZoom: camera.scaleY,
+            peakVisibleCenters: [],
+          };
+          const previousTaxonomyState = taxonomyLabelHistoryRef.current;
+          taxonomyLabelHistoryRef.current = {
+            tree,
+            viewMode: "rectangular",
+            order,
+            zoom: camera.scaleY,
+            visibleKeys: cachedRectTaxonomyOverlay.placedKeys,
+            peakZoom: previousTaxonomyState
+              && previousTaxonomyState.tree === tree
+              && previousTaxonomyState.viewMode === "rectangular"
+              && previousTaxonomyState.order === order
+              ? Math.max(previousTaxonomyState.peakZoom, camera.scaleY)
+              : camera.scaleY,
+            peakVisibleKeys: previousTaxonomyState
+              && previousTaxonomyState.tree === tree
+              && previousTaxonomyState.viewMode === "rectangular"
+              && previousTaxonomyState.order === order
+              && camera.scaleY > previousTaxonomyState.zoom + 1e-6
+              ? Array.from(new Set([...previousTaxonomyState.peakVisibleKeys, ...cachedRectTaxonomyOverlay.placedKeys]))
+              : cachedRectTaxonomyOverlay.placedKeys,
+          };
+        } else {
         const bandXs: number[] = [];
         const bandWidthsPx: number[] = [];
+        const renderedBlocks: Array<{ x: number; y: number; width: number; height: number; color: string }> = [];
         const placedLabels: ScreenLabel[] = [];
         const placedKeys: string[] = [];
         const renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }> = [];
@@ -4064,26 +4237,23 @@ export default function TreeCanvas({
                 continue;
               }
               const verticalInsetPx = Math.min(0.75, Math.max(0, (bottom - top - 1) * 0.5));
-              ctx.fillStyle = block.color;
-              ctx.fillRect(
-                bandX,
-                top + verticalInsetPx,
-                bandWidthPx,
-                Math.max(1, (bottom - top) - (verticalInsetPx * 2)),
-              );
-              pushSceneRect(
-                bandX,
-                top + verticalInsetPx,
-                bandWidthPx,
-                Math.max(1, (bottom - top) - (verticalInsetPx * 2)),
-                block.color,
-              );
+              const renderedBlock = {
+                x: bandX,
+                y: top + verticalInsetPx,
+                width: bandWidthPx,
+                height: Math.max(1, (bottom - top) - (verticalInsetPx * 2)),
+                color: block.color,
+              };
+              renderedBlocks.push(renderedBlock);
+              ctx.fillStyle = renderedBlock.color;
+              ctx.fillRect(renderedBlock.x, renderedBlock.y, renderedBlock.width, renderedBlock.height);
+              pushSceneRect(renderedBlock.x, renderedBlock.y, renderedBlock.width, renderedBlock.height, renderedBlock.color);
               if (renderedBlocksDebug.length < 240) {
                 renderedBlocksDebug.push({
                   rank,
                   label: block.label,
-                  topY: Math.min(top + verticalInsetPx, bottom - verticalInsetPx),
-                  bottomY: Math.max(top + verticalInsetPx, bottom - verticalInsetPx),
+                  topY: Math.min(renderedBlock.y, renderedBlock.y + renderedBlock.height),
+                  bottomY: Math.max(renderedBlock.y, renderedBlock.y + renderedBlock.height),
                 });
               }
               taxonomyConnectorSegmentCount += 1;
@@ -4221,6 +4391,8 @@ export default function TreeCanvas({
               firstNode: labelSegment.firstNode,
               lastNode: labelSegment.lastNode,
               taxonomyTipCount: totalTipCount,
+              textWidthPx: textMetrics.width,
+              lockViewportY: blockSpansViewport,
               offsetY: 0,
             });
             placedKeys.push(blockKey);
@@ -4342,6 +4514,23 @@ export default function TreeCanvas({
             ? Array.from(new Set([...previousTaxonomyState.peakVisibleKeys, ...placedKeys]))
             : placedKeys,
         };
+        if (rectTaxonomyOverlayLayoutSignature) {
+          rectTaxonomyOverlayLayoutCacheRef.current = {
+            tree,
+            order,
+            signature: rectTaxonomyOverlayLayoutSignature,
+            translateX: camera.translateX,
+            translateY: camera.translateY,
+            bandXs,
+            bandWidthsPx,
+            blocks: renderedBlocks,
+            labels: placedLabels,
+            renderedBlocksDebug,
+            placedKeys,
+            taxonomyConnectorSegmentCount,
+          };
+        }
+        }
       } else if (!taxonomyEnabled && showGenusLabels) {
         const priorityBlocks = cache.genusBlocksPriority[order];
         const positionalBlocks = cache.genusBlocks[order];
@@ -5024,7 +5213,7 @@ export default function TreeCanvas({
         ? camera.scale <= (fitLikeCircular.scale * CIRCULAR_NEAR_FIT_SCALE_MULTIPLIER)
         : false;
       const lockTaxonomyLabelsToClade = nearCircularFit || visibleCircleFraction >= CIRCULAR_TAXONOMY_LABEL_LOCK_MIN_VISIBLE_FRACTION;
-      if (useAutomaticTaxonomyRankVisibility && visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 2) {
+      if (useAutomaticTaxonomyRankVisibility && visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 3) {
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
       const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && visibleTaxonomyRanks.length > 0 && taxonomyColors !== null;
@@ -7520,9 +7709,17 @@ export default function TreeCanvas({
         branchBaseMs: timing.branchBaseMs,
         taxonomyOverlayMs: timing.taxonomyOverlayMs,
         renderDpr: Number(renderDebug.renderDpr ?? 1),
-        branchRenderMode: typeof (renderDebug.circular as { branchRenderMode?: unknown } | undefined)?.branchRenderMode === "string"
-          ? (renderDebug.circular as { branchRenderMode: string }).branchRenderMode
-          : null,
+        branchRenderMode: camera.kind === "rect"
+          ? (
+            typeof (renderDebug.rect as { branchRenderMode?: unknown } | undefined)?.branchRenderMode === "string"
+              ? (renderDebug.rect as { branchRenderMode: string }).branchRenderMode
+              : null
+          )
+          : (
+            typeof (renderDebug.circular as { branchRenderMode?: unknown } | undefined)?.branchRenderMode === "string"
+              ? (renderDebug.circular as { branchRenderMode: string }).branchRenderMode
+              : null
+          ),
         cameraKind: camera.kind,
       });
       benchmark.lastFrameAtMs = drawEndTime;
