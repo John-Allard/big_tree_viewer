@@ -63,6 +63,8 @@ declare global {
         value: string | number | boolean,
       ) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;
+      downloadTaxonomyForTest: () => Promise<void>;
+      runTaxonomyMappingForTest: () => Promise<void>;
       getTaxonomyMapForTest: () => TaxonomyMapPayload | null;
       setMockTaxonomy: () => void;
       cacheMockTaxonomy: () => Promise<void>;

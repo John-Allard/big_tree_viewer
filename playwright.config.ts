@@ -21,6 +21,23 @@ export default defineConfig({
         launchOptions: systemChromePath ? { executablePath: systemChromePath } : undefined,
       },
     },
+    ...(process.env.PLAYWRIGHT_INCLUDE_WEBKIT === "1"
+      ? [
+          {
+            name: "webkit",
+            use: {
+              ...devices["Desktop Safari"],
+            },
+          },
+          {
+            name: "iphone-safari",
+            use: {
+              ...devices["iPhone 13"],
+              browserName: "webkit",
+            },
+          },
+        ]
+      : []),
   ],
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --strictPort --port 4173",

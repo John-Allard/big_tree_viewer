@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "bench:pan": "node scripts/benchmark-circular-pan.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:webkit": "PLAYWRIGHT_INCLUDE_WEBKIT=1 playwright test",
+    "test:e2e:ios-taxonomy": "PLAYWRIGHT_INCLUDE_WEBKIT=1 playwright test --project=iphone-safari tests/taxonomy-ios-webkit.spec.ts",
     "test:e2e:perf-local": "playwright test tests/perf-regression.spec.ts",
     "test:e2e:headed": "playwright test --headed"
   },

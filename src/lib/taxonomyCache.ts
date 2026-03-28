@@ -8,6 +8,7 @@ const SUBTREE_STORE_NAME = "shared-subtrees";
 const ARCHIVE_KEY = "ncbi-taxdmp-zip";
 const LATEST_MAPPING_KEY = "latest-tree-mapping";
 const TAXONOMY_MAPPING_CACHE_VERSION = 4;
+let cachedArchiveInMemory: Blob | ArrayBuffer | null = null;
 
 interface CachedTaxonomyMappingRecord {
   version: number;
@@ -35,21 +36,13 @@ function openTaxonomyDb(): Promise<IDBDatabase> {
   });
 }
 
-export async function getCachedTaxonomyArchive(): Promise<Blob | null> {
-  const db = await openTaxonomyDb();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(ARCHIVE_STORE_NAME, "readonly");
-    const store = transaction.objectStore(ARCHIVE_STORE_NAME);
-    const request = store.get(ARCHIVE_KEY);
-    request.onsuccess = () => resolve((request.result as Blob | undefined) ?? null);
-    request.onerror = () => reject(request.error ?? new Error("Unable to read taxonomy cache."));
-    transaction.oncomplete = () => db.close();
-  });
+function cloneArchiveBuffer(buffer: ArrayBuffer): ArrayBuffer {
+  return buffer.slice(0);
 }
 
-export async function putCachedTaxonomyArchive(archive: Blob): Promise<void> {
+async function persistTaxonomyArchive(archive: Blob | ArrayBuffer): Promise<void> {
   const db = await openTaxonomyDb();
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(ARCHIVE_STORE_NAME, "readwrite");
     const store = transaction.objectStore(ARCHIVE_STORE_NAME);
     const request = store.put(archive, ARCHIVE_KEY);
@@ -57,6 +50,63 @@ export async function putCachedTaxonomyArchive(archive: Blob): Promise<void> {
     request.onerror = () => reject(request.error ?? new Error("Unable to update taxonomy cache."));
     transaction.oncomplete = () => db.close();
   });
+}
+
+export async function getCachedTaxonomyArchive(): Promise<Blob | ArrayBuffer | null> {
+  if (cachedArchiveInMemory instanceof Blob) {
+    return cachedArchiveInMemory;
+  }
+  if (cachedArchiveInMemory instanceof ArrayBuffer) {
+    return cloneArchiveBuffer(cachedArchiveInMemory);
+  }
+  const db = await openTaxonomyDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ARCHIVE_STORE_NAME, "readonly");
+    const store = transaction.objectStore(ARCHIVE_STORE_NAME);
+    const request = store.get(ARCHIVE_KEY);
+    request.onsuccess = () => {
+      const archive = (request.result as Blob | ArrayBuffer | undefined) ?? null;
+      if (archive instanceof Blob) {
+        cachedArchiveInMemory = archive;
+        resolve(archive);
+        return;
+      }
+      if (archive instanceof ArrayBuffer) {
+        cachedArchiveInMemory = cloneArchiveBuffer(archive);
+        resolve(cloneArchiveBuffer(archive));
+        return;
+      }
+      resolve(null);
+    };
+    request.onerror = () => reject(request.error ?? new Error("Unable to read taxonomy cache."));
+    transaction.oncomplete = () => db.close();
+  });
+}
+
+export async function putCachedTaxonomyArchive(archive: Blob | ArrayBuffer): Promise<"persistent" | "memory"> {
+  cachedArchiveInMemory = archive instanceof ArrayBuffer ? cloneArchiveBuffer(archive) : archive;
+  try {
+    await persistTaxonomyArchive(archive);
+    return "persistent";
+  } catch (error) {
+    if (archive instanceof Blob) {
+      try {
+        await persistTaxonomyArchive(await archive.arrayBuffer());
+        return "persistent";
+      } catch {
+        return "memory";
+      }
+    }
+    if (archive instanceof ArrayBuffer) {
+      try {
+        await persistTaxonomyArchive(cloneArchiveBuffer(archive));
+        return "persistent";
+      } catch {
+        return "memory";
+      }
+    }
+    throw error;
+  }
 }
 
 export async function getCachedTaxonomyMapping(treeSignature: string): Promise<TaxonomyMapPayload | null> {

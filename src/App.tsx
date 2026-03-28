@@ -176,6 +176,7 @@ const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
 const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
 const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
+const TAXONOMY_ARCHIVE_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
 type VisualPopoverId =
   | LabelStyleClass
   | "timeStripes"
@@ -1533,19 +1534,25 @@ export default function App() {
     setTaxonomyError(null);
     setTaxonomyStatus("Preparing taxonomy download...");
     try {
-      const response = await runTaxonomyWorker({ type: "download-taxonomy" });
-      if (response.type !== "taxonomy-downloaded" || !response.archive) {
-        throw new Error(response.message || "Taxonomy download did not complete.");
+      setTaxonomyStatus("Downloading NCBI taxonomy...");
+      const response = await fetch(TAXONOMY_ARCHIVE_URL);
+      if (!response.ok) {
+        throw new Error(`Taxonomy download failed with HTTP ${response.status}.`);
       }
-      await putCachedTaxonomyArchive(new Blob([response.archive], { type: "application/zip" }));
+      const archive = await response.blob();
+      const cacheMode = await putCachedTaxonomyArchive(archive);
       setTaxonomyCached(true);
-      setTaxonomyStatus("Taxonomy download cached locally.");
+      setTaxonomyStatus(
+        cacheMode === "persistent"
+          ? "Taxonomy download cached locally."
+          : "Taxonomy download available for this session. Safari could not persist the archive locally.",
+      );
     } catch (error) {
       setTaxonomyError(error instanceof Error ? error.message : String(error));
     } finally {
       setTaxonomyLoading(false);
     }
-  }, [runTaxonomyWorker]);
+  }, []);
 
   const runTaxonomyMapping = useCallback(async (): Promise<void> => {
     if (!tree) {
@@ -1654,6 +1661,10 @@ export default function App() {
         order,
         showGenusLabels,
         taxonomyEnabled,
+        taxonomyStatus,
+        taxonomyError,
+        taxonomyCached,
+        taxonomyLoading,
         taxonomyBranchColoringEnabled,
         taxonomyRankVisibility,
         collapsibleTaxonomyRanks,
@@ -1806,6 +1817,12 @@ export default function App() {
         }
         await runTaxonomyMapping();
       },
+      downloadTaxonomyForTest: async () => {
+        await downloadTaxonomy();
+      },
+      runTaxonomyMappingForTest: async () => {
+        await runTaxonomyMapping();
+      },
       getTaxonomyMapForTest: () => viewTaxonomyMap,
       setMockTaxonomy: () => {
         if (!tree) {
@@ -1903,6 +1920,7 @@ export default function App() {
     metadataValueColumn,
     order,
     branchThicknessScale,
+    downloadTaxonomy,
     figureStyles,
     rerootCurrentTree,
     runTaxonomyMapping,
@@ -1914,11 +1932,15 @@ export default function App() {
     timeStripeLineWeight,
     timeStripeStyle,
     taxonomyBranchColoringEnabled,
+    taxonomyCached,
     collapsibleTaxonomyRanks,
     taxonomyCollapseRank,
     taxonomyColorJitter,
     taxonomyEnabled,
+    taxonomyError,
+    taxonomyLoading,
     taxonomyRankVisibility,
+    taxonomyStatus,
     taxonomyMap,
     tree,
     viewTree,
