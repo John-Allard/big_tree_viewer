@@ -188,6 +188,83 @@ function disabledControlTitle(reason?: string): string | undefined {
   return reason ? `Disabled: ${reason}` : undefined;
 }
 
+type DiagnosticsEventRecord = {
+  at: string;
+  kind: string;
+  data?: unknown;
+};
+
+const DIAGNOSTICS_STORAGE_KEY = "big-tree-viewer:diagnostics:v1";
+const DIAGNOSTICS_ACTIVE_SESSION_KEY = "big-tree-viewer:diagnostics:active-session:v1";
+const DIAGNOSTICS_MAX_EVENTS = 200;
+
+function diagnosticsTimestamp(): string {
+  return new Date().toISOString();
+}
+
+function createDiagnosticsSessionId(): string {
+  return `diag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function cloneDiagnosticsValue<T>(value: T): T {
+  if (value === undefined) {
+    return value;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {
+    return value;
+  }
+}
+
+function readDiagnosticsEvents(): DiagnosticsEventRecord[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(DIAGNOSTICS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as DiagnosticsEventRecord[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDiagnosticsEvents(events: DiagnosticsEventRecord[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(DIAGNOSTICS_STORAGE_KEY, JSON.stringify(events.slice(-DIAGNOSTICS_MAX_EVENTS)));
+  } catch {
+    // Ignore local storage failures so diagnostics never break the viewer.
+  }
+}
+
+function appendDiagnosticsEvent(kind: string, data?: unknown): void {
+  const events = readDiagnosticsEvents();
+  events.push({
+    at: diagnosticsTimestamp(),
+    kind,
+    data: cloneDiagnosticsValue(data),
+  });
+  writeDiagnosticsEvents(events);
+}
+
+function clearDiagnosticsEvents(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(DIAGNOSTICS_STORAGE_KEY);
+  } catch {
+    // Ignore local storage failures so diagnostics never break the viewer.
+  }
+}
+
 function LabelStyleSection({
   labelClass,
   settings,
@@ -623,6 +700,7 @@ export default function App() {
   const [visualOpen, setVisualOpen] = useSessionDisclosure("section-visual", false);
   const [taxonomyOpen, setTaxonomyOpen] = useSessionDisclosure("section-taxonomy", false);
   const [searchOpen, setSearchOpen] = useSessionDisclosure("section-search", false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useSessionDisclosure("section-diagnostics", false);
   const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
   const [pastedTreeText, setPastedTreeText] = useState("");
@@ -667,6 +745,14 @@ export default function App() {
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
   const [taxonomyCollapseRank, setTaxonomyCollapseRank] = useState<TaxonomyCollapseRank>(DEFAULT_TAXONOMY_COLLAPSE_RANK);
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
+  const [diagnosticsRevision, setDiagnosticsRevision] = useState(0);
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
+  const [unexpectedDiagnosticsSessionId, setUnexpectedDiagnosticsSessionId] = useState<string | null>(null);
+  const diagnosticsSessionIdRef = useRef<string>(createDiagnosticsSessionId());
+  const appendDiagnostic = useCallback((kind: string, data?: unknown): void => {
+    appendDiagnosticsEvent(kind, data);
+    setDiagnosticsRevision((value) => value + 1);
+  }, []);
   const collapsibleTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => taxonomyMap ? deriveCollapsibleTaxonomyRanks(taxonomyMap.tipRanks.map((tip) => tip.ranks)) : [],
     [taxonomyMap],
@@ -701,6 +787,145 @@ export default function App() {
   const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
   const taxonomyCollapseIsSynthetic = collapsedTaxonomyView !== null;
   const handleHoverChange = useCallback(() => {}, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const recordDiagnostic = (kind: string, data?: unknown): void => {
+      appendDiagnosticsEvent(kind, data);
+      setDiagnosticsRevision((value) => value + 1);
+    };
+    const sessionId = diagnosticsSessionIdRef.current;
+    const previousSessionId = window.localStorage.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY);
+    if (previousSessionId && previousSessionId !== sessionId) {
+      setUnexpectedDiagnosticsSessionId(previousSessionId);
+      recordDiagnostic("session-recovered-after-unclean-exit", {
+        previousSessionId,
+      });
+    }
+    window.localStorage.setItem(DIAGNOSTICS_ACTIVE_SESSION_KEY, sessionId);
+    recordDiagnostic("session-started", {
+      sessionId,
+      href: window.location.href,
+      userAgent: navigator.userAgent,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      },
+    });
+
+    const onError = (event: ErrorEvent): void => {
+      recordDiagnostic("window-error", {
+        message: event.message,
+        filename: event.filename,
+        line: event.lineno,
+        column: event.colno,
+      });
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent): void => {
+      recordDiagnostic("unhandled-rejection", {
+        reason: typeof event.reason === "string" ? event.reason : String(event.reason),
+      });
+    };
+    const onVisibilityChange = (): void => {
+      recordDiagnostic("visibility-change", {
+        state: document.visibilityState,
+      });
+    };
+    const onPageShow = (event: PageTransitionEvent): void => {
+      recordDiagnostic("page-show", {
+        persisted: event.persisted,
+      });
+    };
+    const markSessionClosed = (): void => {
+      appendDiagnosticsEvent("session-closing", {
+        sessionId,
+      });
+      if (window.localStorage.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY) === sessionId) {
+        window.localStorage.removeItem(DIAGNOSTICS_ACTIVE_SESSION_KEY);
+      }
+    };
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("pagehide", markSessionClosed);
+    window.addEventListener("beforeunload", markSessionClosed);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("pagehide", markSessionClosed);
+      window.removeEventListener("beforeunload", markSessionClosed);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      markSessionClosed();
+    };
+  }, []);
+
+  const diagnosticsReport = useMemo(() => JSON.stringify({
+    version: 1,
+    generatedAt: diagnosticsTimestamp(),
+    current: {
+      treeLoaded: tree !== null,
+      treeSignature,
+      viewMode,
+      order,
+      taxonomyCached,
+      taxonomyLoading,
+      taxonomyStatus,
+      taxonomyError,
+      taxonomyEnabled,
+      taxonomyMappedCount: viewTaxonomyMap?.mappedCount ?? 0,
+      loadState,
+      unexpectedPreviousSessionId: unexpectedDiagnosticsSessionId,
+      renderDebug: typeof window !== "undefined" ? window.__BIG_TREE_VIEWER_RENDER_DEBUG__ ?? null : null,
+    },
+    events: readDiagnosticsEvents(),
+  }, null, 2), [
+    diagnosticsRevision,
+    loadState,
+    order,
+    taxonomyCached,
+    taxonomyEnabled,
+    taxonomyError,
+    taxonomyLoading,
+    taxonomyStatus,
+    tree,
+    treeSignature,
+    unexpectedDiagnosticsSessionId,
+    viewMode,
+    viewTaxonomyMap,
+  ]);
+
+  const copyDiagnosticsReport = useCallback(async (): Promise<void> => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable.");
+      }
+      await navigator.clipboard.writeText(diagnosticsReport);
+      setDiagnosticsStatus("Diagnostics copied to the clipboard.");
+      appendDiagnostic("diagnostics-copied", {
+        characters: diagnosticsReport.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDiagnosticsStatus(`Copy failed. Use the text box below. ${message}`);
+      appendDiagnostic("diagnostics-copy-failed", {
+        message,
+      });
+    }
+  }, [appendDiagnostic, diagnosticsReport]);
+
+  const clearDiagnosticsReport = useCallback((): void => {
+    clearDiagnosticsEvents();
+    setUnexpectedDiagnosticsSessionId(null);
+    setDiagnosticsStatus("Diagnostics cleared for this device.");
+    setDiagnosticsRevision((value) => value + 1);
+  }, []);
 
   const applySharedSubtreeVisualSettings = useCallback((visual: SharedSubtreeVisualPayload): void => {
     setViewMode(visual.viewMode);
@@ -1230,6 +1455,9 @@ export default function App() {
         const data = event.data;
         if (data.type === "taxonomy-progress") {
           setTaxonomyStatus(data.message ?? "");
+          appendDiagnostic("taxonomy-worker-progress", {
+            message: data.message ?? "",
+          });
           return;
         }
         cleanup();
@@ -1244,7 +1472,7 @@ export default function App() {
         request.type === "map-taxonomy" && request.archive instanceof ArrayBuffer ? [request.archive] : [],
       );
     });
-  }, []);
+  }, [appendDiagnostic]);
 
   useEffect(() => {
     void (async () => {
@@ -1533,6 +1761,9 @@ export default function App() {
     setTaxonomyLoading(true);
     setTaxonomyError(null);
     setTaxonomyStatus("Preparing taxonomy download...");
+    appendDiagnostic("taxonomy-download-started", {
+      treeLoaded: tree !== null,
+    });
     try {
       setTaxonomyStatus("Downloading NCBI taxonomy...");
       const response = await fetch(TAXONOMY_ARCHIVE_URL);
@@ -1547,12 +1778,20 @@ export default function App() {
           ? "Taxonomy download cached locally."
           : "Taxonomy download available for this session. Safari could not persist the archive locally.",
       );
+      appendDiagnostic("taxonomy-download-completed", {
+        cacheMode,
+        sizeBytes: archive.size,
+      });
     } catch (error) {
-      setTaxonomyError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setTaxonomyError(message);
+      appendDiagnostic("taxonomy-download-failed", {
+        message,
+      });
     } finally {
       setTaxonomyLoading(false);
     }
-  }, []);
+  }, [appendDiagnostic, tree]);
 
   const runTaxonomyMapping = useCallback(async (): Promise<void> => {
     if (!tree) {
@@ -1561,6 +1800,10 @@ export default function App() {
     setTaxonomyLoading(true);
     setTaxonomyError(null);
     setTaxonomyStatus("Loading taxonomy cache...");
+    appendDiagnostic("taxonomy-mapping-started", {
+      tipCount: tree.leafCount,
+      treeSignature,
+    });
     try {
       const archive = await getCachedTaxonomyArchive();
       if (!archive) {
@@ -1586,12 +1829,21 @@ export default function App() {
       setTaxonomyMap(response.payload);
       setTaxonomyEnabled(true);
       setTaxonomyStatus(`Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips.`);
+      appendDiagnostic("taxonomy-mapping-completed", {
+        mappedCount: response.payload.mappedCount,
+        totalTips: response.payload.totalTips,
+        activeRanks: response.payload.activeRanks,
+      });
     } catch (error) {
-      setTaxonomyError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setTaxonomyError(message);
+      appendDiagnostic("taxonomy-mapping-failed", {
+        message,
+      });
     } finally {
       setTaxonomyLoading(false);
     }
-  }, [runTaxonomyWorker, tree, treeSignature]);
+  }, [appendDiagnostic, runTaxonomyWorker, tree, treeSignature]);
 
   const stepSearch = (direction: -1 | 1): void => {
     if (searchResults.length === 0) {
@@ -3075,6 +3327,35 @@ export default function App() {
                 ) : null}
               </>
             ) : null}
+          </div>
+        </PanelSection>
+
+        <PanelSection title="Diagnostics" isOpen={diagnosticsOpen} onToggle={() => setDiagnosticsOpen(!diagnosticsOpen)}>
+          <div className="search-controls">
+            {unexpectedDiagnosticsSessionId ? (
+              <p className="status-error">
+                The previous session on this device appears to have ended unexpectedly. Copy the report below and send it over.
+              </p>
+            ) : (
+              <p className="status-line">
+                Diagnostics stay on this device. The report includes recent app events and taxonomy progress, but not your tree text.
+              </p>
+            )}
+            <div className="button-row">
+              <button type="button" className="secondary" onClick={() => void copyDiagnosticsReport()}>
+                Copy Diagnostics
+              </button>
+              <button type="button" className="secondary" onClick={clearDiagnosticsReport}>
+                Clear Diagnostics
+              </button>
+            </div>
+            {diagnosticsStatus ? <p className="status-line">{diagnosticsStatus}</p> : null}
+            <textarea
+              className="diagnostics-report"
+              readOnly
+              rows={12}
+              value={diagnosticsReport}
+            />
           </div>
         </PanelSection>
 

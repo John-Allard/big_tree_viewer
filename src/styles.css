@@ -622,6 +622,19 @@ button.secondary {
   color: #b91c1c;
 }
 
+.diagnostics-report {
+  width: 100%;
+  min-height: 13rem;
+  resize: vertical;
+  margin-top: 0.8rem;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #0f172a;
+  font: 0.75rem/1.45 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
 .stats-panel {
   border: 1px solid rgba(15, 23, 42, 0.1);
   border-radius: 10px;
