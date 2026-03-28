@@ -75,11 +75,9 @@ function parseTaxonomyNameLine(
   if (rank === "species" && TAXONOMY_SPECIES_INDEX_NAME_CLASSES.has(nameClass)) {
     const normalized = normalizeTaxonomyName(scientificName);
     addTaxonomyIndexEntry(speciesIndex, normalized, taxId);
-    addTaxonomyIndexEntry(speciesIndex, normalized.replaceAll(" ", "_"), taxId);
   } else if (rank === "genus" && nameClass === "scientific name") {
     const normalized = normalizeTaxonomyName(scientificName);
     addTaxonomyIndexEntry(genusIndex, normalized, taxId);
-    addTaxonomyIndexEntry(genusIndex, normalized.replaceAll(" ", "_"), taxId);
   }
   if (nameClass === "scientific name" && (TARGET_RANKS as string[]).includes(rank)) {
     rankNames.set(taxId, scientificName);

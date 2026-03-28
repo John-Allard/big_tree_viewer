@@ -12,7 +12,6 @@ export type ParsedTaxonomyForMapping = {
 
 export const TAXONOMY_SPECIES_INDEX_NAME_CLASSES = new Set<string>([
   "scientific name",
-  "synonym",
 ]);
 
 export type TipTaxonomyRequest = {
@@ -67,10 +66,10 @@ function candidateSpeciesNames(name: string): string[] {
   if (parts.length === 0) {
     return [];
   }
-  const candidates = [parts.join(" "), parts.join("_")];
+  const candidates = [parts.join(" ")];
   if (parts.length >= 2) {
     const twoPart = `${parts[0]} ${parts[1]}`;
-    candidates.push(twoPart, twoPart.replaceAll(" ", "_"));
+    candidates.push(twoPart);
   }
   return [...new Set(candidates)];
 }
