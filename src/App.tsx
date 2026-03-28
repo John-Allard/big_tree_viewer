@@ -265,6 +265,14 @@ function clearDiagnosticsEvents(): void {
   }
 }
 
+function diagnosticsPanelEnabled(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const value = new URLSearchParams(window.location.search).get("diagnostics");
+  return value === "1" || value === "true";
+}
+
 function LabelStyleSection({
   labelClass,
   settings,
@@ -749,6 +757,7 @@ export default function App() {
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [unexpectedDiagnosticsSessionId, setUnexpectedDiagnosticsSessionId] = useState<string | null>(null);
   const diagnosticsSessionIdRef = useRef<string>(createDiagnosticsSessionId());
+  const showDiagnosticsPanel = useMemo(() => diagnosticsPanelEnabled(), []);
   const appendDiagnostic = useCallback((kind: string, data?: unknown): void => {
     appendDiagnosticsEvent(kind, data);
     setDiagnosticsRevision((value) => value + 1);
@@ -3330,34 +3339,36 @@ export default function App() {
           </div>
         </PanelSection>
 
-        <PanelSection title="Diagnostics" isOpen={diagnosticsOpen} onToggle={() => setDiagnosticsOpen(!diagnosticsOpen)}>
-          <div className="search-controls">
-            {unexpectedDiagnosticsSessionId ? (
-              <p className="status-error">
-                The previous session on this device appears to have ended unexpectedly. Copy the report below and send it over.
-              </p>
-            ) : (
-              <p className="status-line">
-                Diagnostics stay on this device. The report includes recent app events and taxonomy progress, but not your tree text.
-              </p>
-            )}
-            <div className="button-row">
-              <button type="button" className="secondary" onClick={() => void copyDiagnosticsReport()}>
-                Copy Diagnostics
-              </button>
-              <button type="button" className="secondary" onClick={clearDiagnosticsReport}>
-                Clear Diagnostics
-              </button>
+        {showDiagnosticsPanel ? (
+          <PanelSection title="Diagnostics" isOpen={diagnosticsOpen} onToggle={() => setDiagnosticsOpen(!diagnosticsOpen)}>
+            <div className="search-controls">
+              {unexpectedDiagnosticsSessionId ? (
+                <p className="status-error">
+                  The previous session on this device appears to have ended unexpectedly. Copy the report below and send it over.
+                </p>
+              ) : (
+                <p className="status-line">
+                  Diagnostics stay on this device. The report includes recent app events and taxonomy progress, but not your tree text.
+                </p>
+              )}
+              <div className="button-row">
+                <button type="button" className="secondary" onClick={() => void copyDiagnosticsReport()}>
+                  Copy Diagnostics
+                </button>
+                <button type="button" className="secondary" onClick={clearDiagnosticsReport}>
+                  Clear Diagnostics
+                </button>
+              </div>
+              {diagnosticsStatus ? <p className="status-line">{diagnosticsStatus}</p> : null}
+              <textarea
+                className="diagnostics-report"
+                readOnly
+                rows={12}
+                value={diagnosticsReport}
+              />
             </div>
-            {diagnosticsStatus ? <p className="status-line">{diagnosticsStatus}</p> : null}
-            <textarea
-              className="diagnostics-report"
-              readOnly
-              rows={12}
-              value={diagnosticsReport}
-            />
-          </div>
-        </PanelSection>
+          </PanelSection>
+        ) : null}
 
         <PanelSection title="Stats" isOpen={statsOpen} onToggle={() => setStatsOpen(!statsOpen)}>
           {viewTree ? (
