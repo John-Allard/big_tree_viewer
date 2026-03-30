@@ -62,6 +62,9 @@ export interface HoverInfo {
   kind?: "node" | "taxonomy";
   taxonomyRank?: string | null;
   mrcaAge?: number | null;
+  collapsedTaxonomyRank?: string | null;
+  collapsedTaxonomyDescendantTipCount?: number | null;
+  collapsedTaxonomyMrcaAge?: number | null;
 }
 
 export interface LoadState {

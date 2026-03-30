@@ -986,7 +986,111 @@ test("taxonomy label hover shows taxonomy tooltip details instead of branch metr
   await expect(tooltip).toContainText("Rank: class");
   await expect(tooltip).toContainText("Descendant tips:");
   await expect(tooltip).toContainText("MRCA age:");
-  await expect(tooltip).not.toContainText("Branch:");
+  await expect(tooltip).not.toContainText("Branch length:");
+});
+
+test("collapsed tip branch hover shows taxonomy summary plus branch metrics", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 8) {
+      throw new Error("Leaf nodes unavailable for collapsed hover test.");
+    }
+    const mappedLeafNodes = leafNodes.slice(0, 8);
+    const tipRanks = mappedLeafNodes.map((node, index) => {
+      if (index < 4) {
+        return {
+          node,
+          ranks: {
+            class: "Mammalia",
+            phylum: "Chordata",
+          },
+        };
+      }
+      if (index < 8) {
+        return {
+          node,
+          ranks: {
+            class: "Aves",
+            phylum: "Chordata",
+          },
+        };
+      }
+      return {
+        node,
+        ranks: {
+          class: "Aves",
+          phylum: "Chordata",
+        },
+      };
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 17,
+      mappedCount: mappedLeafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class", "phylum"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyCollapseRankForTest("class");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    const names = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names ?? [];
+    return state?.viewMode === "rectangular"
+      && state?.taxonomyCollapseRank === "class"
+      && names.some((name) => name === "Mammalia" || name.startsWith("Mammalia-"));
+  });
+
+  const hoverPoint = await page.evaluate(() => {
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const canvas = document.querySelector("canvas");
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const leafIndexMap = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLeafIndexMap?.() ?? {};
+    const names = internal?.names ?? [];
+    const leafNodes = internal?.leafNodes ?? [];
+    const targetNode = leafNodes.find((node) => {
+      const name = String(names[node] ?? "");
+      return name === "Mammalia" || name.startsWith("Mammalia-");
+    });
+    if (!(canvas instanceof HTMLCanvasElement) || !camera || camera.kind !== "rect" || typeof targetNode !== "number") {
+      throw new Error("Collapsed tip branch hover setup unavailable.");
+    }
+    const targetLeafIndex = Number(leafIndexMap[targetNode]);
+    if (!Number.isFinite(targetLeafIndex)) {
+      throw new Error("Collapsed tip leaf index unavailable.");
+    }
+    const localY = (targetLeafIndex * Number(camera.scaleY)) + Number(camera.translateY);
+    for (let localX = 0; localX <= canvas.width; localX += 2) {
+      const hover = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.probeHoverForTest?.(localX, localY) as {
+        name?: string;
+        targetKind?: string;
+      } | null;
+      if (
+        hover?.name
+        && (hover.name === "Mammalia" || hover.name.startsWith("Mammalia-"))
+        && (hover.targetKind === "stem" || hover.targetKind === "connector")
+      ) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: rect.left + localX,
+          y: rect.top + localY,
+        };
+      }
+    }
+    throw new Error("Collapsed tip branch hover target unavailable.");
+  });
+
+  await page.mouse.move(hoverPoint.x, hoverPoint.y);
+  const tooltip = page.locator(".hover-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("Rank: class");
+  await expect(tooltip).toContainText("Descendant tips: 4");
+  await expect(tooltip).toContainText("MRCA age:");
+  await expect(tooltip).toContainText("Branch length:");
 });
 
 test("taxonomy rank controls in taxonomy visual settings filter visible ranks", async ({ page }) => {

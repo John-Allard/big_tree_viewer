@@ -2389,10 +2389,17 @@ export default function TreeCanvas({
         `MRCA age: ${hover.mrcaAge === null || hover.mrcaAge === undefined ? "n/a" : hover.mrcaAge.toPrecision(5)}`,
       );
     } else {
+      if (hover.collapsedTaxonomyRank) {
+        appendLine(`Rank: ${hover.collapsedTaxonomyRank}`);
+        appendLine(`Descendant tips: ${(hover.collapsedTaxonomyDescendantTipCount ?? 0).toLocaleString()}`);
+        appendLine(
+          `MRCA age: ${hover.collapsedTaxonomyMrcaAge === null || hover.collapsedTaxonomyMrcaAge === undefined ? "n/a" : hover.collapsedTaxonomyMrcaAge.toPrecision(5)}`,
+        );
+      }
       if (tree && tree.buffers.firstChild[hover.node] >= 0) {
         appendLine(`Descendant tips: ${hover.descendantTipCount.toLocaleString()}`);
       }
-      appendLine(`Branch: ${hover.branchLength.toPrecision(5)}`);
+      appendLine(`Branch length: ${hover.branchLength.toPrecision(5)}`);
       appendLine(`Parent age: ${hover.parentAge === null ? "n/a" : hover.parentAge.toPrecision(5)}`);
       appendLine(`Child age: ${hover.childAge === null ? "n/a" : hover.childAge.toPrecision(5)}`);
     }
@@ -2496,6 +2503,42 @@ export default function TreeCanvas({
     }
     return byNode;
   }, [taxonomyMap]);
+  const collapsedTipTaxonomySummaryByNode = useMemo(() => {
+    const byNode = new Map<number, {
+      rank: string;
+      descendantTipCount: number;
+      mrcaAge: number | null;
+    }>();
+    if (
+      !taxonomyMap
+      || !sharedSubtreeSourceTree
+      || !sharedSubtreeSourceNodeByViewNode
+      || taxonomyCollapseRank === "species"
+    ) {
+      return byNode;
+    }
+    for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
+      const tip = taxonomyMap.tipRanks[index];
+      const sourceNode = sharedSubtreeSourceNodeByViewNode[tip.node];
+      if (!(sourceNode >= 0)) {
+        continue;
+      }
+      const rank = tip.ranks[taxonomyCollapseRank]
+        ? taxonomyCollapseRank
+        : (tip.collapseFallbacks?.[taxonomyCollapseRank]?.rank ?? null);
+      if (!rank) {
+        continue;
+      }
+      byNode.set(tip.node, {
+        rank,
+        descendantTipCount: sharedSubtreeSourceTree.buffers.leafCount[sourceNode] ?? 0,
+        mrcaAge: sharedSubtreeSourceTree.isUltrametric
+          ? Math.max(0, sharedSubtreeSourceTree.rootAge - sharedSubtreeSourceTree.buffers.depth[sourceNode])
+          : null,
+      });
+    }
+    return byNode;
+  }, [sharedSubtreeSourceNodeByViewNode, sharedSubtreeSourceTree, taxonomyCollapseRank, taxonomyMap]);
   const manualBranchColorVersion = useMemo(() => {
     const branchKey = branchColorAssignmentKey(manualBranchColorAssignments);
     const subtreeKey = branchColorAssignmentKey(manualSubtreeColorAssignments);
@@ -8197,6 +8240,7 @@ export default function TreeCanvas({
         ownerNode?: number,
       ): CanvasHoverInfo => {
         const parent = tree.buffers.parent[node];
+        const collapsedTaxonomySummary = collapsedTipTaxonomySummaryByNode.get(node) ?? null;
         return {
           node,
           branchLength: tree.buffers.branchLength[node],
@@ -8210,6 +8254,9 @@ export default function TreeCanvas({
           targetKind,
           hoveredSegment,
           ownerNode,
+          collapsedTaxonomyRank: collapsedTaxonomySummary?.rank ?? null,
+          collapsedTaxonomyDescendantTipCount: collapsedTaxonomySummary?.descendantTipCount ?? null,
+          collapsedTaxonomyMrcaAge: collapsedTaxonomySummary?.mrcaAge ?? null,
         };
       };
 
@@ -8791,6 +8838,7 @@ export default function TreeCanvas({
     };
   }, [
     cache,
+    collapsedTipTaxonomySummaryByNode,
     circularClampExtraRadiusPx,
     collapsedNodes,
     collapsedView,
