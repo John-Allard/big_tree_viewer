@@ -5,6 +5,7 @@ import {
   addTaxonomyIndexEntry,
   mapTipsWithContext,
   normalizeTaxonomyName,
+  TAXONOMY_NAMED_LINEAGE_RANKS,
   TAXONOMY_SPECIES_INDEX_NAME_CLASSES,
 } from "../lib/taxonomyNameResolver";
 import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
@@ -20,7 +21,7 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-error"; message: string };
 
 const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
-const TAXONOMY_MAPPING_VERSION = 6;
+const TAXONOMY_MAPPING_VERSION = 7;
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };
@@ -79,7 +80,7 @@ function parseTaxonomyNameLine(
     const normalized = normalizeTaxonomyName(scientificName);
     addTaxonomyIndexEntry(genusIndex, normalized, taxId);
   }
-  if (nameClass === "scientific name" && (TARGET_RANKS as string[]).includes(rank)) {
+  if (nameClass === "scientific name" && TAXONOMY_NAMED_LINEAGE_RANKS.has(rank)) {
     rankNames.set(taxId, scientificName);
   }
 }

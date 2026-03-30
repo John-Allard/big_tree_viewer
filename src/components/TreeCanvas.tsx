@@ -203,6 +203,7 @@ function buildSharedSubtreeStoragePayload(
       name: tree.names[tip.node] ?? "",
       ranks: tip.ranks,
       taxIds: tip.taxIds,
+      collapseFallbacks: tip.collapseFallbacks,
     });
   }
   if (tipEntries.length === 0) {

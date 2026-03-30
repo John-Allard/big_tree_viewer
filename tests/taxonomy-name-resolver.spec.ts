@@ -132,3 +132,50 @@ test("species synonym matches win before a conflicting genus fallback", async ()
   expect(payload.tipRanks[0]?.ranks.family).toBe("Sclerotiniaceae");
   expect(payload.tipRanks[0]?.ranks.genus).toBeUndefined();
 });
+
+test("resolver records best lower-rank fallbacks for missing collapse ranks", async () => {
+  const nodes = new Map<number, TaxonomyNodeInfo>();
+  const rankNames = new Map<number, string>();
+  const speciesIndex = new Map<string, number[]>();
+  const genusIndex = new Map<string, number[]>();
+
+  const addNode = (taxId: number, parentId: number, rank: string, name?: string): void => {
+    nodes.set(taxId, { parentId, rank });
+    if (name) {
+      rankNames.set(taxId, name);
+    }
+  };
+
+  addNode(1, 1, "no rank");
+  addNode(2, 1, "superkingdom", "Eukaryota");
+  addNode(10, 2, "phylum", "Chordata");
+  addNode(11, 10, "order", "Testudines");
+  addNode(12, 11, "family", "Testudinidae");
+  addNode(13, 12, "genus", "Testudo");
+  addNode(14, 13, "species");
+
+  addNode(20, 2, "phylum", "Chordata");
+  addNode(21, 20, "superfamily", "Chelonoidea");
+  addNode(22, 21, "genus", "Mysteria");
+  addNode(23, 22, "species");
+
+  addTaxonomyIndexEntry(speciesIndex, "testudo graeca", 14);
+  addTaxonomyIndexEntry(speciesIndex, "testudo_graeca", 14);
+  addTaxonomyIndexEntry(speciesIndex, "mysteria obscura", 23);
+  addTaxonomyIndexEntry(speciesIndex, "mysteria_obscura", 23);
+  addTaxonomyIndexEntry(genusIndex, "testudo", 13);
+  addTaxonomyIndexEntry(genusIndex, "mysteria", 22);
+
+  const payload = mapTipsWithContext([
+    { node: 400, name: "Testudo graeca" },
+    { node: 401, name: "Mysteria obscura" },
+  ], { nodes, rankNames, speciesIndex, genusIndex }, TARGET_RANKS, 99);
+
+  const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
+  expect(byNode.get(400)?.ranks.class).toBeUndefined();
+  expect(byNode.get(400)?.collapseFallbacks?.class?.label).toBe("Testudines");
+  expect(byNode.get(400)?.collapseFallbacks?.class?.rank).toBe("order");
+  expect(byNode.get(401)?.ranks.class).toBeUndefined();
+  expect(byNode.get(401)?.collapseFallbacks?.class?.label).toBe("Chelonoidea");
+  expect(byNode.get(401)?.collapseFallbacks?.class?.rank).toBe("superfamily");
+});

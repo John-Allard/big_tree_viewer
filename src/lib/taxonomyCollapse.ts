@@ -16,6 +16,7 @@ interface CollapseChunk {
   representativeTip: TaxonomyTipRanks;
   maxLeafDepth: number;
   sourceNode: number;
+  usedLowerRankFallback: boolean;
 }
 
 type CollapsedDescriptor =
@@ -26,6 +27,31 @@ export interface TaxonomyCollapsedTreePayload {
   payload: WorkerTreePayload;
   taxonomyMap: TaxonomyMapPayload | null;
   sourceNodeByNode: Int32Array;
+  hasLowerRankFallbackLabels: boolean;
+}
+
+function collapseSelectionForTip(
+  tip: TaxonomyTipRanks,
+  rank: TaxonomyRank,
+): {
+  label: string;
+  usedLowerRankFallback: boolean;
+} | null {
+  const direct = tip.ranks[rank];
+  if (direct) {
+    return {
+      label: direct,
+      usedLowerRankFallback: false,
+    };
+  }
+  const fallback = tip.collapseFallbacks?.[rank];
+  if (!fallback?.label) {
+    return null;
+  }
+  return {
+    label: fallback.label,
+    usedLowerRankFallback: true,
+  };
 }
 
 function lowestCommonAncestor(tree: TreeModel, leftNode: number, rightNode: number): number {
@@ -242,7 +268,7 @@ function buildIncludedLeafCounts(
   const includedLeafCounts = new Int32Array(tree.nodeCount);
   for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
     const tip = taxonomyMap.tipRanks[index];
-    if (tip.ranks[rank]) {
+    if (collapseSelectionForTip(tip, rank)) {
       includedLeafCounts[tip.node] = 1;
     }
   }
@@ -297,12 +323,20 @@ function buildCollapseChunks(
   const tipEntryByNode = new Map<number, TaxonomyTipRanks>();
   for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
     const tip = taxonomyMap.tipRanks[index];
-    if (tip.ranks[rank]) {
+    if (collapseSelectionForTip(tip, rank)) {
       tipEntryByNode.set(tip.node, tip);
     }
   }
 
-  const rawChunks: Array<{ label: string; representativeTip: TaxonomyTipRanks; maxLeafDepth: number; nodes: number[]; sourceNode: number }> = [];
+  const rawChunks: Array<{
+    label: string;
+    displayBaseName: string;
+    representativeTip: TaxonomyTipRanks;
+    maxLeafDepth: number;
+    nodes: number[];
+    sourceNode: number;
+    usedLowerRankFallback: boolean;
+  }> = [];
   let index = 0;
   while (index < orderedIncludedLeaves.length) {
     const node = orderedIncludedLeaves[index];
@@ -311,18 +345,21 @@ function buildCollapseChunks(
       index += 1;
       continue;
     }
-    const label = tip.ranks[rank];
-    if (!label) {
+    const selection = collapseSelectionForTip(tip, rank);
+    if (!selection) {
       index += 1;
       continue;
     }
+    const label = selection.label;
+    const usedLowerRankFallback = selection.usedLowerRankFallback;
     const nodes = [node];
     let maxLeafDepth = tree.buffers.depth[node];
     let endIndex = index + 1;
     while (endIndex < orderedIncludedLeaves.length) {
       const nextNode = orderedIncludedLeaves[endIndex];
       const nextTip = tipEntryByNode.get(nextNode);
-      if (!nextTip || nextTip.ranks[rank] !== label) {
+      const nextSelection = nextTip ? collapseSelectionForTip(nextTip, rank) : null;
+      if (!nextSelection || nextSelection.label !== label || nextSelection.usedLowerRankFallback !== usedLowerRankFallback) {
         break;
       }
       nodes.push(nextNode);
@@ -331,10 +368,12 @@ function buildCollapseChunks(
     }
     rawChunks.push({
       label,
+      displayBaseName: usedLowerRankFallback ? `${label}*` : label,
       representativeTip: tip,
       maxLeafDepth,
       nodes,
       sourceNode: nodes.reduce((currentLca, currentNode) => lowestCommonAncestor(tree, currentLca, currentNode)),
+      usedLowerRankFallback,
     });
     index = endIndex;
   }
@@ -342,23 +381,24 @@ function buildCollapseChunks(
   const totalByLabel = new Map<string, number>();
   for (let chunkIndex = 0; chunkIndex < rawChunks.length; chunkIndex += 1) {
     const chunk = rawChunks[chunkIndex];
-    totalByLabel.set(chunk.label, (totalByLabel.get(chunk.label) ?? 0) + 1);
+    totalByLabel.set(chunk.displayBaseName, (totalByLabel.get(chunk.displayBaseName) ?? 0) + 1);
   }
   const ordinalByLabel = new Map<string, number>();
   const chunkIndexByNode = new Map<number, number>();
   const chunks: CollapseChunk[] = [];
   for (let chunkIndex = 0; chunkIndex < rawChunks.length; chunkIndex += 1) {
     const chunk = rawChunks[chunkIndex];
-    const ordinal = (ordinalByLabel.get(chunk.label) ?? 0) + 1;
-    ordinalByLabel.set(chunk.label, ordinal);
-    const displayName = (totalByLabel.get(chunk.label) ?? 0) > 1
-      ? `${chunk.label}-${ordinal}`
-      : chunk.label;
+    const ordinal = (ordinalByLabel.get(chunk.displayBaseName) ?? 0) + 1;
+    ordinalByLabel.set(chunk.displayBaseName, ordinal);
+    const displayName = (totalByLabel.get(chunk.displayBaseName) ?? 0) > 1
+      ? `${chunk.displayBaseName.replace(/\*$/, "")}-${ordinal}${chunk.usedLowerRankFallback ? "*" : ""}`
+      : chunk.displayBaseName;
     chunks.push({
       displayName,
       representativeTip: chunk.representativeTip,
       maxLeafDepth: chunk.maxLeafDepth,
       sourceNode: chunk.sourceNode,
+      usedLowerRankFallback: chunk.usedLowerRankFallback,
     });
     for (let nodeIndex = 0; nodeIndex < chunk.nodes.length; nodeIndex += 1) {
       chunkIndexByNode.set(chunk.nodes[nodeIndex], chunkIndex);
@@ -467,6 +507,7 @@ export function buildTaxonomyCollapsedTreePayload(
 
   const output: OutputNode[] = [];
   const syntheticTipRanks: TaxonomyTipRanks[] = [];
+  let hasLowerRankFallbackLabels = false;
 
   const appendDescriptor = (descriptor: CollapsedDescriptor, parentOutputNode: number, parentOutputDepth: number): number => {
     if (descriptor.kind === "chunk") {
@@ -485,7 +526,9 @@ export function buildTaxonomyCollapsedTreePayload(
         node: outputNode,
         ranks: chunk.representativeTip.ranks,
         taxIds: chunk.representativeTip.taxIds,
+        collapseFallbacks: chunk.representativeTip.collapseFallbacks,
       });
+      hasLowerRankFallbackLabels = hasLowerRankFallbackLabels || chunk.usedLowerRankFallback;
       return outputNode;
     }
 
@@ -540,5 +583,6 @@ export function buildTaxonomyCollapsedTreePayload(
       tipRanks: syntheticTipRanks,
     },
     sourceNodeByNode,
+    hasLowerRankFallbackLabels,
   };
 }

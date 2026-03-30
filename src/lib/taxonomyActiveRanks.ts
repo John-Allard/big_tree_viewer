@@ -1,4 +1,4 @@
-import type { TaxonomyRank } from "../types/taxonomy";
+import type { TaxonomyRank, TaxonomyTipRanks } from "../types/taxonomy";
 
 export const ACTIVE_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "genus",
@@ -9,8 +9,19 @@ export const ACTIVE_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "superkingdom",
 ];
 
+function collapseLabelForRank(
+  entry: Partial<Record<TaxonomyRank, string>> | TaxonomyTipRanks,
+  rank: TaxonomyRank,
+): string | null {
+  const direct = "ranks" in entry ? entry.ranks[rank] : entry[rank];
+  if (direct) {
+    return direct;
+  }
+  return "collapseFallbacks" in entry ? (entry.collapseFallbacks?.[rank]?.label ?? null) : null;
+}
+
 export function deriveCollapsibleTaxonomyRanks(
-  tipRankEntries: Array<Partial<Record<TaxonomyRank, string>>>,
+  tipRankEntries: Array<Partial<Record<TaxonomyRank, string>> | TaxonomyTipRanks>,
 ): TaxonomyRank[] {
   const rankToCounts = new Map<TaxonomyRank, Map<string, number>>();
   for (let index = 0; index < ACTIVE_TAXONOMY_RANK_ORDER.length; index += 1) {
@@ -20,7 +31,7 @@ export function deriveCollapsibleTaxonomyRanks(
     const entry = tipRankEntries[entryIndex];
     for (let rankIndex = 0; rankIndex < ACTIVE_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
       const rank = ACTIVE_TAXONOMY_RANK_ORDER[rankIndex];
-      const label = entry[rank];
+      const label = collapseLabelForRank(entry, rank);
       if (!label) {
         continue;
       }

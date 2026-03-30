@@ -1,5 +1,5 @@
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
-import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
+import type { TaxonomyCollapseFallback, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
 export type TaxonomyNodeInfo = { parentId: number; rank: string };
 
@@ -14,6 +14,47 @@ export const TAXONOMY_SPECIES_INDEX_NAME_CLASSES = new Set<string>([
   "scientific name",
 ]);
 
+const TAXONOMY_COLLAPSE_RANK_PRECEDENCE = new Map<string, number>([
+  ["superkingdom", 0],
+  ["kingdom", 5],
+  ["subkingdom", 6],
+  ["infrakingdom", 7],
+  ["superphylum", 10],
+  ["phylum", 20],
+  ["subphylum", 21],
+  ["infraphylum", 22],
+  ["superclass", 30],
+  ["class", 40],
+  ["subclass", 41],
+  ["infraclass", 42],
+  ["cohort", 43],
+  ["subcohort", 44],
+  ["superorder", 50],
+  ["order", 60],
+  ["suborder", 61],
+  ["infraorder", 62],
+  ["parvorder", 63],
+  ["superfamily", 70],
+  ["family", 80],
+  ["subfamily", 81],
+  ["tribe", 82],
+  ["subtribe", 83],
+  ["genus", 90],
+  ["subgenus", 91],
+  ["section", 92],
+  ["subsection", 93],
+  ["series", 94],
+  ["subseries", 95],
+  ["species group", 96],
+  ["species subgroup", 97],
+  ["species", 100],
+  ["subspecies", 101],
+  ["varietas", 102],
+  ["forma", 103],
+]);
+
+export const TAXONOMY_NAMED_LINEAGE_RANKS = new Set<string>(TAXONOMY_COLLAPSE_RANK_PRECEDENCE.keys());
+
 export type TipTaxonomyRequest = {
   node: number;
   name: string;
@@ -23,12 +64,14 @@ type ResolvedTipMapping = {
   node: number;
   ranks: Partial<Record<TaxonomyRank, string>>;
   taxIds: Partial<Record<TaxonomyRank, number>>;
+  collapseFallbacks?: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
 };
 
 type CandidateLineage = {
   taxId: number;
   ranks: Partial<Record<TaxonomyRank, string>>;
   taxIds: Partial<Record<TaxonomyRank, number>>;
+  collapseFallbacks: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
 };
 
 const CONTEXT_RANK_WEIGHTS: Array<[TaxonomyRank, number]> = [
@@ -120,6 +163,7 @@ function buildCandidateLineage(
   }
   const ranks: Partial<Record<TaxonomyRank, string>> = {};
   const taxIds: Partial<Record<TaxonomyRank, number>> = {};
+  const collapseFallbacks: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>> = {};
   let anyRank = false;
   for (let rankIndex = 0; rankIndex < targetRanks.length; rankIndex += 1) {
     const rank = targetRanks[rankIndex];
@@ -135,7 +179,54 @@ function buildCandidateLineage(
     taxIds[rank] = ancestor;
     anyRank = true;
   }
-  const lineage = anyRank ? { taxId, ranks, taxIds } : null;
+  if (anyRank) {
+    const lineageAncestors: Array<{ taxId: number; rank: string; label: string }> = [];
+    let current = taxId;
+    const seen = new Set<number>();
+    while (current > 0 && !seen.has(current)) {
+      seen.add(current);
+      const node = taxonomy.nodes.get(current);
+      const label = taxonomy.rankNames.get(current);
+      if (!node) {
+        break;
+      }
+      if (label) {
+        lineageAncestors.push({ taxId: current, rank: node.rank, label });
+      }
+      current = node.parentId;
+    }
+    for (let rankIndex = 0; rankIndex < targetRanks.length; rankIndex += 1) {
+      const targetRank = targetRanks[rankIndex];
+      if (taxIds[targetRank]) {
+        continue;
+      }
+      const targetPrecedence = TAXONOMY_COLLAPSE_RANK_PRECEDENCE.get(targetRank);
+      if (targetPrecedence === undefined) {
+        continue;
+      }
+      let bestFallback: { taxId: number; rank: string; label: string } | null = null;
+      let bestPrecedence = Number.POSITIVE_INFINITY;
+      for (let ancestorIndex = 0; ancestorIndex < lineageAncestors.length; ancestorIndex += 1) {
+        const ancestor = lineageAncestors[ancestorIndex];
+        const ancestorPrecedence = TAXONOMY_COLLAPSE_RANK_PRECEDENCE.get(ancestor.rank);
+        if (ancestorPrecedence === undefined || ancestorPrecedence <= targetPrecedence) {
+          continue;
+        }
+        if (ancestorPrecedence < bestPrecedence) {
+          bestPrecedence = ancestorPrecedence;
+          bestFallback = ancestor;
+        }
+      }
+      if (bestFallback) {
+        collapseFallbacks[targetRank] = {
+          label: bestFallback.label,
+          rank: bestFallback.rank,
+          taxId: bestFallback.taxId,
+        };
+      }
+    }
+  }
+  const lineage = anyRank ? { taxId, ranks, taxIds, collapseFallbacks } : null;
   lineageMemo.set(taxId, lineage);
   return lineage;
 }
@@ -228,6 +319,7 @@ export function mapTipsWithContext(
         node: tips[index].node,
         ranks: candidates[0].ranks,
         taxIds: candidates[0].taxIds,
+        collapseFallbacks: candidates[0].collapseFallbacks,
       };
     }
   }
@@ -262,6 +354,7 @@ export function mapTipsWithContext(
           node: tips[index].node,
           ranks: best.ranks,
           taxIds: best.taxIds,
+          collapseFallbacks: best.collapseFallbacks,
         };
         changed = true;
       }
@@ -293,6 +386,7 @@ export function mapTipsWithContext(
       node: tips[index].node,
       ranks: candidates[0].ranks,
       taxIds: candidates[0].taxIds,
+      collapseFallbacks: candidates[0].collapseFallbacks,
     });
   }
 

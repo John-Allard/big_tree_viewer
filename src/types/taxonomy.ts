@@ -12,10 +12,17 @@ export const TAXONOMY_RANKS = [
 export type TaxonomyRank = typeof TAXONOMY_RANKS[number];
 export type TaxonomyCollapseRank = TaxonomyRank | "species";
 
+export interface TaxonomyCollapseFallback {
+  label: string;
+  rank: string;
+  taxId?: number;
+}
+
 export interface TaxonomyTipRanks {
   node: number;
   ranks: Partial<Record<TaxonomyRank, string>>;
   taxIds?: Partial<Record<TaxonomyRank, number>>;
+  collapseFallbacks?: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
 }
 
 export interface TaxonomyMapPayload {

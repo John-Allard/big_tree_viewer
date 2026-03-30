@@ -763,7 +763,7 @@ export default function App() {
     setDiagnosticsRevision((value) => value + 1);
   }, []);
   const collapsibleTaxonomyRanks = useMemo<TaxonomyRank[]>(
-    () => taxonomyMap ? deriveCollapsibleTaxonomyRanks(taxonomyMap.tipRanks.map((tip) => tip.ranks)) : [],
+    () => taxonomyMap ? deriveCollapsibleTaxonomyRanks(taxonomyMap.tipRanks) : [],
     [taxonomyMap],
   );
   const taxonomyCollapseActiveRank = useMemo<TaxonomyRank | null>(() => {
@@ -790,11 +790,13 @@ export default function App() {
         ),
       },
       sourceNodeByNode: collapsedPayload.sourceNodeByNode,
+      hasLowerRankFallbackLabels: collapsedPayload.hasLowerRankFallbackLabels,
     };
   }, [order, taxonomyCollapseActiveRank, taxonomyMap, tree]);
   const viewTree = collapsedTaxonomyView?.tree ?? tree;
   const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
   const taxonomyCollapseIsSynthetic = collapsedTaxonomyView !== null;
+  const taxonomyCollapseHasLowerRankFallbackLabels = Boolean(collapsedTaxonomyView?.hasLowerRankFallbackLabels);
   const handleHoverChange = useCallback(() => {}, []);
 
   useEffect(() => {
@@ -988,6 +990,7 @@ export default function App() {
           name: tree.names[tip.node] ?? "",
           ranks: tip.ranks,
           taxIds: tip.taxIds,
+          collapseFallbacks: tip.collapseFallbacks,
         })),
       })
       : null;
@@ -1930,6 +1933,7 @@ export default function App() {
         taxonomyRankVisibility,
         collapsibleTaxonomyRanks,
         taxonomyCollapseRank,
+        taxonomyCollapseHasLowerRankFallbackLabels,
         taxonomyColorJitter,
         taxonomyMappedCount: viewTaxonomyMap?.mappedCount ?? 0,
         metadataEnabled,
@@ -2197,6 +2201,7 @@ export default function App() {
     collapsibleTaxonomyRanks,
     taxonomyCollapseRank,
     taxonomyColorJitter,
+    taxonomyCollapseHasLowerRankFallbackLabels,
     taxonomyEnabled,
     taxonomyError,
     taxonomyLoading,
@@ -2851,18 +2856,25 @@ export default function App() {
             {taxonomyStatus ? <p className="status-line">{taxonomyStatus}</p> : null}
             {taxonomyError ? <p className="status-error">{taxonomyError}</p> : null}
             {taxonomyMap ? (
-              <label>
-                Collapse mapped tips to
-                <select
-                  value={taxonomyCollapseRank}
-                  onChange={(event) => setTaxonomyCollapseRank(event.target.value as TaxonomyCollapseRank)}
-                >
-                  <option value="species">Species</option>
-                  {collapsibleTaxonomyRanks.map((rank) => (
-                    <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>
-                  ))}
-                </select>
-              </label>
+              <>
+                <label>
+                  Collapse mapped tips to
+                  <select
+                    value={taxonomyCollapseRank}
+                    onChange={(event) => setTaxonomyCollapseRank(event.target.value as TaxonomyCollapseRank)}
+                  >
+                    <option value="species">Species</option>
+                    {collapsibleTaxonomyRanks.map((rank) => (
+                      <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>
+                    ))}
+                  </select>
+                </label>
+                {taxonomyCollapseActiveRank && taxonomyCollapseHasLowerRankFallbackLabels ? (
+                  <p className="status-line">
+                    * This taxon is a lower rank than {taxonomyRankLabel(taxonomyCollapseActiveRank)} because this lineage lacked a {taxonomyRankLabel(taxonomyCollapseActiveRank)} in the NCBI taxonomy.
+                  </p>
+                ) : null}
+              </>
             ) : null}
           </div>
         </PanelSection>

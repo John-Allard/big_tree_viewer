@@ -2575,6 +2575,87 @@ test("taxonomy rank collapse uses selected rank labels instead of tip binomials"
   expect(collapseState.leafNames.some((name) => /Rattus|Mus|Canis/.test(name))).toBe(false);
 });
 
+test("taxonomy rank collapse keeps lineages with no target rank by using the best lower-rank fallback and marks them", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 12) {
+      throw new Error("Leaf nodes unavailable for taxonomy collapse fallback test.");
+    }
+    const mappedLeafNodes = leafNodes.slice(0, 12);
+    const tipRanks = mappedLeafNodes.map((node, index) => {
+      if (index < 4) {
+        return {
+          node,
+          ranks: {
+            order: "Testudines",
+            phylum: "Chordata",
+          },
+          collapseFallbacks: {
+            class: {
+              label: "Testudines",
+              rank: "order",
+            },
+          },
+        };
+      }
+      if (index < 8) {
+        return {
+          node,
+          ranks: {
+            phylum: "Chordata",
+          },
+          collapseFallbacks: {
+            class: {
+              label: "Chelonoidea",
+              rank: "superfamily",
+            },
+          },
+        };
+      }
+      return {
+        node,
+        ranks: {
+          class: "Mammalia",
+          phylum: "Chordata",
+        },
+      };
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 16,
+      mappedCount: mappedLeafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["order", "class", "phylum"],
+      tipRanks,
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyCollapseRankForTest("class");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.getByRole("button", { name: "Taxonomy" }).click();
+
+  const collapseState = await page.evaluate(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      taxonomyCollapseRank?: string;
+      taxonomyCollapseHasLowerRankFallbackLabels?: boolean;
+    } | undefined;
+    const internalTree = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const leafNames = (internalTree?.names ?? []).filter((_, index) => (internalTree?.firstChild?.[index] ?? -1) < 0);
+    return {
+      taxonomyCollapseRank: state?.taxonomyCollapseRank ?? null,
+      taxonomyCollapseHasLowerRankFallbackLabels: Boolean(state?.taxonomyCollapseHasLowerRankFallbackLabels),
+      leafNames,
+      bodyText: document.body.textContent ?? "",
+    };
+  });
+
+  expect(collapseState.taxonomyCollapseRank).toBe("class");
+  expect(collapseState.taxonomyCollapseHasLowerRankFallbackLabels).toBe(true);
+  expect(collapseState.leafNames).toContain("Testudines*");
+  expect(collapseState.leafNames.some((name) => name === "Chelonoidea*" || name.startsWith("Chelonoidea-"))).toBe(true);
+  expect(collapseState.leafNames.some((name) => name === "Mammalia" || name.startsWith("Mammalia-"))).toBe(true);
+  expect(collapseState.bodyText).toContain("This taxon is a lower rank than Class because this lineage lacked a Class in the NCBI taxonomy.");
+});
+
 test("taxonomy rank collapse list only includes ranks with real subdivision in the mapped tree", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

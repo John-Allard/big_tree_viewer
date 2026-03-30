@@ -1,5 +1,5 @@
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
-import type { TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
+import type { TaxonomyCollapseFallback, TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
@@ -9,6 +9,7 @@ export type SharedSubtreeTaxonomyEntry = {
   name: string;
   ranks: Partial<Record<TaxonomyRank, string>>;
   taxIds?: Partial<Record<TaxonomyRank, number>>;
+  collapseFallbacks?: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
 };
 
 export type SharedSubtreeTaxonomyPayload = {
@@ -229,6 +230,7 @@ export function rebuildSharedSubtreeTaxonomyMap(
       node,
       ranks: entry.ranks,
       taxIds: entry.taxIds,
+      collapseFallbacks: entry.collapseFallbacks,
     });
     if (bucket.length === 0) {
       entriesByName.delete(name);
