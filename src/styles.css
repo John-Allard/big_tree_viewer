@@ -144,6 +144,17 @@ button.secondary {
   display: none;
 }
 
+.panel-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mobile-sidebar-toggle-inline {
+  flex-shrink: 0;
+}
+
 .panel-title-block h1 {
   margin: 0;
   font-size: 1.8rem;
@@ -847,7 +858,17 @@ button.secondary {
     max-height: 42vh;
   }
 
-  .mobile-sidebar-toggle {
+  .mobile-sidebar-toggle-inline {
+    display: inline-flex;
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 0.5rem 0.8rem;
+    background: rgba(15, 23, 42, 0.92);
+    color: #f8fafc;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.2);
+  }
+
+  .mobile-sidebar-toggle-floating {
     display: inline-flex;
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 0.7rem);
@@ -890,7 +911,17 @@ button.secondary {
     min-width: 0;
   }
 
-  .mobile-sidebar-toggle {
+  .mobile-sidebar-toggle-inline {
+    display: inline-flex;
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 0.45rem 0.75rem;
+    background: rgba(15, 23, 42, 0.92);
+    color: #f8fafc;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.2);
+  }
+
+  .mobile-sidebar-toggle-floating {
     display: inline-flex;
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 0.55rem);

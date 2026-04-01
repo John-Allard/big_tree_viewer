@@ -2235,17 +2235,28 @@ export default function App() {
       onDrop={(event) => void handleDrop(event)}
     >
       {dragActive ? <div className="drag-overlay">Drop a tree file, CSV/TSV metadata file, or Newick / NEXUS text to load it</div> : null}
-      <button
-        type="button"
-        className="mobile-sidebar-toggle"
-        onClick={() => setSidebarVisible(!sidebarVisible)}
-      >
-        {sidebarVisible ? "Hide Panel" : "Show Panel"}
-      </button>
+      {!sidebarVisible ? (
+        <button
+          type="button"
+          className="mobile-sidebar-toggle mobile-sidebar-toggle-floating"
+          onClick={() => setSidebarVisible(true)}
+        >
+          Show Panel
+        </button>
+      ) : null}
       <aside className="control-panel">
-        <div className="panel-title-block">
-          <h1>Big Tree Viewer</h1>
-          <p>by John B Allard</p>
+        <div className="panel-title-row">
+          <div className="panel-title-block">
+            <h1>Big Tree Viewer</h1>
+            <p>by John B Allard</p>
+          </div>
+          <button
+            type="button"
+            className="mobile-sidebar-toggle mobile-sidebar-toggle-inline"
+            onClick={() => setSidebarVisible(false)}
+          >
+            Hide Panel
+          </button>
         </div>
 
         <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)}>
