@@ -85,6 +85,27 @@ const CIRCULAR_RIBBON_CANVAS_STABILITY_RADIUS_PX = 6000;
 const CIRCULAR_RIBBON_CANVAS_STABILITY_ARC_PX = 140;
 const CIRCULAR_TAXONOMY_SCREEN_SPACE_RIBBON_MIN_RADIUS_PX = 1200;
 
+function isLikelyTrackpadWheelEvent(event: WheelEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return false;
+  }
+  if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) {
+    return false;
+  }
+  const absDeltaX = Math.abs(event.deltaX);
+  const absDeltaY = Math.abs(event.deltaY);
+  if (absDeltaX > 0) {
+    return true;
+  }
+  if (!(absDeltaY > 0)) {
+    return false;
+  }
+  if (!Number.isInteger(event.deltaX) || !Number.isInteger(event.deltaY)) {
+    return true;
+  }
+  return absDeltaY < 24;
+}
+
 function arcIntersectsViewport(
   centerX: number,
   centerY: number,
@@ -2293,6 +2314,7 @@ export default function TreeCanvas({
   const handledExportRequestRef = useRef(0);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
   const pinchGestureRef = useRef<{ distance: number; centerX: number; centerY: number } | null>(null);
+  const macGestureScaleRef = useRef<number | null>(null);
   const pointerDownRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
@@ -8735,9 +8757,22 @@ export default function TreeCanvas({
       const rect = canvas.getBoundingClientRect();
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
-      const zoom = Math.exp(-event.deltaY * 0.0015);
       markPanBenchmarkInput();
       clearHoverState();
+      if (isLikelyTrackpadWheelEvent(event)) {
+        if (camera.kind === "rect") {
+          camera.translateX -= event.deltaX;
+          camera.translateY -= event.deltaY;
+          clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
+        } else {
+          camera.translateX -= event.deltaX;
+          camera.translateY -= event.deltaY;
+          clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
+        }
+        scheduleDraw();
+        return;
+      }
+      const zoom = Math.exp(-event.deltaY * 0.0015);
       zoomAtPoint(localX, localY, zoom);
       scheduleDraw();
     };
@@ -8817,12 +8852,52 @@ export default function TreeCanvas({
         event.preventDefault();
       }
     };
-    const preventGestureDefault = (event: Event): void => {
+    const handleGestureStart = (event: Event): void => {
       event.preventDefault();
+      const gestureEvent = event as Event & { scale?: number };
+      macGestureScaleRef.current = Math.max(0.01, Number(gestureEvent.scale ?? 1));
+    };
+    const handleGestureChange = (event: Event): void => {
+      event.preventDefault();
+      const camera = cameraRef.current;
+      if (!camera) {
+        return;
+      }
+      const gestureEvent = event as Event & {
+        scale?: number;
+        clientX?: number;
+        clientY?: number;
+      };
+      const currentScale = Math.max(0.01, Number(gestureEvent.scale ?? 1));
+      const previousScale = macGestureScaleRef.current ?? 1;
+      macGestureScaleRef.current = currentScale;
+      if (!(previousScale > 0)) {
+        return;
+      }
+      const zoom = currentScale / previousScale;
+      if (!Number.isFinite(zoom) || Math.abs(zoom - 1) < 1e-4) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const clientX = Number.isFinite(gestureEvent.clientX)
+        ? Number(gestureEvent.clientX)
+        : rect.left + (rect.width * 0.5);
+      const clientY = Number.isFinite(gestureEvent.clientY)
+        ? Number(gestureEvent.clientY)
+        : rect.top + (rect.height * 0.5);
+      markPanBenchmarkInput();
+      clearHoverState();
+      zoomAtPoint(clientX - rect.left, clientY - rect.top, zoom);
+      scheduleDraw();
+    };
+    const handleGestureEnd = (event: Event): void => {
+      event.preventDefault();
+      macGestureScaleRef.current = null;
     };
     canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
-    canvas.addEventListener("gesturestart", preventGestureDefault);
-    canvas.addEventListener("gesturechange", preventGestureDefault);
+    canvas.addEventListener("gesturestart", handleGestureStart);
+    canvas.addEventListener("gesturechange", handleGestureChange);
+    canvas.addEventListener("gestureend", handleGestureEnd);
 
     return () => {
       hoverProbeRef.current = null;
@@ -8833,8 +8908,9 @@ export default function TreeCanvas({
       canvas.removeEventListener("wheel", handleWheel);
       canvas.removeEventListener("contextmenu", handleContextMenu);
       canvas.removeEventListener("touchmove", handleTouchMove);
-      canvas.removeEventListener("gesturestart", preventGestureDefault);
-      canvas.removeEventListener("gesturechange", preventGestureDefault);
+      canvas.removeEventListener("gesturestart", handleGestureStart);
+      canvas.removeEventListener("gesturechange", handleGestureChange);
+      canvas.removeEventListener("gestureend", handleGestureEnd);
     };
   }, [
     cache,

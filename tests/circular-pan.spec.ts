@@ -229,6 +229,105 @@ test("rectangular fit switches to circular fit without partial zoom", async ({ p
   expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
 });
 
+test("rectangular pixel-mode wheel input pans instead of zooming", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const before = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "rect";
+    scaleX: number;
+    scaleY: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  await page.evaluate(async () => {
+    const canvas = document.querySelector("canvas");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Canvas unavailable for wheel pan test.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      deltaX: 18,
+      deltaY: 36,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      clientX: rect.left + (rect.width * 0.5),
+      clientY: rect.top + (rect.height * 0.5),
+      bubbles: true,
+      cancelable: true,
+    }));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const after = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "rect";
+    scaleX: number;
+    scaleY: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  expect(before?.kind).toBe("rect");
+  expect(after?.kind).toBe("rect");
+  expect(Number(after?.scaleX ?? 0)).toBeCloseTo(Number(before?.scaleX ?? 0), 6);
+  expect(Number(after?.scaleY ?? 0)).toBeCloseTo(Number(before?.scaleY ?? 0), 6);
+  expect(Number(after?.translateX ?? 0)).not.toBeCloseTo(Number(before?.translateX ?? 0), 6);
+  expect(Number(after?.translateY ?? 0)).not.toBeCloseTo(Number(before?.translateY ?? 0), 6);
+});
+
+test("rectangular gesturechange input zooms the camera", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const before = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "rect";
+    scaleX: number;
+    scaleY: number;
+  } | null);
+
+  await page.evaluate(async () => {
+    const canvas = document.querySelector("canvas");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Canvas unavailable for gesture zoom test.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    const defineGestureProps = (event: Event, scale: number): void => {
+      Object.defineProperty(event, "scale", { value: scale });
+      Object.defineProperty(event, "clientX", { value: rect.left + (rect.width * 0.5) });
+      Object.defineProperty(event, "clientY", { value: rect.top + (rect.height * 0.5) });
+    };
+    const start = new Event("gesturestart", { bubbles: true, cancelable: true });
+    defineGestureProps(start, 1);
+    canvas.dispatchEvent(start);
+    const change = new Event("gesturechange", { bubbles: true, cancelable: true });
+    defineGestureProps(change, 1.2);
+    canvas.dispatchEvent(change);
+    const end = new Event("gestureend", { bubbles: true, cancelable: true });
+    defineGestureProps(end, 1.2);
+    canvas.dispatchEvent(end);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const after = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "rect";
+    scaleX: number;
+    scaleY: number;
+  } | null);
+
+  expect(before?.kind).toBe("rect");
+  expect(after?.kind).toBe("rect");
+  expect(Number(after?.scaleX ?? 0)).toBeGreaterThan(Number(before?.scaleX ?? 0));
+  expect(Number(after?.scaleY ?? 0)).toBeGreaterThan(Number(before?.scaleY ?? 0));
+});
+
 test("circular subtree zoom switches to rectangular subtree framing", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
