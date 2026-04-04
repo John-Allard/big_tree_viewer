@@ -36,6 +36,8 @@ export interface TaxonomyMapPayload {
 export interface TaxonomyBlock {
   rank: TaxonomyRank;
   label: string;
+  taxId?: number | null;
+  entityKey?: string;
   firstNode: number;
   lastNode: number;
   centerNode: number;

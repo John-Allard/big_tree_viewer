@@ -37,7 +37,7 @@ import {
 } from "./lib/sharedSubtreePayload";
 import { deriveCollapsibleTaxonomyRanks } from "./lib/taxonomyActiveRanks";
 import { buildTaxonomyCollapsedTreePayload } from "./lib/taxonomyCollapse";
-import { buildTaxonomyBlocksForOrderedLeaves } from "./lib/taxonomyBlocks";
+import { buildTaxonomyBlocksForOrderedLeaves, taxonomyEntityKey } from "./lib/taxonomyBlocks";
 import {
   getCachedTaxonomyArchive,
   getCachedTaxonomyMapping,
@@ -1050,6 +1050,7 @@ export default function App() {
     const pushTaxonomyResult = (
       rank: TaxonomyRank,
       label: string,
+      key: string,
       firstNode: number,
       lastNode: number,
       orderIndex: number,
@@ -1062,7 +1063,7 @@ export default function App() {
         node: lowestCommonAncestor(viewTree, firstNode, lastNode),
         displayName: label,
         rank,
-        key: `${rank}:${label}`,
+        key,
       } satisfies SearchResult;
       if (canonicalSearchKey(label) === queryKey) {
         exactTaxonomyResults.push(result);
@@ -1096,7 +1097,14 @@ export default function App() {
           const labelEndIndex = block.labelEndIndex ?? block.endIndex ?? block.segments?.[0]?.endIndex ?? (labelStartIndex + 1);
           const labelFirstNode = orderedLeaves[labelStartIndex];
           const labelLastNode = orderedLeaves[((labelEndIndex - 1 + orderedLeaves.length) % orderedLeaves.length)];
-          pushTaxonomyResult(rank, block.label, labelFirstNode, labelLastNode, labelStartIndex);
+          pushTaxonomyResult(
+            rank,
+            block.label,
+            `${rank}:${block.entityKey ?? taxonomyEntityKey(block.label, block.taxId ?? null)}:${block.centerNode}`,
+            labelFirstNode,
+            labelLastNode,
+            labelStartIndex,
+          );
         }
       }
     } else {

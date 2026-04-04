@@ -2,13 +2,23 @@ import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyMapPayload, type Taxon
 
 export type TaxonomyColorByRank = Partial<Record<TaxonomyRank, Record<string, string>>>;
 
-export function colorForTaxonomy(rank: TaxonomyRank, label: string, colorsByRank: TaxonomyColorByRank | null): string {
-  const mapped = colorsByRank?.[rank]?.[label];
+export function taxonomyEntityKey(label: string, taxId?: number | null): string {
+  return taxId ? `${label}::${taxId}` : label;
+}
+
+export function colorForTaxonomy(
+  rank: TaxonomyRank,
+  label: string,
+  colorsByRank: TaxonomyColorByRank | null,
+  taxId?: number | null,
+): string {
+  const entityKey = taxonomyEntityKey(label, taxId);
+  const mapped = colorsByRank?.[rank]?.[entityKey];
   if (mapped) {
     return mapped;
   }
   let hash = 0;
-  const key = `${rank}:${label}`;
+  const key = `${rank}:${entityKey}`;
   for (let index = 0; index < key.length; index += 1) {
     hash = ((hash * 31) + key.charCodeAt(index)) >>> 0;
   }
@@ -60,25 +70,42 @@ export function buildTaxonomyBlocksForOrderedLeaves(
   taxonomyMap: TaxonomyMapPayload,
   colorsByRank: TaxonomyColorByRank | null,
 ): Record<TaxonomyRank, TaxonomyBlock[]> {
-  const labelByNode = new Map<number, Partial<Record<TaxonomyRank, string>>>();
+  const tipByNode = new Map<number, TaxonomyMapPayload["tipRanks"][number]>();
   for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
-    labelByNode.set(taxonomyMap.tipRanks[index].node, taxonomyMap.tipRanks[index].ranks);
+    tipByNode.set(taxonomyMap.tipRanks[index].node, taxonomyMap.tipRanks[index]);
   }
-  const labelsByRank = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, Record<string, number[]>>>((accumulator, rank) => {
-    const byLabel: Record<string, number[]> = {};
+  const labelsByRank = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, Map<string, {
+    label: string;
+    taxId: number | null;
+    indices: number[];
+  }>>>((accumulator, rank) => {
+    const byLabel = new Map<string, {
+      label: string;
+      taxId: number | null;
+      indices: number[];
+    }>();
     for (let index = 0; index < orderedLeaves.length; index += 1) {
-      const label = labelByNode.get(orderedLeaves[index])?.[rank] ?? null;
+      const tip = tipByNode.get(orderedLeaves[index]);
+      const label = tip?.ranks[rank] ?? null;
       if (!label) {
         continue;
       }
-      if (!byLabel[label]) {
-        byLabel[label] = [];
+      const taxId = tip?.taxIds?.[rank] ?? null;
+      const entityKey = taxonomyEntityKey(label, taxId);
+      const existing = byLabel.get(entityKey);
+      if (existing) {
+        existing.indices.push(index);
+      } else {
+        byLabel.set(entityKey, { label, taxId, indices: [index] });
       }
-      byLabel[label].push(index);
     }
     accumulator[rank] = byLabel;
     return accumulator;
-  }, {} as Record<TaxonomyRank, Record<string, number[]>>);
+  }, {} as Record<TaxonomyRank, Map<string, {
+    label: string;
+    taxId: number | null;
+    indices: number[];
+  }>>);
   const blocks = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, TaxonomyBlock[]>>((accumulator, rank) => {
     accumulator[rank] = [];
     return accumulator;
@@ -86,9 +113,10 @@ export function buildTaxonomyBlocksForOrderedLeaves(
   for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
     const rank = TAXONOMY_RANKS[rankIndex];
     const breakThreshold = orderedLeafSpanThreshold(orderedLeaves.length);
-    const entries = Object.entries(labelsByRank[rank]).sort((left, right) => left[1][0] - right[1][0]);
+    const entries = [...labelsByRank[rank].entries()].sort((left, right) => left[1].indices[0] - right[1].indices[0]);
     for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-      const [label, indices] = entries[entryIndex];
+      const [entityKey, entry] = entries[entryIndex];
+      const { label, taxId, indices } = entry;
       const unwrapped = unwrapCircularIndices(indices, orderedLeaves.length);
       if (unwrapped.length === 0) {
         continue;
@@ -157,6 +185,8 @@ export function buildTaxonomyBlocksForOrderedLeaves(
       blocks[rank].push({
         rank,
         label,
+        taxId,
+        entityKey,
         firstNode: orderedLeaves[wrappedOverallStart],
         lastNode: orderedLeaves[overallLastIndex],
         centerNode: orderedLeaves[centerIndex],
@@ -166,7 +196,7 @@ export function buildTaxonomyBlocksForOrderedLeaves(
         labelEndIndex: labelCoversAllLeaves
           ? orderedLeaves.length
           : ((((bestSegmentEnd % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length) || orderedLeaves.length),
-        color: colorForTaxonomy(rank, label, colorsByRank),
+        color: colorForTaxonomy(rank, label, colorsByRank, taxId),
         segments,
       });
     }

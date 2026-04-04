@@ -9,7 +9,7 @@ import {
 import { putSharedSubtreePayload } from "../lib/taxonomyCache";
 import type { SharedSubtreeStoragePayload, SharedSubtreeTaxonomyEntry, SharedSubtreeVisualPayload } from "../lib/sharedSubtreePayload";
 import { distanceToSegmentSquared } from "../lib/spatialIndex";
-import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
+import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, taxonomyEntityKey, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 import { buildCache } from "./treeCanvasCache";
 import {
@@ -618,7 +618,7 @@ function buildTaxonomyColorMap(
   if (activeRanks.length === 0) {
     return {};
   }
-  const firstSeen = new Map<TaxonomyRank, Map<string, number>>();
+  const firstSeen = new Map<TaxonomyRank, Map<string, { label: string; taxId: number | null; tipIndex: number }>>();
   for (let rankIndex = 0; rankIndex < activeRanks.length; rankIndex += 1) {
     firstSeen.set(activeRanks[rankIndex], new Map());
   }
@@ -630,58 +630,77 @@ function buildTaxonomyColorMap(
       if (!label) {
         continue;
       }
+      const taxId = tip.taxIds?.[rank] ?? null;
+      const entityKey = taxonomyEntityKey(label, taxId);
       const map = firstSeen.get(rank);
-      if (map && !map.has(label)) {
-        map.set(label, tipIndex);
+      if (map && !map.has(entityKey)) {
+        map.set(entityKey, { label, taxId, tipIndex });
       }
     }
   }
 
   const colorsByRank: TaxonomyColorByRank = {};
   const outerRank = activeRanks[activeRanks.length - 1];
-  const outerEntries = [...(firstSeen.get(outerRank)?.entries() ?? [])].sort((left, right) => left[1] - right[1]);
+  const outerEntries = [...(firstSeen.get(outerRank)?.entries() ?? [])].sort((left, right) => left[1].tipIndex - right[1].tipIndex);
   const outerColors: Record<string, string> = {};
   const phi = 0.618033988749895;
   for (let index = 0; index < outerEntries.length; index += 1) {
-    const label = outerEntries[index][0];
-    const override = topLevelOverrides.get(label) ?? null;
+    const [entityKey, entry] = outerEntries[index];
+    const override = topLevelOverrides.get(entry.label) ?? null;
     if (override) {
-      outerColors[label] = override;
+      outerColors[entityKey] = override;
       continue;
     }
     const hue = (index * phi * 360) % 360;
-    outerColors[label] = hslColor(hue, 70, 64);
+    outerColors[entityKey] = hslColor(hue, 70, 64);
   }
   colorsByRank[outerRank] = outerColors;
 
   for (let rankIndex = activeRanks.length - 2; rankIndex >= 0; rankIndex -= 1) {
     const childRank = activeRanks[rankIndex];
-    const childSeen = firstSeen.get(childRank) ?? new Map<string, number>();
-    const parentAssignments = new Map<string, { parentRank: TaxonomyRank; parentLabel: string; firstSeen: number }>();
+    const childSeen = firstSeen.get(childRank) ?? new Map<string, { label: string; taxId: number | null; tipIndex: number }>();
+    const parentAssignments = new Map<string, {
+      childLabel: string;
+      childTaxId: number | null;
+      parentRank: TaxonomyRank;
+      parentLabel: string;
+      parentTaxId: number | null;
+      firstSeen: number;
+    }>();
     for (let tipIndex = 0; tipIndex < taxonomyMap.tipRanks.length; tipIndex += 1) {
       const tip = taxonomyMap.tipRanks[tipIndex];
       const childLabel = tip.ranks[childRank];
       if (!childLabel) {
         continue;
       }
+      const childTaxId = tip.taxIds?.[childRank] ?? null;
+      const childEntityKey = taxonomyEntityKey(childLabel, childTaxId);
       for (let parentRankIndex = rankIndex + 1; parentRankIndex < activeRanks.length; parentRankIndex += 1) {
         const parentRank = activeRanks[parentRankIndex];
         const parentLabel = tip.ranks[parentRank];
         if (!parentLabel) {
           continue;
         }
-        if (!parentAssignments.has(childLabel)) {
-          parentAssignments.set(childLabel, { parentRank, parentLabel, firstSeen: tipIndex });
+        const parentTaxId = tip.taxIds?.[parentRank] ?? null;
+        if (!parentAssignments.has(childEntityKey)) {
+          parentAssignments.set(childEntityKey, {
+            childLabel,
+            childTaxId,
+            parentRank,
+            parentLabel,
+            parentTaxId,
+            firstSeen: tipIndex,
+          });
         }
         break;
       }
     }
 
-    const grouped = new Map<string, Array<{ childLabel: string; firstSeen: number }>>();
-    parentAssignments.forEach((assignment, childLabel) => {
-      const key = `${assignment.parentRank}:${assignment.parentLabel}`;
+    const grouped = new Map<string, Array<{ childEntityKey: string; firstSeen: number }>>();
+    parentAssignments.forEach((assignment, childEntityKey) => {
+      const key = `${assignment.parentRank}:${taxonomyEntityKey(assignment.parentLabel, assignment.parentTaxId)}`;
       const group = grouped.get(key) ?? [];
-      group.push({ childLabel, firstSeen: assignment.firstSeen });
+      group.push({ childEntityKey, firstSeen: assignment.firstSeen });
       grouped.set(key, group);
     });
 
@@ -689,8 +708,8 @@ function buildTaxonomyColorMap(
     grouped.forEach((children, key) => {
       const [parentRankText, ...parentParts] = key.split(":");
       const parentRank = parentRankText as TaxonomyRank;
-      const parentLabel = parentParts.join(":");
-      const parentColor = colorsByRank[parentRank]?.[parentLabel] ?? hslColor(0, 0, 55);
+      const parentEntityKey = parentParts.join(":");
+      const parentColor = colorsByRank[parentRank]?.[parentEntityKey] ?? hslColor(0, 0, 55);
       const parsed = parseHslColor(parentColor) ?? { h: 0, s: 0, l: 55 };
       children.sort((left, right) => left.firstSeen - right.firstSeen);
       const half = Math.max(1, Math.floor((children.length - 1) / 2));
@@ -707,14 +726,14 @@ function buildTaxonomyColorMap(
         const hue = parsed.h + (position * hueStep);
         const lightnessDelta = position > 0 ? 4 * jitterScale : position < 0 ? -4 * jitterScale : 0;
         const lightness = parsed.l + lightnessDelta;
-        childColors[children[childIndex].childLabel] = hslColor(hue, parsed.s, Math.max(42, Math.min(76, lightness)));
+        childColors[children[childIndex].childEntityKey] = hslColor(hue, parsed.s, Math.max(42, Math.min(76, lightness)));
       }
     });
 
-    [...childSeen.keys()].forEach((childLabel, index) => {
-      if (!childColors[childLabel]) {
+    [...childSeen.keys()].forEach((childEntityKey, index) => {
+      if (!childColors[childEntityKey]) {
         const hue = ((outerEntries.length + index) * phi * 360) % 360;
-        childColors[childLabel] = hslColor(hue, 65, 62);
+        childColors[childEntityKey] = hslColor(hue, 65, 62);
       }
     });
     colorsByRank[childRank] = childColors;
@@ -723,32 +742,16 @@ function buildTaxonomyColorMap(
   return colorsByRank;
 }
 
-function buildTaxonomyTaxIdLookup(
-  taxonomyMap: TaxonomyMapPayload | null,
-): Map<TaxonomyRank, Map<string, number>> {
-  const lookup = new Map<TaxonomyRank, Map<string, number>>();
-  for (let index = 0; index < TAXONOMY_RANKS.length; index += 1) {
-    lookup.set(TAXONOMY_RANKS[index], new Map());
+function taxonomyBlockStableKey(block: TaxonomyBlock): string {
+  return `${block.rank}:${block.entityKey ?? taxonomyEntityKey(block.label, block.taxId ?? null)}:${block.centerNode}`;
+}
+
+function disposeCanvasCache(cache: { canvas: HTMLCanvasElement } | null): void {
+  if (!cache) {
+    return;
   }
-  if (!taxonomyMap) {
-    return lookup;
-  }
-  for (let tipIndex = 0; tipIndex < taxonomyMap.tipRanks.length; tipIndex += 1) {
-    const tip = taxonomyMap.tipRanks[tipIndex];
-    for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
-      const rank = TAXONOMY_RANKS[rankIndex];
-      const label = tip.ranks[rank];
-      const taxId = tip.taxIds?.[rank];
-      if (!label || !taxId) {
-        continue;
-      }
-      const byRank = lookup.get(rank);
-      if (byRank && !byRank.has(label)) {
-        byRank.set(label, taxId);
-      }
-    }
-  }
-  return lookup;
+  cache.canvas.width = 0;
+  cache.canvas.height = 0;
 }
 
 function lowestCommonAncestor(tree: TreeModel, leftNode: number, rightNode: number): number {
@@ -1146,7 +1149,7 @@ function buildTaxonomyBranchColorArray(
         const rootNode = lca(segment.firstNode, segment.lastNode);
         const roots = byLabel.get(block.label) ?? [];
         if (!roots.some((entry) => entry.rootNode === rootNode)) {
-          roots.push({ rootNode, color: block.color || colorForTaxonomy(rank, block.label, colorsByRank) });
+          roots.push({ rootNode, color: block.color || colorForTaxonomy(rank, block.label, colorsByRank, block.taxId ?? null) });
           byLabel.set(block.label, roots);
         }
       }
@@ -2283,6 +2286,7 @@ export default function TreeCanvas({
   const hoverTooltipBodyRef = useRef<HTMLDivElement | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
+  const taxonomyBlocksByOrderCacheRef = useRef<Partial<TaxonomyBlocksByOrder>>({});
   const taxonomyBranchColorsCacheRef = useRef<Map<string, string[]>>(new Map());
   const effectiveBranchColorsCacheRef = useRef<Map<string, string[]>>(new Map());
   const circularTaxonomyPathCacheRef = useRef<Map<string, CircularTaxonomyPathCache>>(new Map());
@@ -2500,17 +2504,22 @@ export default function TreeCanvas({
       )
       : null
   ), [effectiveTaxonomyColorSourceMap, taxonomyColorJitter, taxonomyRootColorAssignments]);
-  const taxonomyTaxIdsByRank = useMemo(() => buildTaxonomyTaxIdLookup(taxonomyMap), [taxonomyMap]);
-  const taxonomyBlocks = useMemo<TaxonomyBlocksByOrder | null>(() => {
+  const getTaxonomyBlocks = useCallback((orderKey: LayoutOrder): Record<TaxonomyRank, TaxonomyBlock[]> | null => {
     if (!cache || !taxonomyMap) {
       return null;
     }
-    return {
-      input: buildTaxonomyBlocksForOrderedLeaves(cache.orderedLeaves.input, taxonomyMap, taxonomyColors),
-      desc: buildTaxonomyBlocksForOrderedLeaves(cache.orderedLeaves.desc, taxonomyMap, taxonomyColors),
-      asc: buildTaxonomyBlocksForOrderedLeaves(cache.orderedLeaves.asc, taxonomyMap, taxonomyColors),
-    };
+    const existing = taxonomyBlocksByOrderCacheRef.current[orderKey];
+    if (existing) {
+      return existing;
+    }
+    const built = buildTaxonomyBlocksForOrderedLeaves(cache.orderedLeaves[orderKey], taxonomyMap, taxonomyColors);
+    taxonomyBlocksByOrderCacheRef.current[orderKey] = built;
+    return built;
   }, [cache, taxonomyColors, taxonomyMap]);
+  const taxonomyBlocks = useMemo<Record<TaxonomyRank, TaxonomyBlock[]> | null>(
+    () => getTaxonomyBlocks(order),
+    [getTaxonomyBlocks, order],
+  );
   const taxonomyConsensus = useMemo(
     () => (tree && taxonomyMap ? buildTaxonomyConsensusByRank(tree, taxonomyMap, taxonomyActiveRanks) : null),
     [taxonomyActiveRanks, taxonomyMap, tree],
@@ -2607,16 +2616,19 @@ export default function TreeCanvas({
     return nodes;
   }, [metadataMarkers, tree]);
   useLayoutEffect(() => {
+    taxonomyBlocksByOrderCacheRef.current = {};
     taxonomyBranchColorsCacheRef.current.clear();
     effectiveBranchColorsCacheRef.current.clear();
     circularTaxonomyPathCacheRef.current.clear();
     rectTaxonomyPathCacheRef.current.clear();
     circularBasePathCacheRef.current.clear();
     rectBasePathCacheRef.current.clear();
+    disposeCanvasCache(circularTaxonomyBitmapCacheRef.current);
+    disposeCanvasCache(rectTaxonomyBitmapCacheRef.current);
     circularTaxonomyBitmapCacheRef.current = null;
     rectTaxonomyBitmapCacheRef.current = null;
     circularTaxonomyOverlayLayoutCacheRef.current = null;
-  }, [branchThicknessScale, manualBranchColorVersion, metadataBranchColorVersion, metadataLabelVersion, metadataMarkerVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
+  }, [branchThicknessScale, getTaxonomyBlocks, manualBranchColorVersion, metadataBranchColorVersion, metadataLabelVersion, metadataMarkerVersion, taxonomyActiveRanks, taxonomyColors, taxonomyConsensus, tree]);
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
   const labelFontFamilies = useMemo<Record<LabelStyleClass, string>>(() => ({
     tip: fontFamilyCss(figureStyles.tip.fontFamily),
@@ -3149,7 +3161,7 @@ export default function TreeCanvas({
   }, [finalizeCircularCamera, rectClampPadding, size.height, size.width, tree, zoomAxisMode]);
 
   const getTaxonomyBranchColors = useCallback((orderKey: LayoutOrder, visibleRanks: TaxonomyRank[]): string[] | null => {
-    if (!tree || !taxonomyConsensus || !taxonomyBlocks || visibleRanks.length === 0) {
+    if (!tree || !taxonomyConsensus || visibleRanks.length === 0) {
       return null;
     }
     const key = `${orderKey}:${visibleRanks.join("|")}`;
@@ -3157,10 +3169,14 @@ export default function TreeCanvas({
     if (cached) {
       return cached;
     }
-    const built = buildTaxonomyBranchColorArray(tree, taxonomyConsensus, taxonomyBlocks[orderKey], taxonomyColors, visibleRanks);
+    const blocksByRank = getTaxonomyBlocks(orderKey);
+    if (!blocksByRank) {
+      return null;
+    }
+    const built = buildTaxonomyBranchColorArray(tree, taxonomyConsensus, blocksByRank, taxonomyColors, visibleRanks);
     taxonomyBranchColorsCacheRef.current.set(key, built);
     return built;
-  }, [taxonomyBlocks, taxonomyColors, taxonomyConsensus, tree]);
+  }, [getTaxonomyBlocks, taxonomyColors, taxonomyConsensus, tree]);
 
   const getEffectiveBranchColors = useCallback((orderKey: LayoutOrder, visibleRanks: TaxonomyRank[]): string[] | null => {
     if (!tree) {
@@ -3337,6 +3353,7 @@ export default function TreeCanvas({
       viewportWidth: size.width,
       viewportHeight: size.height,
     };
+    disposeCanvasCache(circularTaxonomyBitmapCacheRef.current);
     circularTaxonomyBitmapCacheRef.current = built;
     return built;
   }, [branchStrokeScale, size.height, size.width, tree]);
@@ -3412,6 +3429,7 @@ export default function TreeCanvas({
       viewportWidth: size.width,
       viewportHeight: size.height,
     };
+    disposeCanvasCache(rectTaxonomyBitmapCacheRef.current);
     rectTaxonomyBitmapCacheRef.current = built;
     return built;
   }, [branchStrokeScale, size.height, size.width, tree]);
@@ -4196,7 +4214,7 @@ export default function TreeCanvas({
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
           const rankKeyPrefix = `${rank}:`;
-          const blocksForRank = taxonomyBlocks[order][rank];
+          const blocksForRank = taxonomyBlocks[rank];
           const blockByKey = new Map<string, TaxonomyBlock>();
           for (let blockIndex = 0; blockIndex < blocksForRank.length; blockIndex += 1) {
             blockByKey.set(`${rank}:${blocksForRank[blockIndex].label}:${blocksForRank[blockIndex].centerNode}`, blocksForRank[blockIndex]);
@@ -4239,7 +4257,7 @@ export default function TreeCanvas({
             if (hiddenNodes[block.centerNode]) {
               continue;
             }
-            const blockKey = `${rank}:${block.label}`;
+            const blockKey = taxonomyBlockStableKey(block);
             const isPreservedLabel = preservedKeySet.has(blockKey);
             const blockSegments = block.segments && block.segments.length > 0
               ? block.segments
@@ -4294,7 +4312,7 @@ export default function TreeCanvas({
               startIndex: block.labelStartIndex ?? block.startIndex ?? blockSegments[0].startIndex,
               endIndex: block.labelEndIndex ?? block.endIndex ?? blockSegments[0].endIndex,
             };
-            const taxonomyTaxId = taxonomyTaxIdsByRank.get(rank)?.get(block.label) ?? null;
+            const taxonomyTaxId = block.taxId ?? null;
             if (!taxonomyBlockIntersectsVisibleLeafRanges([labelSegment], visibleLeafRanges, tree.leafCount)) {
               continue;
             }
@@ -4498,7 +4516,7 @@ export default function TreeCanvas({
           taxonomyPlacedLabelCount: placedLabels.length,
           taxonomyRenderedBlocks: renderedBlocksDebug,
           taxonomyBlockCounts: Object.fromEntries(
-            TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[order][rank]?.length ?? 0]),
+            TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[rank]?.length ?? 0]),
           ),
           taxonomyPlacedLabels: placedLabels.map((label) => ({
             key: label.key ?? null,
@@ -5892,7 +5910,7 @@ export default function TreeCanvas({
             .join("|")
           : "all";
         const visibleRankBlockCountsSignature = visibleRanks
-          .map((rank) => `${rank}:${taxonomyBlocks[order][rank]?.length ?? 0}`)
+          .map((rank) => `${rank}:${taxonomyBlocks[rank]?.length ?? 0}`)
           .join("|");
         const canUseCircularTaxonomyOverlayLayoutCache = !exportCapture
           && collapsedNodes.size === 0
@@ -5946,7 +5964,7 @@ export default function TreeCanvas({
             taxonomyArcCount: circularGenusArcs.length,
             taxonomyPlacedLabelCount: allTaxonomyLabels.length,
             taxonomyBlockCounts: Object.fromEntries(
-              TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[order][rank]?.length ?? 0]),
+              TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[rank]?.length ?? 0]),
             ),
             taxonomyOverlayAlpha: CIRCULAR_TAXONOMY_OVERLAY_ALPHA,
             taxonomyTipBandOuterRadiusPx: cachedCircularTaxonomyOverlay.taxonomyTipBandOuterRadiusPx,
@@ -6026,7 +6044,7 @@ export default function TreeCanvas({
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
           const rankKeyPrefix = `${rank}:`;
-          const blocksForRank: TaxonomyBlock[] = taxonomyBlocks[order][rank];
+          const blocksForRank: TaxonomyBlock[] = taxonomyBlocks[rank];
           const blockByKey = new Map<string, TaxonomyBlock>();
           for (let blockIndex = 0; blockIndex < blocksForRank.length; blockIndex += 1) {
             blockByKey.set(`${rank}:${blocksForRank[blockIndex].label}:${blocksForRank[blockIndex].centerNode}`, blocksForRank[blockIndex]);
@@ -6097,7 +6115,7 @@ export default function TreeCanvas({
             if (hiddenNodes[block.centerNode]) {
               continue;
             }
-            const blockKey = `${rank}:${block.label}`;
+            const blockKey = taxonomyBlockStableKey(block);
             const isPreservedLabel = preservedKeySet.has(blockKey);
             const blockSegments = block.segments && block.segments.length > 0
               ? block.segments
@@ -6270,7 +6288,7 @@ export default function TreeCanvas({
               startIndex: block.labelStartIndex ?? block.startIndex ?? blockSegments[0].startIndex,
               endIndex: block.labelEndIndex ?? block.endIndex ?? blockSegments[0].endIndex,
             };
-            const taxonomyTaxId = taxonomyTaxIdsByRank.get(rank)?.get(block.label) ?? null;
+            const taxonomyTaxId = block.taxId ?? null;
             const labelSegments = [primaryLabelSegment];
             for (let segmentIndex = 0; segmentIndex < labelSegments.length; segmentIndex += 1) {
               const segment = labelSegments[segmentIndex];
@@ -6610,7 +6628,7 @@ export default function TreeCanvas({
           taxonomyArcCount: connectorArcs.length,
           taxonomyPlacedLabelCount: allTaxonomyLabels.length,
           taxonomyBlockCounts: Object.fromEntries(
-            TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[order][rank]?.length ?? 0]),
+            TAXONOMY_RANKS.map((rank) => [rank, taxonomyBlocks[rank]?.length ?? 0]),
           ),
           taxonomyOverlayAlpha: CIRCULAR_TAXONOMY_OVERLAY_ALPHA,
           taxonomyTipBandOuterRadiusPx: tipBandOuterRadiusPx,
