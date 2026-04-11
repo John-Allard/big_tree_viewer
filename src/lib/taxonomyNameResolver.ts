@@ -107,7 +107,7 @@ export function addTaxonomyIndexEntry(index: Map<string, number[]>, name: string
   index.set(name, [taxId]);
 }
 
-function candidateSpeciesNames(name: string): string[] {
+export function candidateSpeciesNames(name: string): string[] {
   const normalized = normalizeTaxonomyName(name).replaceAll("|", " ").replaceAll(";", " ").replaceAll(",", " ");
   const parts = normalized.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
@@ -121,7 +121,7 @@ function candidateSpeciesNames(name: string): string[] {
   return [...new Set(candidates)];
 }
 
-function extractGenus(name: string): string {
+export function extractGenus(name: string): string {
   const parts = normalizeTaxonomyName(name).split(/\s+/).filter(Boolean);
   return parts[0] ?? "";
 }
