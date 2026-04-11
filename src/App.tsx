@@ -273,6 +273,17 @@ function diagnosticsPanelEnabled(): boolean {
   return value === "1" || value === "true";
 }
 
+function useLowMemoryTaxonomyMode(): boolean {
+  if (typeof navigator === "undefined" || typeof window === "undefined") {
+    return false;
+  }
+  const userAgent = navigator.userAgent;
+  const isAppleMobileDevice = /iPhone|iPad|iPod/.test(userAgent)
+    || (userAgent.includes("Macintosh") && "ontouchend" in window);
+  const isWebKitBrowser = /AppleWebKit/i.test(userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(userAgent);
+  return isAppleMobileDevice && isWebKitBrowser;
+}
+
 function LabelStyleSection({
   labelClass,
   settings,
@@ -758,6 +769,7 @@ export default function App() {
   const [unexpectedDiagnosticsSessionId, setUnexpectedDiagnosticsSessionId] = useState<string | null>(null);
   const diagnosticsSessionIdRef = useRef<string>(createDiagnosticsSessionId());
   const showDiagnosticsPanel = useMemo(() => diagnosticsPanelEnabled(), []);
+  const useLowMemoryTaxonomyMapping = useMemo(() => useLowMemoryTaxonomyMode(), []);
   const appendDiagnostic = useCallback((kind: string, data?: unknown): void => {
     appendDiagnosticsEvent(kind, data);
     setDiagnosticsRevision((value) => value + 1);
@@ -1465,7 +1477,7 @@ export default function App() {
     });
   }, [ensureWorker]);
 
-  const runTaxonomyWorker = useCallback((request: { type: "download-taxonomy" } | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }> }): Promise<TaxonomyWorkerResponse> => {
+  const runTaxonomyWorker = useCallback((request: { type: "download-taxonomy" } | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean }): Promise<TaxonomyWorkerResponse> => {
     return new Promise((resolve, reject) => {
       const worker = new Worker(new URL("./workers/taxonomyWorker.ts", import.meta.url), { type: "module" });
       const cleanup = (): void => {
@@ -1823,6 +1835,7 @@ export default function App() {
     appendDiagnostic("taxonomy-mapping-started", {
       tipCount: tree.leafCount,
       treeSignature,
+      lowMemoryMode: useLowMemoryTaxonomyMapping,
     });
     try {
       const archive = await getCachedTaxonomyArchive();
@@ -1839,20 +1852,26 @@ export default function App() {
         type: "map-taxonomy",
         archive,
         tips,
+        lowMemoryMode: useLowMemoryTaxonomyMapping,
       });
       if (response.type !== "taxonomy-mapped" || !response.payload) {
         throw new Error(response.message || "Taxonomy mapping did not complete.");
       }
-      if (treeSignature) {
+      if (treeSignature && !useLowMemoryTaxonomyMapping) {
         await putCachedTaxonomyMapping(treeSignature, response.payload);
       }
       setTaxonomyMap(response.payload);
       setTaxonomyEnabled(true);
-      setTaxonomyStatus(`Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips.`);
+      setTaxonomyStatus(
+        useLowMemoryTaxonomyMapping
+          ? `Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips in low-memory mobile mode.`
+          : `Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips.`,
+      );
       appendDiagnostic("taxonomy-mapping-completed", {
         mappedCount: response.payload.mappedCount,
         totalTips: response.payload.totalTips,
         activeRanks: response.payload.activeRanks,
+        lowMemoryMode: useLowMemoryTaxonomyMapping,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1863,7 +1882,7 @@ export default function App() {
     } finally {
       setTaxonomyLoading(false);
     }
-  }, [appendDiagnostic, runTaxonomyWorker, tree, treeSignature]);
+  }, [appendDiagnostic, runTaxonomyWorker, tree, treeSignature, useLowMemoryTaxonomyMapping]);
 
   const stepSearch = (direction: -1 | 1): void => {
     if (searchResults.length === 0) {
@@ -1937,6 +1956,7 @@ export default function App() {
         taxonomyError,
         taxonomyCached,
         taxonomyLoading,
+        taxonomyLowMemoryMode: useLowMemoryTaxonomyMapping,
         taxonomyBranchColoringEnabled,
         taxonomyRankVisibility,
         collapsibleTaxonomyRanks,
@@ -2213,6 +2233,7 @@ export default function App() {
     taxonomyEnabled,
     taxonomyError,
     taxonomyLoading,
+    useLowMemoryTaxonomyMapping,
     taxonomyRankVisibility,
     taxonomyStatus,
     taxonomyMap,

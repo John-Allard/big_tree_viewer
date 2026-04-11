@@ -12,7 +12,7 @@ import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
 type TaxonomyWorkerRequest =
   | { type: "download-taxonomy" }
-  | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }> };
+  | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean };
 
 type TaxonomyWorkerResponse =
   | { type: "taxonomy-progress"; message: string }
@@ -61,6 +61,7 @@ function parseTaxonomyNameLine(
   rankNames: Map<number, string>,
   speciesIndex: Map<string, number[]>,
   genusIndex: Map<string, number[]>,
+  lowMemoryMode: boolean,
 ): void {
   const parts = line.split("|").map((part) => part.trim());
   if (parts.length < 4) {
@@ -80,7 +81,10 @@ function parseTaxonomyNameLine(
     const normalized = normalizeTaxonomyName(scientificName);
     addTaxonomyIndexEntry(genusIndex, normalized, taxId);
   }
-  if (nameClass === "scientific name" && TAXONOMY_NAMED_LINEAGE_RANKS.has(rank)) {
+  const shouldCacheRankName = lowMemoryMode
+    ? (TARGET_RANKS as string[]).includes(rank)
+    : TAXONOMY_NAMED_LINEAGE_RANKS.has(rank);
+  if (nameClass === "scientific name" && shouldCacheRankName) {
     rankNames.set(taxId, scientificName);
   }
 }
@@ -175,8 +179,8 @@ async function parseZipFileLines(
   });
 }
 
-async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy> {
-  if (parsedCache) {
+async function parseArchive(archive: Blob | ArrayBuffer, lowMemoryMode: boolean): Promise<ParsedTaxonomy> {
+  if (parsedCache && !lowMemoryMode) {
     return parsedCache;
   }
   post({ type: "taxonomy-progress", message: "Extracting taxonomy archive..." });
@@ -190,16 +194,24 @@ async function parseArchive(archive: Blob | ArrayBuffer): Promise<ParsedTaxonomy
     parseNodeLine(line, nodes);
   });
   await parseZipFileLines(archiveBlob, "names.dmp", "Parsing taxonomy names...", (line) => {
-    parseTaxonomyNameLine(line, nodes, rankNames, speciesIndex, genusIndex);
+    parseTaxonomyNameLine(line, nodes, rankNames, speciesIndex, genusIndex, lowMemoryMode);
   });
 
   const parsed = { nodes, rankNames, speciesIndex, genusIndex };
-  parsedCache = parsed;
+  if (!lowMemoryMode) {
+    parsedCache = parsed;
+  }
   return parsed;
 }
 
-function mapTips(tips: Array<{ node: number; name: string }>, taxonomy: ParsedTaxonomy): TaxonomyMapPayload {
-  return mapTipsWithContext(tips, taxonomy, TARGET_RANKS, TAXONOMY_MAPPING_VERSION);
+function mapTips(
+  tips: Array<{ node: number; name: string }>,
+  taxonomy: ParsedTaxonomy,
+  lowMemoryMode: boolean,
+): TaxonomyMapPayload {
+  return mapTipsWithContext(tips, taxonomy, TARGET_RANKS, TAXONOMY_MAPPING_VERSION, {
+    enableCollapseFallbacks: !lowMemoryMode,
+  });
 }
 
 self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerRequest>) => {
@@ -215,9 +227,10 @@ self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerReques
       post({ type: "taxonomy-downloaded", archive }, [archive]);
       return;
     }
-    const taxonomy = await parseArchive(request.archive);
+    const lowMemoryMode = request.type === "map-taxonomy" ? Boolean(request.lowMemoryMode) : false;
+    const taxonomy = await parseArchive(request.archive, lowMemoryMode);
     post({ type: "taxonomy-progress", message: "Mapping taxonomy to tree tips..." });
-    const payload = mapTips(request.tips, taxonomy);
+    const payload = mapTips(request.tips, taxonomy, lowMemoryMode);
     post({ type: "taxonomy-mapped", payload });
   } catch (error) {
     post({

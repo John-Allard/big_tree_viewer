@@ -60,6 +60,10 @@ export type TipTaxonomyRequest = {
   name: string;
 };
 
+export interface TaxonomyMappingOptions {
+  enableCollapseFallbacks?: boolean;
+}
+
 type ResolvedTipMapping = {
   node: number;
   ranks: Partial<Record<TaxonomyRank, string>>;
@@ -156,6 +160,7 @@ function buildCandidateLineage(
   targetRanks: TaxonomyRank[],
   ancestorMemo: Map<string, number | null>,
   lineageMemo: Map<number, CandidateLineage | null>,
+  enableCollapseFallbacks: boolean,
 ): CandidateLineage | null {
   const cached = lineageMemo.get(taxId);
   if (cached !== undefined) {
@@ -179,7 +184,7 @@ function buildCandidateLineage(
     taxIds[rank] = ancestor;
     anyRank = true;
   }
-  if (anyRank) {
+  if (anyRank && enableCollapseFallbacks) {
     const lineageAncestors: Array<{ taxId: number; rank: string; label: string }> = [];
     let current = taxId;
     const seen = new Set<number>();
@@ -283,6 +288,7 @@ function collectCandidatesForTip(
   targetRanks: TaxonomyRank[],
   ancestorMemo: Map<string, number | null>,
   lineageMemo: Map<number, CandidateLineage | null>,
+  enableCollapseFallbacks: boolean,
 ): CandidateLineage[] {
   const speciesCandidates = candidateSpeciesNames(tip.name)
     .flatMap((candidate) => taxonomy.speciesIndex.get(candidate) ?? []);
@@ -293,7 +299,7 @@ function collectCandidatesForTip(
   const unique = [...new Set(source)];
   const candidates: CandidateLineage[] = [];
   for (let index = 0; index < unique.length; index += 1) {
-    const lineage = buildCandidateLineage(unique[index], taxonomy, targetRanks, ancestorMemo, lineageMemo);
+    const lineage = buildCandidateLineage(unique[index], taxonomy, targetRanks, ancestorMemo, lineageMemo, enableCollapseFallbacks);
     if (lineage) {
       candidates.push(lineage);
     }
@@ -306,10 +312,12 @@ export function mapTipsWithContext(
   taxonomy: ParsedTaxonomyForMapping,
   targetRanks: TaxonomyRank[],
   mappingVersion: number,
+  options: TaxonomyMappingOptions = {},
 ): TaxonomyMapPayload {
+  const enableCollapseFallbacks = options.enableCollapseFallbacks ?? true;
   const ancestorMemo = new Map<string, number | null>();
   const lineageMemo = new Map<number, CandidateLineage | null>();
-  const candidatesByTip = tips.map((tip) => collectCandidatesForTip(tip, taxonomy, targetRanks, ancestorMemo, lineageMemo));
+  const candidatesByTip = tips.map((tip) => collectCandidatesForTip(tip, taxonomy, targetRanks, ancestorMemo, lineageMemo, enableCollapseFallbacks));
   const resolved: Array<ResolvedTipMapping | null> = new Array(tips.length).fill(null);
 
   for (let index = 0; index < tips.length; index += 1) {
