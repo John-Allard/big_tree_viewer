@@ -391,6 +391,25 @@ function metadataCircularMarkerScreenPosition(
   };
 }
 
+function evenlySampleSortedItems<T>(items: T[], maxCount: number): T[] {
+  if (items.length <= maxCount) {
+    return items;
+  }
+  if (maxCount <= 0) {
+    return [];
+  }
+  const sampled: T[] = [];
+  const step = items.length / maxCount;
+  for (let sampleIndex = 0; sampleIndex < maxCount; sampleIndex += 1) {
+    const itemIndex = Math.min(
+      items.length - 1,
+      Math.floor((sampleIndex + 0.5) * step),
+    );
+    sampled.push(items[itemIndex]);
+  }
+  return sampled;
+}
+
 function escapeSvgText(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -2266,6 +2285,7 @@ export default function TreeCanvas({
   focusNodeRequest,
   fitRequest,
   exportSvgRequest,
+  exportSvgFilename,
   visualResetRequest,
   onHoverChange,
   onRerootRequest,
@@ -2615,6 +2635,23 @@ export default function TreeCanvas({
     }
     return nodes;
   }, [metadataMarkers, tree]);
+  const metadataMarkerNodesByOrder = useMemo<Record<LayoutOrder, number[]>>(() => {
+    if (!tree || metadataMarkerNodes.length === 0) {
+      return {
+        input: [],
+        desc: [],
+        asc: [],
+      };
+    }
+    const sortForOrder = (orderKey: LayoutOrder): number[] => (
+      [...metadataMarkerNodes].sort((left, right) => tree.layouts[orderKey].center[left] - tree.layouts[orderKey].center[right])
+    );
+    return {
+      input: sortForOrder("input"),
+      desc: sortForOrder("desc"),
+      asc: sortForOrder("asc"),
+    };
+  }, [metadataMarkerNodes, tree]);
   useLayoutEffect(() => {
     taxonomyBlocksByOrderCacheRef.current = {};
     taxonomyBranchColorsCacheRef.current.clear();
@@ -4985,13 +5022,15 @@ export default function TreeCanvas({
 
       if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scaleX > 0.95) {
         const maxVisibleMetadataMarkers = 1800;
-        let visibleMarkers = 0;
+        const visibleMarkers: Array<{
+          marker: NonNullable<(typeof metadataMarkers)[number]>;
+          x: number;
+          y: number;
+        }> = [];
         ctx.lineWidth = 1.1;
-        for (let index = 0; index < metadataMarkerNodes.length; index += 1) {
-          if (visibleMarkers >= maxVisibleMetadataMarkers) {
-            break;
-          }
-          const node = metadataMarkerNodes[index];
+        const orderedMarkerNodes = metadataMarkerNodesByOrder[order];
+        for (let index = 0; index < orderedMarkerNodes.length; index += 1) {
+          const node = orderedMarkerNodes[index];
           if (hiddenNodes[node]) {
             continue;
           }
@@ -5005,13 +5044,21 @@ export default function TreeCanvas({
             continue;
           }
           const { x: markerX, y: markerY } = metadataRectMarkerScreenPosition(tree, node, y, camera, metadataMarkerSizePx);
-          ctx.fillStyle = marker.color;
+          visibleMarkers.push({
+            marker,
+            x: markerX,
+            y: markerY,
+          });
+        }
+        const sampledMarkers = evenlySampleSortedItems(visibleMarkers, maxVisibleMetadataMarkers);
+        for (let index = 0; index < sampledMarkers.length; index += 1) {
+          const marker = sampledMarkers[index];
+          ctx.fillStyle = marker.marker.color;
           ctx.strokeStyle = "rgba(255,255,255,0.92)";
-          drawMetadataMarker(ctx, marker.shape, markerX, markerY, metadataMarkerSizePx);
+          drawMetadataMarker(ctx, marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx);
           ctx.fill();
           ctx.stroke();
-          pushScenePath(metadataMarkerPath(marker.shape, markerX, markerY, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
-          visibleMarkers += 1;
+          pushScenePath(metadataMarkerPath(marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.marker.color, 1);
         }
       }
 
@@ -7370,13 +7417,15 @@ export default function TreeCanvas({
 
       if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scale > 4.5) {
         const maxVisibleMetadataMarkers = 1600;
-        let visibleMarkers = 0;
+        const visibleMarkers: Array<{
+          marker: NonNullable<(typeof metadataMarkers)[number]>;
+          x: number;
+          y: number;
+        }> = [];
         ctx.lineWidth = 1.1;
-        for (let index = 0; index < metadataMarkerNodes.length; index += 1) {
-          if (visibleMarkers >= maxVisibleMetadataMarkers) {
-            break;
-          }
-          const node = metadataMarkerNodes[index];
+        const orderedMarkerNodes = metadataMarkerNodesByOrder[order];
+        for (let index = 0; index < orderedMarkerNodes.length; index += 1) {
+          const node = orderedMarkerNodes[index];
           if (hiddenNodes[node]) {
             continue;
           }
@@ -7389,15 +7438,21 @@ export default function TreeCanvas({
           if (screen.x < -20 || screen.x > size.width + 20 || screen.y < -20 || screen.y > size.height + 20) {
             continue;
           }
-          const markerX = screen.x;
-          const markerY = screen.y;
-          ctx.fillStyle = marker.color;
+          visibleMarkers.push({
+            marker,
+            x: screen.x,
+            y: screen.y,
+          });
+        }
+        const sampledMarkers = evenlySampleSortedItems(visibleMarkers, maxVisibleMetadataMarkers);
+        for (let index = 0; index < sampledMarkers.length; index += 1) {
+          const marker = sampledMarkers[index];
+          ctx.fillStyle = marker.marker.color;
           ctx.strokeStyle = "rgba(255,255,255,0.92)";
-          drawMetadataMarker(ctx, marker.shape, markerX, markerY, metadataMarkerSizePx);
+          drawMetadataMarker(ctx, marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx);
           ctx.fill();
           ctx.stroke();
-          pushScenePath(metadataMarkerPath(marker.shape, markerX, markerY, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.color, 1);
-          visibleMarkers += 1;
+          pushScenePath(metadataMarkerPath(marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.marker.color, 1);
         }
       }
 
@@ -7787,6 +7842,7 @@ export default function TreeCanvas({
     metadataLabelOffsetYPx,
     metadataLabels,
     metadataMarkerNodes,
+    metadataMarkerNodesByOrder,
     metadataMarkerSizePx,
     metadataMarkers,
     order,
@@ -8234,10 +8290,10 @@ export default function TreeCanvas({
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `big-tree-view-${viewMode}.svg`;
+    link.download = exportSvgFilename || `big-tree-view-${viewMode}.svg`;
     link.click();
     window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
-  }, [buildCurrentSvgString, exportSvgRequest, viewMode]);
+  }, [buildCurrentSvgString, exportSvgFilename, exportSvgRequest, viewMode]);
 
   useEffect(() => () => {
     if (frameRequestRef.current !== null) {

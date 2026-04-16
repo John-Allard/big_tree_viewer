@@ -66,6 +66,25 @@ function formatNumber(value: number): string {
   return value.toFixed(4).replace(/\.?0+$/, "");
 }
 
+function sanitizeExportBaseLabel(label: string): string {
+  return label
+    .trim()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-z0-9._-]+/gi, "_")
+    .replace(/^_+|_+$/g, "")
+    || "tree";
+}
+
+function normalizeSvgExportFilename(value: string, fallbackBaseLabel: string): string {
+  const trimmed = value.trim();
+  const base = trimmed
+    .replace(/[/\\?%*:|"<>]+/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^_+|_+$/g, "")
+    || `${fallbackBaseLabel}.svg`;
+  return /\.svg$/i.test(base) ? base : `${base}.svg`;
+}
+
 function normalizeSearchQuery(value: string): string {
   return value.toLowerCase();
 }
@@ -726,6 +745,7 @@ export default function App() {
   const [showPasteInput, setShowPasteInput] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
+  const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
   const [visualResetRequest, setVisualResetRequest] = useState(0);
   const [activeLabelStylePopover, setActiveLabelStylePopover] = useState<VisualPopoverId | null>(null);
   const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
@@ -1572,12 +1592,7 @@ export default function App() {
     const blob = new Blob([newick], { type: "text/plain;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
     const link = window.document.createElement("a");
-    const baseLabel = loadedTreeLabel
-      .trim()
-      .replace(/\.[^.]+$/, "")
-      .replace(/[^a-z0-9._-]+/gi, "_")
-      .replace(/^_+|_+$/g, "")
-      || "tree";
+    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
     link.href = url;
     link.download = `${baseLabel}.nwk`;
     window.document.body.appendChild(link);
@@ -1585,6 +1600,20 @@ export default function App() {
     window.document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   }, [loadedTreeLabel, tree]);
+
+  const requestSvgExport = useCallback((): void => {
+    if (!tree || typeof window === "undefined") {
+      return;
+    }
+    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
+    const defaultFilename = `${baseLabel}-${viewMode}-view.svg`;
+    const requestedFilename = window.prompt("Save SVG as", defaultFilename);
+    if (requestedFilename === null) {
+      return;
+    }
+    setExportSvgFilename(normalizeSvgExportFilename(requestedFilename, `${baseLabel}-${viewMode}-view`));
+    setExportSvgRequest((value) => value + 1);
+  }, [loadedTreeLabel, tree, viewMode]);
 
   useEffect(() => {
     if (didAutoloadRef.current) {
@@ -2345,7 +2374,7 @@ export default function App() {
               type="button"
               className="secondary"
               disabled={!tree}
-              onClick={() => setExportSvgRequest((value) => value + 1)}
+              onClick={requestSvgExport}
             >
               Export View SVG
             </button>
@@ -3502,6 +3531,7 @@ export default function App() {
           focusNodeRequest={focusNodeRequest}
           fitRequest={fitRequest}
           exportSvgRequest={exportSvgRequest}
+          exportSvgFilename={exportSvgFilename}
           visualResetRequest={visualResetRequest}
           onHoverChange={handleHoverChange}
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}

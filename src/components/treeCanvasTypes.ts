@@ -61,6 +61,7 @@ export interface TreeCanvasProps {
   focusNodeRequest: number;
   fitRequest: number;
   exportSvgRequest: number;
+  exportSvgFilename: string;
   visualResetRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
   onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;

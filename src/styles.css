@@ -259,6 +259,10 @@ button.secondary {
   gap: 0.65rem;
 }
 
+.search-controls > * {
+  min-width: 0;
+}
+
 .search-input-wrap {
   position: relative;
 }
@@ -349,10 +353,12 @@ button.secondary {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .metadata-toggle-main {
   flex: 1 1 auto;
+  min-width: 0;
 }
 
 .search-controls label > input[type="checkbox"] {
@@ -612,6 +618,9 @@ button.secondary {
 .empty-note {
   margin: 0.8rem 0 0;
   line-height: 1.4;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .status-line {
