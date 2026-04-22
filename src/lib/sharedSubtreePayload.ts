@@ -105,6 +105,7 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
     current.offsetXPx = coerceFiniteNumber(source.offsetXPx, current.offsetXPx);
     current.offsetYPx = coerceFiniteNumber(source.offsetYPx, current.offsetYPx);
     current.bandThicknessScale = coerceFiniteNumber(source.bandThicknessScale, current.bandThicknessScale ?? 1);
+    current.taxonomyGapPx = coerceFiniteNumber(source.taxonomyGapPx, current.taxonomyGapPx ?? 0);
     current.bold = coerceBoolean(source.bold, Boolean(current.bold));
     current.italic = coerceBoolean(source.italic, Boolean(current.italic));
   }

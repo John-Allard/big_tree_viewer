@@ -2699,6 +2699,8 @@ export default function TreeCanvas({
     Math.min(TAXONOMY_LABEL_SIZE_SCALE_MAX, figureStyles.taxonomy.sizeScale),
   );
   const taxonomyBandThicknessScale = Math.max(0.65, Math.min(1.8, figureStyles.taxonomy.bandThicknessScale ?? 1));
+  const taxonomyGapPx = Math.max(0, figureStyles.taxonomy.taxonomyGapPx ?? 0);
+  const taxonomyBaselineGapPx = showTipLabels ? 18 : 0;
   const reservedTipLabelCharacters = useMemo(() => {
     if (!tree) {
       return 6;
@@ -3013,6 +3015,8 @@ export default function TreeCanvas({
         const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
           + (Math.max(0, visibleRanks.length - 1) * metrics.ringGapPx)
           + metrics.labelGapPx
+          + taxonomyBaselineGapPx
+          + taxonomyGapPx
           + 26
           + Math.max(0, figureStyles.tip.offsetPx);
         return tipBandWidthPx + taxonomyWidthPx;
@@ -3024,7 +3028,7 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, tree, useAutomaticTaxonomyRankVisibility]);
+  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapPx, tree, useAutomaticTaxonomyRankVisibility]);
 
   const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {
@@ -3097,6 +3101,8 @@ export default function TreeCanvas({
       const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
       const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
         + (Math.max(0, visibleRanks.length - 1) * metrics.ringGapPx)
+        + taxonomyBaselineGapPx
+        + taxonomyGapPx
         + 40
         + Math.max(0, figureStyles.tip.offsetPx);
       return {
@@ -3108,7 +3114,7 @@ export default function TreeCanvas({
     return {
       right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx),
     };
-  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled]);
+  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapPx]);
 
   const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
@@ -4243,7 +4249,7 @@ export default function TreeCanvas({
         const placedKeys: string[] = [];
         const renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }> = [];
         let taxonomyConnectorSegmentCount = 0;
-        let bandCursorX = tipSideX + effectiveTipLabelSpacePx;
+        let bandCursorX = tipSideX + effectiveTipLabelSpacePx + taxonomyBaselineGapPx + taxonomyGapPx;
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
         const preservedKeys = previousTaxonomyState
           && previousTaxonomyState.tree === tree
@@ -5856,6 +5862,8 @@ export default function TreeCanvas({
           const metrics = taxonomyRingMetricsPx(visibleTaxonomyRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
           return (maxRadius * camera.scale)
             + globalTipLabelSpacePx
+            + taxonomyBaselineGapPx
+            + taxonomyGapPx
             + metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
             + (Math.max(0, visibleTaxonomyRanks.length - 1) * metrics.ringGapPx)
             + 24;
@@ -5935,7 +5943,7 @@ export default function TreeCanvas({
         circularGenusBaseFontSize = baseFontSize;
         const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
-        const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx;
+        const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx + taxonomyBaselineGapPx + taxonomyGapPx;
         const viewportCenterRenderedTheta = wrapPositive(Math.atan2((size.height * 0.5) - centerPoint.y, (size.width * 0.5) - centerPoint.x));
         let ringCursorOuterPx = tipBandOuterRadiusPx;
         const placedLabels: ScreenLabel[] = [];

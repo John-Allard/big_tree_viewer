@@ -419,6 +419,18 @@ function LabelStyleSection({
                 />
               </label>
               <div className="figure-style-value">x{(settings.bandThicknessScale ?? 1).toFixed(2)}</div>
+              <label>
+                Ribbon gap
+                <input
+                  type="range"
+                  min={0}
+                  max={40}
+                  step={1}
+                  value={settings.taxonomyGapPx ?? 0}
+                  onChange={(event) => onUpdate(labelClass, "taxonomyGapPx", Number(event.target.value))}
+                />
+              </label>
+              <div className="figure-style-value">{Math.max(0, settings.taxonomyGapPx ?? 0)}px</div>
             </>
           ) : isScale ? null : supportsAxisOffsets ? (
             <>
@@ -2133,7 +2145,7 @@ export default function App() {
       setMetadataLabelMinSpacingPx,
       setMetadataLabelOffsetXPx,
       setMetadataLabelOffsetYPx,
-      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "bold" | "italic", value: string | number | boolean) => {
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "taxonomyGapPx" | "bold" | "italic", value: string | number | boolean) => {
         updateFigureStyle(labelClass, field, value as FontFamilyKey | number | boolean);
       },
       runRealTaxonomyMappingForTest: async () => {
