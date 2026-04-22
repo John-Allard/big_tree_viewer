@@ -43,6 +43,7 @@ export type SharedSubtreeVisualPayload = {
   useAutoCircularCenterScaleAngle: boolean;
   circularCenterScaleAngleDegrees: number;
   showCircularCenterRadialScaleBar: boolean;
+  showTipLabels: boolean;
   showGenusLabels: boolean;
   showInternalNodeLabels: boolean;
   showBootstrapLabels: boolean;
@@ -141,6 +142,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     useAutoCircularCenterScaleAngle: coerceBoolean(source.useAutoCircularCenterScaleAngle, true),
     circularCenterScaleAngleDegrees: coerceFiniteNumber(source.circularCenterScaleAngleDegrees, -5),
     showCircularCenterRadialScaleBar: coerceBoolean(source.showCircularCenterRadialScaleBar, false),
+    showTipLabels: coerceBoolean(source.showTipLabels, true),
     showGenusLabels: coerceBoolean(source.showGenusLabels, true),
     showInternalNodeLabels: coerceBoolean(source.showInternalNodeLabels, false),
     showBootstrapLabels: coerceBoolean(source.showBootstrapLabels, false),

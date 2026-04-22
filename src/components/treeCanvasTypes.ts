@@ -21,6 +21,7 @@ export interface TreeCanvasProps {
   circularCenterScaleAngleDegrees: number;
   useAutoCircularCenterScaleAngle: boolean;
   showCircularCenterRadialScaleBar: boolean;
+  showTipLabels: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
   taxonomyBranchColoringEnabled: boolean;

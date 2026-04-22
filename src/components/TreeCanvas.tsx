@@ -2245,6 +2245,7 @@ export default function TreeCanvas({
   circularCenterScaleAngleDegrees,
   useAutoCircularCenterScaleAngle,
   showCircularCenterRadialScaleBar,
+  showTipLabels,
   showGenusLabels,
   taxonomyEnabled,
   taxonomyBranchColoringEnabled,
@@ -2999,7 +3000,9 @@ export default function TreeCanvas({
     const genusFontSize = scaleLabelFontSize("genus", Math.max(10, Math.min(18, Math.max(angularSpacingPx * 0.92, 10))));
     const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-    const tipBandWidthPx = interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx);
+    const tipBandWidthPx = showTipLabels
+      ? interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx)
+      : 0;
     if (taxonomyEnabled) {
       if (taxonomyBlocks) {
         const visibleRanks = useAutomaticTaxonomyRankVisibility
@@ -3021,7 +3024,7 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, tree, useAutomaticTaxonomyRankVisibility]);
+  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, tree, useAutomaticTaxonomyRankVisibility]);
 
   const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {
@@ -3085,7 +3088,9 @@ export default function TreeCanvas({
     const genusFontSize = scaleLabelFontSize("genus", Math.max(10, Math.min(18, camera.scaleY * 0.42)));
     const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-    const tipBandWidthPx = interpolateTipBandWidthPx(camera.scaleY, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx);
+    const tipBandWidthPx = showTipLabels
+      ? interpolateTipBandWidthPx(camera.scaleY, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx)
+      : 0;
     if (taxonomyEnabled && taxonomyBlocks) {
       const visibleRanks = rectVisibleTaxonomyRanksForScaleY(camera.scaleY);
       const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (camera.scaleY * 0.45)));
@@ -3103,7 +3108,7 @@ export default function TreeCanvas({
     return {
       right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx),
     };
-  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled]);
+  }, [figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled]);
 
   const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
@@ -3712,9 +3717,9 @@ export default function TreeCanvas({
       const displayedRectScaleBoundaries = [...new Map(
         rectScaleBoundaries.map((boundary) => [boundary.value.toPrecision(12), boundary]),
       ).values()].sort((left, right) => left.value - right.value);
-      const tipLabelCueVisible = camera.scaleY > 1.45;
-      const microTipLabelsVisible = camera.scaleY > 2.7;
-      const tipLabelsVisible = camera.scaleY > 4.2;
+      const tipLabelCueVisible = showTipLabels && camera.scaleY > 1.45;
+      const microTipLabelsVisible = showTipLabels && camera.scaleY > 2.7;
+      const tipLabelsVisible = showTipLabels && camera.scaleY > 4.2;
       const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? rectVisibleTaxonomyRanksForScaleY(camera.scaleY)
         : [];
@@ -4150,16 +4155,18 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-      const globalTipLabelSpacePx = interpolateTipBandWidthPx(
-        camera.scaleY,
-        1.55,
-        2.7,
-        4.2,
-        microBandWidthPx,
-        readableBandWidthPx,
-      );
+      const globalTipLabelSpacePx = showTipLabels
+        ? interpolateTipBandWidthPx(
+          camera.scaleY,
+          1.55,
+          2.7,
+          4.2,
+          microBandWidthPx,
+          readableBandWidthPx,
+        )
+        : 0;
       const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
-      const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + 8;
+      const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + (showTipLabels ? 8 : 0);
       const orderedLeaves = cache.orderedLeaves[order];
       const startLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, minY - 2);
       const endLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, maxY + 2.000001);
@@ -4236,7 +4243,7 @@ export default function TreeCanvas({
         const placedKeys: string[] = [];
         const renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }> = [];
         let taxonomyConnectorSegmentCount = 0;
-        let bandCursorX = tipSideX + effectiveTipLabelSpacePx + 18;
+        let bandCursorX = tipSideX + effectiveTipLabelSpacePx;
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
         const preservedKeys = previousTaxonomyState
           && previousTaxonomyState.tree === tree
@@ -5818,9 +5825,9 @@ export default function TreeCanvas({
         }
       }
 
-      const tipLabelCueVisible = angularSpacingPx > 1.6;
-      const microTipLabelsVisible = angularSpacingPx > 2.9;
-      const tipLabelsVisible = angularSpacingPx > 4.5;
+      const tipLabelCueVisible = showTipLabels && angularSpacingPx > 1.6;
+      const microTipLabelsVisible = showTipLabels && angularSpacingPx > 2.9;
+      const tipLabelsVisible = showTipLabels && angularSpacingPx > 4.5;
       const tipFontSize = scaleLabelFontSize("tip", Math.max(6.5, Math.min(20, angularSpacingPx * 0.74)));
       const microTipFontSize = scaleLabelFontSize("tip", Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3)));
       const readableBandProgress = smoothstep01((angularSpacingPx - 2.9) / Math.max(1e-6, 4.5 - 2.9));
@@ -5829,14 +5836,16 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-      const globalTipLabelSpacePx = interpolateTipBandWidthPx(
-        angularSpacingPx,
-        1.6,
-        2.9,
-        4.5,
-        microBandWidthPx,
-        readableBandWidthPx,
-      );
+      const globalTipLabelSpacePx = showTipLabels
+        ? interpolateTipBandWidthPx(
+          angularSpacingPx,
+          1.6,
+          2.9,
+          4.5,
+          microBandWidthPx,
+          readableBandWidthPx,
+        )
+        : 0;
       const tipLabelRadius = maxRadius + (20 / camera.scale);
       const cueTipLabelRadius = maxRadius + (8 / camera.scale);
       const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
@@ -5847,7 +5856,6 @@ export default function TreeCanvas({
           const metrics = taxonomyRingMetricsPx(visibleTaxonomyRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
           return (maxRadius * camera.scale)
             + globalTipLabelSpacePx
-            + 18
             + metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
             + (Math.max(0, visibleTaxonomyRanks.length - 1) * metrics.ringGapPx)
             + 24;
@@ -5929,7 +5937,7 @@ export default function TreeCanvas({
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
         const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx;
         const viewportCenterRenderedTheta = wrapPositive(Math.atan2((size.height * 0.5) - centerPoint.y, (size.width * 0.5) - centerPoint.x));
-        let ringCursorOuterPx = tipBandOuterRadiusPx + 18;
+        let ringCursorOuterPx = tipBandOuterRadiusPx;
         const placedLabels: ScreenLabel[] = [];
         const placedKeys: string[] = [];
         const includeDetailedTaxonomyDebug = detailedRenderDebugEnabledRef.current;
@@ -5941,7 +5949,7 @@ export default function TreeCanvas({
           }
         };
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
-        let previewRingCursorOuterPx = tipBandOuterRadiusPx + 18;
+        let previewRingCursorOuterPx = tipBandOuterRadiusPx;
         let taxonomyOverlayRingsFullyVisible = visibleRanks.length > 0;
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const ringOuterPx = previewRingCursorOuterPx + metrics.ringWidthsPx[rankIndex];
@@ -7858,6 +7866,7 @@ export default function TreeCanvas({
     scaleTickInterval,
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
+    showTipLabels,
     showGenusLabels,
     showIntermediateScaleTicks,
     showInternalNodeLabels,
@@ -9053,6 +9062,7 @@ export default function TreeCanvas({
       useAutoCircularCenterScaleAngle,
       circularCenterScaleAngleDegrees,
       showCircularCenterRadialScaleBar,
+      showTipLabels,
       showGenusLabels,
       showInternalNodeLabels,
       showBootstrapLabels,
@@ -9094,6 +9104,7 @@ export default function TreeCanvas({
     scaleTickInterval,
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
+    showTipLabels,
     showGenusLabels,
     showIntermediateScaleTicks,
     showInternalNodeLabels,
@@ -9516,6 +9527,7 @@ export default function TreeCanvas({
           useAutoCircularCenterScaleAngle,
           circularCenterScaleAngleDegrees,
           showCircularCenterRadialScaleBar,
+          showTipLabels,
           showGenusLabels,
           showInternalNodeLabels,
           showBootstrapLabels,
@@ -9557,6 +9569,7 @@ export default function TreeCanvas({
     scaleTickInterval,
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
+    showTipLabels,
     showGenusLabels,
     showIntermediateScaleTicks,
     showInternalNodeLabels,

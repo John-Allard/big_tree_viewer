@@ -718,6 +718,7 @@ export default function App() {
   const [showCircularCenterRadialScaleBar, setShowCircularCenterRadialScaleBar] = useState(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
   const [timeStripeStyle, setTimeStripeStyle] = useState<"bands" | "dashed">(DEFAULT_TIME_STRIPE_STYLE);
   const [timeStripeLineWeight, setTimeStripeLineWeight] = useState(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
+  const [showTipLabels, setShowTipLabels] = useState(true);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
   const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
@@ -986,6 +987,7 @@ export default function App() {
     setUseAutoCircularCenterScaleAngle(visual.useAutoCircularCenterScaleAngle);
     setCircularCenterScaleAngleDegrees(visual.circularCenterScaleAngleDegrees);
     setShowCircularCenterRadialScaleBar(visual.showCircularCenterRadialScaleBar);
+    setShowTipLabels(visual.showTipLabels);
     setShowGenusLabels(visual.showGenusLabels);
     setShowInternalNodeLabels(visual.showInternalNodeLabels);
     setShowBootstrapLabels(visual.showBootstrapLabels);
@@ -1979,6 +1981,7 @@ export default function App() {
         loadError: loadState.error,
         viewMode,
         order,
+        showTipLabels,
         showGenusLabels,
         taxonomyEnabled,
         taxonomyStatus,
@@ -2060,6 +2063,7 @@ export default function App() {
       }),
       setViewMode,
       setOrder,
+      setShowTipLabels,
       setShowGenusLabels,
       setShowInternalNodeLabels,
       setShowBootstrapLabels,
@@ -2248,6 +2252,7 @@ export default function App() {
     runTaxonomyMapping,
     searchQuery,
     searchResults,
+    showTipLabels,
     showBootstrapLabels,
     showGenusLabels,
     showInternalNodeLabels,
@@ -2495,14 +2500,22 @@ export default function App() {
         <PanelSection title="Visual Options" isOpen={visualOpen} onToggle={() => setVisualOpen(!visualOpen)}>
           <div className="option-list">
             <div className="visual-option-row">
-              <span className="visual-option-static-label">Tip labels</span>
+              <label className="visual-option-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showTipLabels}
+                  onChange={(event) => setShowTipLabels(event.target.checked)}
+                />
+                Show tip labels
+              </label>
               <div className="visual-option-actions">
                 <LabelStyleSection
                   labelClass="tip"
                   settings={figureStyles.tip}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "tip"}
-                  disabled={false}
+                  disabled={!showTipLabels}
+                  disabledReason="Enable tip labels first."
                   onToggle={() => setActiveLabelStylePopover((current) => current === "tip" ? null : "tip")}
                   onUpdate={updateFigureStyle}
                 />
@@ -3491,6 +3504,7 @@ export default function App() {
           circularCenterScaleAngleDegrees={effectiveCircularCenterScaleAngleDegrees}
           useAutoCircularCenterScaleAngle={useAutoCircularCenterScaleAngle}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
+          showTipLabels={showTipLabels}
           showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}

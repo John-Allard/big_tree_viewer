@@ -8,6 +8,7 @@ declare global {
       getState: () => Record<string, unknown>;
       setViewMode: (mode: "rectangular" | "circular") => void;
       setOrder: (order: "input" | "desc" | "asc") => void;
+      setShowTipLabels: (visible: boolean) => void;
       setShowGenusLabels: (visible: boolean) => void;
       setShowInternalNodeLabels: (visible: boolean) => void;
       setShowBootstrapLabels: (visible: boolean) => void;
