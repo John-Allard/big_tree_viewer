@@ -12,6 +12,7 @@ import {
   type FontFamilyKey,
   type LabelStyleClass,
 } from "./lib/figureStyles";
+import { HOME_DESCRIPTION } from "./siteCopy";
 import {
   buildMetadataColorOverlay,
   buildMetadataLabelOverlay,
@@ -2324,6 +2325,10 @@ export default function App() {
           <div className="panel-title-block">
             <h1>Big Tree Viewer</h1>
             <p>by John B Allard</p>
+            <p className="panel-title-description">
+              {HOME_DESCRIPTION}{" "}
+              <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
+            </p>
           </div>
           <button
             type="button"

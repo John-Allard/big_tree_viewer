@@ -1,0 +1,1 @@
+export const HOME_DESCRIPTION = "View huge phylogenetic trees with hundreds of thousands of tips directly in your browser, with no data upload required. Automatically map species names to taxonomic groups and display taxonomic ribbons in rectangular and circular layouts. Customize the visual style and export publication-quality figures.";
