@@ -149,10 +149,9 @@ export default function AboutPage() {
         <section className="about-colophon">
           <h2>Notes</h2>
           <p>
-            Big Tree Viewer is a research tool under active development. Layouts
-            and rendering are tuned for interactive use at large scale; some
-            features common in smaller-tree viewers (e.g.&nbsp;per-edge
-            annotations, tree editing) are intentionally out of scope. 
+            Big Tree Viewer is a research tool under active development. If you
+            have a bug report or feature request, please let me know at
+            john.allard@temple.edu
           </p>
         </section>
       </div>
