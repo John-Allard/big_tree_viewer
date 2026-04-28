@@ -107,7 +107,7 @@ export function pointInLabelHitbox(x: number, y: number, hitbox: LabelHitbox): b
   const dy = y - hitbox.y;
   const localX = (dx * Math.cos(-rotation)) - (dy * Math.sin(-rotation));
   const localY = (dx * Math.sin(-rotation)) + (dy * Math.cos(-rotation));
-  const left = hitbox.align === "right" ? -hitbox.width : 0;
+  const left = hitbox.align === "right" ? -hitbox.width : hitbox.align === "center" ? -hitbox.width * 0.5 : 0;
   return localX >= left && localX <= left + hitbox.width && localY >= (-hitbox.height * 0.5) && localY <= (hitbox.height * 0.5);
 }
 

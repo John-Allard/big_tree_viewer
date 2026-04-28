@@ -1,6 +1,6 @@
 export type LayoutOrder = "input" | "desc" | "asc";
 
-export type ViewMode = "rectangular" | "circular";
+export type ViewMode = "rectangular" | "circular" | "spiral";
 
 export type ZoomAxisMode = "both" | "x" | "y";
 

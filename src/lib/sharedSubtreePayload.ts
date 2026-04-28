@@ -32,6 +32,7 @@ export type SharedSubtreeVisualPayload = {
   order: LayoutOrder;
   zoomAxisMode: ZoomAxisMode;
   circularRotationDegrees: number;
+  spiralTurns: number;
   showTimeStripes: boolean;
   timeStripeStyle: "bands" | "dashed";
   timeStripeLineWeight: number;
@@ -128,10 +129,11 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     }
   }
   return {
-    viewMode: coerceEnum(source.viewMode, ["rectangular", "circular"] as const, "rectangular"),
+    viewMode: coerceEnum(source.viewMode, ["rectangular", "circular", "spiral"] as const, "rectangular"),
     order: coerceEnum(source.order, ["asc", "desc", "input"] as const, "asc"),
     zoomAxisMode: coerceEnum(source.zoomAxisMode, ["both", "x", "y"] as const, "both"),
     circularRotationDegrees: coerceFiniteNumber(source.circularRotationDegrees, 0),
+    spiralTurns: coerceFiniteNumber(source.spiralTurns, 5.5),
     showTimeStripes: coerceBoolean(source.showTimeStripes, true),
     timeStripeStyle: coerceEnum(source.timeStripeStyle, ["bands", "dashed"] as const, "bands"),
     timeStripeLineWeight: coerceFiniteNumber(source.timeStripeLineWeight, 1.1),

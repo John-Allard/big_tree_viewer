@@ -6,7 +6,7 @@ declare global {
   interface Window {
     __BIG_TREE_VIEWER_APP_TEST__?: {
       getState: () => Record<string, unknown>;
-      setViewMode: (mode: "rectangular" | "circular") => void;
+      setViewMode: (mode: "rectangular" | "circular" | "spiral") => void;
       setOrder: (order: "input" | "desc" | "asc") => void;
       setShowTipLabels: (visible: boolean) => void;
       setShowGenusLabels: (visible: boolean) => void;
@@ -29,6 +29,7 @@ declare global {
       setCircularCenterScaleAngleDegrees: (value: number) => void;
       setUseAutoCircularCenterScaleAngle: (enabled: boolean) => void;
       setShowCircularCenterRadialScaleBar: (visible: boolean) => void;
+      setSpiralTurnsForTest: (turns: number) => void;
       setTimeStripeStyle: (value: "bands" | "dashed") => void;
       setTimeStripeLineWeight: (value: number) => void;
       setShowNodeErrorBars: (visible: boolean) => void;

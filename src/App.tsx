@@ -184,6 +184,7 @@ const DEFAULT_EXTEND_RECT_SCALE_TO_TICK = false;
 const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
 const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = -5;
 const DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR = false;
+const DEFAULT_SPIRAL_TURNS = 5.5;
 const DEFAULT_TIME_STRIPE_STYLE = "bands";
 const DEFAULT_TIME_STRIPE_LINE_WEIGHT = 1.1;
 const DEFAULT_SHOW_NODE_ERROR_BARS = false;
@@ -333,7 +334,7 @@ function LabelStyleSection({
   const supportsAxisOffsets = labelClass === "internalNode"
     || labelClass === "bootstrap"
     || labelClass === "nodeHeight";
-  const usePolarOffsets = supportsAxisOffsets && viewMode === "circular";
+  const usePolarOffsets = supportsAxisOffsets && viewMode !== "rectangular";
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -411,7 +412,7 @@ function LabelStyleSection({
                 Band thickness
                 <input
                   type="range"
-                  min={0.65}
+                  min={viewMode === "spiral" ? 0.15 : 0.65}
                   max={1.8}
                   step={0.05}
                   value={settings.bandThicknessScale ?? 1}
@@ -728,6 +729,7 @@ export default function App() {
   const [useAutoCircularCenterScaleAngle, setUseAutoCircularCenterScaleAngle] = useState(true);
   const [circularCenterScaleAngleDegrees, setCircularCenterScaleAngleDegrees] = useState(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
   const [showCircularCenterRadialScaleBar, setShowCircularCenterRadialScaleBar] = useState(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
+  const [spiralTurns, setSpiralTurns] = useState(DEFAULT_SPIRAL_TURNS);
   const [timeStripeStyle, setTimeStripeStyle] = useState<"bands" | "dashed">(DEFAULT_TIME_STRIPE_STYLE);
   const [timeStripeLineWeight, setTimeStripeLineWeight] = useState(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
   const [showTipLabels, setShowTipLabels] = useState(true);
@@ -988,6 +990,7 @@ export default function App() {
     setOrder(visual.order);
     setZoomAxisMode(visual.zoomAxisMode);
     setCircularRotationDegrees(visual.circularRotationDegrees);
+    setSpiralTurns(visual.spiralTurns);
     setShowTimeStripes(visual.showTimeStripes);
     setTimeStripeStyle(visual.timeStripeStyle);
     setTimeStripeLineWeight(visual.timeStripeLineWeight);
@@ -1366,11 +1369,14 @@ export default function App() {
         __BIG_TREE_VIEWER_RENDER_DEBUG__?: {
           rect?: { taxonomyVisibleRanks?: string[] };
           circular?: { taxonomyVisibleRanks?: string[] };
+          spiral?: { visibleTaxonomyRanks?: string[] };
         } | null;
       }).__BIG_TREE_VIEWER_RENDER_DEBUG__;
       const visibleRanks = (
         viewMode === "circular"
           ? renderDebug?.circular?.taxonomyVisibleRanks
+          : viewMode === "spiral"
+            ? renderDebug?.spiral?.visibleTaxonomyRanks
           : renderDebug?.rect?.taxonomyVisibleRanks
       ) ?? [];
       const nextVisibility: Partial<Record<TaxonomyRank, boolean>> = {};
@@ -1972,6 +1978,7 @@ export default function App() {
     setUseAutoCircularCenterScaleAngle(true);
     setCircularCenterScaleAngleDegrees(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
     setShowCircularCenterRadialScaleBar(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
+    setSpiralTurns(DEFAULT_SPIRAL_TURNS);
     setTimeStripeStyle(DEFAULT_TIME_STRIPE_STYLE);
     setTimeStripeLineWeight(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
     setShowNodeErrorBars(DEFAULT_SHOW_NODE_ERROR_BARS);
@@ -2044,6 +2051,7 @@ export default function App() {
         circularCenterScaleAngleDegrees: effectiveCircularCenterScaleAngleDegrees,
         circularCenterScaleAngleAuto: useAutoCircularCenterScaleAngle,
         showCircularCenterRadialScaleBar,
+        spiralTurns,
         taxonomyRankVisibilityAuto: useAutomaticTaxonomyRankVisibility,
         timeStripeStyle,
         timeStripeLineWeight,
@@ -2109,6 +2117,7 @@ export default function App() {
         setUseAutoCircularCenterScaleAngle(enabled);
       },
       setShowCircularCenterRadialScaleBar,
+      setSpiralTurnsForTest: setSpiralTurns,
       setTimeStripeStyle: (value: "bands" | "dashed") => setTimeStripeStyle(value),
       setTimeStripeLineWeight,
       setShowNodeErrorBars,
@@ -2268,6 +2277,7 @@ export default function App() {
     showBootstrapLabels,
     showGenusLabels,
     showInternalNodeLabels,
+    spiralTurns,
     timeStripeLineWeight,
     timeStripeStyle,
     taxonomyBranchColoringEnabled,
@@ -2424,6 +2434,13 @@ export default function App() {
             >
               Circular
             </button>
+            <button
+              type="button"
+              className={viewMode === "spiral" ? "active" : ""}
+              onClick={() => setViewMode("spiral")}
+            >
+              Spiral
+            </button>
           </div>
           <div className="segmented">
             <button type="button" className={order === "asc" ? "active" : ""} onClick={() => setOrder("asc")}>
@@ -2441,8 +2458,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "both" ? "active" : ""}
               onClick={() => setZoomAxisMode("both")}
-              disabled={viewMode === "circular"}
-              title={disabledControlTitle(viewMode === "circular" ? "Circular mode always zooms both axes together." : undefined)}
+              disabled={viewMode !== "rectangular"}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined)}
             >
               Zoom Both
             </button>
@@ -2450,8 +2467,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "x" ? "active" : ""}
               onClick={() => setZoomAxisMode("x")}
-              disabled={viewMode === "circular"}
-              title={disabledControlTitle(viewMode === "circular" ? "Circular mode always zooms both axes together." : undefined)}
+              disabled={viewMode !== "rectangular"}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined)}
             >
               Zoom X
             </button>
@@ -2459,8 +2476,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "y" ? "active" : ""}
               onClick={() => setZoomAxisMode("y")}
-              disabled={viewMode === "circular"}
-              title={disabledControlTitle(viewMode === "circular" ? "Circular mode always zooms both axes together." : undefined)}
+              disabled={viewMode !== "rectangular"}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined)}
             >
               Zoom Y
             </button>
@@ -2474,7 +2491,7 @@ export default function App() {
             <span className="view-zoom-hint-desktop">Push + to zoom in and - to zoom out.</span>
             <span className="view-zoom-hint-mobile">Pinch to zoom.</span>
           </p>
-          {viewMode === "circular" ? (
+          {viewMode === "circular" || viewMode === "spiral" ? (
             <div className="rotation-controls">
               <label htmlFor="circular-rotation">Rotation</label>
               <input
@@ -2505,6 +2522,21 @@ export default function App() {
                   Reset
                 </button>
               </div>
+              {viewMode === "spiral" ? (
+                <>
+                  <label htmlFor="spiral-turns">Spiral turns</label>
+                  <input
+                    id="spiral-turns"
+                    type="range"
+                    min={3}
+                    max={8}
+                    step={0.1}
+                    value={spiralTurns}
+                    onChange={(event) => setSpiralTurns(Number(event.target.value))}
+                  />
+                  <div className="figure-style-value">{spiralTurns.toFixed(1)}</div>
+                </>
+              ) : null}
             </div>
           ) : null}
         </PanelSection>
@@ -3503,8 +3535,9 @@ export default function App() {
           tree={viewTree}
           order={order}
           viewMode={viewMode}
-          zoomAxisMode={viewMode === "circular" ? "both" : zoomAxisMode}
+          zoomAxisMode={viewMode !== "rectangular" ? "both" : zoomAxisMode}
           circularRotation={(circularRotationDegrees * Math.PI) / 180}
+          spiralTurns={spiralTurns}
           showTimeStripes={showTimeStripes}
           timeStripeStyle={timeStripeStyle}
           timeStripeLineWeight={timeStripeLineWeight}

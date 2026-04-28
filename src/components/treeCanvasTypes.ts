@@ -10,6 +10,7 @@ export interface TreeCanvasProps {
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;
   circularRotation: number;
+  spiralTurns: number;
   showTimeStripes: boolean;
   timeStripeStyle: "bands" | "dashed";
   timeStripeLineWeight: number;
