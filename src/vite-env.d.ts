@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 import type { TaxonomyMapPayload } from "./types/taxonomy";
+import type { TaxonomyColorPaletteKey } from "./lib/taxonomyPalettes";
+import type { TimeAxisScale } from "./lib/timeAxis";
 
 declare global {
   interface Window {
@@ -21,6 +23,9 @@ declare global {
       setTaxonomyRankVisibilityAutoForTest: (enabled: boolean) => void;
       setTaxonomyCollapseRankForTest: (rank: "species" | "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setTaxonomyColorJitterForTest: (value: number) => void;
+      setTaxonomyColorPaletteForTest: (palette: TaxonomyColorPaletteKey) => void;
+      setTaxonomyColorRootRankForTest: (rank: "auto" | "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
+      setTaxonomyColorJitterRankForTest: (rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setShowIntermediateScaleTicks: (visible: boolean) => void;
       setExtendRectScaleToTick: (visible: boolean) => void;
@@ -31,6 +36,8 @@ declare global {
       setShowCircularCenterRadialScaleBar: (visible: boolean) => void;
       setSpiralTurnsForTest: (turns: number) => void;
       setTimeStripeStyle: (value: "bands" | "dashed") => void;
+      setTimeAxisScale: (value: TimeAxisScale) => void;
+      setTimeAxisLogBase: (value: number) => void;
       setTimeStripeLineWeight: (value: number) => void;
       setShowNodeErrorBars: (visible: boolean) => void;
       setErrorBarThicknessPx: (value: number) => void;
