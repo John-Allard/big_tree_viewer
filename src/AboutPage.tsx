@@ -8,40 +8,40 @@ const figureSections = [
     text: "Individual tip labels are not legible when a tree with tens of thousands of tips is fit to the screen. When binomial species names are detected, genera are inferred from the tip labels and drawn as bands along the tip axis, giving readable structure at any zoom level.",
   },
   {
-    title: "Genus column in rectangular layout",
+    title: "Names of genera are displayed at low magnification",
     image: `${import.meta.env.BASE_URL}about/example-rectangular-genus-bands.png`,
     alt: "Rectangular Big Tree Viewer screenshot showing a tree of rodents with a genus label column to the right of the tips.",
     text: "In rectangular layout the inferred genera are placed in a column to the right of the tips, so each clade gets a readable label even where individual species names overlap. As with the circular layout, this works directly from binomial tip names and does not require a taxonomy download.",
   },
   {
-    title: "Higher-rank taxonomy ribbons",
+    title: "Automatically map taxonomy and display ribbons",
     image: `${import.meta.env.BASE_URL}about/example-50k-circular-taxonomy.png`,
     alt: "Circular Big Tree Viewer screenshot showing a mapped 50k-tip tree with taxonomy ribbons.",
-    text: "The Taxonomy panel can fetch the NCBI taxonomy and map species names to higher Linnaean ranks. Genus, family, order, class, and phylum are then drawn as colored ribbons, making the broad structure of a species tree readable without panning.",
+    text: "The Taxonomy panel can fetch the NCBI taxonomy and map species names to Linnaean ranks. Genus, family, order, class, and phylum are then drawn as colored ribbons, making the broad structure of a species tree readable without panning.",
   },
   {
-    title: "Intermediate zoom across multiple ranks",
+    title: "Smoothly zoom in to display taxonomy detail",
     image: `${import.meta.env.BASE_URL}about/example-circular-taxonomy-quadrant.png`,
     alt: "Big Tree Viewer screenshot showing one quadrant of a circular vertebrate tree with class, order, and family ribbons and branches colored by class.",
-    text: "Zooming into part of the tree exposes finer ranks while keeping coarser ones in view. Here class, order, and family ribbons are visible at the same time, and branches are colored by their assigned class so the taxonomic context is preserved even when only a portion of the tree is on screen.",
+    text: "Zooming into part of the tree exposes finer ranks while keeping coarser ones in view. Daughter taxa inherit the color with jitter from their parent taxon to make them visually distinct the user can choose or define new color palettes and set the degree of jitter.",
   },
   {
     title: "Local detail with global context",
     image: `${import.meta.env.BASE_URL}about/example-50k-primate-ribbons-detail.png`,
     alt: "Big Tree Viewer screenshot showing a zoomed primate clade with species tip labels and four taxonomy ribbons.",
-    text: "Zooming into a clade reveals tip labels while the taxonomy ribbons remain aligned with the same tips. Local branch relationships stay anchored to their position in the wider taxonomy.",
+    text: "Zooming into a clade reveals tip name labels while the taxonomy ribbons remain aligned with the same tips. Local branch relationships stay anchored to their position in the wider taxonomy.",
   },
   {
     title: "Hundreds of thousands of tips",
     image: `${import.meta.env.BASE_URL}about/tree-200k-rectangular-overview.png`,
     alt: "Rectangular Big Tree Viewer screenshot showing a very large mapped tree with taxonomy ribbons.",
-    text: "Layout runs in a Web Worker and rendering is done on a Canvas, so trees with several hundred thousand tips remain responsive on a typical laptop. Pan and zoom recover local detail when needed.",
+    text: "Display is highly optimized for performance, so trees with several hundred thousand tips remain responsive on a typical computer. Pan and zoom recover local detail when needed.",
   },
   {
     title: "Styling and SVG export",
     image: `${import.meta.env.BASE_URL}about/example-50k-style-panel.png`,
     alt: "Big Tree Viewer screenshot showing the style controls panel next to a loaded tree.",
-    text: "Typography, branch thickness, ribbon spacing, and metadata overlays are adjusted in the same view used for exploration. The current view can be exported as SVG for use in figures.",
+    text: "Typography, branch thickness, ribbon spacing, metadata overlays and many other settings are adjusted in the same view used for exploration. The current view can be exported as SVG for use in figures.",
   },
 ] as const;
 

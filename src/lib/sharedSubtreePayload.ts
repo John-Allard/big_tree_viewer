@@ -1,4 +1,6 @@
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
+import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
+import { DEFAULT_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./timeAxis";
 import type { TaxonomyCollapseFallback, TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
@@ -32,7 +34,10 @@ export type SharedSubtreeVisualPayload = {
   order: LayoutOrder;
   zoomAxisMode: ZoomAxisMode;
   circularRotationDegrees: number;
+  spiralTurns: number;
   showTimeStripes: boolean;
+  timeAxisScale: TimeAxisScale;
+  timeAxisLogBase: number;
   timeStripeStyle: "bands" | "dashed";
   timeStripeLineWeight: number;
   showScaleBars: boolean;
@@ -58,6 +63,10 @@ export type SharedSubtreeVisualPayload = {
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyCollapseRank: TaxonomyCollapseRank;
   taxonomyColorJitter: number;
+  taxonomyColorPalette: TaxonomyColorPaletteKey;
+  taxonomyCustomPaletteInput: string;
+  taxonomyColorRootRank: TaxonomyRank | "auto";
+  taxonomyColorJitterRank: TaxonomyRank;
   branchThicknessScale: number;
 };
 
@@ -128,11 +137,14 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     }
   }
   return {
-    viewMode: coerceEnum(source.viewMode, ["rectangular", "circular"] as const, "rectangular"),
+    viewMode: coerceEnum(source.viewMode, ["rectangular", "circular", "spiral"] as const, "rectangular"),
     order: coerceEnum(source.order, ["asc", "desc", "input"] as const, "asc"),
     zoomAxisMode: coerceEnum(source.zoomAxisMode, ["both", "x", "y"] as const, "both"),
     circularRotationDegrees: coerceFiniteNumber(source.circularRotationDegrees, 0),
+    spiralTurns: coerceFiniteNumber(source.spiralTurns, 5.5),
     showTimeStripes: coerceBoolean(source.showTimeStripes, true),
+    timeAxisScale: coerceEnum(source.timeAxisScale, ["linear", "log"] as const, "linear"),
+    timeAxisLogBase: coerceFiniteNumber(source.timeAxisLogBase, DEFAULT_TIME_AXIS_LOG_BASE),
     timeStripeStyle: coerceEnum(source.timeStripeStyle, ["bands", "dashed"] as const, "bands"),
     timeStripeLineWeight: coerceFiniteNumber(source.timeStripeLineWeight, 1.1),
     showScaleBars: coerceBoolean(source.showScaleBars, true),
@@ -158,6 +170,12 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     taxonomyRankVisibility: parsedTaxonomyRankVisibility,
     taxonomyCollapseRank: coerceEnum(source.taxonomyCollapseRank, ["species", ...TAXONOMY_RANKS] as const, "species"),
     taxonomyColorJitter: coerceFiniteNumber(source.taxonomyColorJitter, 1),
+    taxonomyColorPalette: isTaxonomyColorPaletteKey(source.taxonomyColorPalette)
+      ? source.taxonomyColorPalette
+      : DEFAULT_TAXONOMY_COLOR_PALETTE,
+    taxonomyCustomPaletteInput: typeof source.taxonomyCustomPaletteInput === "string" ? source.taxonomyCustomPaletteInput : "",
+    taxonomyColorRootRank: coerceEnum(source.taxonomyColorRootRank, ["auto", ...TAXONOMY_RANKS] as const, "auto"),
+    taxonomyColorJitterRank: coerceEnum(source.taxonomyColorJitterRank, TAXONOMY_RANKS, "genus"),
     branchThicknessScale: coerceFiniteNumber(source.branchThicknessScale, 1),
   };
 }

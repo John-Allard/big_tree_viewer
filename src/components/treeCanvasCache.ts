@@ -1,4 +1,5 @@
 import { UniformGridIndex, type IndexedSegment } from "../lib/spatialIndex";
+import { DEFAULT_TIME_AXIS_LOG_BASE, depthToTimeAxisDepth, treeTimeAxisExtent, type TimeAxisScale } from "../lib/timeAxis";
 import type { LayoutOrder, TreeModel } from "../types/tree";
 import type { GenusBlock, RenderCache } from "./treeCanvasTypes";
 import {
@@ -13,7 +14,7 @@ export function computeOrderedLeaves(tree: TreeModel, order: LayoutOrder): numbe
   return [...tree.leafNodes].sort((left, right) => tree.layouts[order].center[left] - tree.layouts[order].center[right]);
 }
 
-export function computeGenusBlocks(tree: TreeModel, orderedLeaves: number[]): GenusBlock[] {
+export function computeGenusBlocks(tree: TreeModel, orderedLeaves: number[], timeAxisScale: TimeAxisScale, timeAxisLogBase = DEFAULT_TIME_AXIS_LOG_BASE): GenusBlock[] {
   const blocks: GenusBlock[] = [];
   let index = 0;
   while (index < orderedLeaves.length) {
@@ -24,14 +25,14 @@ export function computeGenusBlocks(tree: TreeModel, orderedLeaves: number[]): Ge
       continue;
     }
     let end = index + 1;
-    let maxDepth = tree.buffers.depth[node];
+    let maxDepth = depthToTimeAxisDepth(tree, tree.buffers.depth[node], timeAxisScale, timeAxisLogBase);
     while (end < orderedLeaves.length) {
       const nextNode = orderedLeaves[end];
       const nextToken = extractGenusToken(tree.names[nextNode] || "");
       if (nextToken !== token) {
         break;
       }
-      maxDepth = Math.max(maxDepth, tree.buffers.depth[nextNode]);
+      maxDepth = Math.max(maxDepth, depthToTimeAxisDepth(tree, tree.buffers.depth[nextNode], timeAxisScale, timeAxisLogBase));
       end += 1;
     }
     if ((end - index) >= 2) {
@@ -86,7 +87,7 @@ export function computeOrderedChildren(tree: TreeModel, order: LayoutOrder): num
   return childrenByNode;
 }
 
-export function buildCache(tree: TreeModel): RenderCache {
+export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "linear", timeAxisLogBase = DEFAULT_TIME_AXIS_LOG_BASE): RenderCache {
   const orderedChildren = {
     input: computeOrderedChildren(tree, "input"),
     desc: computeOrderedChildren(tree, "desc"),
@@ -98,9 +99,9 @@ export function buildCache(tree: TreeModel): RenderCache {
     asc: computeOrderedLeaves(tree, "asc"),
   } satisfies Record<LayoutOrder, number[]>;
   const genusBlocks = {
-    input: computeGenusBlocks(tree, orderedLeaves.input),
-    desc: computeGenusBlocks(tree, orderedLeaves.desc),
-    asc: computeGenusBlocks(tree, orderedLeaves.asc),
+    input: computeGenusBlocks(tree, orderedLeaves.input, timeAxisScale, timeAxisLogBase),
+    desc: computeGenusBlocks(tree, orderedLeaves.desc, timeAxisScale, timeAxisLogBase),
+    asc: computeGenusBlocks(tree, orderedLeaves.asc, timeAxisScale, timeAxisLogBase),
   } satisfies Record<LayoutOrder, GenusBlock[]>;
   const genusBlocksPriority = {
     input: prioritizeGenusBlocks(tree, "input", genusBlocks.input),
@@ -119,13 +120,15 @@ export function buildCache(tree: TreeModel): RenderCache {
     asc: [] as IndexedSegment[],
   };
 
+  const axisExtent = timeAxisScale === "log" ? treeTimeAxisExtent(tree) : Math.max(tree.maxDepth, 1);
+  const axisDepth = (node: number): number => depthToTimeAxisDepth(tree, tree.buffers.depth[node], timeAxisScale, timeAxisLogBase);
   const boundsRect = {
     minX: 0,
     minY: 0,
-    maxX: Math.max(tree.maxDepth, 1),
+    maxX: Math.max(axisExtent, 1),
     maxY: Math.max(tree.leafCount - 1, 1),
   };
-  const radius = Math.max(tree.maxDepth, 1);
+  const radius = Math.max(axisExtent, 1);
   const boundsCircular = {
     minX: -radius,
     minY: -radius,
@@ -146,9 +149,9 @@ export function buildCache(tree: TreeModel): RenderCache {
           rect.push({
             node,
             kind: "connector",
-            x1: tree.buffers.depth[node],
+            x1: axisDepth(node),
             y1: center[children[node][0]],
-            x2: tree.buffers.depth[node],
+            x2: axisDepth(node),
             y2: center[children[node][children[node].length - 1]],
           });
         }
@@ -159,7 +162,7 @@ export function buildCache(tree: TreeModel): RenderCache {
           const arcEnd = thetaFor(layout.max, node, tree.leafCount);
           const arcLength = Math.max(0, arcEnd - arcStart);
           const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-          appendCircularArcSegments(radial, node, tree.buffers.depth[node], arcAngles.start, arcAngles.end);
+          appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
         }
         continue;
       }
@@ -167,25 +170,25 @@ export function buildCache(tree: TreeModel): RenderCache {
       rect.push({
         node,
         kind: "stem",
-        x1: tree.buffers.depth[parent],
+        x1: axisDepth(parent),
         y1: y,
-        x2: tree.buffers.depth[node],
+        x2: axisDepth(node),
         y2: y,
       });
       if (children[node].length >= 2) {
         rect.push({
           node,
           kind: "connector",
-          x1: tree.buffers.depth[node],
+          x1: axisDepth(node),
           y1: center[children[node][0]],
-          x2: tree.buffers.depth[node],
+          x2: axisDepth(node),
           y2: center[children[node][children[node].length - 1]],
         });
       }
 
       const theta = thetaFor(center, node, tree.leafCount);
-      const start = polarToCartesian(tree.buffers.depth[parent], theta);
-      const end = polarToCartesian(tree.buffers.depth[node], theta);
+      const start = polarToCartesian(axisDepth(parent), theta);
+      const end = polarToCartesian(axisDepth(node), theta);
       radial.push({
         node,
         kind: "stem",
@@ -201,7 +204,7 @@ export function buildCache(tree: TreeModel): RenderCache {
         const arcEnd = thetaFor(layout.max, node, tree.leafCount);
         const arcLength = Math.max(0, arcEnd - arcStart);
         const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-        appendCircularArcSegments(radial, node, tree.buffers.depth[node], arcAngles.start, arcAngles.end);
+        appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
       }
     }
   }

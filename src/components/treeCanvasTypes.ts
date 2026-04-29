@@ -1,6 +1,8 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { FigureStyleSettings } from "../lib/figureStyles";
 import type { MetadataMarkerStyle } from "../lib/metadataColors";
+import type { TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
+import type { TimeAxisScale } from "../lib/timeAxis";
 import type { TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
 
@@ -10,10 +12,13 @@ export interface TreeCanvasProps {
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;
   circularRotation: number;
+  spiralTurns: number;
   showTimeStripes: boolean;
   timeStripeStyle: "bands" | "dashed";
   timeStripeLineWeight: number;
   showScaleBars: boolean;
+  timeAxisScale: TimeAxisScale;
+  timeAxisLogBase: number;
   scaleTickInterval: number | null;
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
@@ -26,6 +31,10 @@ export interface TreeCanvasProps {
   taxonomyEnabled: boolean;
   taxonomyBranchColoringEnabled: boolean;
   taxonomyColorJitter: number;
+  taxonomyColorPalette: TaxonomyColorPaletteKey;
+  taxonomyCustomPaletteColors: string[];
+  taxonomyColorRootRank: TaxonomyRank | "auto";
+  taxonomyColorJitterRank: TaxonomyRank;
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyCollapseRank: TaxonomyCollapseRank;

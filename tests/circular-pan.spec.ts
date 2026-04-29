@@ -229,7 +229,90 @@ test("rectangular fit switches to circular fit without partial zoom", async ({ p
   expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
 });
 
-test("rectangular pixel-mode wheel input pans instead of zooming", async ({ page }) => {
+test("circular fit switches to spiral fit without collapsing to the center", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const switchedCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "circular";
+    scale: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "circular";
+    scale: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  expect(switchedCamera?.kind).toBe("circular");
+  expect(fitCamera?.kind).toBe("circular");
+  expect(Number(switchedCamera?.scale ?? 0)).toBeGreaterThan(0);
+  expect(Math.abs(Number(switchedCamera?.scale ?? 0) - Number(fitCamera?.scale ?? 0))).toBeLessThanOrEqual(Number(fitCamera?.scale ?? 0) * 0.03);
+  expect(Math.abs(Number(switchedCamera?.translateX ?? 0) - Number(fitCamera?.translateX ?? 0))).toBeLessThanOrEqual(6);
+  expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
+});
+
+test("zoomed spiral switches back to circular fit without keeping the spiral zoom", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Spiral camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale: camera.scale * 4,
+      translateX: camera.translateX - 120,
+      translateY: camera.translateY + 90,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const switchedCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "circular";
+    scale: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "circular";
+    scale: number;
+    translateX: number;
+    translateY: number;
+  } | null);
+
+  expect(switchedCamera?.kind).toBe("circular");
+  expect(fitCamera?.kind).toBe("circular");
+  expect(Math.abs(Number(switchedCamera?.scale ?? 0) - Number(fitCamera?.scale ?? 0))).toBeLessThanOrEqual(Number(fitCamera?.scale ?? 0) * 0.03);
+  expect(Math.abs(Number(switchedCamera?.translateX ?? 0) - Number(fitCamera?.translateX ?? 0))).toBeLessThanOrEqual(6);
+  expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
+});
+
+test("rectangular vertical wheel input zooms instead of scrolling or panning", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
@@ -252,7 +335,7 @@ test("rectangular pixel-mode wheel input pans instead of zooming", async ({ page
     }
     const rect = canvas.getBoundingClientRect();
     canvas.dispatchEvent(new WheelEvent("wheel", {
-      deltaX: 18,
+      deltaX: 0,
       deltaY: 36,
       deltaMode: WheelEvent.DOM_DELTA_PIXEL,
       clientX: rect.left + (rect.width * 0.5),
@@ -273,10 +356,8 @@ test("rectangular pixel-mode wheel input pans instead of zooming", async ({ page
 
   expect(before?.kind).toBe("rect");
   expect(after?.kind).toBe("rect");
-  expect(Number(after?.scaleX ?? 0)).toBeCloseTo(Number(before?.scaleX ?? 0), 6);
-  expect(Number(after?.scaleY ?? 0)).toBeCloseTo(Number(before?.scaleY ?? 0), 6);
-  expect(Number(after?.translateX ?? 0)).not.toBeCloseTo(Number(before?.translateX ?? 0), 6);
-  expect(Number(after?.translateY ?? 0)).not.toBeCloseTo(Number(before?.translateY ?? 0), 6);
+  expect(Number(after?.scaleX ?? 0)).toBeLessThan(Number(before?.scaleX ?? 0));
+  expect(Number(after?.scaleY ?? 0)).toBeLessThan(Number(before?.scaleY ?? 0));
 });
 
 test("rectangular gesturechange input zooms the camera", async ({ page }) => {
