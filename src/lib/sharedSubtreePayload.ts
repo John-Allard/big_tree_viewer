@@ -1,6 +1,6 @@
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
 import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
-import { DEFAULT_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./timeAxis";
+import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./timeAxis";
 import type { TaxonomyCollapseFallback, TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
@@ -92,6 +92,11 @@ function coerceNullableFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function coerceTimeAxisLogBase(value: unknown): number {
+  const numeric = coerceFiniteNumber(value, DEFAULT_TIME_AXIS_LOG_BASE);
+  return Math.max(MIN_TIME_AXIS_LOG_BASE, Math.min(MAX_TIME_AXIS_LOG_BASE, numeric));
+}
+
 function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
   const defaults = cloneDefaultFigureStyles();
   if (!raw || typeof raw !== "object") {
@@ -144,7 +149,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     spiralTurns: coerceFiniteNumber(source.spiralTurns, 5.5),
     showTimeStripes: coerceBoolean(source.showTimeStripes, true),
     timeAxisScale: coerceEnum(source.timeAxisScale, ["linear", "log"] as const, "linear"),
-    timeAxisLogBase: coerceFiniteNumber(source.timeAxisLogBase, DEFAULT_TIME_AXIS_LOG_BASE),
+    timeAxisLogBase: coerceTimeAxisLogBase(source.timeAxisLogBase),
     timeStripeStyle: coerceEnum(source.timeStripeStyle, ["bands", "dashed"] as const, "bands"),
     timeStripeLineWeight: coerceFiniteNumber(source.timeStripeLineWeight, 1.1),
     showScaleBars: coerceBoolean(source.showScaleBars, true),

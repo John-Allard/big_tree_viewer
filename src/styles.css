@@ -553,6 +553,12 @@ button.secondary {
   margin-top: 0.2rem;
 }
 
+.view-group-divider {
+  height: 1px;
+  margin: 0.15rem 0;
+  background: rgba(148, 163, 184, 0.28);
+}
+
 .rotation-controls {
   margin-top: 0.8rem;
   display: grid;
@@ -909,6 +915,10 @@ button.secondary {
 
 .label-style-inline-toggle input[type="checkbox"] {
   width: auto;
+}
+
+.label-style-disabled-control {
+  color: #94a3b8 !important;
 }
 
 .figure-style-help {

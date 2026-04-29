@@ -43,7 +43,7 @@ import {
   TAXONOMY_COLOR_PALETTES,
   type TaxonomyColorPaletteKey,
 } from "./lib/taxonomyPalettes";
-import { DEFAULT_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./lib/timeAxis";
+import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./lib/timeAxis";
 import { deriveCollapsibleTaxonomyRanks } from "./lib/taxonomyActiveRanks";
 import { buildTaxonomyCollapsedTreePayload } from "./lib/taxonomyCollapse";
 import { buildTaxonomyBlocksForOrderedLeaves, taxonomyEntityKey } from "./lib/taxonomyBlocks";
@@ -2509,6 +2509,7 @@ export default function App() {
               Spiral
             </button>
           </div>
+          <div className="view-group-divider" aria-hidden="true" />
           <div className="segmented">
             <button type="button" className={order === "asc" ? "active" : ""} onClick={() => setOrder("asc")}>
               Smallest First
@@ -2520,6 +2521,7 @@ export default function App() {
               Input Order
             </button>
           </div>
+          <div className="view-group-divider" aria-hidden="true" />
           <div className="segmented">
             <button
               type="button"
@@ -2553,31 +2555,6 @@ export default function App() {
             <button type="button" className="secondary" onClick={() => setFitRequest((value) => value + 1)}>
               Fit View
             </button>
-          </div>
-          <label
-            className="visual-option-checkbox"
-            title={viewMode === "spiral" ? "Spiral mode always uses a log time axis." : undefined}
-          >
-            <input
-              type="checkbox"
-              checked={viewMode === "spiral" || timeAxisScale === "log"}
-              disabled={viewMode === "spiral"}
-              onChange={(event) => setTimeAxisScale(event.target.checked ? "log" : "linear")}
-            />
-            Use log time axis
-          </label>
-          <div className="rotation-controls">
-            <label htmlFor="time-axis-log-base">Log time scale base</label>
-            <input
-              id="time-axis-log-base"
-              type="range"
-              min={2}
-              max={10000}
-              step={1}
-              value={timeAxisLogBase}
-              onChange={(event) => setTimeAxisLogBase(Number(event.target.value))}
-            />
-            <div className="figure-style-value">{Math.round(timeAxisLogBase).toLocaleString()}</div>
           </div>
           <p className="view-zoom-hint">
             <span className="view-zoom-hint-desktop">Push + to zoom in and - to zoom out.</span>
@@ -2949,6 +2926,35 @@ export default function App() {
                         />
                       </label>
                       <p className="figure-style-help">Leave blank for automatic tick spacing.</p>
+                      <label
+                        className="label-style-inline-toggle"
+                        title={viewMode === "spiral" ? "Spiral mode always uses a log time axis." : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={viewMode === "spiral" || timeAxisScale === "log"}
+                          disabled={viewMode === "spiral"}
+                          onChange={(event) => setTimeAxisScale(event.target.checked ? "log" : "linear")}
+                        />
+                        Use log time axis
+                      </label>
+                      <label
+                        htmlFor="time-axis-log-base"
+                        className={viewMode !== "spiral" && timeAxisScale !== "log" ? "label-style-disabled-control" : undefined}
+                      >
+                        Log time scale base
+                        <input
+                          id="time-axis-log-base"
+                          type="range"
+                          min={MIN_TIME_AXIS_LOG_BASE}
+                          max={MAX_TIME_AXIS_LOG_BASE}
+                          step={0.1}
+                          value={timeAxisLogBase}
+                          disabled={viewMode !== "spiral" && timeAxisScale !== "log"}
+                          onChange={(event) => setTimeAxisLogBase(Number(event.target.value))}
+                        />
+                      </label>
+                      <div className="figure-style-value">{timeAxisLogBase.toFixed(1)}</div>
                       <label className="label-style-inline-toggle">
                         <input
                           type="checkbox"
