@@ -4,6 +4,8 @@
     radial-gradient(circle at top left, rgba(255, 225, 172, 0.32), transparent 34%),
     radial-gradient(circle at right center, rgba(125, 211, 252, 0.18), transparent 28%),
     linear-gradient(180deg, #f7f8fb 0%, #eef2f7 100%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
@@ -167,6 +169,311 @@ button.secondary {
   font-size: 0.82rem;
   color: #64748b;
   letter-spacing: 0.01em;
+}
+
+.panel-title-block .panel-title-description {
+  margin-top: 0.45rem;
+  font-size: 0.76rem;
+  line-height: 1.42;
+  color: #475569;
+  letter-spacing: 0;
+}
+
+.panel-title-link {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+.panel-title-link:hover {
+  text-decoration: underline;
+}
+
+.about-page {
+  min-height: 100%;
+  padding: 1.5rem 1rem 2.5rem;
+  color: #0f172a;
+}
+
+.about-page-frame {
+  width: min(1160px, 100%);
+  margin: 0 auto;
+  padding: 0 0 2rem;
+}
+
+.about-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0 1.5rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.about-kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.about-header h1 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-size: clamp(2.2rem, 4vw, 3.5rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.about-top-link {
+  color: #1d4ed8;
+  text-decoration: none;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.about-author-line {
+  max-width: 72ch;
+  margin: 0.6rem 0 0;
+  font-size: 0.94rem;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.about-author-line a {
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+.about-author-line a:hover {
+  text-decoration: underline;
+}
+
+.about-top-link:hover {
+  text-decoration: underline;
+}
+
+.about-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+  gap: 1.5rem;
+  align-items: start;
+  padding: 1.5rem 0 1.75rem;
+}
+
+.about-intro h2,
+.about-figure-copy h3,
+.about-gallery-card figcaption strong {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-weight: 700;
+}
+
+.about-intro h2 {
+  max-width: 13.5ch;
+  font-size: clamp(2rem, 3.6vw, 3.2rem);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+}
+
+.about-lead {
+  margin: 1rem 0 0;
+  max-width: 64ch;
+  font-size: 0.98rem;
+  line-height: 1.72;
+  color: #334155;
+}
+
+.about-hero-figure,
+.about-gallery-card {
+  margin: 0;
+  overflow: hidden;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.08);
+}
+
+.about-hero-figure img,
+.about-gallery-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #f8fafc;
+}
+
+.about-hero-figure img {
+  aspect-ratio: 16 / 10;
+  padding: 0.35rem;
+}
+
+.about-hero-figure figcaption,
+.about-gallery-card figcaption {
+  display: grid;
+  gap: 0.42rem;
+  padding: 0.95rem 1rem 1.05rem;
+  color: #475569;
+  line-height: 1.58;
+}
+
+.about-gallery-card figcaption strong {
+  font-size: 1.08rem;
+}
+
+.about-gallery-card figcaption span,
+.about-hero-figure figcaption {
+  margin: 0;
+  line-height: 1.65;
+  color: #475569;
+}
+
+.about-figure-sections {
+  display: grid;
+  gap: 1.6rem;
+  padding-top: 1.2rem;
+}
+
+.about-figure-section {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.98fr) minmax(0, 1.02fr);
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.about-figure-section.reverse {
+  grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.98fr);
+}
+
+.about-figure-section.reverse .about-gallery-card {
+  order: 2;
+}
+
+.about-figure-section.reverse .about-figure-copy {
+  order: 1;
+}
+
+.about-gallery-card img {
+  aspect-ratio: 16 / 10;
+  padding: 0.35rem;
+}
+
+.about-figure-copy {
+  padding: 0.2rem 0.2rem 0.2rem 0;
+}
+
+.about-figure-copy h3 {
+  font-size: clamp(1.55rem, 2.4vw, 2.25rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+
+.about-capabilities,
+.about-colophon {
+  margin-top: 2.4rem;
+  padding-top: 1.6rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.about-capabilities h2,
+.about-colophon h2 {
+  margin: 0 0 1rem;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-size: clamp(1.6rem, 2.4vw, 2.1rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.about-capability-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.4rem 2rem;
+  margin: 0;
+}
+
+.about-capability-row {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.about-capability-row dt {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #475569;
+  font-weight: 600;
+}
+
+.about-capability-row dd {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: #334155;
+}
+
+.about-colophon p {
+  max-width: 72ch;
+  margin: 0;
+  font-size: 0.96rem;
+  line-height: 1.65;
+  color: #334155;
+}
+
+.about-colophon a {
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+.about-colophon a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .about-capability-row {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+}
+
+.about-figure-copy p {
+  max-width: 58ch;
+  margin: 0.9rem 0 0;
+  font-size: 0.98rem;
+  line-height: 1.72;
+  color: #475569;
+}
+
+@media (max-width: 1080px) {
+  .about-intro {
+    grid-template-columns: 1fr;
+  }
+
+  .about-figure-section,
+  .about-figure-section.reverse {
+    grid-template-columns: 1fr;
+  }
+
+  .about-figure-section.reverse .about-gallery-card,
+  .about-figure-section.reverse .about-figure-copy {
+    order: initial;
+  }
+}
+
+@media (max-width: 760px) {
+  .about-page {
+    padding: 1.25rem 1rem 2rem;
+  }
+
+  .about-header {
+    align-items: start;
+    flex-direction: column;
+  }
 }
 
 .panel-section {
