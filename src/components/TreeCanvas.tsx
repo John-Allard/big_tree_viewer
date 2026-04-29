@@ -493,6 +493,163 @@ function drawSpiralRibbonScreenPath(
   ctx.restore();
 }
 
+function curvedTextNeeded(textWidthPx: number, fontSizePx: number, curveRadiusPx: number): boolean {
+  if (!(curveRadiusPx > 0) || !(textWidthPx > 0)) {
+    return false;
+  }
+  const halfWidthPx = textWidthPx * 0.5;
+  const sagittaPx = halfWidthPx >= curveRadiusPx
+    ? curveRadiusPx
+    : curveRadiusPx - Math.sqrt(Math.max(0, (curveRadiusPx * curveRadiusPx) - (halfWidthPx * halfWidthPx)));
+  return sagittaPx > Math.max(1.4, fontSizePx * 0.16) || curveRadiusPx < fontSizePx * 9;
+}
+
+function drawCircularCurvedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  centerX: number,
+  centerY: number,
+  radiusPx: number,
+  centerTheta: number,
+  color: string,
+  searchHighlightColor: string | null,
+  searchMatchRange: { start: number; end: number } | null,
+): void {
+  if (!(radiusPx > 1)) {
+    ctx.fillStyle = color;
+    ctx.fillText(text, 0, 0);
+    return;
+  }
+  const glyphs = Array.from(text);
+  const widths = glyphs.map((glyph) => ctx.measureText(glyph).width);
+  const totalWidth = widths.reduce((total, width) => total + width, 0);
+  const rawCenterTangent = centerTheta + (Math.PI * 0.5);
+  const readableCenterTangent = normalizeRotation(rawCenterTangent * 180 / Math.PI) * Math.PI / 180;
+  const wordFlipped = Math.cos(readableCenterTangent - rawCenterTangent) < 0;
+  const direction = wordFlipped ? -1 : 1;
+  let cursor = -totalWidth * 0.5;
+  for (let index = 0; index < glyphs.length; index += 1) {
+    const glyph = glyphs[index];
+    const glyphWidth = widths[index];
+    const offsetPx = cursor + (glyphWidth * 0.5);
+    const theta = centerTheta + ((direction * offsetPx) / radiusPx);
+    const rotation = theta + (Math.PI * 0.5) + (wordFlipped ? Math.PI : 0);
+    ctx.save();
+    ctx.translate(centerX + (Math.cos(theta) * radiusPx), centerY + (Math.sin(theta) * radiusPx));
+    ctx.rotate(rotation);
+    ctx.fillStyle = searchHighlightColor && searchMatchRange && index >= searchMatchRange.start && index < searchMatchRange.end
+      ? searchHighlightColor
+      : color;
+    ctx.fillText(glyph, 0, 0);
+    ctx.restore();
+    cursor += glyphWidth;
+  }
+}
+
+function spiralThetaForArcOffset(
+  centerTheta: number,
+  offsetWorld: number,
+  centerOffset: number,
+  metrics: SpiralMetrics,
+): number {
+  if (Math.abs(offsetWorld) < 1e-9) {
+    return centerTheta;
+  }
+  const centerDelta = Math.max(0, Math.min(metrics.totalTheta, centerTheta - metrics.startTheta));
+  const startRadius = metrics.innerRadius + centerOffset;
+  if (offsetWorld > 0) {
+    let low = centerDelta;
+    let high = metrics.totalTheta;
+    for (let iteration = 0; iteration < 24; iteration += 1) {
+      const mid = (low + high) * 0.5;
+      const distance = spiralArcLengthBetween(centerDelta, mid, startRadius, metrics.pitchPerRadian);
+      if (distance < offsetWorld) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+    return metrics.startTheta + ((low + high) * 0.5);
+  }
+  let low = 0;
+  let high = centerDelta;
+  const target = -offsetWorld;
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    const mid = (low + high) * 0.5;
+    const distance = spiralArcLengthBetween(mid, centerDelta, startRadius, metrics.pitchPerRadian);
+    if (distance > target) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return metrics.startTheta + ((low + high) * 0.5);
+}
+
+function drawSpiralCurvedText(
+  ctx: CanvasRenderingContext2D,
+  camera: CircularCamera,
+  metrics: SpiralMetrics,
+  text: string,
+  centerTheta: number,
+  centerOffset: number,
+  color: string,
+): void {
+  const glyphs = Array.from(text);
+  const widths = glyphs.map((glyph) => ctx.measureText(glyph).width);
+  const totalWidth = widths.reduce((total, width) => total + width, 0);
+  const rawCenterTangent = spiralTangentAngle(centerTheta, centerOffset, metrics) + camera.rotation;
+  const readableCenterTangent = normalizeRotation(rawCenterTangent * 180 / Math.PI) * Math.PI / 180;
+  const wordFlipped = Math.cos(readableCenterTangent - rawCenterTangent) < 0;
+  const direction = wordFlipped ? -1 : 1;
+  let cursor = -totalWidth * 0.5;
+  for (let index = 0; index < glyphs.length; index += 1) {
+    const glyph = glyphs[index];
+    const glyphWidth = widths[index];
+    const offsetPx = cursor + (glyphWidth * 0.5);
+    const theta = spiralThetaForArcOffset(
+      centerTheta,
+      (direction * offsetPx) / Math.max(camera.scale, 1e-6),
+      centerOffset,
+      metrics,
+    );
+    const world = spiralNormalOffsetPoint(theta, centerOffset, metrics);
+    const screen = worldToScreenCircular(camera, world.x, world.y);
+    const rotation = spiralTangentAngle(theta, centerOffset, metrics) + camera.rotation + (wordFlipped ? Math.PI : 0);
+    ctx.save();
+    ctx.translate(screen.x, screen.y);
+    ctx.rotate(rotation);
+    ctx.fillStyle = color;
+    ctx.fillText(glyph, 0, 0);
+    ctx.restore();
+    cursor += glyphWidth;
+  }
+}
+
+function spiralLabelIntervalsByTurn(
+  spanStartTheta: number,
+  spanEndTheta: number,
+  metrics: SpiralMetrics,
+): Array<{ startTheta: number; endTheta: number }> {
+  const spanTheta = spanEndTheta - spanStartTheta;
+  if (spanTheta <= Math.PI * 2.05) {
+    return [{ startTheta: spanStartTheta, endTheta: spanEndTheta }];
+  }
+  const intervals: Array<{ startTheta: number; endTheta: number }> = [];
+  const firstTurnIndex = Math.floor((spanStartTheta - metrics.startTheta) / (Math.PI * 2));
+  const lastTurnIndex = Math.floor((spanEndTheta - metrics.startTheta) / (Math.PI * 2));
+  for (let turnIndex = firstTurnIndex; turnIndex <= lastTurnIndex; turnIndex += 1) {
+    const turnStart = metrics.startTheta + (turnIndex * Math.PI * 2);
+    const turnEnd = turnStart + (Math.PI * 2);
+    const startTheta = Math.max(spanStartTheta, turnStart);
+    const endTheta = Math.min(spanEndTheta, turnEnd);
+    if (endTheta - startTheta > Math.PI * 0.35) {
+      intervals.push({ startTheta, endTheta });
+    }
+  }
+  return intervals.length > 0 ? intervals : [{ startTheta: spanStartTheta, endTheta: spanEndTheta }];
+}
+
 function spiralMetricCacheKey(metrics: SpiralMetrics): string {
   return [
     metrics.totalTheta.toFixed(6),
@@ -6196,62 +6353,75 @@ export default function TreeCanvas({
               : spiralThetaForY(layout.center[block.lastNode], tree.leafCount, metrics);
             const spanStartTheta = Math.min(labelStartTheta, labelEndTheta);
             const spanEndTheta = Math.max(labelStartTheta, labelEndTheta);
-            let labelTheta = (labelStartTheta + labelEndTheta) * 0.5;
-            const labelSpanPx = Math.abs(spiralArcLengthBetween(
-              spanStartTheta - taxonomyMetrics.startTheta,
-              spanEndTheta - taxonomyMetrics.startTheta,
-              taxonomyMetrics.innerRadius + ((innerOffset + outerOffset) * 0.5),
-              taxonomyMetrics.pitchPerRadian,
-            )) * camera.scale;
-            const fittedLabelFontSize = Math.max(
-              4,
-              Math.min(labelFontSize, labelSpanPx / Math.max(1, block.label.length * 0.56)),
-            );
-            if (labelSpanPx < Math.max(34, block.label.length * fittedLabelFontSize * 0.56)) {
-              continue;
+            const centerOffset = (innerOffset + outerOffset) * 0.5;
+            const labelIntervals = spiralLabelIntervalsByTurn(spanStartTheta, spanEndTheta, taxonomyMetrics);
+            for (let labelIndex = 0; labelIndex < labelIntervals.length; labelIndex += 1) {
+              const labelInterval = labelIntervals[labelIndex];
+              let labelTheta = (labelInterval.startTheta + labelInterval.endTheta) * 0.5;
+              const labelSpanPx = Math.abs(spiralArcLengthBetween(
+                labelInterval.startTheta - taxonomyMetrics.startTheta,
+                labelInterval.endTheta - taxonomyMetrics.startTheta,
+                taxonomyMetrics.innerRadius + centerOffset,
+                taxonomyMetrics.pitchPerRadian,
+              )) * camera.scale;
+              const fittedLabelFontSize = Math.max(
+                4,
+                Math.min(labelFontSize, labelSpanPx / Math.max(1, block.label.length * 0.56)),
+              );
+              if (labelSpanPx < Math.max(34, block.label.length * fittedLabelFontSize * 0.56)) {
+                continue;
+              }
+              let labelWorld = spiralNormalOffsetPoint(labelTheta, centerOffset, taxonomyMetrics);
+              let labelScreen = spiralToScreen(labelWorld);
+              if (
+                labelIntervals.length === 1
+                && (labelScreen.x < 0 || labelScreen.x > size.width || labelScreen.y < 0 || labelScreen.y > size.height)
+                && viewportCenterTheta >= labelInterval.startTheta
+                && viewportCenterTheta <= labelInterval.endTheta
+              ) {
+                labelTheta = Math.max(labelInterval.startTheta, Math.min(labelInterval.endTheta, viewportCenterTheta));
+                labelWorld = spiralNormalOffsetPoint(labelTheta, centerOffset, taxonomyMetrics);
+                labelScreen = spiralToScreen(labelWorld);
+              }
+              if (labelScreen.x < -60 || labelScreen.x > size.width + 60 || labelScreen.y < -60 || labelScreen.y > size.height + 60) {
+                continue;
+              }
+              const tangentAngle = spiralTangentAngle(labelTheta, centerOffset, taxonomyMetrics) + camera.rotation;
+              const rotation = normalizeRotation(tangentAngle * 180 / Math.PI) * Math.PI / 180;
+              ctx.save();
+              ctx.font = fontSpec("taxonomy", fittedLabelFontSize);
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillStyle = taxonomyTextColor(block.color);
+              const measuredLabelWidth = ctx.measureText(block.label).width;
+              const localRadiusPx = Math.max(1, labelWorld.radius * camera.scale);
+              if (curvedTextNeeded(measuredLabelWidth, fittedLabelFontSize, localRadiusPx)) {
+                drawSpiralCurvedText(ctx, camera, taxonomyMetrics, block.label, labelTheta, centerOffset, taxonomyTextColor(block.color));
+              } else {
+                ctx.translate(labelScreen.x, labelScreen.y);
+                ctx.rotate(rotation);
+                ctx.fillText(block.label, 0, 0);
+              }
+              ctx.restore();
+              labelHitsRef.current.push({
+                node: block.centerNode,
+                kind: "rotated",
+                source: "label",
+                labelKind: "taxonomy",
+                text: block.label,
+                taxonomyRank: rank,
+                taxonomyTaxId: block.taxId,
+                taxonomyFirstNode: block.firstNode,
+                taxonomyLastNode: block.lastNode,
+                taxonomyTipCount: Math.max(1, Math.abs((block.endIndex ?? 0) - (block.startIndex ?? 0))),
+                x: labelScreen.x,
+                y: labelScreen.y,
+                width: measuredLabelWidth,
+                height: fittedLabelFontSize * 1.15,
+                rotation,
+                align: "center",
+              });
             }
-            let labelWorld = spiralNormalOffsetPoint(labelTheta, (innerOffset + outerOffset) * 0.5, taxonomyMetrics);
-            let labelScreen = spiralToScreen(labelWorld);
-            if (
-              (labelScreen.x < 0 || labelScreen.x > size.width || labelScreen.y < 0 || labelScreen.y > size.height)
-              && viewportCenterTheta >= spanStartTheta
-              && viewportCenterTheta <= spanEndTheta
-            ) {
-              labelTheta = Math.max(spanStartTheta, Math.min(spanEndTheta, viewportCenterTheta));
-              labelWorld = spiralNormalOffsetPoint(labelTheta, (innerOffset + outerOffset) * 0.5, taxonomyMetrics);
-              labelScreen = spiralToScreen(labelWorld);
-            }
-            if (labelScreen.x < -60 || labelScreen.x > size.width + 60 || labelScreen.y < -60 || labelScreen.y > size.height + 60) {
-              continue;
-            }
-            const tangentAngle = spiralTangentAngle(labelTheta, (innerOffset + outerOffset) * 0.5, taxonomyMetrics) + camera.rotation;
-            const rotation = normalizeRotation(tangentAngle * 180 / Math.PI) * Math.PI / 180;
-            ctx.save();
-            ctx.translate(labelScreen.x, labelScreen.y);
-            ctx.rotate(rotation);
-            ctx.font = fontSpec("taxonomy", fittedLabelFontSize);
-            ctx.textAlign = "center";
-            ctx.fillStyle = taxonomyTextColor(block.color);
-            ctx.fillText(block.label, 0, 0);
-            ctx.restore();
-            labelHitsRef.current.push({
-              node: block.centerNode,
-              kind: "rotated",
-              source: "label",
-              labelKind: "taxonomy",
-              text: block.label,
-              taxonomyRank: rank,
-              taxonomyTaxId: block.taxId,
-              taxonomyFirstNode: block.firstNode,
-              taxonomyLastNode: block.lastNode,
-              taxonomyTipCount: Math.max(1, Math.abs((block.endIndex ?? 0) - (block.startIndex ?? 0))),
-              x: labelScreen.x,
-              y: labelScreen.y,
-              width: estimateLabelWidth(fittedLabelFontSize, block.label.length),
-              height: fittedLabelFontSize * 1.15,
-              rotation,
-              align: "center",
-            });
           }
         }
         ctx.globalAlpha = 1;
@@ -6294,13 +6464,18 @@ export default function TreeCanvas({
           if (spanPx < Math.max(36, block.label.length * genusFontSize * 0.52) || placedGenusLabels.length > 300) {
             continue;
           }
+          const midFrame = spiralFrameAt(midTheta, genusOffset, metrics);
+          const normalAngle = Math.atan2(midFrame.normalY, midFrame.normalX) + camera.rotation;
+          const labelGapPx = Math.max(4, genusFontSize * 0.62);
+          const labelX = midScreen.x + (Math.cos(normalAngle) * labelGapPx);
+          const labelY = midScreen.y + (Math.sin(normalAngle) * labelGapPx);
           const rotation = normalizeRotation((spiralTangentAngle(midTheta, genusOffset, metrics) + camera.rotation) * 180 / Math.PI) * Math.PI / 180;
-          if (!canPlaceLinearLabel(placedGenusLabels, midScreen.x, midScreen.y, genusFontSize * 1.4, estimateLabelWidth(genusFontSize, block.label.length) * 0.55)) {
+          if (!canPlaceLinearLabel(placedGenusLabels, labelX, labelY, genusFontSize * 1.4, estimateLabelWidth(genusFontSize, block.label.length) * 0.55)) {
             continue;
           }
           placedGenusLabels.push({
-            x: midScreen.x,
-            y: midScreen.y,
+            x: labelX,
+            y: labelY,
             text: block.label,
             alpha: 1,
             fontSize: genusFontSize,
@@ -8562,19 +8737,46 @@ export default function TreeCanvas({
           ctx.closePath();
           ctx.clip();
         }
-        ctx.translate(label.x, label.y);
-        ctx.rotate(label.rotation ?? 0);
-        ctx.textAlign = label.align ?? "left";
-        drawHighlightedText(
-          ctx,
-          label.text,
-          0,
-          label.offsetY ?? 0,
-          label.align ?? "left",
-          label.color ?? GENUS_COLOR,
-          label.searchHighlightColor ?? null,
-          label.searchMatchRange ?? null,
+        const curvedRadiusPx = label.clipArc
+          ? (label.clipArc.innerRadiusPx + label.clipArc.outerRadiusPx) * 0.5
+          : 0;
+        const useCurvedText = Boolean(
+          label.rank
+          && label.clipArc
+          && curvedTextNeeded(
+            labelMetrics.width,
+            label.fontSize ?? circularGenusBaseFontSize,
+            curvedRadiusPx,
+          ),
         );
+        if (useCurvedText) {
+          ctx.textAlign = "center";
+          drawCircularCurvedText(
+            ctx,
+            label.text,
+            centerPoint.x,
+            centerPoint.y,
+            curvedRadiusPx,
+            label.theta ?? Math.atan2(label.y - centerPoint.y, label.x - centerPoint.x),
+            label.color ?? GENUS_COLOR,
+            label.searchHighlightColor ?? null,
+            label.searchMatchRange ?? null,
+          );
+        } else {
+          ctx.translate(label.x, label.y);
+          ctx.rotate(label.rotation ?? 0);
+          ctx.textAlign = label.align ?? "left";
+          drawHighlightedText(
+            ctx,
+            label.text,
+            0,
+            label.offsetY ?? 0,
+            label.align ?? "left",
+            label.color ?? GENUS_COLOR,
+            label.searchHighlightColor ?? null,
+            label.searchMatchRange ?? null,
+          );
+        }
         ctx.restore();
         pushSceneText(
           label.text,
