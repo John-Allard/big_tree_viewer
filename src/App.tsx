@@ -94,6 +94,102 @@ function normalizeSvgExportFilename(value: string, fallbackBaseLabel: string): s
   return /\.svg$/i.test(base) ? base : `${base}.svg`;
 }
 
+type BigTreeViewerLaunchPayload = {
+  version?: 1;
+  newick?: string;
+  label?: string;
+  visual?: {
+    viewMode?: ViewMode;
+    order?: LayoutOrder;
+    zoomAxisMode?: ZoomAxisMode;
+    circularRotationDegrees?: number;
+    spiralTurns?: number;
+    showTipLabels?: boolean;
+    showGenusLabels?: boolean;
+    showTimeStripes?: boolean;
+    showScaleBars?: boolean;
+    timeAxisScale?: TimeAxisScale;
+    timeAxisLogBase?: number;
+    branchThicknessScale?: number;
+    taxonomyEnabled?: boolean;
+    taxonomyBranchColoringEnabled?: boolean;
+    taxonomyColorPalette?: TaxonomyColorPaletteKey;
+  };
+  metadata?: {
+    text?: string;
+    label?: string;
+    firstRowIsHeader?: boolean;
+    enabled?: boolean;
+    keyColumn?: string;
+    valueColumn?: string;
+    colorMode?: MetadataColorMode;
+    applyScope?: MetadataApplyScope;
+    labelsEnabled?: boolean;
+    labelColumn?: string;
+    markersEnabled?: boolean;
+    markerColumn?: string;
+  };
+};
+
+function decodeBase64UrlText(value: string): string {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function parseLaunchJsonParam(value: string | null): Partial<BigTreeViewerLaunchPayload> | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const decoded = decodeBase64UrlText(value);
+    const parsed = JSON.parse(decoded) as unknown;
+    return parsed && typeof parsed === "object" ? parsed as Partial<BigTreeViewerLaunchPayload> : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLaunchTextParam(params: URLSearchParams, plainKey: string, encodedKey: string): string | undefined {
+  const encoded = params.get(encodedKey);
+  if (encoded) {
+    try {
+      return decodeBase64UrlText(encoded);
+    } catch {
+      return undefined;
+    }
+  }
+  return params.get(plainKey) ?? undefined;
+}
+
+function readLaunchBoolParam(params: URLSearchParams, key: string): boolean | undefined {
+  const value = params.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (/^(1|true|yes|on)$/i.test(value)) {
+    return true;
+  }
+  if (/^(0|false|no|off)$/i.test(value)) {
+    return false;
+  }
+  return undefined;
+}
+
+function readLaunchNumberParam(params: URLSearchParams, key: string): number | undefined {
+  const value = params.get(key);
+  if (value === null || value.trim() === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function normalizeSearchQuery(value: string): string {
   return value.toLowerCase();
 }
@@ -719,6 +815,7 @@ export default function App() {
   const pendingSharedSubtreeVisualRef = useRef<SharedSubtreeVisualPayload | null>(null);
   const pendingTreeReplacementTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
   const pendingTreeReplacementTaxonomyEnabledRef = useRef<boolean | null>(null);
+  const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
   const [loadedTreeLabel, setLoadedTreeLabel] = useState("tree");
@@ -727,6 +824,7 @@ export default function App() {
     message: "Load a Newick tree to begin.",
     error: null,
   });
+  const [showSpiralViewOption, setShowSpiralViewOption] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("rectangular");
   const [order, setOrder] = useState<LayoutOrder>("asc");
   const [zoomAxisMode, setZoomAxisMode] = useState<ZoomAxisMode>("both");
@@ -823,6 +921,38 @@ export default function App() {
   const diagnosticsSessionIdRef = useRef<string>(createDiagnosticsSessionId());
   const showDiagnosticsPanel = useMemo(() => diagnosticsPanelEnabled(), []);
   const useLowMemoryTaxonomyMapping = useMemo(() => useLowMemoryTaxonomyMode(), []);
+  useEffect(() => {
+    if (showSpiralViewOption) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.repeat || !event.shiftKey) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key !== "s" && key !== "p") {
+        return;
+      }
+      const pressed = spiralShortcutKeysRef.current;
+      pressed.add(key);
+      if (pressed.has("s") && pressed.has("p")) {
+        setShowSpiralViewOption(true);
+        pressed.clear();
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent): void => {
+      spiralShortcutKeysRef.current.delete(event.key.toLowerCase());
+      if (event.key === "Shift") {
+        spiralShortcutKeysRef.current.clear();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [showSpiralViewOption]);
   const appendDiagnostic = useCallback((kind: string, data?: unknown): void => {
     appendDiagnosticsEvent(kind, data);
     setDiagnosticsRevision((value) => value + 1);
@@ -1042,6 +1172,60 @@ export default function App() {
     setTaxonomyColorRootRank(visual.taxonomyColorRootRank);
     setTaxonomyColorJitterRank(visual.taxonomyColorJitterRank);
     setBranchThicknessScale(visual.branchThicknessScale);
+  }, []);
+
+  const applyLaunchVisualSettings = useCallback((visual: BigTreeViewerLaunchPayload["visual"] | undefined): void => {
+    if (!visual) {
+      return;
+    }
+    if (visual.viewMode === "rectangular" || visual.viewMode === "circular" || visual.viewMode === "spiral") {
+      setViewMode(visual.viewMode);
+      if (visual.viewMode === "spiral") {
+        setShowSpiralViewOption(true);
+      }
+    }
+    if (visual.order === "asc" || visual.order === "desc" || visual.order === "input") {
+      setOrder(visual.order);
+    }
+    if (visual.zoomAxisMode === "both" || visual.zoomAxisMode === "x" || visual.zoomAxisMode === "y") {
+      setZoomAxisMode(visual.zoomAxisMode);
+    }
+    if (typeof visual.circularRotationDegrees === "number" && Number.isFinite(visual.circularRotationDegrees)) {
+      setCircularRotationDegrees(visual.circularRotationDegrees);
+    }
+    if (typeof visual.spiralTurns === "number" && Number.isFinite(visual.spiralTurns)) {
+      setSpiralTurns(visual.spiralTurns);
+    }
+    if (typeof visual.showTipLabels === "boolean") {
+      setShowTipLabels(visual.showTipLabels);
+    }
+    if (typeof visual.showGenusLabels === "boolean") {
+      setShowGenusLabels(visual.showGenusLabels);
+    }
+    if (typeof visual.showTimeStripes === "boolean") {
+      setShowTimeStripes(visual.showTimeStripes);
+    }
+    if (typeof visual.showScaleBars === "boolean") {
+      setShowScaleBars(visual.showScaleBars);
+    }
+    if (visual.timeAxisScale === "linear" || visual.timeAxisScale === "log") {
+      setTimeAxisScale(visual.timeAxisScale);
+    }
+    if (typeof visual.timeAxisLogBase === "number" && Number.isFinite(visual.timeAxisLogBase)) {
+      setTimeAxisLogBase(Math.max(MIN_TIME_AXIS_LOG_BASE, Math.min(MAX_TIME_AXIS_LOG_BASE, visual.timeAxisLogBase)));
+    }
+    if (typeof visual.branchThicknessScale === "number" && Number.isFinite(visual.branchThicknessScale)) {
+      setBranchThicknessScale(visual.branchThicknessScale);
+    }
+    if (typeof visual.taxonomyEnabled === "boolean") {
+      setTaxonomyEnabled(visual.taxonomyEnabled);
+    }
+    if (typeof visual.taxonomyBranchColoringEnabled === "boolean") {
+      setTaxonomyBranchColoringEnabled(visual.taxonomyBranchColoringEnabled);
+    }
+    if (visual.taxonomyColorPalette && (TAXONOMY_COLOR_PALETTE_KEYS as readonly string[]).includes(visual.taxonomyColorPalette)) {
+      setTaxonomyColorPalette(visual.taxonomyColorPalette);
+    }
   }, []);
 
   const rerootCurrentTree = useCallback((node: number, mode: RerootMode): void => {
@@ -1677,19 +1861,6 @@ export default function App() {
   }, [loadedTreeLabel, tree, viewMode]);
 
   useEffect(() => {
-    if (didAutoloadRef.current) {
-      return;
-    }
-    didAutoloadRef.current = true;
-    void (async () => {
-      const loadedSubtree = await loadSubtreeFromUrl();
-      if (!loadedSubtree) {
-        await loadExample();
-      }
-    })();
-  }, [loadExample, loadSubtreeFromUrl]);
-
-  useEffect(() => {
     if (!tree || !treeSignature) {
       setTaxonomyMap(null);
       setTaxonomyEnabled(false);
@@ -1829,6 +2000,221 @@ export default function App() {
   const importMetadataText = useCallback((text: string, label: string): void => {
     applyMetadataText(text, label, metadataFirstRowIsHeader);
   }, [applyMetadataText, metadataFirstRowIsHeader]);
+
+  const applyLaunchMetadata = useCallback((metadata: BigTreeViewerLaunchPayload["metadata"] | undefined): void => {
+    if (!metadata?.text) {
+      return;
+    }
+    applyMetadataText(metadata.text, metadata.label ?? "launch-metadata.csv", metadata.firstRowIsHeader ?? true);
+    if (typeof metadata.enabled === "boolean") {
+      setMetadataEnabled(metadata.enabled);
+    }
+    if (metadata.keyColumn) {
+      setMetadataKeyColumn(metadata.keyColumn);
+    }
+    if (metadata.valueColumn) {
+      setMetadataValueColumn(metadata.valueColumn);
+    }
+    if (metadata.colorMode === "categorical" || metadata.colorMode === "continuous") {
+      setMetadataColorMode(metadata.colorMode);
+    }
+    if (metadata.applyScope === "branch" || metadata.applyScope === "subtree") {
+      setMetadataApplyScope(metadata.applyScope);
+    }
+    if (typeof metadata.labelsEnabled === "boolean") {
+      setMetadataLabelsEnabled(metadata.labelsEnabled);
+    }
+    if (metadata.labelColumn) {
+      setMetadataLabelColumn(metadata.labelColumn);
+    }
+    if (typeof metadata.markersEnabled === "boolean") {
+      setMetadataMarkersEnabled(metadata.markersEnabled);
+    }
+    if (metadata.markerColumn) {
+      setMetadataMarkerColumn(metadata.markerColumn);
+    }
+  }, [applyMetadataText]);
+
+  const loadLaunchPayload = useCallback(async (payload: BigTreeViewerLaunchPayload, sourceLabel = "launch API"): Promise<boolean> => {
+    applyLaunchVisualSettings(payload.visual);
+    applyLaunchMetadata(payload.metadata);
+    if (!payload.newick?.trim()) {
+      return false;
+    }
+    await parseText(payload.newick, payload.label?.trim() || sourceLabel);
+    return true;
+  }, [applyLaunchMetadata, applyLaunchVisualSettings, parseText]);
+
+  const readLaunchPayloadFromUrl = useCallback((): { payload: BigTreeViewerLaunchPayload | null; waitForMessage: boolean } => {
+    if (typeof window === "undefined") {
+      return { payload: null, waitForMessage: false };
+    }
+    const params = new URLSearchParams(window.location.search);
+    const payload: BigTreeViewerLaunchPayload = {
+      ...(parseLaunchJsonParam(params.get("btv_payload")) ?? {}),
+    };
+    const newick = readLaunchTextParam(params, "btv_newick", "btv_newick_b64");
+    const metadataText = readLaunchTextParam(params, "btv_metadata", "btv_metadata_b64");
+    if (newick) {
+      payload.newick = newick;
+    }
+    if (params.get("btv_label")) {
+      payload.label = params.get("btv_label") ?? undefined;
+    }
+    const viewModeParam = params.get("btv_view");
+    const orderParam = params.get("btv_order");
+    const zoomAxisModeParam = params.get("btv_zoom_axis");
+    const timeAxisScaleParam = params.get("btv_time_axis");
+    const paletteParam = params.get("btv_palette");
+    const visualParamsPresent = Boolean(
+      viewModeParam
+      || orderParam
+      || zoomAxisModeParam
+      || timeAxisScaleParam
+      || paletteParam
+      || params.has("btv_tip_labels")
+      || params.has("btv_genus_labels")
+      || params.has("btv_time_stripes")
+      || params.has("btv_scale_bars")
+      || params.has("btv_taxonomy")
+      || params.has("btv_taxonomy_branch_colors")
+      || params.has("btv_rotation")
+      || params.has("btv_spiral_turns")
+      || params.has("btv_branch_thickness")
+      || params.has("btv_time_axis_log_base"),
+    );
+    if (visualParamsPresent) {
+      payload.visual = {
+        ...payload.visual,
+        viewMode: viewModeParam === "rectangular" || viewModeParam === "circular" || viewModeParam === "spiral"
+          ? viewModeParam
+          : payload.visual?.viewMode,
+        order: orderParam === "asc" || orderParam === "desc" || orderParam === "input"
+          ? orderParam
+          : payload.visual?.order,
+        zoomAxisMode: zoomAxisModeParam === "both" || zoomAxisModeParam === "x" || zoomAxisModeParam === "y"
+          ? zoomAxisModeParam
+          : payload.visual?.zoomAxisMode,
+        circularRotationDegrees: readLaunchNumberParam(params, "btv_rotation") ?? payload.visual?.circularRotationDegrees,
+        spiralTurns: readLaunchNumberParam(params, "btv_spiral_turns") ?? payload.visual?.spiralTurns,
+        showTipLabels: readLaunchBoolParam(params, "btv_tip_labels") ?? payload.visual?.showTipLabels,
+        showGenusLabels: readLaunchBoolParam(params, "btv_genus_labels") ?? payload.visual?.showGenusLabels,
+        showTimeStripes: readLaunchBoolParam(params, "btv_time_stripes") ?? payload.visual?.showTimeStripes,
+        showScaleBars: readLaunchBoolParam(params, "btv_scale_bars") ?? payload.visual?.showScaleBars,
+        timeAxisScale: timeAxisScaleParam === "linear" || timeAxisScaleParam === "log"
+          ? timeAxisScaleParam
+          : payload.visual?.timeAxisScale,
+        timeAxisLogBase: readLaunchNumberParam(params, "btv_time_axis_log_base") ?? payload.visual?.timeAxisLogBase,
+        branchThicknessScale: readLaunchNumberParam(params, "btv_branch_thickness") ?? payload.visual?.branchThicknessScale,
+        taxonomyEnabled: readLaunchBoolParam(params, "btv_taxonomy") ?? payload.visual?.taxonomyEnabled,
+        taxonomyBranchColoringEnabled: readLaunchBoolParam(params, "btv_taxonomy_branch_colors") ?? payload.visual?.taxonomyBranchColoringEnabled,
+        taxonomyColorPalette: paletteParam && (TAXONOMY_COLOR_PALETTE_KEYS as readonly string[]).includes(paletteParam)
+          ? paletteParam as TaxonomyColorPaletteKey
+          : payload.visual?.taxonomyColorPalette,
+      };
+    }
+    const metadataColorModeParam = params.get("btv_metadata_color_mode");
+    const metadataScopeParam = params.get("btv_metadata_scope");
+    const metadataParamsPresent = Boolean(
+      metadataText
+      || params.has("btv_metadata_label")
+      || params.has("btv_metadata_header")
+      || params.has("btv_metadata_enabled")
+      || params.has("btv_metadata_key")
+      || params.has("btv_metadata_value")
+      || metadataColorModeParam
+      || metadataScopeParam
+      || params.has("btv_metadata_labels")
+      || params.has("btv_metadata_label_column")
+      || params.has("btv_metadata_markers")
+      || params.has("btv_metadata_marker_column"),
+    );
+    if (metadataParamsPresent) {
+      payload.metadata = {
+        ...payload.metadata,
+        text: metadataText ?? payload.metadata?.text,
+        label: params.get("btv_metadata_label") ?? payload.metadata?.label,
+        firstRowIsHeader: readLaunchBoolParam(params, "btv_metadata_header") ?? payload.metadata?.firstRowIsHeader,
+        enabled: readLaunchBoolParam(params, "btv_metadata_enabled") ?? payload.metadata?.enabled,
+        keyColumn: params.get("btv_metadata_key") ?? payload.metadata?.keyColumn,
+        valueColumn: params.get("btv_metadata_value") ?? payload.metadata?.valueColumn,
+        colorMode: metadataColorModeParam === "categorical" || metadataColorModeParam === "continuous"
+          ? metadataColorModeParam
+          : payload.metadata?.colorMode,
+        applyScope: metadataScopeParam === "branch" || metadataScopeParam === "subtree"
+          ? metadataScopeParam
+          : payload.metadata?.applyScope,
+        labelsEnabled: readLaunchBoolParam(params, "btv_metadata_labels") ?? payload.metadata?.labelsEnabled,
+        labelColumn: params.get("btv_metadata_label_column") ?? payload.metadata?.labelColumn,
+        markersEnabled: readLaunchBoolParam(params, "btv_metadata_markers") ?? payload.metadata?.markersEnabled,
+        markerColumn: params.get("btv_metadata_marker_column") ?? payload.metadata?.markerColumn,
+      };
+    }
+    const hasPayload = Boolean(payload.newick || payload.metadata?.text || payload.visual);
+    return {
+      payload: hasPayload ? payload : null,
+      waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",
+    };
+  }, []);
+
+  useEffect(() => {
+    if (didAutoloadRef.current) {
+      return;
+    }
+    didAutoloadRef.current = true;
+    void (async () => {
+      const launch = readLaunchPayloadFromUrl();
+      if (launch.payload && await loadLaunchPayload(launch.payload, "URL launch")) {
+        return;
+      }
+      if (launch.waitForMessage) {
+        setLoadState({
+          loading: false,
+          message: "Waiting for Big Tree Viewer launch payload...",
+          error: null,
+        });
+        return;
+      }
+      const loadedSubtree = await loadSubtreeFromUrl();
+      if (!loadedSubtree) {
+        await loadExample();
+      }
+    })();
+  }, [loadExample, loadLaunchPayload, loadSubtreeFromUrl, readLaunchPayloadFromUrl]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const readyMessage = { type: "big-tree-viewer:ready", version: 1 };
+    window.opener?.postMessage(readyMessage, "*");
+    window.parent !== window && window.parent.postMessage(readyMessage, "*");
+    const handleMessage = (event: MessageEvent): void => {
+      const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload } | null;
+      if (!data || typeof data !== "object" || data.type !== "big-tree-viewer:load") {
+        return;
+      }
+      const payload = data.payload && typeof data.payload === "object"
+        ? data.payload
+        : data as BigTreeViewerLaunchPayload;
+      const replyOrigin = event.origin || "*";
+      void loadLaunchPayload(payload, "message launch")
+        .then((loaded) => {
+          (event.source as Window | null)?.postMessage(
+            { type: loaded ? "big-tree-viewer:loaded" : "big-tree-viewer:error", version: 1, message: loaded ? undefined : "No Newick string was provided." },
+            replyOrigin,
+          );
+        })
+        .catch((error) => {
+          (event.source as Window | null)?.postMessage(
+            { type: "big-tree-viewer:error", version: 1, message: error instanceof Error ? error.message : String(error) },
+            replyOrigin,
+          );
+        });
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [loadLaunchPayload]);
 
   const onMetadataFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -2393,6 +2779,13 @@ export default function App() {
         </button>
       ) : null}
       <aside className="control-panel">
+        <button
+          type="button"
+          className="mobile-sidebar-toggle mobile-sidebar-toggle-inline"
+          onClick={() => setSidebarVisible(false)}
+        >
+          Hide Panel
+        </button>
         <div className="panel-title-row">
           <div className="panel-title-block">
             <h1>Big Tree Viewer</h1>
@@ -2402,13 +2795,6 @@ export default function App() {
               <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
             </p>
           </div>
-          <button
-            type="button"
-            className="mobile-sidebar-toggle mobile-sidebar-toggle-inline"
-            onClick={() => setSidebarVisible(false)}
-          >
-            Hide Panel
-          </button>
         </div>
 
         <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)}>
@@ -2501,13 +2887,15 @@ export default function App() {
             >
               Circular
             </button>
-            <button
-              type="button"
-              className={viewMode === "spiral" ? "active" : ""}
-              onClick={() => setViewMode("spiral")}
-            >
-              Spiral
-            </button>
+            {showSpiralViewOption ? (
+              <button
+                type="button"
+                className={viewMode === "spiral" ? "active" : ""}
+                onClick={() => setViewMode("spiral")}
+              >
+                Spiral
+              </button>
+            ) : null}
           </div>
           <div className="view-group-divider" aria-hidden="true" />
           <div className="segmented">

@@ -209,6 +209,38 @@ test("circular vector SVG export preserves taxonomy and metadata annotations", a
   expect(svg).toContain("stroke=\"#2563eb\"");
 });
 
+test("spiral SVG export includes vector tree content instead of a blank scene", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "(((Alpha_one:1,Alpha_two:1)Alpha:1,(Beta_one:1,Beta_two:1)Beta:1)Left:1,((Gamma_one:1,Gamma_two:1)Gamma:1,(Delta_one:1,Delta_two:1)Delta:1)Right:1)Root;");
+
+  const svg = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowGenusLabels(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+        const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as { kind?: string } | null;
+        if (state?.viewMode === "spiral" && camera?.kind === "circular") {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(check);
+      };
+      check();
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+
+  expect(svg).toContain("<svg");
+  expect(svg).not.toContain("<image");
+  expect(svg).toContain("<path");
+  expect(svg).toContain("<line");
+  expect(svg).toMatch(/>(Alpha|Beta|Gamma|Delta)</);
+});
+
 test("taxonomy label size and band thickness controls are independent", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((Alpha_one:1,Alpha_two:1)CladeOne:1,(Beta_one:1,Beta_two:1)CladeTwo:1)Root;");
