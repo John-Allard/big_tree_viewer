@@ -311,6 +311,49 @@ function closestSpiralThetaForPoint(x: number, y: number, metrics: SpiralMetrics
   return (low + high) * 0.5;
 }
 
+function visibleSpiralThetaForViewport(
+  camera: CircularCamera,
+  metrics: SpiralMetrics,
+  viewportWidth: number,
+  viewportHeight: number,
+): number | null {
+  const centerX = viewportWidth * 0.5;
+  const centerY = viewportHeight * 0.5;
+  const margin = 12;
+  const offsets = [
+    metrics.spacingOffset,
+    metrics.bandWidth * 0.08,
+    metrics.bandWidth * 0.92,
+    metrics.bandWidth + (metrics.taxonomyRibbonWidth * 0.5),
+  ];
+  const samples = Math.max(720, Math.min(2400, Math.ceil(metrics.totalTheta * 96)));
+  let bestTheta: number | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let index = 0; index <= samples; index += 1) {
+    const theta = metrics.startTheta + ((index / samples) * metrics.totalTheta);
+    for (let offsetIndex = 0; offsetIndex < offsets.length; offsetIndex += 1) {
+      const point = spiralNormalOffsetPoint(theta, offsets[offsetIndex], metrics);
+      const screen = worldToScreenCircular(camera, point.x, point.y);
+      if (
+        screen.x < -margin
+        || screen.x > viewportWidth + margin
+        || screen.y < -margin
+        || screen.y > viewportHeight + margin
+      ) {
+        continue;
+      }
+      const normalizedDx = (screen.x - centerX) / Math.max(viewportWidth, 1);
+      const normalizedDy = (screen.y - centerY) / Math.max(viewportHeight, 1);
+      const score = (normalizedDx * normalizedDx) + (normalizedDy * normalizedDy);
+      if (score < bestScore) {
+        bestScore = score;
+        bestTheta = theta;
+      }
+    }
+  }
+  return bestTheta;
+}
+
 function spiralBaseRadius(theta: number, metrics: SpiralMetrics): number {
   return metrics.innerRadius + ((theta - metrics.startTheta) * metrics.pitchPerRadian);
 }
@@ -4516,7 +4559,8 @@ export default function TreeCanvas({
         ? buildSpiralMetrics(tree, spiralTurns, visibleRankCount, taxonomyBandThicknessScale, effectiveTimeAxisLogBase)
         : null;
       const theta = spiralMetrics
-        ? closestSpiralThetaForPoint(world.x, world.y, spiralMetrics)
+        ? visibleSpiralThetaForViewport(fromCamera, spiralMetrics, size.width, size.height)
+          ?? closestSpiralThetaForPoint(world.x, world.y, spiralMetrics)
         : wrapPositive(Math.atan2(world.y, world.x));
       const targetY = spiralMetrics
         ? spiralArcFractionForTheta(theta, spiralMetrics) * Math.max(1, tree.leafCount - 1)
