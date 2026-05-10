@@ -87,6 +87,10 @@ const CIRCULAR_TAXONOMY_VISIBLE_FILTER_MAX_VISIBLE_FRACTION = 0.88;
 const CIRCULAR_RIBBON_CANVAS_STABILITY_RADIUS_PX = 6000;
 const CIRCULAR_RIBBON_CANVAS_STABILITY_ARC_PX = 140;
 const CIRCULAR_TAXONOMY_SCREEN_SPACE_RIBBON_MIN_RADIUS_PX = 1200;
+const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+const TRACKPAD_PIXEL_ZOOM_MULTIPLIER = 5;
+const TRACKPAD_PIXEL_DELTA_THRESHOLD = 32;
+const MAC_GESTURE_ZOOM_EXPONENT = 1.7;
 
 function isHorizontalWheelPanEvent(event: WheelEvent): boolean {
   if (event.ctrlKey || event.metaKey || event.altKey) {
@@ -98,6 +102,20 @@ function isHorizontalWheelPanEvent(event: WheelEvent): boolean {
   const absDeltaX = Math.abs(event.deltaX);
   const absDeltaY = Math.abs(event.deltaY);
   return absDeltaX > 0 && absDeltaX > Math.max(1, absDeltaY * 1.6);
+}
+
+function normalizedWheelZoomDelta(event: WheelEvent, viewportHeight: number): number {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return event.deltaY * 16;
+  }
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return event.deltaY * viewportHeight;
+  }
+  const absDeltaY = Math.abs(event.deltaY);
+  const looksLikeTrackpad = absDeltaY > 0
+    && absDeltaY < TRACKPAD_PIXEL_DELTA_THRESHOLD
+    && Math.abs(event.deltaX) < Math.max(1, absDeltaY * 0.4);
+  return event.deltaY * (looksLikeTrackpad ? TRACKPAD_PIXEL_ZOOM_MULTIPLIER : 1);
 }
 
 function arcIntersectsViewport(
@@ -3084,10 +3102,14 @@ export default function TreeCanvas({
   fitRequest,
   exportSvgRequest,
   exportSvgFilename,
+  sessionStateRequest,
+  sessionRestoreRequest,
+  sessionRestoreState,
   visualResetRequest,
   onHoverChange,
   onRerootRequest,
   onViewModeChange,
+  onSessionStateSnapshot,
 }: TreeCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -3141,6 +3163,8 @@ export default function TreeCanvas({
   } | null>(null);
   const handledFocusRequestRef = useRef(0);
   const handledExportRequestRef = useRef(0);
+  const handledSessionStateRequestRef = useRef(sessionStateRequest);
+  const handledSessionRestoreRequestRef = useRef(sessionRestoreRequest);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
   const pinchGestureRef = useRef<{ distance: number; centerX: number; centerY: number } | null>(null);
   const macGestureScaleRef = useRef<number | null>(null);
@@ -3290,6 +3314,25 @@ export default function TreeCanvas({
       ctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
     }
   }, [tree, updateHoverTooltip]);
+
+  useEffect(() => {
+    if (!onSessionStateSnapshot || handledSessionStateRequestRef.current === sessionStateRequest) {
+      return;
+    }
+    handledSessionStateRequestRef.current = sessionStateRequest;
+    onSessionStateSnapshot({
+      camera: cameraRef.current ? { ...cameraRef.current } : null,
+      collapsedNodes: Array.from(collapsedNodes),
+      manualBranchColors: Array.from(manualBranchColorAssignments),
+      manualSubtreeColors: Array.from(manualSubtreeColorAssignments),
+    });
+  }, [
+    collapsedNodes,
+    manualBranchColorAssignments,
+    manualSubtreeColorAssignments,
+    onSessionStateSnapshot,
+    sessionStateRequest,
+  ]);
   useEffect(() => {
     setTaxonomyRootColorAssignments(new Map());
     setContextMenuColorMode(null);
@@ -9829,6 +9872,51 @@ export default function TreeCanvas({
   }, [cache, convertCameraForViewMode, fitCamera, fitRequest, size, tree, viewMode]);
 
   useLayoutEffect(() => {
+    if (!tree || handledSessionRestoreRequestRef.current === sessionRestoreRequest) {
+      return;
+    }
+    handledSessionRestoreRequestRef.current = sessionRestoreRequest;
+    if (!sessionRestoreState) {
+      return;
+    }
+    const isValidNode = (node: number): boolean => Number.isInteger(node) && node >= 0 && node < tree.nodeCount;
+    setCollapsedNodes(new Set(sessionRestoreState.collapsedNodes.filter(isValidNode)));
+    setManualBranchColorAssignments(new Map(
+      sessionRestoreState.manualBranchColors.filter(([node, color]) => isValidNode(node) && typeof color === "string" && color.trim() !== ""),
+    ));
+    setManualSubtreeColorAssignments(new Map(
+      sessionRestoreState.manualSubtreeColors.filter(([node, color]) => isValidNode(node) && typeof color === "string" && color.trim() !== ""),
+    ));
+    const camera = sessionRestoreState.camera;
+    if (camera?.kind === "rect" && viewMode === "rectangular") {
+      const nextCamera = { ...camera };
+      clampRectCamera(nextCamera, tree, size.width, size.height, rectClampPadding(nextCamera));
+      cameraRef.current = nextCamera;
+      draw();
+      return;
+    }
+    if (camera?.kind === "circular" && viewMode !== "rectangular") {
+      const nextCamera = { ...camera };
+      cameraRef.current = nextCamera;
+      finalizeCircularCamera(nextCamera);
+      draw();
+      return;
+    }
+    draw();
+  }, [
+    clampRectCamera,
+    draw,
+    finalizeCircularCamera,
+    rectClampPadding,
+    sessionRestoreRequest,
+    sessionRestoreState,
+    size.height,
+    size.width,
+    tree,
+    viewMode,
+  ]);
+
+  useLayoutEffect(() => {
     if (
       !tree
       || viewMode !== "circular"
@@ -10728,12 +10816,8 @@ export default function TreeCanvas({
         scheduleDraw();
         return;
       }
-      const deltaY = event.deltaMode === WheelEvent.DOM_DELTA_LINE
-        ? event.deltaY * 16
-        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-          ? event.deltaY * size.height
-          : event.deltaY;
-      const zoom = Math.exp(-deltaY * 0.0015);
+      const deltaY = normalizedWheelZoomDelta(event, size.height);
+      const zoom = Math.exp(-deltaY * WHEEL_ZOOM_SENSITIVITY);
       zoomAtPoint(localX, localY, zoom);
       scheduleDraw();
     };
@@ -10836,7 +10920,10 @@ export default function TreeCanvas({
       if (!(previousScale > 0)) {
         return;
       }
-      const zoom = currentScale / previousScale;
+      const rawZoom = currentScale / previousScale;
+      const zoom = rawZoom >= 1
+        ? Math.pow(rawZoom, MAC_GESTURE_ZOOM_EXPONENT)
+        : 1 / Math.pow(1 / rawZoom, MAC_GESTURE_ZOOM_EXPONENT);
       if (!Number.isFinite(zoom) || Math.abs(zoom - 1) < 1e-4) {
         return;
       }

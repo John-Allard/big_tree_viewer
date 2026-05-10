@@ -360,6 +360,50 @@ test("rectangular vertical wheel input zooms instead of scrolling or panning", a
   expect(Number(after?.scaleY ?? 0)).toBeLessThan(Number(before?.scaleY ?? 0));
 });
 
+test("small pixel wheel deltas from trackpads zoom with usable sensitivity", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const before = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "rect";
+    scaleX: number;
+    scaleY: number;
+  } | null);
+
+  await page.evaluate(async () => {
+    const canvas = document.querySelector("canvas");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Canvas unavailable for trackpad wheel test.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      deltaX: 0,
+      deltaY: -4,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      clientX: rect.left + (rect.width * 0.5),
+      clientY: rect.top + (rect.height * 0.5),
+      bubbles: true,
+      cancelable: true,
+    }));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const after = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+    kind: "rect";
+    scaleX: number;
+    scaleY: number;
+  } | null);
+
+  expect(before?.kind).toBe("rect");
+  expect(after?.kind).toBe("rect");
+  expect(Number(after?.scaleX ?? 0) / Number(before?.scaleX ?? 1)).toBeGreaterThan(1.025);
+  expect(Number(after?.scaleY ?? 0) / Number(before?.scaleY ?? 1)).toBeGreaterThan(1.025);
+});
+
 test("rectangular gesturechange input zooms the camera", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

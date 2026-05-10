@@ -61,6 +61,7 @@ import { TAXONOMY_RANKS, type TaxonomyCollapseRank, type TaxonomyMapPayload, typ
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
+import type { TreeCanvasSessionState } from "./components/treeCanvasTypes";
 
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
@@ -129,6 +130,91 @@ type BigTreeViewerLaunchPayload = {
     markersEnabled?: boolean;
     markerColumn?: string;
   };
+};
+
+type BigTreeViewerSessionSettings = {
+  viewMode: ViewMode;
+  showSpiralViewOption: boolean;
+  order: LayoutOrder;
+  zoomAxisMode: ZoomAxisMode;
+  circularRotationDegrees: number;
+  spiralTurns: number;
+  showTimeStripes: boolean;
+  timeStripeStyle: "bands" | "dashed";
+  timeStripeLineWeight: number;
+  timeAxisScale: TimeAxisScale;
+  timeAxisLogBase: number;
+  showScaleBars: boolean;
+  showIntermediateScaleTicks: boolean;
+  extendRectScaleToTick: boolean;
+  showScaleZeroTick: boolean;
+  scaleTickIntervalInput: string;
+  useAutoCircularCenterScaleAngle: boolean;
+  circularCenterScaleAngleDegrees: number;
+  showCircularCenterRadialScaleBar: boolean;
+  showTipLabels: boolean;
+  showGenusLabels: boolean;
+  showInternalNodeLabels: boolean;
+  showBootstrapLabels: boolean;
+  showNodeHeightLabels: boolean;
+  showNodeErrorBars: boolean;
+  errorBarThicknessPx: number;
+  errorBarCapSizePx: number;
+  figureStyles: FigureStyleSettings;
+  taxonomyEnabled: boolean;
+  taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
+  taxonomyCollapseRank: TaxonomyCollapseRank;
+  useAutomaticTaxonomyRankVisibility: boolean;
+  taxonomyBranchColoringEnabled: boolean;
+  taxonomyColorJitter: number;
+  taxonomyColorPalette: TaxonomyColorPaletteKey;
+  taxonomyCustomPaletteInput: string;
+  taxonomyColorRootRank: TaxonomyRank | "auto";
+  taxonomyColorJitterRank: TaxonomyRank;
+  branchThicknessScale: number;
+  metadataEnabled: boolean;
+  metadataFirstRowIsHeader: boolean;
+  metadataKeyColumn: string;
+  metadataValueColumn: string;
+  metadataColorMode: MetadataColorMode;
+  metadataApplyScope: MetadataApplyScope;
+  metadataReverseScale: boolean;
+  metadataContinuousPalette: MetadataContinuousPalette;
+  metadataContinuousTransform: MetadataContinuousTransform;
+  metadataContinuousMinInput: string;
+  metadataContinuousMaxInput: string;
+  metadataLabelsEnabled: boolean;
+  metadataLabelColumn: string;
+  metadataMarkersEnabled: boolean;
+  metadataMarkerColumn: string;
+  metadataCategoryColorOverrides: Record<string, string>;
+  metadataMarkerStyleOverrides: Record<string, { color?: string; shape?: MetadataMarkerShape }>;
+  metadataMarkerSizePx: number;
+  metadataLabelMaxCount: number;
+  metadataLabelMinSpacingPx: number;
+  metadataLabelOffsetXPx: number;
+  metadataLabelOffsetYPx: number;
+};
+
+type BigTreeViewerSessionFile = {
+  format: "big-tree-viewer-session";
+  version: 1;
+  savedAt: string;
+  settings: BigTreeViewerSessionSettings;
+  tree?: {
+    label: string;
+    newick: string;
+    signature: string | null;
+  };
+  metadata?: {
+    text: string;
+    label: string;
+    firstRowIsHeader: boolean;
+  };
+  taxonomy?: {
+    map: TaxonomyMapPayload | null;
+  };
+  canvas?: TreeCanvasSessionState | null;
 };
 
 function decodeBase64UrlText(value: string): string {
@@ -815,6 +901,10 @@ export default function App() {
   const pendingSharedSubtreeVisualRef = useRef<SharedSubtreeVisualPayload | null>(null);
   const pendingTreeReplacementTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
   const pendingTreeReplacementTaxonomyEnabledRef = useRef<boolean | null>(null);
+  const pendingSessionTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
+  const pendingSessionTaxonomyEnabledRef = useRef<boolean | null>(null);
+  const pendingSessionCanvasStateRef = useRef<TreeCanvasSessionState | null | undefined>(undefined);
+  const pendingSessionSnapshotResolverRef = useRef<((state: TreeCanvasSessionState | null) => void) | null>(null);
   const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
@@ -877,6 +967,11 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
+  const [sessionStateRequest, setSessionStateRequest] = useState(0);
+  const [sessionRestoreRequest, setSessionRestoreRequest] = useState(0);
+  const [sessionRestoreState, setSessionRestoreState] = useState<TreeCanvasSessionState | null>(null);
+  const [sessionStatus, setSessionStatus] = useState("");
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [visualResetRequest, setVisualResetRequest] = useState(0);
   const [activeLabelStylePopover, setActiveLabelStylePopover] = useState<VisualPopoverId | null>(null);
   const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
@@ -1860,6 +1955,355 @@ export default function App() {
     setExportSvgRequest((value) => value + 1);
   }, [loadedTreeLabel, tree, viewMode]);
 
+  const handleSessionStateSnapshot = useCallback((state: TreeCanvasSessionState): void => {
+    const resolver = pendingSessionSnapshotResolverRef.current;
+    pendingSessionSnapshotResolverRef.current = null;
+    resolver?.(state);
+  }, []);
+
+  const requestCanvasSessionState = useCallback(async (): Promise<TreeCanvasSessionState | null> => {
+    if (!tree || typeof window === "undefined") {
+      return null;
+    }
+    return await new Promise<TreeCanvasSessionState | null>((resolve) => {
+      pendingSessionSnapshotResolverRef.current = resolve;
+      window.setTimeout(() => {
+        if (pendingSessionSnapshotResolverRef.current === resolve) {
+          pendingSessionSnapshotResolverRef.current = null;
+          resolve(null);
+        }
+      }, 500);
+      setSessionStateRequest((value) => value + 1);
+    });
+  }, [tree]);
+
+  const captureSessionSettings = useCallback((): BigTreeViewerSessionSettings => ({
+    viewMode,
+    showSpiralViewOption,
+    order,
+    zoomAxisMode,
+    circularRotationDegrees,
+    spiralTurns,
+    showTimeStripes,
+    timeStripeStyle,
+    timeStripeLineWeight,
+    timeAxisScale,
+    timeAxisLogBase,
+    showScaleBars,
+    showIntermediateScaleTicks,
+    extendRectScaleToTick,
+    showScaleZeroTick,
+    scaleTickIntervalInput,
+    useAutoCircularCenterScaleAngle,
+    circularCenterScaleAngleDegrees,
+    showCircularCenterRadialScaleBar,
+    showTipLabels,
+    showGenusLabels,
+    showInternalNodeLabels,
+    showBootstrapLabels,
+    showNodeHeightLabels,
+    showNodeErrorBars,
+    errorBarThicknessPx,
+    errorBarCapSizePx,
+    figureStyles,
+    taxonomyEnabled,
+    taxonomyRankVisibility,
+    taxonomyCollapseRank,
+    useAutomaticTaxonomyRankVisibility,
+    taxonomyBranchColoringEnabled,
+    taxonomyColorJitter,
+    taxonomyColorPalette,
+    taxonomyCustomPaletteInput,
+    taxonomyColorRootRank,
+    taxonomyColorJitterRank,
+    branchThicknessScale,
+    metadataEnabled,
+    metadataFirstRowIsHeader,
+    metadataKeyColumn,
+    metadataValueColumn,
+    metadataColorMode,
+    metadataApplyScope,
+    metadataReverseScale,
+    metadataContinuousPalette,
+    metadataContinuousTransform,
+    metadataContinuousMinInput,
+    metadataContinuousMaxInput,
+    metadataLabelsEnabled,
+    metadataLabelColumn,
+    metadataMarkersEnabled,
+    metadataMarkerColumn,
+    metadataCategoryColorOverrides,
+    metadataMarkerStyleOverrides,
+    metadataMarkerSizePx,
+    metadataLabelMaxCount,
+    metadataLabelMinSpacingPx,
+    metadataLabelOffsetXPx,
+    metadataLabelOffsetYPx,
+  }), [
+    branchThicknessScale,
+    circularCenterScaleAngleDegrees,
+    circularRotationDegrees,
+    errorBarCapSizePx,
+    errorBarThicknessPx,
+    extendRectScaleToTick,
+    figureStyles,
+    metadataApplyScope,
+    metadataCategoryColorOverrides,
+    metadataColorMode,
+    metadataContinuousMaxInput,
+    metadataContinuousMinInput,
+    metadataContinuousPalette,
+    metadataContinuousTransform,
+    metadataEnabled,
+    metadataFirstRowIsHeader,
+    metadataKeyColumn,
+    metadataLabelColumn,
+    metadataLabelMaxCount,
+    metadataLabelMinSpacingPx,
+    metadataLabelOffsetXPx,
+    metadataLabelOffsetYPx,
+    metadataLabelsEnabled,
+    metadataMarkerColumn,
+    metadataMarkerSizePx,
+    metadataMarkerStyleOverrides,
+    metadataMarkersEnabled,
+    metadataReverseScale,
+    metadataValueColumn,
+    order,
+    scaleTickIntervalInput,
+    showBootstrapLabels,
+    showCircularCenterRadialScaleBar,
+    showGenusLabels,
+    showIntermediateScaleTicks,
+    showInternalNodeLabels,
+    showNodeErrorBars,
+    showNodeHeightLabels,
+    showScaleBars,
+    showScaleZeroTick,
+    showSpiralViewOption,
+    showTimeStripes,
+    showTipLabels,
+    spiralTurns,
+    taxonomyBranchColoringEnabled,
+    taxonomyCollapseRank,
+    taxonomyColorJitter,
+    taxonomyColorJitterRank,
+    taxonomyColorPalette,
+    taxonomyColorRootRank,
+    taxonomyCustomPaletteInput,
+    taxonomyEnabled,
+    taxonomyRankVisibility,
+    timeAxisLogBase,
+    timeAxisScale,
+    timeStripeLineWeight,
+    timeStripeStyle,
+    useAutoCircularCenterScaleAngle,
+    useAutomaticTaxonomyRankVisibility,
+    viewMode,
+    zoomAxisMode,
+  ]);
+
+  const applySessionSettings = useCallback((settings: BigTreeViewerSessionSettings): void => {
+    if (settings.viewMode === "rectangular" || settings.viewMode === "circular" || settings.viewMode === "spiral") {
+      setViewMode(settings.viewMode);
+      if (settings.viewMode === "spiral" || settings.showSpiralViewOption) {
+        setShowSpiralViewOption(true);
+      }
+    }
+    if (settings.order === "input" || settings.order === "asc" || settings.order === "desc") {
+      setOrder(settings.order);
+    }
+    if (settings.zoomAxisMode === "both" || settings.zoomAxisMode === "x" || settings.zoomAxisMode === "y") {
+      setZoomAxisMode(settings.zoomAxisMode);
+    }
+    setCircularRotationDegrees(settings.circularRotationDegrees);
+    setSpiralTurns(settings.spiralTurns);
+    setShowTimeStripes(settings.showTimeStripes);
+    setTimeStripeStyle(settings.timeStripeStyle);
+    setTimeStripeLineWeight(settings.timeStripeLineWeight);
+    setTimeAxisScale(settings.timeAxisScale);
+    setTimeAxisLogBase(settings.timeAxisLogBase);
+    setShowScaleBars(settings.showScaleBars);
+    setShowIntermediateScaleTicks(settings.showIntermediateScaleTicks);
+    setExtendRectScaleToTick(settings.extendRectScaleToTick);
+    setShowScaleZeroTick(settings.showScaleZeroTick);
+    setScaleTickIntervalInput(settings.scaleTickIntervalInput);
+    setUseAutoCircularCenterScaleAngle(settings.useAutoCircularCenterScaleAngle);
+    setCircularCenterScaleAngleDegrees(settings.circularCenterScaleAngleDegrees);
+    setShowCircularCenterRadialScaleBar(settings.showCircularCenterRadialScaleBar);
+    setShowTipLabels(settings.showTipLabels);
+    setShowGenusLabels(settings.showGenusLabels);
+    setShowInternalNodeLabels(settings.showInternalNodeLabels);
+    setShowBootstrapLabels(settings.showBootstrapLabels);
+    setShowNodeHeightLabels(settings.showNodeHeightLabels);
+    setShowNodeErrorBars(settings.showNodeErrorBars);
+    setErrorBarThicknessPx(settings.errorBarThicknessPx);
+    setErrorBarCapSizePx(settings.errorBarCapSizePx);
+    setFigureStyles(settings.figureStyles);
+    setTaxonomyEnabled(settings.taxonomyEnabled);
+    setTaxonomyRankVisibility(settings.taxonomyRankVisibility);
+    setTaxonomyCollapseRank(settings.taxonomyCollapseRank);
+    setUseAutomaticTaxonomyRankVisibility(settings.useAutomaticTaxonomyRankVisibility);
+    setTaxonomyBranchColoringEnabled(settings.taxonomyBranchColoringEnabled);
+    setTaxonomyColorJitter(settings.taxonomyColorJitter);
+    setTaxonomyColorPalette(settings.taxonomyColorPalette);
+    setTaxonomyCustomPaletteInput(settings.taxonomyCustomPaletteInput);
+    setTaxonomyColorRootRank(settings.taxonomyColorRootRank);
+    setTaxonomyColorJitterRank(settings.taxonomyColorJitterRank);
+    setBranchThicknessScale(settings.branchThicknessScale);
+    setMetadataFirstRowIsHeader(settings.metadataFirstRowIsHeader);
+    setMetadataEnabled(settings.metadataEnabled);
+    setMetadataKeyColumn(settings.metadataKeyColumn);
+    setMetadataValueColumn(settings.metadataValueColumn);
+    setMetadataColorMode(settings.metadataColorMode);
+    setMetadataApplyScope(settings.metadataApplyScope);
+    setMetadataReverseScale(settings.metadataReverseScale);
+    setMetadataContinuousPalette(settings.metadataContinuousPalette);
+    setMetadataContinuousTransform(settings.metadataContinuousTransform);
+    setMetadataContinuousMinInput(settings.metadataContinuousMinInput);
+    setMetadataContinuousMaxInput(settings.metadataContinuousMaxInput);
+    setMetadataLabelsEnabled(settings.metadataLabelsEnabled);
+    setMetadataLabelColumn(settings.metadataLabelColumn);
+    setMetadataMarkersEnabled(settings.metadataMarkersEnabled);
+    setMetadataMarkerColumn(settings.metadataMarkerColumn);
+    setMetadataCategoryColorOverrides(settings.metadataCategoryColorOverrides);
+    setMetadataMarkerStyleOverrides(settings.metadataMarkerStyleOverrides);
+    setMetadataMarkerSizePx(settings.metadataMarkerSizePx);
+    setMetadataLabelMaxCount(settings.metadataLabelMaxCount);
+    setMetadataLabelMinSpacingPx(settings.metadataLabelMinSpacingPx);
+    setMetadataLabelOffsetXPx(settings.metadataLabelOffsetXPx);
+    setMetadataLabelOffsetYPx(settings.metadataLabelOffsetYPx);
+  }, []);
+
+  const writeSessionFile = useCallback(async (session: BigTreeViewerSessionFile): Promise<boolean> => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    const baseLabel = sanitizeExportBaseLabel(session.tree?.label ?? loadedTreeLabel ?? "big-tree-viewer");
+    const suggestedName = `${baseLabel}.btvsession`;
+    const text = JSON.stringify(session, null, 2);
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const pickerWindow = window as Window & {
+      showSaveFilePicker?: (options: unknown) => Promise<{
+        createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
+      }>;
+    };
+    if (typeof pickerWindow.showSaveFilePicker === "function") {
+      try {
+        const handle = await pickerWindow.showSaveFilePicker({
+          id: "big-tree-viewer-sessions",
+          suggestedName,
+          types: [{
+            description: "Big Tree Viewer session",
+            accept: { "application/json": [".btvsession", ".json"] },
+          }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return true;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return false;
+        }
+        throw error;
+      }
+    }
+    const url = window.URL.createObjectURL(blob);
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = suggestedName;
+    window.document.body.appendChild(link);
+    link.click();
+    window.document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    return true;
+  }, [loadedTreeLabel]);
+
+  const readSessionFile = useCallback(async (): Promise<File | null> => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const pickerWindow = window as Window & {
+      showOpenFilePicker?: (options: unknown) => Promise<Array<{ getFile: () => Promise<File> }>>;
+    };
+    if (typeof pickerWindow.showOpenFilePicker === "function") {
+      try {
+        const [handle] = await pickerWindow.showOpenFilePicker({
+          id: "big-tree-viewer-sessions",
+          multiple: false,
+          types: [{
+            description: "Big Tree Viewer session",
+            accept: { "application/json": [".btvsession", ".json"] },
+          }],
+        });
+        return handle ? await handle.getFile() : null;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return null;
+        }
+        throw error;
+      }
+    }
+    return await new Promise<File | null>((resolve) => {
+      const input = window.document.createElement("input");
+      input.type = "file";
+      input.accept = ".btvsession,.json,application/json";
+      input.onchange = () => resolve(input.files?.[0] ?? null);
+      input.click();
+    });
+  }, []);
+
+  const parseSessionFile = useCallback(async (file: File): Promise<BigTreeViewerSessionFile> => {
+    const parsed = JSON.parse(await file.text()) as Partial<BigTreeViewerSessionFile>;
+    if (parsed.format !== "big-tree-viewer-session" || parsed.version !== 1 || !parsed.settings) {
+      throw new Error("This is not a valid Big Tree Viewer session file.");
+    }
+    return parsed as BigTreeViewerSessionFile;
+  }, []);
+
+  const saveSession = useCallback(async (): Promise<void> => {
+    try {
+      setSessionError(null);
+      setSessionStatus("Preparing session file...");
+      const canvas = await requestCanvasSessionState();
+      const session: BigTreeViewerSessionFile = {
+        format: "big-tree-viewer-session",
+        version: 1,
+        savedAt: new Date().toISOString(),
+        settings: captureSessionSettings(),
+        tree: tree ? {
+          label: loadedTreeLabel,
+          newick: serializeSubtreeToNewick(tree, tree.root),
+          signature: treeSignature,
+        } : undefined,
+        metadata: metadataRawText ? {
+          text: metadataRawText,
+          label: metadataFileName || "metadata.csv",
+          firstRowIsHeader: metadataFirstRowIsHeader,
+        } : undefined,
+        taxonomy: tree ? { map: taxonomyMap } : undefined,
+        canvas,
+      };
+      const saved = await writeSessionFile(session);
+      setSessionStatus(saved ? "Session saved." : "");
+    } catch (error) {
+      setSessionStatus("");
+      setSessionError(error instanceof Error ? error.message : String(error));
+    }
+  }, [
+    captureSessionSettings,
+    loadedTreeLabel,
+    metadataFileName,
+    metadataFirstRowIsHeader,
+    metadataRawText,
+    requestCanvasSessionState,
+    taxonomyMap,
+    tree,
+    treeSignature,
+    writeSessionFile,
+  ]);
+
   useEffect(() => {
     if (!tree || !treeSignature) {
       setTaxonomyMap(null);
@@ -1878,6 +2322,24 @@ export default function App() {
         ? `Updated taxonomy mapping after reroot (${replacementTaxonomy.mappedCount.toLocaleString()} mapped tips).`
         : "");
       setTaxonomyError(null);
+      return;
+    }
+    if (pendingSessionTaxonomyRef.current !== undefined) {
+      const sessionTaxonomy = pendingSessionTaxonomyRef.current;
+      const sessionTaxonomyEnabled = pendingSessionTaxonomyEnabledRef.current;
+      pendingSessionTaxonomyRef.current = undefined;
+      pendingSessionTaxonomyEnabledRef.current = null;
+      setTaxonomyMap(sessionTaxonomy ?? null);
+      setTaxonomyEnabled(sessionTaxonomy ? sessionTaxonomyEnabled ?? true : false);
+      setTaxonomyStatus(sessionTaxonomy
+        ? `Loaded taxonomy mapping from session (${sessionTaxonomy.mappedCount.toLocaleString()} mapped tips).`
+        : "");
+      setTaxonomyError(null);
+      if (pendingSessionCanvasStateRef.current !== undefined) {
+        setSessionRestoreState(pendingSessionCanvasStateRef.current ?? null);
+        setSessionRestoreRequest((value) => value + 1);
+        pendingSessionCanvasStateRef.current = undefined;
+      }
       return;
     }
     const inheritedSubtreeTaxonomy = pendingSharedSubtreeTaxonomyRef.current;
@@ -2000,6 +2462,54 @@ export default function App() {
   const importMetadataText = useCallback((text: string, label: string): void => {
     applyMetadataText(text, label, metadataFirstRowIsHeader);
   }, [applyMetadataText, metadataFirstRowIsHeader]);
+
+  const loadSession = useCallback(async (mode: "full" | "settings"): Promise<void> => {
+    try {
+      setSessionError(null);
+      const file = await readSessionFile();
+      if (!file) {
+        return;
+      }
+      const session = await parseSessionFile(file);
+      if (mode === "full") {
+        if (session.metadata?.text) {
+          applyMetadataText(session.metadata.text, session.metadata.label, session.metadata.firstRowIsHeader);
+        } else {
+          clearMetadata();
+        }
+      }
+      applySessionSettings(session.settings);
+      if (mode === "full" && session.tree?.newick) {
+        pendingSessionTaxonomyRef.current = session.taxonomy?.map ?? null;
+        pendingSessionTaxonomyEnabledRef.current = session.settings.taxonomyEnabled;
+        pendingSessionCanvasStateRef.current = session.canvas ?? null;
+        await parseText(session.tree.newick, session.tree.label || file.name);
+        setSessionStatus(`Loaded session from ${file.name}.`);
+        return;
+      }
+      if (mode === "settings" && tree && session.tree?.signature && session.tree.signature === treeSignature && session.canvas) {
+        setSessionRestoreState(session.canvas);
+        setSessionRestoreRequest((value) => value + 1);
+        setSessionStatus(`Loaded settings and tree-specific view state from ${file.name}.`);
+        return;
+      }
+      setSessionStatus(mode === "settings"
+        ? `Loaded reusable settings from ${file.name}. Tree-specific state was skipped.`
+        : `Loaded settings from ${file.name}.`);
+    } catch (error) {
+      setSessionStatus("");
+      setSessionError(error instanceof Error ? error.message : String(error));
+    }
+  }, [
+    applyMetadataText,
+    applySessionSettings,
+    clearMetadata,
+    parseSessionFile,
+    parseText,
+    readSessionFile,
+    tree,
+    treeSignature,
+  ]);
 
   const applyLaunchMetadata = useCallback((metadata: BigTreeViewerLaunchPayload["metadata"] | undefined): void => {
     if (!metadata?.text) {
@@ -2867,8 +3377,21 @@ export default function App() {
               Download Newick
             </button>
           </div>
+          <div className="button-row">
+            <button type="button" className="secondary" onClick={() => void saveSession()}>
+              Save Session
+            </button>
+            <button type="button" className="secondary" onClick={() => void loadSession("full")}>
+              Load Session
+            </button>
+            <button type="button" className="secondary" onClick={() => void loadSession("settings")}>
+              Load Settings
+            </button>
+          </div>
           {loadState.loading && loadState.message ? <p className="status-line">{loadState.message}</p> : null}
           {loadState.error ? <p className="status-error">{loadState.error}</p> : null}
+          {sessionStatus ? <p className="status-line">{sessionStatus}</p> : null}
+          {sessionError ? <p className="status-error">{sessionError}</p> : null}
         </PanelSection>
 
         <PanelSection title="View" isOpen={viewOpen} onToggle={() => setViewOpen(!viewOpen)}>
@@ -4153,10 +4676,14 @@ export default function App() {
           fitRequest={fitRequest}
           exportSvgRequest={exportSvgRequest}
           exportSvgFilename={exportSvgFilename}
+          sessionStateRequest={sessionStateRequest}
+          sessionRestoreRequest={sessionRestoreRequest}
+          sessionRestoreState={sessionRestoreState}
           visualResetRequest={visualResetRequest}
           onHoverChange={handleHoverChange}
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={setViewMode}
+          onSessionStateSnapshot={handleSessionStateSnapshot}
         />
       </main>
     </div>

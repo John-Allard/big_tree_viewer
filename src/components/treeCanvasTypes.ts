@@ -72,10 +72,14 @@ export interface TreeCanvasProps {
   fitRequest: number;
   exportSvgRequest: number;
   exportSvgFilename: string;
+  sessionStateRequest: number;
+  sessionRestoreRequest: number;
+  sessionRestoreState: TreeCanvasSessionState | null;
   visualResetRequest: number;
   onHoverChange: (hover: HoverInfo | null) => void;
   onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;
   onViewModeChange?: (mode: ViewMode) => void;
+  onSessionStateSnapshot?: (state: TreeCanvasSessionState) => void;
 }
 
 export interface RectCamera {
@@ -97,6 +101,13 @@ export interface CircularCamera {
 }
 
 export type CameraState = RectCamera | CircularCamera;
+
+export interface TreeCanvasSessionState {
+  camera: CameraState | null;
+  collapsedNodes: number[];
+  manualBranchColors: Array<[number, string]>;
+  manualSubtreeColors: Array<[number, string]>;
+}
 
 export interface GenusBlock {
   label: string;
