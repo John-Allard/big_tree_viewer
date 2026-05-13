@@ -84,6 +84,11 @@ export default function AboutPage() {
   return (
     <main className="about-page">
       <div className="about-page-frame">
+        <nav className="site-doc-nav" aria-label="Documentation">
+          <a href={`${import.meta.env.BASE_URL}#`}>Viewer</a>
+          <a href={`${import.meta.env.BASE_URL}#about`} aria-current="page">About</a>
+          <a href={`${import.meta.env.BASE_URL}#api`}>API</a>
+        </nav>
         <header className="about-header">
           <div>
             <p className="about-kicker">Big Tree Viewer</p>

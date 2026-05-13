@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
@@ -344,15 +344,17 @@ function PanelSection({
   title,
   isOpen,
   onToggle,
+  tourId,
   children,
 }: {
   title: string;
   isOpen: boolean;
   onToggle: () => void;
+  tourId?: string;
   children: ReactNode;
 }): ReactNode {
   return (
-    <section className="panel-section">
+    <section className="panel-section" data-tour={tourId}>
       <button
         type="button"
         className="section-toggle"
@@ -385,6 +387,54 @@ const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
+const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
+const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
+
+type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "metadata" | "sessions";
+
+const TUTORIAL_STEPS: Array<{
+  id: TutorialStepId;
+  target: string;
+  title: string;
+  body: string;
+}> = [
+  {
+    id: "data",
+    target: "data",
+    title: "Load a tree",
+    body: "Open a Newick/NEXUS file, drag a tree onto the page, or paste a Newick string. Trees are parsed locally in your browser; Big Tree Viewer does not upload your data.",
+  },
+  {
+    id: "navigation",
+    target: "view",
+    title: "Navigate the tree",
+    body: "Switch between rectangular and circular layouts, choose tip ordering, fit the view, and zoom with the wheel, trackpad pinch, +/-, or touch gestures. Rectangular mode can lock zoom to X, Y, or both axes.",
+  },
+  {
+    id: "visual",
+    target: "visual",
+    title: "Style the figure",
+    body: "Visual Options controls labels, time stripes, branch thickness, and export styling. Gear buttons open detailed controls for typography, spacing, line weights, and taxonomy ribbon styling.",
+  },
+  {
+    id: "taxonomy",
+    target: "taxonomy",
+    title: "Map taxonomy",
+    body: "Download Taxonomy fetches the NCBI taxdump archive, roughly a few hundred MB compressed. The browser caches it in site storage so later mappings can run without downloading it again.",
+  },
+  {
+    id: "metadata",
+    target: "metadata",
+    title: "Display metadata",
+    body: "Open a CSV or TSV table, choose the column that matches tree labels, then color branches, add text labels, or draw markers from other columns. Metadata stays local in the browser.",
+  },
+  {
+    id: "sessions",
+    target: "sessions",
+    title: "Save your work",
+    body: "Save Session writes a .btvsession file containing the tree, metadata, settings, manual colors, collapsed clades, and viewport. Load Settings applies reusable styling from a saved session to another tree.",
+  },
+];
 const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
 const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
 const DEFAULT_TIME_AXIS_SCALE: TimeAxisScale = "linear";
@@ -1006,6 +1056,7 @@ export default function App() {
   const [taxonomyLoading, setTaxonomyLoading] = useState(false);
   const [taxonomyStatus, setTaxonomyStatus] = useState("");
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+  const [taxonomyStorageInfoVisible, setTaxonomyStorageInfoVisible] = useState(false);
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
   const [taxonomyCollapseRank, setTaxonomyCollapseRank] = useState<TaxonomyCollapseRank>(DEFAULT_TAXONOMY_COLLAPSE_RANK);
@@ -1016,6 +1067,17 @@ export default function App() {
   const diagnosticsSessionIdRef = useRef<string>(createDiagnosticsSessionId());
   const showDiagnosticsPanel = useMemo(() => diagnosticsPanelEnabled(), []);
   const useLowMemoryTaxonomyMapping = useMemo(() => useLowMemoryTaxonomyMode(), []);
+  const shouldShowTutorialPrompt = useMemo(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(TUTORIAL_COMPLETED_STORAGE_KEY) !== "true"
+      && window.localStorage.getItem(TUTORIAL_DISMISSED_STORAGE_KEY) !== "true";
+  }, []);
+  const [tutorialPromptVisible, setTutorialPromptVisible] = useState(shouldShowTutorialPrompt);
+  const [tutorialActive, setTutorialActive] = useState(false);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [tutorialCardPosition, setTutorialCardPosition] = useState<CSSProperties | undefined>(undefined);
   useEffect(() => {
     if (showSpiralViewOption) {
       return;
@@ -1048,6 +1110,114 @@ export default function App() {
       window.removeEventListener("keyup", handleKeyUp);
     };
   }, [showSpiralViewOption]);
+
+  const completeTutorial = useCallback((remember = true): void => {
+    setTutorialActive(false);
+    setTutorialPromptVisible(false);
+    setTutorialStepIndex(0);
+    if (remember && typeof window !== "undefined") {
+      window.localStorage.setItem(TUTORIAL_COMPLETED_STORAGE_KEY, "true");
+      window.localStorage.removeItem(TUTORIAL_DISMISSED_STORAGE_KEY);
+    }
+  }, []);
+
+  const dismissTutorial = useCallback((dontShowAgain = false): void => {
+    setTutorialActive(false);
+    setTutorialPromptVisible(false);
+    setTutorialStepIndex(0);
+    if (dontShowAgain && typeof window !== "undefined") {
+      window.localStorage.setItem(TUTORIAL_DISMISSED_STORAGE_KEY, "true");
+    }
+  }, []);
+
+  const startTutorial = useCallback((): void => {
+    setTutorialPromptVisible(false);
+    setTutorialStepIndex(0);
+    setTutorialActive(true);
+    setDataOpen(true);
+  }, [setDataOpen]);
+
+  useEffect(() => {
+    if (!tutorialActive) {
+      window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
+      setTutorialCardPosition(undefined);
+      return;
+    }
+    const step = TUTORIAL_STEPS[tutorialStepIndex];
+    if (!step) {
+      return;
+    }
+    const openSectionForStep = (): void => {
+      if (step.id === "data" || step.id === "sessions") {
+        setDataOpen(true);
+      } else if (step.id === "navigation") {
+        setViewOpen(true);
+      } else if (step.id === "visual") {
+        setVisualOpen(true);
+      } else if (step.id === "taxonomy") {
+        setTaxonomyOpen(true);
+      } else if (step.id === "metadata") {
+        setMetadataOpen(true);
+      }
+    };
+    openSectionForStep();
+    const positionCardNearTarget = (target: Element): void => {
+      const rect = target.getBoundingClientRect();
+      const card = window.document.querySelector<HTMLElement>(".tutorial-card");
+      const margin = 16;
+      const gap = 14;
+      const cardWidth = Math.min(card?.offsetWidth || 420, window.innerWidth - (margin * 2));
+      const cardHeight = Math.min(card?.offsetHeight || 240, window.innerHeight - (margin * 2));
+      let left = rect.right + gap;
+      let top = rect.top + (rect.height * 0.5) - (cardHeight * 0.5);
+
+      if (left + cardWidth > window.innerWidth - margin) {
+        left = rect.left - cardWidth - gap;
+      }
+      if (left < margin) {
+        left = Math.min(window.innerWidth - margin - cardWidth, Math.max(margin, rect.left));
+        top = rect.bottom + gap;
+      }
+      if (top + cardHeight > window.innerHeight - margin) {
+        top = rect.top - cardHeight - gap;
+      }
+      top = Math.max(margin, Math.min(window.innerHeight - margin - cardHeight, top));
+      left = Math.max(margin, Math.min(window.innerWidth - margin - cardWidth, left));
+      setTutorialCardPosition({ top, left });
+    };
+
+    const timeout = window.setTimeout(() => {
+      window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
+      const target = window.document.querySelector(`[data-tour="${step.target}"]`);
+      target?.classList.add("tour-highlight");
+      target?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+      if (target) {
+        window.requestAnimationFrame(() => positionCardNearTarget(target));
+      }
+    }, 80);
+    const handleResize = (): void => {
+      const target = window.document.querySelector(`[data-tour="${step.target}"]`);
+      if (target) {
+        positionCardNearTarget(target);
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("scroll", handleResize, true);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("scroll", handleResize, true);
+      window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
+    };
+  }, [
+    setDataOpen,
+    setMetadataOpen,
+    setTaxonomyOpen,
+    setViewOpen,
+    setVisualOpen,
+    tutorialActive,
+    tutorialStepIndex,
+  ]);
   const appendDiagnostic = useCallback((kind: string, data?: unknown): void => {
     appendDiagnosticsEvent(kind, data);
     setDiagnosticsRevision((value) => value + 1);
@@ -3279,6 +3449,66 @@ export default function App() {
       onDrop={(event) => void handleDrop(event)}
     >
       {dragActive ? <div className="drag-overlay">Drop a tree file, CSV/TSV metadata file, or Newick / NEXUS text to load it</div> : null}
+      {tutorialPromptVisible ? (
+        <div className="tutorial-prompt" role="dialog" aria-label="Big Tree Viewer tutorial">
+          <button
+            type="button"
+            className="tutorial-close"
+            aria-label="Close tutorial prompt"
+            onClick={() => dismissTutorial(false)}
+          >
+            ×
+          </button>
+          <div>
+            <strong>New to Big Tree Viewer?</strong>
+            <p>Take a short guided tour of loading trees, navigation, taxonomy, metadata, and session files.</p>
+          </div>
+          <div className="tutorial-actions">
+            <button type="button" onClick={startTutorial}>Start tutorial</button>
+            <button type="button" className="secondary" onClick={() => dismissTutorial(true)}>Don&apos;t show again</button>
+          </div>
+        </div>
+      ) : null}
+      {tutorialActive ? (
+        <div
+          className="tutorial-card"
+          role="dialog"
+          aria-live="polite"
+          aria-label="Big Tree Viewer tutorial step"
+          style={tutorialCardPosition}
+        >
+          <div className="tutorial-step-counter">
+            Step {tutorialStepIndex + 1} of {TUTORIAL_STEPS.length}
+          </div>
+          <h2>{TUTORIAL_STEPS[tutorialStepIndex].title}</h2>
+          <p>{TUTORIAL_STEPS[tutorialStepIndex].body}</p>
+          <div className="tutorial-actions">
+            <button
+              type="button"
+              onClick={() => {
+                if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
+                  completeTutorial(true);
+                } else {
+                  setTutorialStepIndex((index) => Math.min(TUTORIAL_STEPS.length - 1, index + 1));
+                }
+              }}
+            >
+              {tutorialStepIndex >= TUTORIAL_STEPS.length - 1 ? "Finish" : "Next"}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={tutorialStepIndex === 0}
+              onClick={() => setTutorialStepIndex((index) => Math.max(0, index - 1))}
+            >
+              Back
+            </button>
+            <button type="button" className="secondary" onClick={() => dismissTutorial(true)}>
+              Stop
+            </button>
+          </div>
+        </div>
+      ) : null}
       {!sidebarVisible ? (
         <button
           type="button"
@@ -3304,10 +3534,13 @@ export default function App() {
               {HOME_DESCRIPTION}{" "}
               <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
             </p>
+            <button type="button" className="text-link-button" onClick={startTutorial}>
+              Start tutorial
+            </button>
           </div>
         </div>
 
-        <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)}>
+        <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)} tourId="data">
           <div className="button-row">
             <button type="button" onClick={() => void loadExample()} disabled={loadState.loading}>
               Load Example
@@ -3377,7 +3610,7 @@ export default function App() {
               Download Newick
             </button>
           </div>
-          <div className="button-row">
+          <div className="button-row" data-tour="sessions">
             <button type="button" className="secondary" onClick={() => void saveSession()}>
               Save Session
             </button>
@@ -3394,7 +3627,7 @@ export default function App() {
           {sessionError ? <p className="status-error">{sessionError}</p> : null}
         </PanelSection>
 
-        <PanelSection title="View" isOpen={viewOpen} onToggle={() => setViewOpen(!viewOpen)}>
+        <PanelSection title="View" isOpen={viewOpen} onToggle={() => setViewOpen(!viewOpen)} tourId="view">
           <div className="segmented">
             <button
               type="button"
@@ -3521,7 +3754,7 @@ export default function App() {
           ) : null}
         </PanelSection>
 
-        <PanelSection title="Visual Options" isOpen={visualOpen} onToggle={() => setVisualOpen(!visualOpen)}>
+        <PanelSection title="Visual Options" isOpen={visualOpen} onToggle={() => setVisualOpen(!visualOpen)} tourId="visual">
           <div className="option-list">
             <div className="visual-option-row">
               <label className="visual-option-checkbox">
@@ -4022,10 +4255,38 @@ export default function App() {
           </div>
         </PanelSection>
 
-        <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)}>
+        <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)} tourId="taxonomy">
           <div className="search-controls">
             {taxonomyCached ? (
-              <p className="status-line">Taxonomy cache found.</p>
+              <>
+                <p className="status-line">Taxonomy cache found.</p>
+                <button
+                  type="button"
+                  className="text-link-button taxonomy-storage-link"
+                  onClick={() => setTaxonomyStorageInfoVisible((visible) => !visible)}
+                >
+                  Where is this file on my computer?
+                </button>
+                {taxonomyStorageInfoVisible ? (
+                  <div className="taxonomy-storage-note">
+                    <p>
+                      Big Tree Viewer stores the NCBI taxdump archive in browser-managed
+                      IndexedDB site storage, not as a normal visible download.
+                    </p>
+                    <p>
+                      Database: <code>big-tree-viewer-taxonomy</code>, object store:
+                      <code> archives</code>, key: <code>ncbi-taxdmp-zip</code>.
+                    </p>
+                    <p>
+                      Typical browser profile locations are under
+                      <code> ~/Library/Application Support/[browser]/.../IndexedDB</code> on macOS,
+                      <code> ~/.config/[browser]/.../IndexedDB</code> on Linux, and
+                      <code> %LOCALAPPDATA%\[browser]\User Data\...\IndexedDB</code> on Windows.
+                      The exact profile folder is chosen by your browser.
+                    </p>
+                  </div>
+                ) : null}
+              </>
             ) : (
               <div className="button-row">
                 <button
@@ -4084,7 +4345,7 @@ export default function App() {
           </div>
         </PanelSection>
 
-        <PanelSection title="Metadata" isOpen={metadataOpen} onToggle={() => setMetadataOpen(!metadataOpen)}>
+        <PanelSection title="Metadata" isOpen={metadataOpen} onToggle={() => setMetadataOpen(!metadataOpen)} tourId="metadata">
           <div className="search-controls">
             <input
               ref={metadataFileInputRef}

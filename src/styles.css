@@ -195,6 +195,139 @@ button.secondary {
   text-decoration: underline;
 }
 
+.text-link-button {
+  border: 0;
+  background: transparent;
+  color: #1d4ed8;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.text-link-button:hover:not(:disabled) {
+  background: transparent;
+  color: #1e40af;
+  text-decoration: underline;
+}
+
+.text-link-button:disabled {
+  color: #94a3b8;
+}
+
+.tutorial-prompt,
+.tutorial-card {
+  position: fixed;
+  z-index: 45;
+  border: 1px solid rgba(37, 99, 235, 0.26);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.tutorial-prompt {
+  top: 1.25rem;
+  left: 50%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  width: min(620px, calc(100vw - 2rem));
+  padding: 1rem 1.1rem;
+  transform: translateX(-50%);
+}
+
+.tutorial-prompt p,
+.tutorial-card p {
+  margin: 0.35rem 0 0;
+  color: #475569;
+  line-height: 1.48;
+}
+
+.tutorial-close {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.65rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.tutorial-close:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.18);
+  color: #0f172a;
+}
+
+.tutorial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.tutorial-card {
+  width: min(420px, calc(100vw - 2rem));
+  padding: 1.05rem 1.15rem 1.15rem;
+}
+
+.tutorial-card h2 {
+  margin: 0.2rem 0 0;
+  font-size: 1.12rem;
+}
+
+.tutorial-step-counter {
+  color: #2563eb;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tour-highlight {
+  position: relative;
+  border-radius: 14px;
+  outline: 3px solid rgba(37, 99, 235, 0.68);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 7px rgba(96, 165, 250, 0.18), 0 12px 36px rgba(37, 99, 235, 0.18);
+  transition: outline-color 160ms ease, box-shadow 160ms ease;
+}
+
+.taxonomy-storage-link {
+  margin-top: -0.35rem;
+}
+
+.taxonomy-storage-note {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #475569;
+  font-size: 0.78rem;
+  line-height: 1.42;
+}
+
+.taxonomy-storage-note p {
+  margin: 0;
+}
+
+.taxonomy-storage-note code {
+  color: #0f172a;
+  font-size: 0.74rem;
+}
+
 .about-page {
   min-height: 100%;
   padding: 1.5rem 1rem 2.5rem;
@@ -205,6 +338,27 @@ button.secondary {
   width: min(1160px, 100%);
   margin: 0 auto;
   padding: 0 0 2rem;
+}
+
+.site-doc-nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.2rem 0 1rem;
+  font-size: 0.86rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.site-doc-nav a {
+  color: #334155;
+  text-decoration: none;
+}
+
+.site-doc-nav a:hover,
+.site-doc-nav a[aria-current="page"] {
+  color: #1d4ed8;
+  text-decoration: underline;
 }
 
 .about-header {
@@ -437,6 +591,66 @@ button.secondary {
 
 .about-colophon a:hover {
   text-decoration: underline;
+}
+
+.api-page .about-page-frame {
+  width: min(980px, 100%);
+}
+
+.api-doc-section {
+  margin-top: 1.25rem;
+  padding: 1.2rem;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.08);
+}
+
+.api-doc-section h2 {
+  margin: 0 0 0.55rem;
+  font-size: 1.18rem;
+}
+
+.api-doc-section p {
+  margin: 0.45rem 0 0;
+  color: #475569;
+  line-height: 1.58;
+}
+
+.api-doc-section pre {
+  margin: 0.9rem 0 0;
+  padding: 0.9rem 1rem;
+  overflow: auto;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #dbeafe;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.api-option-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.7rem;
+  margin: 0.95rem 0 0;
+}
+
+.api-option-list div {
+  padding: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.api-option-list dt {
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.api-option-list dd {
+  margin: 0.25rem 0 0;
+  color: #475569;
+  line-height: 1.4;
 }
 
 @media (max-width: 640px) {
