@@ -99,9 +99,15 @@ export default function AboutPage() {
               at the Institute for Genomics and Evolutionary Medicine, Temple University.
             </p>
           </div>
-          <a className="about-top-link" href={`${import.meta.env.BASE_URL}#`}>
-            Back to viewer
-          </a>
+          <div className="about-header-actions">
+            <a className="about-top-link" href={`${import.meta.env.BASE_URL}#`}>
+              Back to viewer
+            </a>
+            <span aria-hidden="true">|</span>
+            <a className="about-top-link" href={`${import.meta.env.BASE_URL}#tutorial`}>
+              Start tutorial
+            </a>
+          </div>
         </header>
 
         <section className="about-intro">

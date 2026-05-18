@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
@@ -389,6 +389,7 @@ const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
 const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
 const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
+const TUTORIAL_HASH = "#tutorial";
 
 type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "metadata" | "sessions";
 
@@ -435,6 +436,32 @@ const TUTORIAL_STEPS: Array<{
     body: "Save Session writes a .btvsession file containing the tree, metadata, settings, manual colors, collapsed clades, and viewport. Load Settings applies reusable styling from a saved session to another tree.",
   },
 ];
+
+function tutorialCardPositionForTarget(target: Element, card: HTMLElement | null): CSSProperties {
+  const rect = target.getBoundingClientRect();
+  const margin = 16;
+  const gap = 14;
+  const cardWidth = Math.min(card?.offsetWidth || 420, window.innerWidth - (margin * 2));
+  const cardHeight = Math.min(card?.offsetHeight || 240, window.innerHeight - (margin * 2));
+  let left = rect.right + gap;
+  let top = rect.top + (rect.height * 0.5) - (cardHeight * 0.5);
+
+  if (left + cardWidth > window.innerWidth - margin) {
+    left = rect.left - cardWidth - gap;
+  }
+  if (left < margin) {
+    left = Math.min(window.innerWidth - margin - cardWidth, Math.max(margin, rect.left));
+    top = rect.bottom + gap;
+  }
+  if (top + cardHeight > window.innerHeight - margin) {
+    top = rect.top - cardHeight - gap;
+  }
+
+  return {
+    top: Math.max(margin, Math.min(window.innerHeight - margin - cardHeight, top)),
+    left: Math.max(margin, Math.min(window.innerWidth - margin - cardWidth, left)),
+  };
+}
 const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
 const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
 const DEFAULT_TIME_AXIS_SCALE: TimeAxisScale = "linear";
@@ -1111,6 +1138,30 @@ export default function App() {
     };
   }, [showSpiralViewOption]);
 
+  const openSectionForTutorialStep = useCallback((stepIndex: number): void => {
+    const step = TUTORIAL_STEPS[stepIndex];
+    if (!step) {
+      return;
+    }
+    if (step.id === "data" || step.id === "sessions") {
+      setDataOpen(true);
+    } else if (step.id === "navigation") {
+      setViewOpen(true);
+    } else if (step.id === "visual") {
+      setVisualOpen(true);
+    } else if (step.id === "taxonomy") {
+      setTaxonomyOpen(true);
+    } else if (step.id === "metadata") {
+      setMetadataOpen(true);
+    }
+  }, [setDataOpen, setMetadataOpen, setTaxonomyOpen, setViewOpen, setVisualOpen]);
+
+  const showTutorialStep = useCallback((stepIndex: number): void => {
+    const boundedIndex = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, stepIndex));
+    openSectionForTutorialStep(boundedIndex);
+    setTutorialStepIndex(boundedIndex);
+  }, [openSectionForTutorialStep]);
+
   const completeTutorial = useCallback((remember = true): void => {
     setTutorialActive(false);
     setTutorialPromptVisible(false);
@@ -1132,12 +1183,29 @@ export default function App() {
 
   const startTutorial = useCallback((): void => {
     setTutorialPromptVisible(false);
-    setTutorialStepIndex(0);
+    showTutorialStep(0);
     setTutorialActive(true);
-    setDataOpen(true);
-  }, [setDataOpen]);
+  }, [showTutorialStep]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const maybeStartTutorialFromHash = (): void => {
+      if (window.location.hash !== TUTORIAL_HASH) {
+        return;
+      }
+      startTutorial();
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    };
+    maybeStartTutorialFromHash();
+    window.addEventListener("hashchange", maybeStartTutorialFromHash);
+    return () => {
+      window.removeEventListener("hashchange", maybeStartTutorialFromHash);
+    };
+  }, [startTutorial]);
+
+  useLayoutEffect(() => {
     if (!tutorialActive) {
       window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
       setTutorialCardPosition(undefined);
@@ -1147,74 +1215,34 @@ export default function App() {
     if (!step) {
       return;
     }
-    const openSectionForStep = (): void => {
-      if (step.id === "data" || step.id === "sessions") {
-        setDataOpen(true);
-      } else if (step.id === "navigation") {
-        setViewOpen(true);
-      } else if (step.id === "visual") {
-        setVisualOpen(true);
-      } else if (step.id === "taxonomy") {
-        setTaxonomyOpen(true);
-      } else if (step.id === "metadata") {
-        setMetadataOpen(true);
-      }
-    };
-    openSectionForStep();
     const positionCardNearTarget = (target: Element): void => {
-      const rect = target.getBoundingClientRect();
-      const card = window.document.querySelector<HTMLElement>(".tutorial-card");
-      const margin = 16;
-      const gap = 14;
-      const cardWidth = Math.min(card?.offsetWidth || 420, window.innerWidth - (margin * 2));
-      const cardHeight = Math.min(card?.offsetHeight || 240, window.innerHeight - (margin * 2));
-      let left = rect.right + gap;
-      let top = rect.top + (rect.height * 0.5) - (cardHeight * 0.5);
-
-      if (left + cardWidth > window.innerWidth - margin) {
-        left = rect.left - cardWidth - gap;
-      }
-      if (left < margin) {
-        left = Math.min(window.innerWidth - margin - cardWidth, Math.max(margin, rect.left));
-        top = rect.bottom + gap;
-      }
-      if (top + cardHeight > window.innerHeight - margin) {
-        top = rect.top - cardHeight - gap;
-      }
-      top = Math.max(margin, Math.min(window.innerHeight - margin - cardHeight, top));
-      left = Math.max(margin, Math.min(window.innerWidth - margin - cardWidth, left));
-      setTutorialCardPosition({ top, left });
+      setTutorialCardPosition(tutorialCardPositionForTarget(
+        target,
+        window.document.querySelector<HTMLElement>(".tutorial-card"),
+      ));
     };
 
-    const timeout = window.setTimeout(() => {
-      window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
-      const target = window.document.querySelector(`[data-tour="${step.target}"]`);
-      target?.classList.add("tour-highlight");
-      target?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
-      if (target) {
-        window.requestAnimationFrame(() => positionCardNearTarget(target));
-      }
-    }, 80);
+    window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
+    const target = window.document.querySelector(`[data-tour="${step.target}"]`);
+    target?.classList.add("tour-highlight");
+    target?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    if (target) {
+      positionCardNearTarget(target);
+    }
     const handleResize = (): void => {
-      const target = window.document.querySelector(`[data-tour="${step.target}"]`);
-      if (target) {
-        positionCardNearTarget(target);
+      const currentTarget = window.document.querySelector(`[data-tour="${step.target}"]`);
+      if (currentTarget) {
+        positionCardNearTarget(currentTarget);
       }
     };
     window.addEventListener("resize", handleResize);
     window.addEventListener("scroll", handleResize, true);
     return () => {
-      window.clearTimeout(timeout);
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("scroll", handleResize, true);
       window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
     };
   }, [
-    setDataOpen,
-    setMetadataOpen,
-    setTaxonomyOpen,
-    setViewOpen,
-    setVisualOpen,
     tutorialActive,
     tutorialStepIndex,
   ]);
@@ -3489,7 +3517,7 @@ export default function App() {
                 if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
                   completeTutorial(true);
                 } else {
-                  setTutorialStepIndex((index) => Math.min(TUTORIAL_STEPS.length - 1, index + 1));
+                  showTutorialStep(tutorialStepIndex + 1);
                 }
               }}
             >
@@ -3499,7 +3527,7 @@ export default function App() {
               type="button"
               className="secondary"
               disabled={tutorialStepIndex === 0}
-              onClick={() => setTutorialStepIndex((index) => Math.max(0, index - 1))}
+              onClick={() => showTutorialStep(tutorialStepIndex - 1)}
             >
               Back
             </button>
@@ -3534,9 +3562,6 @@ export default function App() {
               {HOME_DESCRIPTION}{" "}
               <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
             </p>
-            <button type="button" className="text-link-button" onClick={startTutorial}>
-              Start tutorial
-            </button>
           </div>
         </div>
 
