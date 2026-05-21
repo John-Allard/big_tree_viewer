@@ -52,6 +52,7 @@ declare global {
       setMetadataKeyColumn: (column: string) => void;
       setMetadataValueColumn: (column: string) => void;
       setMetadataColorMode: (mode: "categorical" | "continuous") => void;
+      setMetadataCategoryColorOverridesForTest: (overrides: Record<string, string>) => void;
       setMetadataApplyScope: (scope: "branch" | "subtree") => void;
       setMetadataReverseScale: (reverse: boolean) => void;
       setMetadataContinuousPalette: (palette: "blueOrange" | "viridis" | "redBlue" | "tealRose") => void;

@@ -37,6 +37,12 @@ const figureSections = [
     text: "In rectangular mode, x and y zoom can be adjusted independently. Zooming out along x first, then y, reveals broader branch-length and taxonomic context while keeping local tip and ribbon alignment clear.",
   },
   {
+    title: "Map metadata onto the tree",
+    image: `${import.meta.env.BASE_URL}about/example-50k-metadata-overlay.png`,
+    alt: "Big Tree Viewer screenshot showing a circular tree with CSV metadata coloring branches gray and blue, with the Metadata panel open.",
+    text: "CSV or TSV metadata can be joined to tip labels and used to color branches, add labels, or draw tip markers. This example marks tips from genera with more than 50 species in blue and all other tips in gray.",
+  },
+  {
     title: "Hundreds of thousands of tips",
     image: `${import.meta.env.BASE_URL}about/tree-200k-rectangular-overview.png`,
     alt: "Rectangular Big Tree Viewer screenshot showing a very large mapped tree with taxonomy ribbons.",

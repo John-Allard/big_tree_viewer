@@ -3322,6 +3322,7 @@ export default function App() {
       setMetadataKeyColumn,
       setMetadataValueColumn,
       setMetadataColorMode,
+      setMetadataCategoryColorOverridesForTest: setMetadataCategoryColorOverrides,
       setMetadataApplyScope,
       setMetadataReverseScale,
       setMetadataContinuousPalette,
