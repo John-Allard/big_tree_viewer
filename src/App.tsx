@@ -3283,6 +3283,7 @@ export default function App() {
       setTaxonomyColorJitterRankForTest: setTaxonomyColorJitterRank,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
       setShowIntermediateScaleTicks,
+      setShowTimeStripes,
       setExtendRectScaleToTick,
       setShowScaleZeroTick,
       setScaleTickIntervalInput,

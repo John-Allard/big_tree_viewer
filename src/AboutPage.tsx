@@ -44,8 +44,10 @@ const figureSections = [
   },
   {
     title: "Styling and SVG export",
-    image: `${import.meta.env.BASE_URL}about/example-50k-style-panel.png`,
-    alt: "Big Tree Viewer screenshot showing the style controls panel next to a loaded tree.",
+    videoWebm: `${import.meta.env.BASE_URL}about/example-50k-style-panel.webm`,
+    videoMp4: `${import.meta.env.BASE_URL}about/example-50k-style-panel.mp4`,
+    poster: `${import.meta.env.BASE_URL}about/example-50k-style-panel-poster.webp`,
+    alt: "Animated Big Tree Viewer view showing styling controls changing taxonomy palettes, visible ribbons, branch thickness, and time stripe settings.",
     text: "Typography, branch thickness, ribbon spacing, metadata overlays and many other settings are adjusted in the same view used for exploration. The current view can be exported as SVG for use in figures.",
   },
 ] as const;
@@ -176,8 +178,8 @@ export default function AboutPage() {
             <p className="about-lead">{HOME_DESCRIPTION}</p>
             <p className="about-lead">
               The viewer is intended for trees that are too large to be useful in
-              traditional desktop tools&mdash;tens of thousands to several hundred
-              thousand tips&mdash;where readable structure depends on summarizing
+              traditional desktop tools, from tens of thousands to several hundred
+              thousand tips, where readable structure depends on summarizing
               tip labels into taxonomy bands and ribbons. Trees are parsed and
               rendered locally in the browser, so no data is uploaded.
             </p>

@@ -28,6 +28,7 @@ declare global {
       setTaxonomyColorJitterRankForTest: (rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setShowIntermediateScaleTicks: (visible: boolean) => void;
+      setShowTimeStripes: (visible: boolean) => void;
       setExtendRectScaleToTick: (visible: boolean) => void;
       setShowScaleZeroTick: (visible: boolean) => void;
       setScaleTickIntervalInput: (value: string) => void;
