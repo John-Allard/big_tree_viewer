@@ -176,13 +176,6 @@ export default function AboutPage() {
           <div className="about-intro-copy">
             <h2>A browser-based viewer for very large phylogenies.</h2>
             <p className="about-lead">{HOME_DESCRIPTION}</p>
-            <p className="about-lead">
-              The viewer is intended for trees that are too large to be useful in
-              traditional desktop tools, from tens of thousands to several hundred
-              thousand tips, where readable structure depends on summarizing
-              tip labels into taxonomy bands and ribbons. Trees are parsed and
-              rendered locally in the browser, so no data is uploaded.
-            </p>
           </div>
           <figure className="about-hero-figure">
             <AboutMedia item={figureSections[0]} eager />
