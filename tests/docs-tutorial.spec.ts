@@ -43,6 +43,22 @@ test("new-user tutorial prompt can start, advance, and persist dismissal", async
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Navigate the tree");
   await expect(page.locator('[data-tour="view"]')).toHaveClass(/tour-highlight/);
 
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Style the figure");
+  await expect(page.locator('[data-tour="visual"]')).toHaveClass(/tour-highlight/);
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Map taxonomy");
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("automatically map binomial species tip names");
+  await expect(page.locator('[data-tour="taxonomy"]')).toHaveClass(/tour-highlight/);
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Use the branch menu");
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Right-click or control-click");
+  await expect(page.locator('[data-tour="branch-menu-demo"]')).toHaveClass(/tour-highlight/);
+  await expect(page.locator('[data-tour="branch-menu-demo"]')).toContainText("Right click to open this menu");
+  await expect(page.locator('[data-tour="branch-menu-demo"]')).toContainText("Color Subtree");
+
   await page.getByRole("button", { name: "Stop" }).click();
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial" })).toHaveCount(0);

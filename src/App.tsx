@@ -391,7 +391,7 @@ const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
 const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
 const TUTORIAL_HASH = "#tutorial";
 
-type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "metadata" | "sessions";
+type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "branchMenu" | "metadata" | "sessions";
 
 const TUTORIAL_STEPS: Array<{
   id: TutorialStepId;
@@ -421,7 +421,13 @@ const TUTORIAL_STEPS: Array<{
     id: "taxonomy",
     target: "taxonomy",
     title: "Map taxonomy",
-    body: "Download Taxonomy fetches the NCBI taxdump archive, roughly a few hundred MB compressed. The browser caches it in site storage so later mappings can run without downloading it again.",
+    body: "You can automatically map binomial species tip names to taxonomic groups and display colored taxonomy ribbons on your tree. Download Taxonomy fetches the NCBI taxdump archive, roughly a few hundred MB compressed, and caches it in browser site storage for later mappings.",
+  },
+  {
+    id: "branchMenu",
+    target: "branch-menu-demo",
+    title: "Use the branch menu",
+    body: "Right-click or control-click a branch, tip, or taxonomy ribbon to open the context menu. Use it to zoom to subtrees, reroot, open a subtree in a new tab, collapse clades, copy tip names, or assign manual branch and subtree colors.",
   },
   {
     id: "metadata",
@@ -1105,6 +1111,7 @@ export default function App() {
   const [tutorialActive, setTutorialActive] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [tutorialCardPosition, setTutorialCardPosition] = useState<CSSProperties | undefined>(undefined);
+  const [tutorialCardReady, setTutorialCardReady] = useState(false);
   useEffect(() => {
     if (showSpiralViewOption) {
       return;
@@ -1147,6 +1154,12 @@ export default function App() {
       setDataOpen(true);
     } else if (step.id === "navigation") {
       setViewOpen(true);
+    } else if (step.id === "branchMenu") {
+      setDataOpen(false);
+      setViewOpen(false);
+      setVisualOpen(false);
+      setTaxonomyOpen(false);
+      setMetadataOpen(false);
     } else if (step.id === "visual") {
       setVisualOpen(true);
     } else if (step.id === "taxonomy") {
@@ -1158,6 +1171,7 @@ export default function App() {
 
   const showTutorialStep = useCallback((stepIndex: number): void => {
     const boundedIndex = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, stepIndex));
+    setTutorialCardReady(false);
     openSectionForTutorialStep(boundedIndex);
     setTutorialStepIndex(boundedIndex);
   }, [openSectionForTutorialStep]);
@@ -1165,6 +1179,7 @@ export default function App() {
   const completeTutorial = useCallback((remember = true): void => {
     setTutorialActive(false);
     setTutorialPromptVisible(false);
+    setTutorialCardReady(false);
     setTutorialStepIndex(0);
     if (remember && typeof window !== "undefined") {
       window.localStorage.setItem(TUTORIAL_COMPLETED_STORAGE_KEY, "true");
@@ -1175,6 +1190,7 @@ export default function App() {
   const dismissTutorial = useCallback((dontShowAgain = false): void => {
     setTutorialActive(false);
     setTutorialPromptVisible(false);
+    setTutorialCardReady(false);
     setTutorialStepIndex(0);
     if (dontShowAgain && typeof window !== "undefined") {
       window.localStorage.setItem(TUTORIAL_DISMISSED_STORAGE_KEY, "true");
@@ -1209,6 +1225,7 @@ export default function App() {
     if (!tutorialActive) {
       window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
       setTutorialCardPosition(undefined);
+      setTutorialCardReady(false);
       return;
     }
     const step = TUTORIAL_STEPS[tutorialStepIndex];
@@ -1220,15 +1237,26 @@ export default function App() {
         target,
         window.document.querySelector<HTMLElement>(".tutorial-card"),
       ));
+      setTutorialCardReady(true);
     };
 
     window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
-    const target = window.document.querySelector(`[data-tour="${step.target}"]`);
-    target?.classList.add("tour-highlight");
-    target?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
-    if (target) {
+    let retryFrame: number | null = null;
+    let retryCount = 0;
+    const attachToTarget = (): void => {
+      const target = window.document.querySelector(`[data-tour="${step.target}"]`);
+      if (!target) {
+        if (retryCount < 60) {
+          retryCount += 1;
+          retryFrame = window.requestAnimationFrame(attachToTarget);
+        }
+        return;
+      }
+      target.classList.add("tour-highlight");
+      target.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
       positionCardNearTarget(target);
-    }
+    };
+    attachToTarget();
     const handleResize = (): void => {
       const currentTarget = window.document.querySelector(`[data-tour="${step.target}"]`);
       if (currentTarget) {
@@ -1238,6 +1266,9 @@ export default function App() {
     window.addEventListener("resize", handleResize);
     window.addEventListener("scroll", handleResize, true);
     return () => {
+      if (retryFrame !== null) {
+        window.cancelAnimationFrame(retryFrame);
+      }
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("scroll", handleResize, true);
       window.document.querySelectorAll(".tour-highlight").forEach((element) => element.classList.remove("tour-highlight"));
@@ -3499,7 +3530,7 @@ export default function App() {
       ) : null}
       {tutorialActive ? (
         <div
-          className="tutorial-card"
+          className={`tutorial-card${tutorialCardReady ? " ready" : ""}`}
           role="dialog"
           aria-live="polite"
           aria-label="Big Tree Viewer tutorial step"
@@ -4966,6 +4997,7 @@ export default function App() {
           sessionRestoreRequest={sessionRestoreRequest}
           sessionRestoreState={sessionRestoreState}
           visualResetRequest={visualResetRequest}
+          tutorialBranchMenuDemoActive={tutorialActive && TUTORIAL_STEPS[tutorialStepIndex]?.id === "branchMenu"}
           onHoverChange={handleHoverChange}
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={setViewMode}

@@ -76,6 +76,7 @@ export interface TreeCanvasProps {
   sessionRestoreRequest: number;
   sessionRestoreState: TreeCanvasSessionState | null;
   visualResetRequest: number;
+  tutorialBranchMenuDemoActive?: boolean;
   onHoverChange: (hover: HoverInfo | null) => void;
   onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;
   onViewModeChange?: (mode: ViewMode) => void;

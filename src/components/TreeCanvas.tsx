@@ -3106,6 +3106,7 @@ export default function TreeCanvas({
   sessionRestoreRequest,
   sessionRestoreState,
   visualResetRequest,
+  tutorialBranchMenuDemoActive = false,
   onHoverChange,
   onRerootRequest,
   onViewModeChange,
@@ -3212,6 +3213,7 @@ export default function TreeCanvas({
       node: number;
       name: string;
       descendantTipCount: number;
+      tutorialDemo?: boolean;
     }
     | {
       kind: "taxonomy";
@@ -3223,6 +3225,7 @@ export default function TreeCanvas({
       lastNode: number;
       descendantTipCount: number;
       taxId: number | null;
+      tutorialDemo?: boolean;
     }
   ) | null>(null);
 
@@ -10865,8 +10868,8 @@ export default function TreeCanvas({
         return;
       }
       hoverRef.current = hover;
-      updateHoverTooltip(hover);
-      onHoverChange(hover);
+      updateHoverTooltip(null);
+      onHoverChange(null);
       drawHoverHighlightOverlay();
       setContextMenu({
         kind: "node",
@@ -11602,6 +11605,145 @@ export default function TreeCanvas({
     zoomToSubtreeTarget,
   ]);
 
+  useEffect(() => {
+    if (!tutorialBranchMenuDemoActive) {
+      if (contextMenu?.tutorialDemo) {
+        setContextMenu(null);
+        setContextMenuColorMode(null);
+        hoverRef.current = null;
+        updateHoverTooltip(null);
+        drawHoverHighlightOverlay();
+        onHoverChange(null);
+      }
+      return;
+    }
+
+    let cancelled = false;
+    let retryTimer: number | null = null;
+
+    const findVisibleBranchHover = (): CanvasHoverInfo | null => {
+      const camera = cameraRef.current;
+      if (!tree || !cache || !camera || size.width <= 0 || size.height <= 0) {
+        return null;
+      }
+      const segments = camera.kind === "rect"
+        ? cache.rectSegments[order]
+        : viewMode === "circular"
+          ? cache.circularSegments[order]
+          : [];
+      const centerX = size.width * 0.5;
+      const centerY = size.height * 0.5;
+      const candidates: Array<{ node: number; x: number; y: number; distance: number }> = [];
+      for (let index = 0; index < segments.length; index += 1) {
+        const segment = segments[index];
+        if (segment.kind !== "stem" || tree.buffers.parent[segment.node] < 0) {
+          continue;
+        }
+        const start = camera.kind === "rect"
+          ? worldToScreenRect(camera, segment.x1, segment.y1)
+          : worldToScreenCircular(camera, segment.x1, segment.y1);
+        const end = camera.kind === "rect"
+          ? worldToScreenRect(camera, segment.x2, segment.y2)
+          : worldToScreenCircular(camera, segment.x2, segment.y2);
+        const x = (start.x + end.x) * 0.5;
+        const y = (start.y + end.y) * 0.5;
+        const length = Math.hypot(end.x - start.x, end.y - start.y);
+        if (
+          length < 18
+          || x < 24
+          || y < 24
+          || x > size.width - 24
+          || y > size.height - 24
+        ) {
+          continue;
+        }
+        candidates.push({
+          node: segment.node,
+          x,
+          y,
+          distance: Math.hypot(x - centerX, y - centerY),
+        });
+      }
+      candidates.sort((left, right) => left.distance - right.distance);
+      const preferred = candidates.find((candidate) => tree.buffers.firstChild[candidate.node] >= 0) ?? candidates[0];
+      if (!preferred) {
+        return null;
+      }
+      const parent = tree.buffers.parent[preferred.node];
+      const collapsedTaxonomySummary = collapsedTipTaxonomySummaryByNode.get(preferred.node) ?? null;
+      return {
+        node: preferred.node,
+        branchLength: tree.buffers.branchLength[preferred.node],
+        parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
+        parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+        childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[preferred.node]) : null,
+        name: displayNodeNameForView(preferred.node),
+        descendantTipCount: descendantTipCountForView(preferred.node),
+        screenX: preferred.x,
+        screenY: preferred.y,
+        targetKind: "stem",
+        collapsedTaxonomyRank: collapsedTaxonomySummary?.rank ?? null,
+        collapsedTaxonomyDescendantTipCount: collapsedTaxonomySummary?.descendantTipCount ?? null,
+        collapsedTaxonomyMrcaAge: collapsedTaxonomySummary?.mrcaAge ?? null,
+        kind: "node",
+      };
+    };
+
+    const openDemoMenu = (attempt = 0): void => {
+      if (cancelled) {
+        return;
+      }
+      const hover = findVisibleBranchHover();
+      if (!hover) {
+        if (attempt < 12) {
+          retryTimer = window.setTimeout(() => openDemoMenu(attempt + 1), 120);
+        }
+        return;
+      }
+      hoverRef.current = hover;
+      updateHoverTooltip(hover);
+      onHoverChange(hover);
+      drawHoverHighlightOverlay();
+      setContextMenuColorMode(null);
+      setContextMenuRootMenuOpen(false);
+      setContextMenu({
+        kind: "node",
+        x: Math.max(12, Math.min(size.width - 240, hover.screenX + 18)),
+        y: Math.max(12, Math.min(size.height - 270, hover.screenY + 18)),
+        node: hover.node,
+        name: hover.name,
+        descendantTipCount: hover.descendantTipCount,
+        tutorialDemo: true,
+      });
+      scheduleDraw();
+    };
+
+    openDemoMenu();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+    };
+  }, [
+    contextMenu?.tutorialDemo,
+    cache,
+    collapsedTipTaxonomySummaryByNode,
+    descendantTipCountForView,
+    displayNodeNameForView,
+    drawHoverHighlightOverlay,
+    onHoverChange,
+    order,
+    scheduleDraw,
+    size.height,
+    size.width,
+    tutorialBranchMenuDemoActive,
+    tree,
+    updateHoverTooltip,
+    viewMode,
+  ]);
+
   return (
     <div
       className="tree-canvas-shell"
@@ -11626,13 +11768,15 @@ export default function TreeCanvas({
       </div>
       {contextMenu ? (
         <div
-          className="tree-context-menu"
+          className={`tree-context-menu${contextMenu.tutorialDemo ? " tree-context-menu-tutorial-demo" : ""}`}
+          data-tour={contextMenu.tutorialDemo ? "branch-menu-demo" : undefined}
           style={{
             left: contextMenu.x,
             top: contextMenu.y,
           }}
           onPointerDown={(event) => event.stopPropagation()}
         >
+          {contextMenu.tutorialDemo ? <div className="tree-context-menu-tutorial-cue">Right click to open this menu</div> : null}
           <div className="tree-context-menu-title">{contextMenu.name}</div>
           {contextMenu.kind === "node" ? (
             <>

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { HOME_DESCRIPTION } from "./siteCopy";
 
 const figureSections = [
@@ -8,10 +9,12 @@ const figureSections = [
     text: "Individual tip labels are not legible when a tree with tens of thousands of tips is fit to the screen. When binomial species names are detected, genera are inferred from the tip labels and drawn as bands along the tip axis, giving readable structure at any zoom level.",
   },
   {
-    title: "Names of genera are displayed at low magnification",
-    image: `${import.meta.env.BASE_URL}about/example-rectangular-genus-bands.png`,
-    alt: "Rectangular Big Tree Viewer screenshot showing a tree of rodents with a genus label column to the right of the tips.",
-    text: "In rectangular layout the inferred genera are placed in a column to the right of the tips, so each clade gets a readable label even where individual species names overlap. As with the circular layout, this works directly from binomial tip names and does not require a taxonomy download.",
+    title: "Tip labels appear as you zoom in",
+    videoWebm: `${import.meta.env.BASE_URL}about/example-rectangular-tip-labels-zoom.webm`,
+    videoMp4: `${import.meta.env.BASE_URL}about/example-rectangular-tip-labels-zoom.mp4`,
+    poster: `${import.meta.env.BASE_URL}about/example-rectangular-tip-labels-zoom-poster.webp`,
+    alt: "Animated rectangular Big Tree Viewer view zooming from the full 50,062-tip example tree into the hominoid region until tip labels appear.",
+    text: "Dense trees are summarized at low magnification, then individual species names appear as you zoom into a local region.",
   },
   {
     title: "Automatically map taxonomy and display ribbons",
@@ -27,9 +30,11 @@ const figureSections = [
   },
   {
     title: "Local detail with global context",
-    image: `${import.meta.env.BASE_URL}about/example-50k-primate-ribbons-detail.png`,
-    alt: "Big Tree Viewer screenshot showing a zoomed primate clade with species tip labels and four taxonomy ribbons.",
-    text: "Zooming into a clade reveals tip name labels while the taxonomy ribbons remain aligned with the same tips. Local branch relationships stay anchored to their position in the wider taxonomy.",
+    videoWebm: `${import.meta.env.BASE_URL}about/example-50k-primate-ribbons-context-zoom.webm`,
+    videoMp4: `${import.meta.env.BASE_URL}about/example-50k-primate-ribbons-context-zoom.mp4`,
+    poster: `${import.meta.env.BASE_URL}about/example-50k-primate-ribbons-context-zoom-poster.webp`,
+    alt: "Animated rectangular Big Tree Viewer view showing primate tip labels and taxonomy ribbons while zooming out first on the x axis and then on the y axis.",
+    text: "In rectangular mode, x and y zoom can be adjusted independently. Zooming out along x first, then y, reveals broader branch-length and taxonomic context while keeping local tip and ribbon alignment clear.",
   },
   {
     title: "Hundreds of thousands of tips",
@@ -44,6 +49,61 @@ const figureSections = [
     text: "Typography, branch thickness, ribbon spacing, metadata overlays and many other settings are adjusted in the same view used for exploration. The current view can be exported as SVG for use in figures.",
   },
 ] as const;
+
+type AboutFigure = typeof figureSections[number];
+
+function AboutMedia({ item, eager = false }: { item: AboutFigure; eager?: boolean }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [shouldLoadVideo, setShouldLoadVideo] = useState(eager);
+  const isVideo = "videoWebm" in item;
+
+  useEffect(() => {
+    if (!isVideo || shouldLoadVideo || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+    const node = rootRef.current;
+    if (!node) {
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setShouldLoadVideo(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "700px 0px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [isVideo, shouldLoadVideo]);
+
+  if (isVideo) {
+    return (
+      <div ref={rootRef} className="about-media-frame">
+        {shouldLoadVideo ? (
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload={eager ? "metadata" : "none"}
+            poster={item.poster}
+            aria-label={item.alt}
+          >
+            <source src={item.videoWebm} type="video/webm" />
+            <source src={item.videoMp4} type="video/mp4" />
+          </video>
+        ) : (
+          <img src={item.poster} alt={item.alt} loading="lazy" />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="about-media-frame">
+      <img src={item.image} alt={item.alt} loading={eager ? "eager" : "lazy"} />
+    </div>
+  );
+}
 
 const capabilities = [
   {
@@ -123,7 +183,7 @@ export default function AboutPage() {
             </p>
           </div>
           <figure className="about-hero-figure">
-            <img src={figureSections[0].image} alt={figureSections[0].alt} />
+            <AboutMedia item={figureSections[0]} eager />
             <figcaption>{figureSections[0].text}</figcaption>
           </figure>
         </section>
@@ -135,7 +195,7 @@ export default function AboutPage() {
               className={`about-figure-section${index % 2 === 1 ? " reverse" : ""}`}
             >
               <figure className="about-gallery-card">
-                <img src={item.image} alt={item.alt} loading="lazy" />
+                <AboutMedia item={item} />
               </figure>
               <div className="about-figure-copy">
                 <h3>{item.title}</h3>
