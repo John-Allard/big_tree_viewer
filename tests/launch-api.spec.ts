@@ -152,11 +152,34 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
       showTipLabels: false,
       showGenusLabels: false,
       branchThicknessScale: 2.1,
+      taxonomyEnabled: true,
     }),
     tree: {
       label: "remote-session-tree",
       newick: "((Session_alpha:1,Session_beta:1)SessionClade:1,Session_gamma:2)Root;",
       signature: null,
+    },
+    taxonomy: {
+      map: {
+        version: 3,
+        mappedCount: 3,
+        totalTips: 3,
+        activeRanks: ["genus", "family", "order"],
+        tipRanks: [
+          {
+            node: 2,
+            ranks: { genus: "Session", family: "Sessionidae", order: "Sessionales" },
+          },
+          {
+            node: 3,
+            ranks: { genus: "Session", family: "Sessionidae", order: "Sessionales" },
+          },
+          {
+            node: 4,
+            ranks: { genus: "Remote", family: "Remotidae", order: "Remotales" },
+          },
+        ],
+      },
     },
     canvas: null,
   };
@@ -170,12 +193,15 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
 
   await page.goto(`/?btv_session_url=${encodeURIComponent("/remote-session.btvsession")}`);
   await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 3);
 
   const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
   expect(state?.viewMode).toBe("circular");
   expect(state?.showTipLabels).toBe(false);
   expect(state?.showGenusLabels).toBe(false);
   expect(state?.branchThicknessScale).toBeCloseTo(2.1);
+  expect(state?.taxonomyEnabled).toBe(true);
+  expect(state?.taxonomyMappedCount).toBe(3);
   expect(state?.loadError).toBeNull();
 });
 

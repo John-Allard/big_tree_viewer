@@ -47,9 +47,11 @@ window.open(url, "_blank");`}</code></pre>
             Use `btv_newick_url` to load a public Newick or NEXUS file, or
             `btv_session_url` to load a saved Big Tree Viewer session containing
             the tree, metadata, visual settings, manual clade colors, collapsed
-            clades, and viewport. The file is fetched directly by the visitor&apos;s
-            browser, so the host must allow cross-origin requests from
-            `bigtreeviewer.net`.
+            clades, taxonomy mappings, and viewport. A session saved after
+            taxonomy mapping can therefore open with taxonomy ribbons already
+            available, without requiring the visitor to download the NCBI
+            taxonomy dump. The file is fetched directly by the visitor&apos;s browser,
+            so the host must allow cross-origin requests from `bigtreeviewer.net`.
           </p>
           <pre><code>{remoteNewick}</code></pre>
           <pre><code>{remoteSession}</code></pre>
