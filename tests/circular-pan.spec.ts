@@ -570,6 +570,48 @@ test("mobile circular fit leaves room for taxonomy overlays", async ({ page }) =
   expect(snapshot.camera.translateY + snapshot.outerRadiusPx).toBeLessThanOrEqual(snapshot.height + 2);
 });
 
+test("mobile circular taxonomy panning does not clamp branch bitmap apart from ribbons", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await waitForViewer(page);
+
+  const modes = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy();
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const initialDebug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.circular as {
+      branchRenderMode?: string;
+    } | undefined;
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable.");
+    }
+    let pannedDebug: { branchRenderMode?: string } | undefined;
+    for (const delta of [900, 1800, 3200, -900, -1800, -3200]) {
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        translateX: camera.translateX + delta,
+        translateY: camera.translateY,
+        scale: camera.scale,
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      pannedDebug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.circular as {
+        branchRenderMode?: string;
+      } | undefined;
+      if (pannedDebug?.branchRenderMode !== "taxonomy-cached-bitmap") {
+        break;
+      }
+    }
+    return {
+      initial: initialDebug?.branchRenderMode ?? null,
+      panned: pannedDebug?.branchRenderMode ?? null,
+    };
+  });
+
+  expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(modes.initial);
+  expect(modes.panned).toBe("taxonomy-cached-paths");
+});
+
 test("large circular fit-view falls back to the cached base path", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFile(page, path.resolve(TEST_DIR, "..", "backbone_hang_supertree.nwk"));

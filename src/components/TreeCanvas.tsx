@@ -7129,9 +7129,26 @@ export default function TreeCanvas({
         && !manualDenseTaxonomyRanksVisible
         && (nearCircularFit || visibleCircleFraction >= CIRCULAR_TAXONOMY_BITMAP_MIN_VISIBLE_FRACTION)
         && useCircularTaxonomyBitmapAtCurrentScale;
-      const cachedCircularTaxonomyBitmap = useCachedCircularTaxonomyBitmap
+      const candidateCircularTaxonomyBitmap = useCachedCircularTaxonomyBitmap
         ? getCircularTaxonomyBitmapCache(order, coloredBranchKey, cachedCircularTaxonomyPaths, camera)
         : null;
+      let cachedCircularTaxonomyBitmap = candidateCircularTaxonomyBitmap;
+      if (cachedCircularTaxonomyBitmap) {
+        const bitmapScaleRatio = camera.scale / Math.max(cachedCircularTaxonomyBitmap.scale, 1e-6);
+        const sourceWidth = Math.max(1, cachedCircularTaxonomyBitmap.viewportWidth / Math.max(bitmapScaleRatio, 1e-6));
+        const sourceHeight = Math.max(1, cachedCircularTaxonomyBitmap.viewportHeight / Math.max(bitmapScaleRatio, 1e-6));
+        const sourceX = cachedCircularTaxonomyBitmap.sourceOffsetX - (camera.translateX / Math.max(bitmapScaleRatio, 1e-6));
+        const sourceY = cachedCircularTaxonomyBitmap.sourceOffsetY - (camera.translateY / Math.max(bitmapScaleRatio, 1e-6));
+        const epsilon = 0.5;
+        if (
+          sourceX < -epsilon
+          || sourceY < -epsilon
+          || sourceX + sourceWidth > cachedCircularTaxonomyBitmap.canvas.width + epsilon
+          || sourceY + sourceHeight > cachedCircularTaxonomyBitmap.canvas.height + epsilon
+        ) {
+          cachedCircularTaxonomyBitmap = null;
+        }
+      }
       const useCachedCircularBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 1.1;
       const cachedCircularBasePath = useCachedCircularBasePath
         ? getCircularBasePath(order, layout)
@@ -7262,20 +7279,8 @@ export default function TreeCanvas({
         const bitmapScaleRatio = camera.scale / Math.max(cachedCircularTaxonomyBitmap.scale, 1e-6);
         const sourceWidth = Math.max(1, cachedCircularTaxonomyBitmap.viewportWidth / Math.max(bitmapScaleRatio, 1e-6));
         const sourceHeight = Math.max(1, cachedCircularTaxonomyBitmap.viewportHeight / Math.max(bitmapScaleRatio, 1e-6));
-        const sourceX = Math.max(
-          0,
-          Math.min(
-            cachedCircularTaxonomyBitmap.canvas.width - sourceWidth,
-            cachedCircularTaxonomyBitmap.sourceOffsetX - (camera.translateX / Math.max(bitmapScaleRatio, 1e-6)),
-          ),
-        );
-        const sourceY = Math.max(
-          0,
-          Math.min(
-            cachedCircularTaxonomyBitmap.canvas.height - sourceHeight,
-            cachedCircularTaxonomyBitmap.sourceOffsetY - (camera.translateY / Math.max(bitmapScaleRatio, 1e-6)),
-          ),
-        );
+        const sourceX = cachedCircularTaxonomyBitmap.sourceOffsetX - (camera.translateX / Math.max(bitmapScaleRatio, 1e-6));
+        const sourceY = cachedCircularTaxonomyBitmap.sourceOffsetY - (camera.translateY / Math.max(bitmapScaleRatio, 1e-6));
         ctx.drawImage(
           cachedCircularTaxonomyBitmap.canvas,
           sourceX,
