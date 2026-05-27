@@ -43,7 +43,7 @@ For public files hosted elsewhere, use `btv_newick_url` for a Newick/NEXUS file 
 ```
 
 The file host must allow browser fetches from Big Tree Viewer, for example with CORS headers.
-If a session is saved after taxonomy mapping, the session includes that mapping, so visitors can open the shared session with taxonomy ribbons already available without downloading the NCBI taxonomy dump themselves.
+Session files are gzip-compressed by default, but older uncompressed JSON session files can still be loaded. If a session is saved after taxonomy mapping, the session includes that mapping, so visitors can open the shared session with taxonomy ribbons already available without downloading the NCBI taxonomy dump themselves.
 
 For larger trees or richer metadata, open `/?btv_api=1` and send a message after receiving `big-tree-viewer:ready`:
 

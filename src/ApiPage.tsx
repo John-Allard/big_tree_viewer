@@ -11,6 +11,7 @@ export default function ApiPage() {
         <nav className="site-doc-nav" aria-label="Documentation">
           <a href={`${import.meta.env.BASE_URL}#`}>Viewer</a>
           <a href={`${import.meta.env.BASE_URL}#about`}>About</a>
+          <a href={`${import.meta.env.BASE_URL}#share`}>Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`} aria-current="page">API</a>
         </nav>
         <header className="about-header">
@@ -50,8 +51,10 @@ window.open(url, "_blank");`}</code></pre>
             clades, taxonomy mappings, and viewport. A session saved after
             taxonomy mapping can therefore open with taxonomy ribbons already
             available, without requiring the visitor to download the NCBI
-            taxonomy dump. The file is fetched directly by the visitor&apos;s browser,
-            so the host must allow cross-origin requests from `bigtreeviewer.net`.
+            taxonomy dump. Session files are gzip-compressed by default, and older
+            uncompressed JSON session files are still accepted. The file is fetched
+            directly by the visitor&apos;s browser, so the host must allow cross-origin
+            requests from `bigtreeviewer.net`.
           </p>
           <pre><code>{remoteNewick}</code></pre>
           <pre><code>{remoteSession}</code></pre>

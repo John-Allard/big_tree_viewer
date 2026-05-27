@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test("API documentation page is linked and documents launch parameters", async ({ page }) => {
   await page.goto("/#about");
   await expect(page.getByRole("link", { name: "API" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Share sessions" }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Start tutorial" })).toBeVisible();
   await page.getByRole("link", { name: "API" }).click();
 
@@ -10,6 +11,27 @@ test("API documentation page is linked and documents launch parameters", async (
   await expect(page.getByText("btv_newick").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Large trees with postMessage" })).toBeVisible();
   await expect(page.getByText("Metadata-driven branch colors")).toBeVisible();
+});
+
+test("share sessions page generates a launch link and QR code", async ({ page }) => {
+  await page.goto("/#share");
+
+  await expect(page.getByRole("heading", { name: "How to share your tree session" })).toBeVisible();
+  await expect(page.getByAltText("Big Tree Viewer interface with the Save Session button highlighted in the Data panel.")).toBeVisible();
+  await expect(page.getByText("Dropbox", { exact: true })).toBeVisible();
+  await expect(page.getByText("OSF", { exact: true })).toBeVisible();
+  await expect(page.getByText("Google Drive", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not suitable for direct BTV session links")).toBeVisible();
+
+  await page.getByLabel("Static session file URL").fill("https://example.org/tree.btvsession");
+  const expected = "http://127.0.0.1:4173/?btv_session_url=https%3A%2F%2Fexample.org%2Ftree.btvsession";
+  await expect(page.getByLabel("Share link")).toHaveValue(expected);
+  await expect(page.getByLabel("QR code for the Big Tree Viewer session link")).toBeVisible();
+
+  await page.getByLabel("Static session file URL").fill("https://www.dropbox.com/scl/fi/token/tree.btvsession?rlkey=abc&dl=0");
+  await expect(page.getByLabel("Share link")).toHaveValue(
+    "http://127.0.0.1:4173/?btv_session_url=https%3A%2F%2Fdl.dropboxusercontent.com%2Fscl%2Ffi%2Ftoken%2Ftree.btvsession%3Frlkey%3Dabc%26dl%3D1",
+  );
 });
 
 test("about page start tutorial link opens the guided tutorial in the viewer", async ({ page }) => {

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { gunzipSync, strFromU8 } from "fflate";
 
 async function waitForViewer(page: Page): Promise<void> {
   await page.goto("/");
@@ -69,7 +70,10 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   const savedPath = await download.path();
   expect(savedPath).toBeTruthy();
 
-  const session = JSON.parse(await readFile(savedPath as string, "utf8"));
+  const savedBytes = await readFile(savedPath as string);
+  expect(savedBytes[0]).toBe(0x1f);
+  expect(savedBytes[1]).toBe(0x8b);
+  const session = JSON.parse(strFromU8(gunzipSync(savedBytes)));
   expect(session.format).toBe("big-tree-viewer-session");
   expect(session.version).toBe(1);
   expect(session.tree?.newick).toContain("A_species");

@@ -183,7 +183,7 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
     },
     canvas: null,
   };
-  await page.route("**/remote-session.btvsession", async (route) => {
+  await page.route("**/scl/fi/token/remote-session.btvsession?rlkey=abc&dl=1", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -191,7 +191,8 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
     });
   });
 
-  await page.goto(`/?btv_session_url=${encodeURIComponent("/remote-session.btvsession")}`);
+  const dropboxShareUrl = "https://www.dropbox.com/scl/fi/token/remote-session.btvsession?rlkey=abc&raw=1";
+  await page.goto(`/?btv_session_url=${encodeURIComponent(dropboxShareUrl)}`);
   await waitForLoadedTree(page);
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 3);
 

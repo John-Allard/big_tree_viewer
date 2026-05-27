@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
@@ -263,6 +264,47 @@ function parseSessionText(text: string): BigTreeViewerSessionFile {
   return parsed as BigTreeViewerSessionFile;
 }
 
+function gzipBytes(data: Uint8Array): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    gzip(data, { level: 6, mtime: 0 }, (error, compressed) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(compressed);
+    });
+  });
+}
+
+function bytesAreGzip(data: Uint8Array): boolean {
+  return data.length >= 2 && data[0] === 0x1f && data[1] === 0x8b;
+}
+
+function gunzipBytes(data: Uint8Array): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    gunzip(data, (error, decompressed) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(decompressed);
+    });
+  });
+}
+
+async function buildSessionBlob(session: BigTreeViewerSessionFile): Promise<Blob> {
+  const text = JSON.stringify(session);
+  const compressed = await gzipBytes(strToU8(text));
+  const bytes = new ArrayBuffer(compressed.byteLength);
+  new Uint8Array(bytes).set(compressed);
+  return new Blob([bytes], { type: "application/octet-stream" });
+}
+
+async function parseSessionBytes(data: Uint8Array): Promise<BigTreeViewerSessionFile> {
+  const text = bytesAreGzip(data) ? strFromU8(await gunzipBytes(data)) : strFromU8(data);
+  return parseSessionText(text);
+}
+
 function launchLabelFromUrl(url: string, fallback: string): string {
   try {
     const parsed = new URL(url, window.location.href);
@@ -273,12 +315,22 @@ function launchLabelFromUrl(url: string, fallback: string): string {
   }
 }
 
-async function fetchRemoteLaunchText(url: string, label: string): Promise<string> {
+function normalizeRemoteLaunchUrl(url: string): URL {
+  const parsed = new URL(url.trim(), window.location.href);
+  if (parsed.hostname === "www.dropbox.com" || parsed.hostname === "dropbox.com") {
+    parsed.hostname = "dl.dropboxusercontent.com";
+    parsed.searchParams.delete("raw");
+    parsed.searchParams.set("dl", "1");
+  }
+  return parsed;
+}
+
+async function fetchRemoteLaunchBytes(url: string, label: string): Promise<Uint8Array> {
   const trimmed = url.trim();
   if (!trimmed) {
     throw new Error(`${label} URL is empty.`);
   }
-  const parsed = new URL(trimmed, window.location.href);
+  const parsed = normalizeRemoteLaunchUrl(trimmed);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`${label} URL must use http or https.`);
   }
@@ -294,7 +346,11 @@ async function fetchRemoteLaunchText(url: string, label: string): Promise<string
   if (buffer.byteLength > MAX_REMOTE_LAUNCH_BYTES) {
     throw new Error(`${label} file is too large for URL launch.`);
   }
-  return new TextDecoder().decode(buffer);
+  return new Uint8Array(buffer);
+}
+
+async function fetchRemoteLaunchText(url: string, label: string): Promise<string> {
+  return new TextDecoder().decode(await fetchRemoteLaunchBytes(url, label));
 }
 
 function readLaunchBoolParam(params: URLSearchParams, key: string): boolean | undefined {
@@ -483,7 +539,7 @@ const TUTORIAL_STEPS: Array<{
     id: "sessions",
     target: "sessions",
     title: "Save your work",
-    body: "Save Session writes a .btvsession file containing the tree, metadata, settings, manual colors, collapsed clades, and viewport. Load Settings applies reusable styling from a saved session to another tree.",
+    body: "Save Session writes a compressed .btvsession file containing the tree, metadata, settings, manual colors, collapsed clades, taxonomy mapping, and viewport. Load Settings applies reusable styling from a saved session to another tree.",
   },
 ];
 
@@ -2454,8 +2510,7 @@ export default function App() {
     }
     const baseLabel = sanitizeExportBaseLabel(session.tree?.label ?? loadedTreeLabel ?? "big-tree-viewer");
     const suggestedName = `${baseLabel}.btvsession`;
-    const text = JSON.stringify(session, null, 2);
-    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const blob = await buildSessionBlob(session);
     const pickerWindow = window as Window & {
       showSaveFilePicker?: (options: unknown) => Promise<{
         createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
@@ -2468,7 +2523,7 @@ export default function App() {
           suggestedName,
           types: [{
             description: "Big Tree Viewer session",
-            accept: { "application/json": [".btvsession", ".json"] },
+            accept: { "application/octet-stream": [".btvsession"] },
           }],
         });
         const writable = await handle.createWritable();
@@ -2507,7 +2562,7 @@ export default function App() {
           multiple: false,
           types: [{
             description: "Big Tree Viewer session",
-            accept: { "application/json": [".btvsession", ".json"] },
+            accept: { "application/octet-stream": [".btvsession"], "application/json": [".json"] },
           }],
         });
         return handle ? await handle.getFile() : null;
@@ -2521,13 +2576,13 @@ export default function App() {
     return await new Promise<File | null>((resolve) => {
       const input = window.document.createElement("input");
       input.type = "file";
-      input.accept = ".btvsession,.json,application/json";
+      input.accept = ".btvsession,.json,application/json,application/octet-stream";
       input.onchange = () => resolve(input.files?.[0] ?? null);
       input.click();
     });
   }, []);
 
-  const parseSessionFile = useCallback(async (file: File): Promise<BigTreeViewerSessionFile> => parseSessionText(await file.text()), []);
+  const parseSessionFile = useCallback(async (file: File): Promise<BigTreeViewerSessionFile> => await parseSessionBytes(new Uint8Array(await file.arrayBuffer())), []);
 
   const saveSession = useCallback(async (): Promise<void> => {
     try {
@@ -2971,8 +3026,8 @@ export default function App() {
             message: "Fetching Big Tree Viewer session...",
             error: null,
           });
-          const text = await fetchRemoteLaunchText(launch.sessionUrl, "session");
-          const session = parseSessionText(text);
+          const bytes = await fetchRemoteLaunchBytes(launch.sessionUrl, "session");
+          const session = await parseSessionBytes(bytes);
           const label = launchLabelFromUrl(launch.sessionUrl, "remote session");
           if (!await loadFullSessionFromObject(session, label)) {
             throw new Error("The remote session did not include a tree.");

@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import App from "./App";
 import AboutPage from "./AboutPage";
 import ApiPage from "./ApiPage";
+import SharePage from "./SharePage";
 
-type SitePage = "viewer" | "about" | "api";
+type SitePage = "viewer" | "about" | "api" | "share";
 
 function currentSitePage(): SitePage {
   if (typeof window === "undefined") {
@@ -14,6 +15,9 @@ function currentSitePage(): SitePage {
   }
   if (window.location.hash === "#api") {
     return "api";
+  }
+  if (window.location.hash === "#share") {
+    return "share";
   }
   return "viewer";
 }
@@ -33,14 +37,16 @@ export default function SiteRoot() {
   }, []);
 
   useEffect(() => {
-    const isDocumentPage = page === "about" || page === "api";
+    const isDocumentPage = page === "about" || page === "api" || page === "share";
     document.body.style.overflow = isDocumentPage ? "auto" : "hidden";
     document.body.style.overscrollBehavior = isDocumentPage ? "auto" : "none";
     document.title = page === "about"
       ? "Big Tree Viewer | About"
       : page === "api"
         ? "Big Tree Viewer | API"
-        : "Big Tree Viewer";
+        : page === "share"
+          ? "Big Tree Viewer | Share sessions"
+          : "Big Tree Viewer";
     return () => {
       document.body.style.overflow = "";
       document.body.style.overscrollBehavior = "";
@@ -52,6 +58,9 @@ export default function SiteRoot() {
   }
   if (page === "api") {
     return <ApiPage />;
+  }
+  if (page === "share") {
+    return <SharePage />;
   }
   return <App />;
 }

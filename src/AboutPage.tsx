@@ -155,6 +155,7 @@ export default function AboutPage() {
         <nav className="site-doc-nav" aria-label="Documentation">
           <a href={`${import.meta.env.BASE_URL}#`}>Viewer</a>
           <a href={`${import.meta.env.BASE_URL}#about`} aria-current="page">About</a>
+          <a href={`${import.meta.env.BASE_URL}#share`}>Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`}>API</a>
         </nav>
         <header className="about-header">
@@ -174,6 +175,10 @@ export default function AboutPage() {
             <span aria-hidden="true">|</span>
             <a className="about-top-link" href={`${import.meta.env.BASE_URL}#tutorial`}>
               Start tutorial
+            </a>
+            <span aria-hidden="true">|</span>
+            <a className="about-top-link" href={`${import.meta.env.BASE_URL}#share`}>
+              Share sessions
             </a>
           </div>
         </header>
