@@ -1,6 +1,8 @@
 export default function ApiPage() {
   const origin = "https://bigtreeviewer.net/";
   const simpleNewick = `${origin}?btv_newick=%28A%3A1%2CB%3A1%29Root%3B`;
+  const remoteNewick = `${origin}?btv_newick_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.nwk&btv_view=circular`;
+  const remoteSession = `${origin}?btv_session_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.btvsession`;
   const metadataExample = `${origin}?btv_newick=%28A%3A1%2C%28B%3A1%2CC%3A1%29Clade1%3A1%29Root%3B&btv_metadata=name%2Cgroup%0AA%2Cred_group%0AB%2Cblue_group%0AC%2Cblue_group%0A&btv_metadata_key=name&btv_metadata_value=group&btv_metadata_enabled=true`;
 
   return (
@@ -37,6 +39,20 @@ export default function ApiPage() {
           <pre><code>{`const newick = "(A:1,B:1)Root;";
 const url = \`${origin}?btv_newick=\${encodeURIComponent(newick)}\`;
 window.open(url, "_blank");`}</code></pre>
+        </section>
+
+        <section className="api-doc-section">
+          <h2>Remote tree or session files</h2>
+          <p>
+            Use `btv_newick_url` to load a public Newick or NEXUS file, or
+            `btv_session_url` to load a saved Big Tree Viewer session containing
+            the tree, metadata, visual settings, manual clade colors, collapsed
+            clades, and viewport. The file is fetched directly by the visitor&apos;s
+            browser, so the host must allow cross-origin requests from
+            `bigtreeviewer.net`.
+          </p>
+          <pre><code>{remoteNewick}</code></pre>
+          <pre><code>{remoteSession}</code></pre>
         </section>
 
         <section className="api-doc-section">
@@ -82,6 +98,8 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_time_axis</dt><dd>`linear` or `log`.</dd></div>
             <div><dt>btv_metadata_labels</dt><dd>Show metadata text labels.</dd></div>
             <div><dt>btv_metadata_markers</dt><dd>Show metadata markers.</dd></div>
+            <div><dt>btv_newick_url</dt><dd>Public URL for a Newick or NEXUS file. Requires host CORS support.</dd></div>
+            <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
           </dl>
         </section>
 

@@ -15,6 +15,92 @@ async function waitForLoadedTree(page: Page): Promise<void> {
   });
 }
 
+function sessionSettings(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const labelStyle = {
+    fontFamily: "arial",
+    sizeScale: 1,
+    offsetPx: 0,
+    offsetXPx: 0,
+    offsetYPx: 0,
+    bold: false,
+    italic: false,
+    bandThicknessScale: 1,
+    taxonomyGapPx: 0,
+  };
+  return {
+    viewMode: "rectangular",
+    showSpiralViewOption: false,
+    order: "asc",
+    zoomAxisMode: "both",
+    circularRotationDegrees: 0,
+    spiralTurns: 5.5,
+    showTimeStripes: true,
+    timeStripeStyle: "bands",
+    timeStripeLineWeight: 1.1,
+    timeAxisScale: "linear",
+    timeAxisLogBase: 3,
+    showScaleBars: true,
+    showIntermediateScaleTicks: true,
+    extendRectScaleToTick: false,
+    showScaleZeroTick: false,
+    scaleTickIntervalInput: "",
+    useAutoCircularCenterScaleAngle: true,
+    circularCenterScaleAngleDegrees: 5,
+    showCircularCenterRadialScaleBar: false,
+    showTipLabels: true,
+    showGenusLabels: true,
+    showInternalNodeLabels: false,
+    showBootstrapLabels: false,
+    showNodeHeightLabels: false,
+    showNodeErrorBars: false,
+    errorBarThicknessPx: 1.2,
+    errorBarCapSizePx: 7,
+    figureStyles: {
+      tip: labelStyle,
+      genus: labelStyle,
+      taxonomy: labelStyle,
+      internalNode: { ...labelStyle, fontFamily: "georgia", sizeScale: 0.95 },
+      bootstrap: { ...labelStyle, fontFamily: "courierNew", sizeScale: 0.9 },
+      nodeHeight: { ...labelStyle, fontFamily: "courierNew" },
+      scale: labelStyle,
+    },
+    taxonomyEnabled: false,
+    taxonomyRankVisibility: {},
+    taxonomyCollapseRank: "species",
+    useAutomaticTaxonomyRankVisibility: true,
+    taxonomyBranchColoringEnabled: true,
+    taxonomyColorJitter: 1,
+    taxonomyColorPalette: "classic",
+    taxonomyCustomPaletteInput: "",
+    taxonomyColorRootRank: "auto",
+    taxonomyColorJitterRank: "genus",
+    branchThicknessScale: 1,
+    metadataEnabled: false,
+    metadataFirstRowIsHeader: true,
+    metadataKeyColumn: "",
+    metadataValueColumn: "",
+    metadataColorMode: "categorical",
+    metadataApplyScope: "branch",
+    metadataReverseScale: false,
+    metadataContinuousPalette: "blueOrange",
+    metadataContinuousTransform: "linear",
+    metadataContinuousMinInput: "",
+    metadataContinuousMaxInput: "",
+    metadataLabelsEnabled: false,
+    metadataLabelColumn: "",
+    metadataMarkersEnabled: false,
+    metadataMarkerColumn: "",
+    metadataCategoryColorOverrides: {},
+    metadataMarkerStyleOverrides: {},
+    metadataMarkerSizePx: 9,
+    metadataLabelMaxCount: 240,
+    metadataLabelMinSpacingPx: 10,
+    metadataLabelOffsetXPx: 0,
+    metadataLabelOffsetYPx: 0,
+    ...overrides,
+  };
+}
+
 test("spiral view option stays hidden on ordinary page load until the shortcut is pressed", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
@@ -29,6 +115,68 @@ test("spiral view option stays hidden on ordinary page load until the shortcut i
   await page.keyboard.up("Shift");
 
   await expect(page.getByRole("button", { name: "Spiral" })).toBeVisible();
+});
+
+test("remote Newick URL launch fetches a public tree and applies URL settings", async ({ page }) => {
+  await page.route("**/remote-tree.nwk", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/plain",
+      body: "((Remote_alpha:1,Remote_beta:1)RemoteClade:1,Remote_gamma:2)Root;",
+    });
+  });
+  const params = new URLSearchParams({
+    btv_newick_url: "/remote-tree.nwk",
+    btv_view: "circular",
+    btv_tip_labels: "false",
+    btv_branch_thickness: "1.6",
+  });
+
+  await page.goto(`/?${params.toString()}`);
+  await waitForLoadedTree(page);
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
+  expect(state?.viewMode).toBe("circular");
+  expect(state?.showTipLabels).toBe(false);
+  expect(state?.branchThicknessScale).toBeCloseTo(1.6);
+  expect(state?.loadError).toBeNull();
+});
+
+test("remote session URL launch fetches and restores a saved session", async ({ page }) => {
+  const session = {
+    format: "big-tree-viewer-session",
+    version: 1,
+    savedAt: "2026-05-27T00:00:00.000Z",
+    settings: sessionSettings({
+      viewMode: "circular",
+      showTipLabels: false,
+      showGenusLabels: false,
+      branchThicknessScale: 2.1,
+    }),
+    tree: {
+      label: "remote-session-tree",
+      newick: "((Session_alpha:1,Session_beta:1)SessionClade:1,Session_gamma:2)Root;",
+      signature: null,
+    },
+    canvas: null,
+  };
+  await page.route("**/remote-session.btvsession", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(session),
+    });
+  });
+
+  await page.goto(`/?btv_session_url=${encodeURIComponent("/remote-session.btvsession")}`);
+  await waitForLoadedTree(page);
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
+  expect(state?.viewMode).toBe("circular");
+  expect(state?.showTipLabels).toBe(false);
+  expect(state?.showGenusLabels).toBe(false);
+  expect(state?.branchThicknessScale).toBeCloseTo(2.1);
+  expect(state?.loadError).toBeNull();
 });
 
 test("URL launch parameters load a tree, metadata, and selected visual options", async ({ page }) => {

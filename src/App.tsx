@@ -217,6 +217,8 @@ type BigTreeViewerSessionFile = {
   canvas?: TreeCanvasSessionState | null;
 };
 
+const MAX_REMOTE_LAUNCH_BYTES = 150 * 1024 * 1024;
+
 function decodeBase64UrlText(value: string): string {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
@@ -251,6 +253,48 @@ function readLaunchTextParam(params: URLSearchParams, plainKey: string, encodedK
     }
   }
   return params.get(plainKey) ?? undefined;
+}
+
+function parseSessionText(text: string): BigTreeViewerSessionFile {
+  const parsed = JSON.parse(text) as Partial<BigTreeViewerSessionFile>;
+  if (parsed.format !== "big-tree-viewer-session" || parsed.version !== 1 || !parsed.settings) {
+    throw new Error("This is not a valid Big Tree Viewer session file.");
+  }
+  return parsed as BigTreeViewerSessionFile;
+}
+
+function launchLabelFromUrl(url: string, fallback: string): string {
+  try {
+    const parsed = new URL(url, window.location.href);
+    const pathName = parsed.pathname.split("/").filter(Boolean).pop();
+    return pathName ? decodeURIComponent(pathName) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function fetchRemoteLaunchText(url: string, label: string): Promise<string> {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    throw new Error(`${label} URL is empty.`);
+  }
+  const parsed = new URL(trimmed, window.location.href);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${label} URL must use http or https.`);
+  }
+  const response = await fetch(parsed.toString(), { credentials: "omit", mode: "cors" });
+  if (!response.ok) {
+    throw new Error(`Could not fetch ${label} URL (${response.status} ${response.statusText}).`);
+  }
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number(contentLength) > MAX_REMOTE_LAUNCH_BYTES) {
+    throw new Error(`${label} file is too large for URL launch.`);
+  }
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength > MAX_REMOTE_LAUNCH_BYTES) {
+    throw new Error(`${label} file is too large for URL launch.`);
+  }
+  return new TextDecoder().decode(buffer);
 }
 
 function readLaunchBoolParam(params: URLSearchParams, key: string): boolean | undefined {
@@ -2483,13 +2527,7 @@ export default function App() {
     });
   }, []);
 
-  const parseSessionFile = useCallback(async (file: File): Promise<BigTreeViewerSessionFile> => {
-    const parsed = JSON.parse(await file.text()) as Partial<BigTreeViewerSessionFile>;
-    if (parsed.format !== "big-tree-viewer-session" || parsed.version !== 1 || !parsed.settings) {
-      throw new Error("This is not a valid Big Tree Viewer session file.");
-    }
-    return parsed as BigTreeViewerSessionFile;
-  }, []);
+  const parseSessionFile = useCallback(async (file: File): Promise<BigTreeViewerSessionFile> => parseSessionText(await file.text()), []);
 
   const saveSession = useCallback(async (): Promise<void> => {
     try {
@@ -2692,6 +2730,31 @@ export default function App() {
     applyMetadataText(text, label, metadataFirstRowIsHeader);
   }, [applyMetadataText, metadataFirstRowIsHeader]);
 
+  const loadFullSessionFromObject = useCallback(async (session: BigTreeViewerSessionFile, label: string): Promise<boolean> => {
+    if (session.metadata?.text) {
+      applyMetadataText(session.metadata.text, session.metadata.label, session.metadata.firstRowIsHeader);
+    } else {
+      clearMetadata();
+    }
+    applySessionSettings(session.settings);
+    if (session.tree?.newick) {
+      pendingSessionTaxonomyRef.current = session.taxonomy?.map ?? null;
+      pendingSessionTaxonomyEnabledRef.current = session.settings.taxonomyEnabled;
+      pendingSessionCanvasStateRef.current = session.canvas ?? null;
+      setTree(null);
+      setTreeSignature(null);
+      await parseText(session.tree.newick, session.tree.label || label);
+      return true;
+    }
+    setSessionStatus(`Loaded settings from ${label}.`);
+    return false;
+  }, [
+    applyMetadataText,
+    applySessionSettings,
+    clearMetadata,
+    parseText,
+  ]);
+
   const loadSession = useCallback(async (mode: "full" | "settings"): Promise<void> => {
     try {
       setSessionError(null);
@@ -2700,21 +2763,12 @@ export default function App() {
         return;
       }
       const session = await parseSessionFile(file);
-      if (mode === "full") {
-        if (session.metadata?.text) {
-          applyMetadataText(session.metadata.text, session.metadata.label, session.metadata.firstRowIsHeader);
-        } else {
-          clearMetadata();
-        }
-      }
-      applySessionSettings(session.settings);
-      if (mode === "full" && session.tree?.newick) {
-        pendingSessionTaxonomyRef.current = session.taxonomy?.map ?? null;
-        pendingSessionTaxonomyEnabledRef.current = session.settings.taxonomyEnabled;
-        pendingSessionCanvasStateRef.current = session.canvas ?? null;
-        await parseText(session.tree.newick, session.tree.label || file.name);
+      if (mode === "full" && await loadFullSessionFromObject(session, file.name)) {
         setSessionStatus(`Loaded session from ${file.name}.`);
         return;
+      }
+      if (mode === "settings") {
+        applySessionSettings(session.settings);
       }
       if (mode === "settings" && tree && session.tree?.signature && session.tree.signature === treeSignature && session.canvas) {
         setSessionRestoreState(session.canvas);
@@ -2730,11 +2784,9 @@ export default function App() {
       setSessionError(error instanceof Error ? error.message : String(error));
     }
   }, [
-    applyMetadataText,
     applySessionSettings,
-    clearMetadata,
+    loadFullSessionFromObject,
     parseSessionFile,
-    parseText,
     readSessionFile,
     tree,
     treeSignature,
@@ -2784,11 +2836,18 @@ export default function App() {
     return true;
   }, [applyLaunchMetadata, applyLaunchVisualSettings, parseText]);
 
-  const readLaunchPayloadFromUrl = useCallback((): { payload: BigTreeViewerLaunchPayload | null; waitForMessage: boolean } => {
+  const readLaunchPayloadFromUrl = useCallback((): {
+    payload: BigTreeViewerLaunchPayload | null;
+    waitForMessage: boolean;
+    newickUrl?: string;
+    sessionUrl?: string;
+  } => {
     if (typeof window === "undefined") {
       return { payload: null, waitForMessage: false };
     }
     const params = new URLSearchParams(window.location.search);
+    const newickUrl = params.get("btv_newick_url") ?? undefined;
+    const sessionUrl = params.get("btv_session_url") ?? undefined;
     const payload: BigTreeViewerLaunchPayload = {
       ...(parseLaunchJsonParam(params.get("btv_payload")) ?? {}),
     };
@@ -2893,6 +2952,8 @@ export default function App() {
     return {
       payload: hasPayload ? payload : null,
       waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",
+      newickUrl,
+      sessionUrl,
     };
   }, []);
 
@@ -2903,6 +2964,52 @@ export default function App() {
     didAutoloadRef.current = true;
     void (async () => {
       const launch = readLaunchPayloadFromUrl();
+      if (launch.sessionUrl) {
+        try {
+          setLoadState({
+            loading: true,
+            message: "Fetching Big Tree Viewer session...",
+            error: null,
+          });
+          const text = await fetchRemoteLaunchText(launch.sessionUrl, "session");
+          const session = parseSessionText(text);
+          const label = launchLabelFromUrl(launch.sessionUrl, "remote session");
+          if (!await loadFullSessionFromObject(session, label)) {
+            throw new Error("The remote session did not include a tree.");
+          }
+          setSessionStatus(`Loaded session from ${label}.`);
+          return;
+        } catch (error) {
+          setLoadState({
+            loading: false,
+            message: "",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+      }
+      if (launch.newickUrl) {
+        try {
+          setLoadState({
+            loading: true,
+            message: "Fetching remote Newick tree...",
+            error: null,
+          });
+          const newick = await fetchRemoteLaunchText(launch.newickUrl, "Newick");
+          const label = launch.payload?.label?.trim() || launchLabelFromUrl(launch.newickUrl, "remote Newick");
+          const loaded = await loadLaunchPayload({ ...(launch.payload ?? {}), newick, label }, "URL Newick");
+          if (loaded) {
+            return;
+          }
+        } catch (error) {
+          setLoadState({
+            loading: false,
+            message: "",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+      }
       if (launch.payload && await loadLaunchPayload(launch.payload, "URL launch")) {
         return;
       }
@@ -2919,7 +3026,7 @@ export default function App() {
         await loadExample();
       }
     })();
-  }, [loadExample, loadLaunchPayload, loadSubtreeFromUrl, readLaunchPayloadFromUrl]);
+  }, [loadExample, loadFullSessionFromObject, loadLaunchPayload, loadSubtreeFromUrl, readLaunchPayloadFromUrl]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

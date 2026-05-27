@@ -94,6 +94,10 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
     return Boolean(state?.treeLoaded) && !Boolean(state?.loading) && state?.metadataRowCount === 2;
   });
+  await page.waitForFunction(() => {
+    const colors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? [];
+    return colors.includes("#ff0000");
+  });
 
   const restored = await page.evaluate(() => ({
     app: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
