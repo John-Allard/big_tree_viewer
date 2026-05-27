@@ -105,6 +105,8 @@ export type CameraState = RectCamera | CircularCamera;
 
 export interface TreeCanvasSessionState {
   camera: CameraState | null;
+  viewportWidth?: number;
+  viewportHeight?: number;
   collapsedNodes: number[];
   manualBranchColors: Array<[number, string]>;
   manualSubtreeColors: Array<[number, string]>;

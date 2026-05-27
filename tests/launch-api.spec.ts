@@ -206,6 +206,85 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
   expect(state?.loadError).toBeNull();
 });
 
+test("desktop-saved remote session viewport is reframed on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const session = {
+    format: "big-tree-viewer-session",
+    version: 1,
+    savedAt: "2026-05-27T00:00:00.000Z",
+    settings: sessionSettings({
+      viewMode: "circular",
+      showTipLabels: false,
+      showGenusLabels: false,
+    }),
+    tree: {
+      label: "desktop-session-tree",
+      newick: "((Desktop_alpha:1,Desktop_beta:1)DesktopClade:1,Desktop_gamma:2)Root;",
+      signature: null,
+    },
+    taxonomy: null,
+    canvas: {
+      viewportWidth: 1200,
+      viewportHeight: 800,
+      camera: {
+        kind: "circular",
+        scale: 176,
+        translateX: 600,
+        translateY: 400,
+        rotation: 0,
+        rotationCos: 1,
+        rotationSin: 0,
+      },
+      collapsedNodes: [],
+      manualBranchColors: [],
+      manualSubtreeColors: [],
+    },
+  };
+  await page.route("**/mobile-session.btvsession", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(session),
+    });
+  });
+
+  await page.goto(`/?btv_session_url=${encodeURIComponent("/mobile-session.btvsession")}`);
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()?.kind === "circular");
+
+  const result = await page.evaluate(() => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
+      kind?: string;
+      scale?: number;
+      translateX?: number;
+      translateY?: number;
+    } | null;
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      maxDepth?: number | null;
+      viewMode?: string;
+    } | null;
+    const radiusPx = Number(state?.maxDepth ?? 0) * Number(camera?.scale ?? 0);
+    return {
+      viewMode: state?.viewMode,
+      kind: camera?.kind,
+      translateX: Number(camera?.translateX ?? Number.NaN),
+      translateY: Number(camera?.translateY ?? Number.NaN),
+      radiusPx,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+  });
+
+  expect(result.viewMode).toBe("circular");
+  expect(result.kind).toBe("circular");
+  expect(result.translateX).toBeGreaterThan(0);
+  expect(result.translateX).toBeLessThan(result.width);
+  expect(result.translateY).toBeGreaterThan(0);
+  expect(result.translateY).toBeLessThan(result.height);
+  expect(result.translateX - result.radiusPx).toBeGreaterThanOrEqual(-2);
+  expect(result.translateX + result.radiusPx).toBeLessThanOrEqual(result.width + 2);
+});
+
 test("URL launch parameters load a tree, metadata, and selected visual options", async ({ page }) => {
   const newick = "((Alpha_one:1,Beta_two:1)CladeOne:1,Gamma_three:2)Root;";
   const metadata = "name,group,label,marker\nAlpha_one,A,Alpha label,circle\nBeta_two,B,Beta label,square\n";

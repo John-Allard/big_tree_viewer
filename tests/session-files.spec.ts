@@ -81,6 +81,8 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(session.settings?.viewMode).toBe("circular");
   expect(session.settings?.showTipLabels).toBe(false);
   expect(session.canvas?.camera?.kind).toBe("circular");
+  expect(Number(session.canvas?.viewportWidth ?? 0)).toBeGreaterThan(0);
+  expect(Number(session.canvas?.viewportHeight ?? 0)).toBeGreaterThan(0);
   expect(session.canvas?.manualBranchColors?.length).toBe(1);
 
   await page.goto("/");

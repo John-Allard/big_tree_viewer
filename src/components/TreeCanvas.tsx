@@ -38,6 +38,7 @@ import type {
   RenderCache,
   ScreenLabel,
   TreeCanvasProps,
+  TreeCanvasSessionState,
 } from "./treeCanvasTypes";
 import {
   BRANCH_COLOR,
@@ -3355,6 +3356,8 @@ export default function TreeCanvas({
     handledSessionStateRequestRef.current = sessionStateRequest;
     onSessionStateSnapshot({
       camera: cameraRef.current ? { ...cameraRef.current } : null,
+      viewportWidth: size.width,
+      viewportHeight: size.height,
       collapsedNodes: Array.from(collapsedNodes),
       manualBranchColors: Array.from(manualBranchColorAssignments),
       manualSubtreeColors: Array.from(manualSubtreeColorAssignments),
@@ -3365,6 +3368,8 @@ export default function TreeCanvas({
     manualSubtreeColorAssignments,
     onSessionStateSnapshot,
     sessionStateRequest,
+    size.height,
+    size.width,
   ]);
   useEffect(() => {
     setTaxonomyRootColorAssignments(new Map());
@@ -4204,6 +4209,57 @@ export default function TreeCanvas({
     }
     pendingCircularTaxonomyRefitRef.current = viewMode === "circular" && taxonomyEnabled && !taxonomyBlocks;
   }, [fitCameraForMode, taxonomyBlocks, taxonomyEnabled, viewMode]);
+
+  const restoreRectSessionCamera = useCallback((camera: RectCamera, restoreState: TreeCanvasSessionState): RectCamera | null => {
+    if (!tree) {
+      return null;
+    }
+    const savedWidth = Number(restoreState.viewportWidth);
+    const savedHeight = Number(restoreState.viewportHeight);
+    if (!(savedWidth > 0) || !(savedHeight > 0)) {
+      return compactCircularOverlayScale(size.width, size.height) < 1 ? fitRectCamera(size.width, size.height, tree) : { ...camera };
+    }
+    const centerWorldX = ((savedWidth * 0.5) - camera.translateX) / Math.max(camera.scaleX, 1e-9);
+    const centerWorldY = ((savedHeight * 0.5) - camera.translateY) / Math.max(camera.scaleY, 1e-9);
+    return {
+      ...camera,
+      scaleX: camera.scaleX * (size.width / savedWidth),
+      scaleY: camera.scaleY * (size.height / savedHeight),
+      translateX: (size.width * 0.5) - (centerWorldX * camera.scaleX * (size.width / savedWidth)),
+      translateY: (size.height * 0.5) - (centerWorldY * camera.scaleY * (size.height / savedHeight)),
+    };
+  }, [size.height, size.width, tree]);
+
+  const restoreCircularSessionCamera = useCallback((camera: CircularCamera, restoreState: TreeCanvasSessionState): CircularCamera | null => {
+    if (!tree) {
+      return null;
+    }
+    const savedWidth = Number(restoreState.viewportWidth);
+    const savedHeight = Number(restoreState.viewportHeight);
+    if (!(savedWidth > 0) || !(savedHeight > 0)) {
+      if (compactCircularOverlayScale(size.width, size.height) < 1) {
+        const fit = fitCameraForMode(viewMode);
+        return fit?.kind === "circular" ? fit : null;
+      }
+      return { ...camera };
+    }
+    const safeScale = Math.max(camera.scale, 1e-9);
+    const savedDx = ((savedWidth * 0.5) - camera.translateX) / safeScale;
+    const savedDy = ((savedHeight * 0.5) - camera.translateY) / safeScale;
+    const centerWorld = {
+      x: (savedDx * camera.rotationCos) + (savedDy * camera.rotationSin),
+      y: (-savedDx * camera.rotationSin) + (savedDy * camera.rotationCos),
+    };
+    const nextCamera = {
+      ...camera,
+      scale: camera.scale * (Math.min(size.width, size.height) / Math.max(1, Math.min(savedWidth, savedHeight))),
+    };
+    setCircularCameraRotation(nextCamera, camera.rotation);
+    const rotatedCenter = rotateCircularWorldPoint(nextCamera, centerWorld.x, centerWorld.y);
+    nextCamera.translateX = (size.width * 0.5) - (rotatedCenter.x * nextCamera.scale);
+    nextCamera.translateY = (size.height * 0.5) - (rotatedCenter.y * nextCamera.scale);
+    return nextCamera;
+  }, [fitCameraForMode, size.height, size.width, viewMode]);
 
   const zoomAtPoint = useCallback((localX: number, localY: number, zoom: number): void => {
     if (!tree || !Number.isFinite(zoom) || zoom <= 0) {
@@ -9933,14 +9989,22 @@ export default function TreeCanvas({
     ));
     const camera = sessionRestoreState.camera;
     if (camera?.kind === "rect" && viewMode === "rectangular") {
-      const nextCamera = { ...camera };
+      const nextCamera = restoreRectSessionCamera(camera, sessionRestoreState);
+      if (!nextCamera) {
+        draw();
+        return;
+      }
       clampRectCamera(nextCamera, tree, size.width, size.height, rectClampPadding(nextCamera));
       cameraRef.current = nextCamera;
       draw();
       return;
     }
     if (camera?.kind === "circular" && viewMode !== "rectangular") {
-      const nextCamera = { ...camera };
+      const nextCamera = restoreCircularSessionCamera(camera, sessionRestoreState);
+      if (!nextCamera) {
+        draw();
+        return;
+      }
       cameraRef.current = nextCamera;
       finalizeCircularCamera(nextCamera);
       draw();
@@ -9952,6 +10016,8 @@ export default function TreeCanvas({
     draw,
     finalizeCircularCamera,
     rectClampPadding,
+    restoreCircularSessionCamera,
+    restoreRectSessionCamera,
     sessionRestoreRequest,
     sessionRestoreState,
     size.height,
