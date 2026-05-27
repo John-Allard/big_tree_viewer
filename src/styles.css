@@ -1587,7 +1587,7 @@ button.secondary {
     top: calc(env(safe-area-inset-top, 0px) + 0.45rem);
     align-self: flex-end;
     z-index: 45;
-    margin: -0.15rem 0 -0.55rem;
+    margin: 0 0 calc(-2.35rem - 1.1rem) auto;
     border-radius: 999px;
     padding: 0.5rem 0.8rem;
     background: rgba(15, 23, 42, 0.92);
@@ -1649,7 +1649,7 @@ button.secondary {
     top: calc(env(safe-area-inset-top, 0px) + 0.45rem);
     align-self: flex-end;
     z-index: 45;
-    margin: -0.1rem 0 -0.55rem;
+    margin: 0 0 calc(-2.15rem - 1.1rem) auto;
     border-radius: 999px;
     padding: 0.45rem 0.75rem;
     background: rgba(15, 23, 42, 0.92);

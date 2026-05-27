@@ -43,6 +43,35 @@ test("about page start tutorial link opens the guided tutorial in the viewer", a
   await expect(page).not.toHaveURL(/#tutorial$/);
 });
 
+test("tutorial prompt and tour are suppressed on mobile-sized viewports", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.evaluate(() => {
+    window.localStorage.removeItem("big-tree-viewer-tutorial-completed");
+    window.localStorage.removeItem("big-tree-viewer-tutorial-dismissed");
+  });
+  await page.reload();
+
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial" })).toHaveCount(0);
+  const mobilePanelLayout = await page.evaluate(() => {
+    const panel = document.querySelector(".control-panel")?.getBoundingClientRect();
+    const title = document.querySelector(".panel-title-block h1")?.getBoundingClientRect();
+    const button = document.querySelector(".mobile-sidebar-toggle-inline")?.getBoundingClientRect();
+    return panel && title && button
+      ? {
+        titleTopOffset: title.top - panel.top,
+        buttonTopOffset: button.top - panel.top,
+      }
+      : null;
+  });
+  expect(mobilePanelLayout).not.toBeNull();
+  expect(mobilePanelLayout?.titleTopOffset ?? Number.POSITIVE_INFINITY).toBeLessThan(28);
+  expect(mobilePanelLayout?.buttonTopOffset ?? Number.POSITIVE_INFINITY).toBeLessThan(28);
+  await page.goto("/#tutorial");
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/#tutorial$/);
+});
+
 test("new-user tutorial prompt can start, advance, and persist dismissal", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => {

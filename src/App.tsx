@@ -490,6 +490,14 @@ const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
 const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
 const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
 const TUTORIAL_HASH = "#tutorial";
+const MOBILE_TUTORIAL_MEDIA_QUERY = "(max-width: 980px), (pointer: coarse)";
+
+function suppressTutorialForCurrentViewport(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.matchMedia(MOBILE_TUTORIAL_MEDIA_QUERY).matches;
+}
 
 type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "branchMenu" | "metadata" | "sessions";
 
@@ -1204,6 +1212,9 @@ export default function App() {
     if (typeof window === "undefined") {
       return false;
     }
+    if (suppressTutorialForCurrentViewport()) {
+      return false;
+    }
     return window.localStorage.getItem(TUTORIAL_COMPLETED_STORAGE_KEY) !== "true"
       && window.localStorage.getItem(TUTORIAL_DISMISSED_STORAGE_KEY) !== "true";
   }, []);
@@ -1212,6 +1223,44 @@ export default function App() {
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [tutorialCardPosition, setTutorialCardPosition] = useState<CSSProperties | undefined>(undefined);
   const [tutorialCardReady, setTutorialCardReady] = useState(false);
+  const [tutorialSuppressedForMobile, setTutorialSuppressedForMobile] = useState(() => suppressTutorialForCurrentViewport());
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const queries = [
+      window.matchMedia("(max-width: 980px)"),
+      window.matchMedia("(pointer: coarse)"),
+    ];
+    const updateSuppression = (): void => {
+      setTutorialSuppressedForMobile(queries.some((query) => query.matches));
+    };
+    updateSuppression();
+    queries.forEach((query) => {
+      if (typeof query.addEventListener === "function") {
+        query.addEventListener("change", updateSuppression);
+      } else {
+        query.addListener(updateSuppression);
+      }
+    });
+    return () => {
+      queries.forEach((query) => {
+        if (typeof query.removeEventListener === "function") {
+          query.removeEventListener("change", updateSuppression);
+        } else {
+          query.removeListener(updateSuppression);
+        }
+      });
+    };
+  }, []);
+  useEffect(() => {
+    if (!tutorialSuppressedForMobile) {
+      return;
+    }
+    setTutorialPromptVisible(false);
+    setTutorialActive(false);
+    setTutorialCardReady(false);
+  }, [tutorialSuppressedForMobile]);
   useEffect(() => {
     if (showSpiralViewOption) {
       return;
@@ -1298,10 +1347,13 @@ export default function App() {
   }, []);
 
   const startTutorial = useCallback((): void => {
+    if (tutorialSuppressedForMobile) {
+      return;
+    }
     setTutorialPromptVisible(false);
     showTutorialStep(0);
     setTutorialActive(true);
-  }, [showTutorialStep]);
+  }, [showTutorialStep, tutorialSuppressedForMobile]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -3672,7 +3724,7 @@ export default function App() {
       onDrop={(event) => void handleDrop(event)}
     >
       {dragActive ? <div className="drag-overlay">Drop a tree file, CSV/TSV metadata file, or Newick / NEXUS text to load it</div> : null}
-      {tutorialPromptVisible ? (
+      {tutorialPromptVisible && !tutorialSuppressedForMobile ? (
         <div className="tutorial-prompt" role="dialog" aria-label="Big Tree Viewer tutorial">
           <button
             type="button"
@@ -3692,7 +3744,7 @@ export default function App() {
           </div>
         </div>
       ) : null}
-      {tutorialActive ? (
+      {tutorialActive && !tutorialSuppressedForMobile ? (
         <div
           className={`tutorial-card${tutorialCardReady ? " ready" : ""}`}
           role="dialog"

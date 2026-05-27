@@ -528,6 +528,48 @@ test("circular taxonomy fit-view branch render stays cached-fast", async ({ page
   expect(Number(timing?.totalMs ?? 999)).toBeLessThan(24);
 });
 
+test("mobile circular fit leaves room for taxonomy overlays", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await waitForViewer(page);
+
+  const snapshot = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowTipLabels(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const debug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.circular as {
+      taxonomyArcDebug?: Array<{ outerRadiusPx?: number | null }>;
+      taxonomyVisibleRanks?: string[];
+    } | undefined;
+    if (!camera || camera.kind !== "circular" || !debug) {
+      throw new Error("Mobile circular fit debug unavailable.");
+    }
+    const outerRadiusPx = Math.max(
+      0,
+      ...(debug.taxonomyArcDebug ?? []).map((arc) => Number(arc.outerRadiusPx ?? 0)),
+    );
+    return {
+      camera,
+      outerRadiusPx,
+      visibleRanks: debug.taxonomyVisibleRanks ?? [],
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+  });
+
+  expect(snapshot.visibleRanks.length).toBeGreaterThan(0);
+  expect(snapshot.outerRadiusPx).toBeGreaterThan(0);
+  expect(snapshot.camera.translateX - snapshot.outerRadiusPx).toBeGreaterThanOrEqual(-2);
+  expect(snapshot.camera.translateX + snapshot.outerRadiusPx).toBeLessThanOrEqual(snapshot.width + 2);
+  expect(snapshot.camera.translateY - snapshot.outerRadiusPx).toBeGreaterThanOrEqual(-2);
+  expect(snapshot.camera.translateY + snapshot.outerRadiusPx).toBeLessThanOrEqual(snapshot.height + 2);
+});
+
 test("large circular fit-view falls back to the cached base path", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFile(page, path.resolve(TEST_DIR, "..", "backbone_hang_supertree.nwk"));

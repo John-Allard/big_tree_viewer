@@ -92,6 +92,25 @@ const TRACKPAD_PIXEL_ZOOM_MULTIPLIER = 5;
 const TRACKPAD_PIXEL_DELTA_THRESHOLD = 32;
 const MAC_GESTURE_ZOOM_EXPONENT = 1.7;
 
+function compactCircularOverlayScale(width: number, height: number): number {
+  const minDimension = Math.min(width, height);
+  if (minDimension >= 620) {
+    return 1;
+  }
+  if (minDimension <= 360) {
+    return 0.58;
+  }
+  return 0.58 + (((minDimension - 360) / 260) * 0.42);
+}
+
+function circularFitMinTreeRadiusPx(width: number, height: number): number {
+  return compactCircularOverlayScale(width, height) < 1 ? 42 : 120;
+}
+
+function circularZoomOutScaleMultiplier(width: number, height: number): number {
+  return compactCircularOverlayScale(width, height) < 1 ? 0.32 : 0.55;
+}
+
 function isHorizontalWheelPanEvent(event: WheelEvent): boolean {
   if (event.ctrlKey || event.metaKey || event.altKey) {
     return false;
@@ -1598,15 +1617,26 @@ function taxonomyTextColor(fill: string): string {
   return parsed.l >= 64 ? "#0f172a" : "#f8fafc";
 }
 
-function taxonomyRingMetricsPx(rankCount: number, baseFontSize: number, bandThicknessScale = 1): {
+function taxonomyRingMetricsPx(rankCount: number, baseFontSize: number, bandThicknessScale = 1, viewportScale = 1): {
   ringWidthsPx: number[];
   ringGapPx: number;
   labelGapPx: number;
 } {
-  const ringBaseWidthPx = Math.max(16, Math.min(72, baseFontSize * 3.24 * bandThicknessScale));
+  const compactScale = Math.max(0.5, Math.min(1, viewportScale));
+  if (compactScale >= 0.999) {
+    const ringBaseWidthPx = Math.max(16, Math.min(72, baseFontSize * 3.24 * bandThicknessScale));
+    const outerRingWidthPx = ringBaseWidthPx * 1.82;
+    const ringGapPx = Math.max(6, baseFontSize * 0.42);
+    const labelGapPx = Math.max(14, baseFontSize * 1.05);
+    const ringWidthsPx = Array.from({ length: rankCount }, (_, index) => (
+      index === rankCount - 1 ? outerRingWidthPx : ringBaseWidthPx
+    ));
+    return { ringWidthsPx, ringGapPx, labelGapPx };
+  }
+  const ringBaseWidthPx = Math.max(10, Math.min(72, baseFontSize * 3.24 * bandThicknessScale)) * compactScale;
   const outerRingWidthPx = ringBaseWidthPx * 1.82;
-  const ringGapPx = Math.max(6, baseFontSize * 0.42);
-  const labelGapPx = Math.max(14, baseFontSize * 1.05);
+  const ringGapPx = Math.max(4, baseFontSize * 0.42 * compactScale);
+  const labelGapPx = Math.max(8, baseFontSize * 1.05 * compactScale);
   const ringWidthsPx = Array.from({ length: rankCount }, (_, index) => (
     index === rankCount - 1 ? outerRingWidthPx : ringBaseWidthPx
   ));
@@ -3605,6 +3635,8 @@ export default function TreeCanvas({
     viewMode === "spiral" ? 0.15 : 0.65,
     Math.min(viewMode === "spiral" ? 5 : 1.8, figureStyles.taxonomy.bandThicknessScale ?? 1),
   );
+  const circularOverlayViewportScale = compactCircularOverlayScale(size.width, size.height);
+  const compactCircularViewport = circularOverlayViewportScale < 1;
   const taxonomyGapPx = Math.max(0, figureStyles.taxonomy.taxonomyGapPx ?? 0);
   const taxonomyBaselineGapPx = showTipLabels ? 18 : 0;
   const spiralVisibleTaxonomyRanksForScale = useCallback((scale: number): TaxonomyRank[] => {
@@ -3995,7 +4027,7 @@ export default function TreeCanvas({
           ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
           : taxonomyActiveRanks;
         const taxonomyMetricBaseSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
-        const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
+        const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale, circularOverlayViewportScale);
         const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
           + (Math.max(0, visibleRanks.length - 1) * metrics.ringGapPx)
           + metrics.ringGapPx
@@ -4013,7 +4045,7 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [effectiveTimeAxisScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapPx, timeAxisExtent, tree, useAutomaticTaxonomyRankVisibility]);
+  }, [circularOverlayViewportScale, effectiveTimeAxisScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapPx, timeAxisExtent, tree, useAutomaticTaxonomyRankVisibility]);
 
   const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {
@@ -4034,7 +4066,7 @@ export default function TreeCanvas({
       const radius = Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive);
       for (let iteration = 0; iteration < 2; iteration += 1) {
         const extra = circularClampExtraRadiusPx(fitCircular);
-        const availableRadiusPx = Math.max(120, (Math.min(size.width, size.height) * 0.44) - extra);
+        const availableRadiusPx = Math.max(circularFitMinTreeRadiusPx(size.width, size.height), (Math.min(size.width, size.height) * 0.44) - extra);
         fitCircular.scale = availableRadiusPx / radius;
       }
       finalizeCircularCamera(fitCircular);
@@ -4133,7 +4165,7 @@ export default function TreeCanvas({
       const radius = Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive);
       for (let iteration = 0; iteration < 2; iteration += 1) {
         const extra = circularClampExtraRadiusPx(nextCamera);
-        const availableRadiusPx = Math.max(120, (Math.min(size.width, size.height) * 0.44) - extra);
+        const availableRadiusPx = Math.max(circularFitMinTreeRadiusPx(size.width, size.height), (Math.min(size.width, size.height) * 0.44) - extra);
         nextCamera.scale = availableRadiusPx / radius;
       }
       finalizeCircularCamera(nextCamera);
@@ -4198,7 +4230,7 @@ export default function TreeCanvas({
     } else {
       const world = screenToWorldCircular(camera, localX, localY);
       const fit = fitCircularCamera(size.width, size.height, tree, camera.rotation);
-      const minScale = fit.scale * 0.55;
+      const minScale = fit.scale * circularZoomOutScaleMultiplier(size.width, size.height);
       camera.scale = Math.max(minScale, camera.scale * zoom);
       const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
       camera.translateX = localX - (rotated.x * camera.scale);
@@ -7632,7 +7664,7 @@ export default function TreeCanvas({
       const taxonomyVisibilityOuterRadiusPx = taxonomyEnabled && taxonomyBlocks && visibleTaxonomyRanks.length > 0
         ? (() => {
           const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
-          const metrics = taxonomyRingMetricsPx(visibleTaxonomyRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
+          const metrics = taxonomyRingMetricsPx(visibleTaxonomyRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale, circularOverlayViewportScale);
           return (maxRadius * camera.scale)
             + globalTipLabelSpacePx
             + taxonomyBaselineGapPx
@@ -7645,6 +7677,10 @@ export default function TreeCanvas({
         : 0;
       const needsVisibleLeafRanges = tipLabelCueVisible
         || (taxonomyEnabled && taxonomyBlocks !== null && visibleCircleFraction < CIRCULAR_TAXONOMY_VISIBLE_FILTER_MAX_VISIBLE_FRACTION);
+      const circularTaxonomyVisibilityMarginPx = compactCircularViewport ? 220 : 120;
+      const circularTaxonomyScreenSampleMarginPx = compactCircularViewport ? 96 : 48;
+      const circularTaxonomyLabelAnchorMarginPx = compactCircularViewport ? 120 : 24;
+      const circularTaxonomyLabelViewportMarginPx = compactCircularViewport ? 42 : 2;
       const visibleLeafOverscan = needsVisibleLeafRanges
         ? Math.max(12, Math.min(1600, Math.ceil((circularTipVisibilityMargin + 120) / Math.max(0.5, angularSpacingPx))))
         : 0;
@@ -7661,7 +7697,7 @@ export default function TreeCanvas({
           leafVisibilityRadiusPx,
           size.width,
           size.height,
-          circularTipVisibilityMargin + 80,
+          Math.max(circularTipVisibilityMargin + 80, circularTaxonomyVisibilityMarginPx),
         )
         : [];
       const visibleLeafRanges = visibleAngleSpans.length > 0
@@ -7716,7 +7752,7 @@ export default function TreeCanvas({
         const baseFontSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
         circularGenusBaseFontSize = baseFontSize;
         const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
-        const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale);
+        const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale, circularOverlayViewportScale);
         const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx + taxonomyBaselineGapPx + taxonomyGapPx;
         const viewportCenterRenderedTheta = wrapPositive(Math.atan2((size.height * 0.5) - centerPoint.y, (size.width * 0.5) - centerPoint.x));
         let ringCursorOuterPx = tipBandOuterRadiusPx + metrics.ringGapPx;
@@ -7927,7 +7963,7 @@ export default function TreeCanvas({
           const ringFullyVisible = ringOuterPx <= (fullyVisibleRadiusPx - 24);
           const useScreenSpaceRibbonGeometry = !ringFullyVisible
             && lineRadiusPx >= CIRCULAR_TAXONOMY_SCREEN_SPACE_RIBBON_MIN_RADIUS_PX;
-          const ringVisibilityMarginPx = 120 + (ringWidthPx * 0.5) + 2;
+          const ringVisibilityMarginPx = circularTaxonomyVisibilityMarginPx + (ringWidthPx * 0.5) + 2;
           let ringUsesBandVisibilityFallback = false;
           let ringVisibleSpans = ringFullyVisible || useScreenSpaceRibbonGeometry
             ? []
@@ -7948,7 +7984,7 @@ export default function TreeCanvas({
               ringOuterPx,
               size.width,
               size.height,
-              120,
+              circularTaxonomyVisibilityMarginPx,
             );
           }
           const occupiedIntervalsForRank: Array<{ start: number; end: number }> = [];
@@ -8008,7 +8044,7 @@ export default function TreeCanvas({
                     renderedEndTheta,
                     size.width,
                     size.height,
-                    48,
+                    circularTaxonomyScreenSampleMarginPx,
                   ).map((visibleRun, visibleIndex) => ({
                     start: visibleRun.startTheta,
                     end: visibleRun.endTheta,
@@ -8151,7 +8187,7 @@ export default function TreeCanvas({
                   Math.cos(totalMidTheta) * lineRadius,
                   Math.sin(totalMidTheta) * lineRadius,
                 );
-                return isScreenPointVisible(fullLabelPoint.x, fullLabelPoint.y, size.width, size.height, 24);
+                return isScreenPointVisible(fullLabelPoint.x, fullLabelPoint.y, size.width, size.height, circularTaxonomyLabelAnchorMarginPx);
               })();
               if (fullMidVisible) {
                 const candidateArcLengthPx = totalRenderedSpan * lineRadiusPx;
@@ -8176,7 +8212,7 @@ export default function TreeCanvas({
                     renderEndTheta + rotationAngle,
                     size.width,
                     size.height,
-                    48,
+                    circularTaxonomyScreenSampleMarginPx,
                   ).map((visibleRun) => ({
                     start: visibleRun.startTheta,
                     end: visibleRun.endTheta,
@@ -8212,7 +8248,7 @@ export default function TreeCanvas({
                     Math.cos(renderedMidTheta - rotationAngle) * lineRadius,
                     Math.sin(renderedMidTheta - rotationAngle) * lineRadius,
                   );
-                  if (!isScreenPointVisible(candidatePoint.x, candidatePoint.y, size.width, size.height, 24)) {
+                  if (!isScreenPointVisible(candidatePoint.x, candidatePoint.y, size.width, size.height, circularTaxonomyLabelAnchorMarginPx)) {
                     continue;
                   }
                   const candidateArcLengthPx = candidateSpan * lineRadiusPx;
@@ -8358,7 +8394,7 @@ export default function TreeCanvas({
               rotationRadians,
               size.width,
               size.height,
-              2,
+              circularTaxonomyLabelViewportMarginPx,
             );
             if (!labelIntersectsViewport) {
               pushTaxonomyCandidateDebug({
