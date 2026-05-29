@@ -33,17 +33,19 @@ For small trees, pass URL parameters:
 /?btv_newick_b64=<base64url-utf8-newick>&btv_view=circular&btv_tip_labels=false
 ```
 
-Useful URL fields include `btv_newick` or `btv_newick_b64`, `btv_label`, `btv_metadata` or `btv_metadata_b64`, `btv_view=rectangular|circular|spiral`, `btv_order=input|asc|desc`, `btv_tip_labels`, `btv_genus_labels`, `btv_taxonomy`, `btv_taxonomy_branch_colors`, `btv_palette`, `btv_branch_thickness`, `btv_time_axis=linear|log`, and metadata controls such as `btv_metadata_key`, `btv_metadata_value`, `btv_metadata_color_mode`, `btv_metadata_labels`, and `btv_metadata_markers`.
+Useful URL fields include `btv_newick` or `btv_newick_b64`, `btv_label`, `btv_metadata` or `btv_metadata_b64`, `btv_view=rectangular|circular|spiral`, `btv_order=input|asc|desc`, `btv_tip_labels`, `btv_genus_labels`, `btv_taxonomy`, `btv_taxonomy_branch_colors`, `btv_palette`, `btv_branch_thickness`, `btv_time_axis=linear|log`, `btv_hide_download_newick`, and metadata controls such as `btv_metadata_key`, `btv_metadata_value`, `btv_metadata_color_mode`, `btv_metadata_labels`, and `btv_metadata_markers`.
 
 For public files hosted elsewhere, use `btv_newick_url` for a Newick/NEXUS file or `btv_session_url` for a saved `.btvsession` file:
 
 ```text
 /?btv_session_url=https%3A%2F%2Fexample.org%2Ftree.btvsession
+/?btv_session_url=https%3A%2F%2Fexample.org%2Ftree.btvsession&btv_hide_download_newick=1
 /?btv_newick_url=https%3A%2F%2Fexample.org%2Ftree.nwk&btv_view=circular
 ```
 
 The file host must allow browser fetches from Big Tree Viewer, for example with CORS headers.
 Session files are gzip-compressed by default, but older uncompressed JSON session files can still be loaded. If a session is saved after taxonomy mapping, the session includes that mapping, so visitors can open the shared session with taxonomy ribbons already available without downloading the NCBI taxonomy dump themselves.
+`btv_hide_download_newick=1` hides the Download Newick button for a shared viewer link, but it is only a presentation safeguard because a `.btvsession` still contains the tree data.
 
 For larger trees or richer metadata, open `/?btv_api=1` and send a message after receiving `big-tree-viewer:ready`:
 

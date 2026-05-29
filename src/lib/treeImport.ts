@@ -337,3 +337,37 @@ export function normalizeImportedTreeText(text: string): string {
   }
   return firstTree ?? text;
 }
+
+export function looksLikeTreeText(text: string): boolean {
+  const normalized = normalizeImportedTreeText(text).trim();
+  if (!normalized) {
+    return false;
+  }
+  if (/^#?nexus/i.test(normalized) || /begin\s+trees\s*;/i.test(normalized)) {
+    return false;
+  }
+  const semicolonIndex = normalized.lastIndexOf(";");
+  if (semicolonIndex < 0) {
+    return false;
+  }
+  const tree = normalized.slice(0, semicolonIndex + 1);
+  if (!tree.includes("(") || !tree.includes(")")) {
+    return false;
+  }
+  let depth = 0;
+  let hasCommaInsideTree = false;
+  for (let index = 0; index < tree.length; index += 1) {
+    const character = tree[index];
+    if (character === "(") {
+      depth += 1;
+    } else if (character === ")") {
+      depth -= 1;
+      if (depth < 0) {
+        return false;
+      }
+    } else if (character === "," && depth > 0) {
+      hasCommaInsideTree = true;
+    }
+  }
+  return depth === 0 && hasCommaInsideTree;
+}

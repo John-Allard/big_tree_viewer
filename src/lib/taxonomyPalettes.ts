@@ -76,6 +76,32 @@ export const TAXONOMY_COLOR_PALETTES = {
       "#7a5195",
     ],
   },
+  ttolSpiral: {
+    label: "TToL spiral",
+    colors: [
+      "#2f5bea",
+      "#ff7a1a",
+      "#a59a2f",
+      "#158a53",
+      "#1fbfc3",
+      "#d93a88",
+      "#6f3fb3",
+      "#8b5a2b",
+      "#e6c229",
+      "#d94141",
+      "#637729",
+      "#0f8aa0",
+    ],
+    plantPreferredIndex: 3,
+    majorTaxonColorOrder: [3, 0, 1, 5, 6, 8, 9, 7, 11, 2, 10, 4],
+    taxonPreferredColorIndexes: [
+      { labels: ["chordata"], taxIds: [7711], colorIndex: 0 },
+      { labels: ["arthropoda"], taxIds: [6656], colorIndex: 1 },
+      { labels: ["ascomycota"], taxIds: [4890], colorIndex: 5 },
+      { labels: ["mollusca"], taxIds: [6447], colorIndex: 6 },
+      { labels: ["basidiomycota"], taxIds: [5204], colorIndex: 7 },
+    ],
+  },
   custom: {
     label: "Custom",
     colors: [] as string[],
@@ -85,6 +111,7 @@ export const TAXONOMY_COLOR_PALETTES = {
 export type TaxonomyColorPaletteKey = keyof typeof TAXONOMY_COLOR_PALETTES;
 
 export const DEFAULT_TAXONOMY_COLOR_PALETTE: TaxonomyColorPaletteKey = "classic";
+export const SPIRAL_TTOL_TAXONOMY_COLOR_PALETTE: TaxonomyColorPaletteKey = "ttolSpiral";
 
 export const TAXONOMY_COLOR_PALETTE_KEYS = Object.keys(TAXONOMY_COLOR_PALETTES) as TaxonomyColorPaletteKey[];
 

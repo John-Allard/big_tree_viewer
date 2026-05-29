@@ -6,6 +6,7 @@ import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
 import type { LayoutOrder, ViewMode, ZoomAxisMode } from "../types/tree";
+import type { TaxonomyOverlayStyle, TimeStripeStyle } from "../components/treeCanvasTypes";
 
 export type SharedSubtreeTaxonomyEntry = {
   name: string;
@@ -38,7 +39,7 @@ export type SharedSubtreeVisualPayload = {
   showTimeStripes: boolean;
   timeAxisScale: TimeAxisScale;
   timeAxisLogBase: number;
-  timeStripeStyle: "bands" | "dashed";
+  timeStripeStyle: TimeStripeStyle;
   timeStripeLineWeight: number;
   showScaleBars: boolean;
   scaleTickInterval: number | null;
@@ -58,6 +59,7 @@ export type SharedSubtreeVisualPayload = {
   errorBarCapSizePx: number;
   figureStyles: FigureStyleSettings;
   taxonomyEnabled: boolean;
+  taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyBranchColoringEnabled: boolean;
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
@@ -150,7 +152,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     showTimeStripes: coerceBoolean(source.showTimeStripes, true),
     timeAxisScale: coerceEnum(source.timeAxisScale, ["linear", "log"] as const, "linear"),
     timeAxisLogBase: coerceTimeAxisLogBase(source.timeAxisLogBase),
-    timeStripeStyle: coerceEnum(source.timeStripeStyle, ["bands", "dashed"] as const, "bands"),
+    timeStripeStyle: coerceEnum(source.timeStripeStyle, ["bands", "age-gradient", "dashed"] as const, "bands"),
     timeStripeLineWeight: coerceFiniteNumber(source.timeStripeLineWeight, 1.1),
     showScaleBars: coerceBoolean(source.showScaleBars, true),
     scaleTickInterval: coerceNullableFiniteNumber(source.scaleTickInterval),
@@ -170,6 +172,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     errorBarCapSizePx: coerceFiniteNumber(source.errorBarCapSizePx, 7),
     figureStyles: parseSharedFigureStyles(source.figureStyles),
     taxonomyEnabled: coerceBoolean(source.taxonomyEnabled, false),
+    taxonomyOverlayStyle: coerceEnum(source.taxonomyOverlayStyle, ["ribbons", "strands"] as const, "ribbons"),
     taxonomyBranchColoringEnabled: coerceBoolean(source.taxonomyBranchColoringEnabled, true),
     useAutomaticTaxonomyRankVisibility: coerceBoolean(source.useAutomaticTaxonomyRankVisibility, true),
     taxonomyRankVisibility: parsedTaxonomyRankVisibility,

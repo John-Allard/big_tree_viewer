@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
+import type { TaxonomyOverlayStyle, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import {
   cloneDefaultFigureStyles,
@@ -32,6 +33,15 @@ import {
   type ParsedMetadataTable,
 } from "./lib/metadataColors";
 import {
+  buildPhyloPicAttributionCaption,
+  PHYLOPIC_MAX_RETRIEVE_PER_CLICK,
+  PhyloPicRateLimitError,
+  readCachedPhyloPicSilhouette,
+  retrievePhyloPicSilhouette,
+  type PhyloPicCandidate,
+  type PhyloPicSilhouette,
+} from "./lib/phylopic";
+import {
   parseSharedSubtreeStoragePayload,
   rebuildSharedSubtreeTaxonomyMap,
   type SharedSubtreeTaxonomyPayload,
@@ -40,6 +50,7 @@ import {
 import {
   DEFAULT_TAXONOMY_COLOR_PALETTE,
   parseCustomTaxonomyPalette,
+  SPIRAL_TTOL_TAXONOMY_COLOR_PALETTE,
   TAXONOMY_COLOR_PALETTE_KEYS,
   TAXONOMY_COLOR_PALETTES,
   type TaxonomyColorPaletteKey,
@@ -56,7 +67,7 @@ import {
   putCachedTaxonomyMapping,
 } from "./lib/taxonomyCache";
 import { rerootTreePayload, type RerootMode } from "./lib/rerootTree";
-import { normalizeImportedTreeText } from "./lib/treeImport";
+import { looksLikeTreeText, normalizeImportedTreeText } from "./lib/treeImport";
 import type { WorkerResponse } from "./types/messages";
 import { TAXONOMY_RANKS, type TaxonomyCollapseRank, type TaxonomyMapPayload, type TaxonomyRank } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
@@ -96,10 +107,25 @@ function normalizeSvgExportFilename(value: string, fallbackBaseLabel: string): s
   return /\.svg$/i.test(base) ? base : `${base}.svg`;
 }
 
+function normalizePngExportFilename(value: string, fallbackBaseLabel: string): string {
+  const trimmed = value.trim();
+  const base = trimmed
+    .replace(/[/\\?%*:|"<>]+/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^_+|_+$/g, "")
+    || `${fallbackBaseLabel}.png`;
+  return /\.png$/i.test(base) ? base : `${base}.png`;
+}
+
+type ExportViewFormat = "png" | "svg";
+
 type BigTreeViewerLaunchPayload = {
   version?: 1;
   newick?: string;
   label?: string;
+  controls?: {
+    hideDownloadNewick?: boolean;
+  };
   visual?: {
     viewMode?: ViewMode;
     order?: LayoutOrder;
@@ -141,7 +167,7 @@ type BigTreeViewerSessionSettings = {
   circularRotationDegrees: number;
   spiralTurns: number;
   showTimeStripes: boolean;
-  timeStripeStyle: "bands" | "dashed";
+  timeStripeStyle: TimeStripeStyle;
   timeStripeLineWeight: number;
   timeAxisScale: TimeAxisScale;
   timeAxisLogBase: number;
@@ -163,6 +189,7 @@ type BigTreeViewerSessionSettings = {
   errorBarCapSizePx: number;
   figureStyles: FigureStyleSettings;
   taxonomyEnabled: boolean;
+  taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyCollapseRank: TaxonomyCollapseRank;
   useAutomaticTaxonomyRankVisibility: boolean;
@@ -172,6 +199,8 @@ type BigTreeViewerSessionSettings = {
   taxonomyCustomPaletteInput: string;
   taxonomyColorRootRank: TaxonomyRank | "auto";
   taxonomyColorJitterRank: TaxonomyRank;
+  phylopicRankSelection?: Partial<Record<TaxonomyRank, boolean>>;
+  phylopicPlacement?: "after-label" | "outside-ribbon";
   branchThicknessScale: number;
   metadataEnabled: boolean;
   metadataFirstRowIsHeader: boolean;
@@ -257,7 +286,12 @@ function readLaunchTextParam(params: URLSearchParams, plainKey: string, encodedK
 }
 
 function parseSessionText(text: string): BigTreeViewerSessionFile {
-  const parsed = JSON.parse(text) as Partial<BigTreeViewerSessionFile>;
+  let parsed: Partial<BigTreeViewerSessionFile>;
+  try {
+    parsed = JSON.parse(text) as Partial<BigTreeViewerSessionFile>;
+  } catch {
+    throw new Error("This is not a valid Big Tree Viewer session file.");
+  }
   if (parsed.format !== "big-tree-viewer-session" || parsed.version !== 1 || !parsed.settings) {
     throw new Error("This is not a valid Big Tree Viewer session file.");
   }
@@ -303,6 +337,14 @@ async function buildSessionBlob(session: BigTreeViewerSessionFile): Promise<Blob
 async function parseSessionBytes(data: Uint8Array): Promise<BigTreeViewerSessionFile> {
   const text = bytesAreGzip(data) ? strFromU8(await gunzipBytes(data)) : strFromU8(data);
   return parseSessionText(text);
+}
+
+function fileLooksLikeSession(file: File): boolean {
+  return /\.(btvsession|json)$/i.test(file.name) || file.type === "application/json";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function launchLabelFromUrl(url: string, fallback: string): string {
@@ -478,8 +520,9 @@ const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
 const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = -5;
 const DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR = false;
 const DEFAULT_SPIRAL_TURNS = 5.5;
-const DEFAULT_TIME_STRIPE_STYLE = "bands";
+const DEFAULT_TIME_STRIPE_STYLE: TimeStripeStyle = "bands";
 const DEFAULT_TIME_STRIPE_LINE_WEIGHT = 1.1;
+const DEFAULT_TAXONOMY_OVERLAY_STYLE: TaxonomyOverlayStyle = "ribbons";
 const DEFAULT_SHOW_NODE_ERROR_BARS = false;
 const DEFAULT_ERROR_BAR_THICKNESS_PX = 1.2;
 const DEFAULT_ERROR_BAR_CAP_SIZE_PX = 7;
@@ -585,6 +628,7 @@ const TAXONOMY_ARCHIVE_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.z
 type VisualPopoverId =
   | LabelStyleClass
   | "timeStripes"
+  | "phylopic"
   | "metadataBranchColors"
   | "metadataLabels"
   | "metadataMarkers";
@@ -1095,7 +1139,11 @@ export default function App() {
   const pendingSessionTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
   const pendingSessionTaxonomyEnabledRef = useRef<boolean | null>(null);
   const pendingSessionCanvasStateRef = useRef<TreeCanvasSessionState | null | undefined>(undefined);
+  const pendingSessionRestoreResolverRef = useRef<(() => void) | null>(null);
   const pendingSessionSnapshotResolverRef = useRef<((state: TreeCanvasSessionState | null) => void) | null>(null);
+  const pendingTreeParseResolverRef = useRef<(() => void) | null>(null);
+  const pendingTreeParseRejecterRef = useRef<((error: Error) => void) | null>(null);
+  const phylopicCancelRequestedRef = useRef(false);
   const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
@@ -1113,6 +1161,7 @@ export default function App() {
   const [showTimeStripes, setShowTimeStripes] = useState(true);
   const [timeAxisScale, setTimeAxisScale] = useState<TimeAxisScale>(DEFAULT_TIME_AXIS_SCALE);
   const [timeAxisLogBase, setTimeAxisLogBase] = useState(DEFAULT_TIME_AXIS_LOG_BASE);
+  const [timeAxisLogBaseDraft, setTimeAxisLogBaseDraft] = useState(DEFAULT_TIME_AXIS_LOG_BASE);
   const [showScaleBars, setShowScaleBars] = useState(true);
   const [showIntermediateScaleTicks, setShowIntermediateScaleTicks] = useState(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
@@ -1123,7 +1172,7 @@ export default function App() {
   const [circularCenterScaleAngleDegrees, setCircularCenterScaleAngleDegrees] = useState(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
   const [showCircularCenterRadialScaleBar, setShowCircularCenterRadialScaleBar] = useState(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
   const [spiralTurns, setSpiralTurns] = useState(DEFAULT_SPIRAL_TURNS);
-  const [timeStripeStyle, setTimeStripeStyle] = useState<"bands" | "dashed">(DEFAULT_TIME_STRIPE_STYLE);
+  const [timeStripeStyle, setTimeStripeStyle] = useState<TimeStripeStyle>(DEFAULT_TIME_STRIPE_STYLE);
   const [timeStripeLineWeight, setTimeStripeLineWeight] = useState(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
   const [showTipLabels, setShowTipLabels] = useState(true);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
@@ -1158,11 +1207,25 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
+  const [exportPngRequest, setExportPngRequest] = useState(0);
+  const [exportPngFilename, setExportPngFilename] = useState("big-tree-view.png");
+  const [exportPngWidth, setExportPngWidth] = useState(6000);
+  const [exportPngHeight, setExportPngHeight] = useState(6000);
+  const [showExportOptions, setShowExportOptions] = useState(false);
+  const [exportViewFormat, setExportViewFormat] = useState<ExportViewFormat>("png");
+  const [exportViewFilenameInput, setExportViewFilenameInput] = useState("big-tree-view.png");
+  const [exportViewWidthInput, setExportViewWidthInput] = useState(6000);
+  const [exportViewHeightInput, setExportViewHeightInput] = useState(6000);
+  const [exportViewPrintWidthInchesInput, setExportViewPrintWidthInchesInput] = useState(20);
+  const [exportViewPrintHeightInchesInput, setExportViewPrintHeightInchesInput] = useState(20);
+  const [exportViewDpiInput, setExportViewDpiInput] = useState(300);
   const [sessionStateRequest, setSessionStateRequest] = useState(0);
   const [sessionRestoreRequest, setSessionRestoreRequest] = useState(0);
   const [sessionRestoreState, setSessionRestoreState] = useState<TreeCanvasSessionState | null>(null);
   const [sessionStatus, setSessionStatus] = useState("");
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [hideDownloadNewick, setHideDownloadNewick] = useState(false);
   const [visualResetRequest, setVisualResetRequest] = useState(0);
   const [activeLabelStylePopover, setActiveLabelStylePopover] = useState<VisualPopoverId | null>(null);
   const [metadataOpen, setMetadataOpen] = useSessionDisclosure("section-metadata", false);
@@ -1199,9 +1262,24 @@ export default function App() {
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
   const [taxonomyStorageInfoVisible, setTaxonomyStorageInfoVisible] = useState(false);
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
+  const [taxonomyOverlayStyle, setTaxonomyOverlayStyle] = useState<TaxonomyOverlayStyle>(DEFAULT_TAXONOMY_OVERLAY_STYLE);
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
   const [taxonomyCollapseRank, setTaxonomyCollapseRank] = useState<TaxonomyCollapseRank>(DEFAULT_TAXONOMY_COLLAPSE_RANK);
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
+  const [phylopicEnabled, setPhyloPicEnabled] = useState(false);
+  const [phylopicOpen, setPhyloPicOpen] = useSessionDisclosure("taxonomy-phylopic", false);
+  const [phylopicRetrieving, setPhyloPicRetrieving] = useState(false);
+  const [phylopicStatus, setPhyloPicStatus] = useState("");
+  const [phylopicError, setPhyloPicError] = useState<string | null>(null);
+  const [phylopicRankSelection, setPhyloPicRankSelection] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
+  const [phylopicViewportRanks, setPhyloPicViewportRanks] = useState<TaxonomyRank[]>([]);
+  const [phylopicPlacement, setPhyloPicPlacement] = useState<"after-label" | "outside-ribbon">("after-label");
+  const [phylopicSizeScale, setPhyloPicSizeScale] = useState(1.35);
+  const [phylopicOffsetXPx, setPhyloPicOffsetXPx] = useState(0);
+  const [phylopicOffsetYPx, setPhyloPicOffsetYPx] = useState(0);
+  const [phylopicSilhouettes, setPhyloPicSilhouettes] = useState<PhyloPicSilhouette[]>([]);
+  const [phylopicCaptionVisible, setPhyloPicCaptionVisible] = useState(false);
+  const [phylopicReminderDismissed, setPhyloPicReminderDismissed] = useState(false);
   const [diagnosticsRevision, setDiagnosticsRevision] = useState(0);
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [unexpectedDiagnosticsSessionId, setUnexpectedDiagnosticsSessionId] = useState<string | null>(null);
@@ -1638,6 +1716,7 @@ export default function App() {
     setErrorBarCapSizePx(visual.errorBarCapSizePx);
     setFigureStyles(visual.figureStyles);
     setTaxonomyEnabled(visual.taxonomyEnabled);
+    setTaxonomyOverlayStyle(visual.taxonomyOverlayStyle === "strands" ? "strands" : "ribbons");
     setTaxonomyBranchColoringEnabled(visual.taxonomyBranchColoringEnabled);
     setUseAutomaticTaxonomyRankVisibility(visual.useAutomaticTaxonomyRankVisibility);
     setTaxonomyRankVisibility(visual.taxonomyRankVisibility);
@@ -2047,9 +2126,46 @@ export default function App() {
     ),
     [viewTaxonomyMap],
   );
+  const phylopicSelectableRanks = useMemo<TaxonomyRank[]>(
+    () => availableTaxonomyRanks.filter((rank) => {
+      if (useAutomaticTaxonomyRankVisibility) {
+        return true;
+      }
+      return taxonomyRankVisibility[rank] !== false;
+    }),
+    [availableTaxonomyRanks, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility],
+  );
+  const phylopicViewportRankSet = useMemo(() => new Set(phylopicViewportRanks), [phylopicViewportRanks]);
+  const phylopicHasViewportRankInfo = phylopicViewportRanks.length > 0;
+  const phylopicHasSelectedVisibleRank = phylopicSelectableRanks.some((rank) => (
+    phylopicRankSelection[rank] && (!phylopicHasViewportRankInfo || phylopicViewportRankSet.has(rank))
+  ));
+  const phylopicCaption = useMemo(
+    () => buildPhyloPicAttributionCaption(phylopicSilhouettes),
+    [phylopicSilhouettes],
+  );
   const customTaxonomyPaletteColors = useMemo(
     () => parseCustomTaxonomyPalette(taxonomyCustomPaletteInput),
     [taxonomyCustomPaletteInput],
+  );
+  useEffect(() => {
+    setTimeAxisLogBaseDraft(timeAxisLogBase);
+  }, [timeAxisLogBase]);
+  const commitTimeAxisLogBaseDraft = useCallback((): void => {
+    const clamped = Math.max(
+      MIN_TIME_AXIS_LOG_BASE,
+      Math.min(MAX_TIME_AXIS_LOG_BASE, Number.isFinite(timeAxisLogBaseDraft) ? timeAxisLogBaseDraft : DEFAULT_TIME_AXIS_LOG_BASE),
+    );
+    setTimeAxisLogBaseDraft(clamped);
+    setTimeAxisLogBase((current) => Math.abs(current - clamped) < 1e-9 ? current : clamped);
+  }, [timeAxisLogBaseDraft]);
+  const taxonomyColorPaletteOptions = useMemo(
+    () => TAXONOMY_COLOR_PALETTE_KEYS.filter((paletteKey) => (
+      paletteKey !== SPIRAL_TTOL_TAXONOMY_COLOR_PALETTE
+      || viewMode === "spiral"
+      || taxonomyColorPalette === SPIRAL_TTOL_TAXONOMY_COLOR_PALETTE
+    )),
+    [taxonomyColorPalette, viewMode],
   );
   useEffect(() => {
     if (availableTaxonomyRanks.length === 0) {
@@ -2104,6 +2220,65 @@ export default function App() {
   }, [collapsibleTaxonomyRanks, taxonomyCollapseRank, taxonomyMap]);
 
   useEffect(() => {
+    setPhyloPicRankSelection((current) => {
+      const next: Partial<Record<TaxonomyRank, boolean>> = {};
+      const visibleRanks = phylopicViewportRanks.length > 0 ? phylopicViewportRanks : phylopicSelectableRanks;
+      const visibleRankSet = new Set(visibleRanks);
+      let hasSelectedAvailableRank = false;
+      for (const rank of phylopicSelectableRanks) {
+        const selected = (current[rank] ?? false) && visibleRankSet.has(rank);
+        next[rank] = selected;
+        hasSelectedAvailableRank ||= selected;
+      }
+      const defaultRank = phylopicSelectableRanks.find((rank) => visibleRankSet.has(rank));
+      if (!hasSelectedAvailableRank && defaultRank) {
+        next[defaultRank] = true;
+      }
+      return next;
+    });
+  }, [phylopicSelectableRanks, phylopicViewportRanks]);
+
+  useEffect(() => {
+    if (!taxonomyMap || !taxonomyEnabled) {
+      setPhyloPicViewportRanks([]);
+      return;
+    }
+    const readVisibleRanks = (): void => {
+      const renderDebug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug?.() as {
+        rect?: { taxonomyVisibleRanks?: TaxonomyRank[] };
+        circular?: { taxonomyVisibleRanks?: TaxonomyRank[] };
+        spiral?: { visibleTaxonomyRanks?: TaxonomyRank[] };
+      } | null | undefined;
+      const rawRanks = (
+        viewMode === "circular"
+          ? renderDebug?.circular?.taxonomyVisibleRanks
+          : viewMode === "spiral"
+            ? renderDebug?.spiral?.visibleTaxonomyRanks
+            : renderDebug?.rect?.taxonomyVisibleRanks
+      ) ?? [];
+      const nextRanks = rawRanks.filter((rank): rank is TaxonomyRank => TAXONOMY_RANKS.includes(rank));
+      setPhyloPicViewportRanks((current) => {
+        if (current.length === nextRanks.length && current.every((rank, index) => rank === nextRanks[index])) {
+          return current;
+        }
+        return nextRanks;
+      });
+    };
+    readVisibleRanks();
+    const interval = window.setInterval(readVisibleRanks, 350);
+    return () => window.clearInterval(interval);
+  }, [taxonomyEnabled, taxonomyMap, viewMode]);
+
+  useEffect(() => {
+    setPhyloPicEnabled(false);
+    setPhyloPicSilhouettes([]);
+    setPhyloPicStatus("");
+    setPhyloPicError(null);
+    setPhyloPicCaptionVisible(false);
+    setPhyloPicReminderDismissed(false);
+  }, [treeSignature]);
+
+  useEffect(() => {
     if (searchResults.length === 0) {
       setActiveSearchIndex(0);
       return;
@@ -2126,11 +2301,15 @@ export default function App() {
       pendingTreeSignatureRef.current = null;
       pendingTreeLabelRef.current = "";
       pendingSharedSubtreeTaxonomyRef.current = null;
+      const rejectParse = pendingTreeParseRejecterRef.current;
+      pendingTreeParseResolverRef.current = null;
+      pendingTreeParseRejecterRef.current = null;
       setLoadState({
         loading: false,
         message: "Failed to parse tree.",
         error: data.message,
       });
+      rejectParse?.(new Error(data.message));
       return;
     }
     const nextTree = buildTreeModel(data.payload);
@@ -2150,9 +2329,16 @@ export default function App() {
       setPastedTreeText("");
     }
     setFitRequest((value) => value + 1);
+    const resolveParse = pendingTreeParseResolverRef.current;
+    pendingTreeParseResolverRef.current = null;
+    pendingTreeParseRejecterRef.current = null;
+    resolveParse?.();
   }, []);
 
   const handleWorkerError = useCallback((event: ErrorEvent): void => {
+    const rejectParse = pendingTreeParseRejecterRef.current;
+    pendingTreeParseResolverRef.current = null;
+    pendingTreeParseRejecterRef.current = null;
     pendingPasteHideRef.current = false;
     pendingTreeSignatureRef.current = null;
     pendingTreeLabelRef.current = "";
@@ -2162,9 +2348,13 @@ export default function App() {
       message: "Tree worker failed.",
       error: event.message || "Unknown worker error.",
     });
+    rejectParse?.(new Error(event.message || "Tree worker failed."));
   }, []);
 
   const handleWorkerMessageError = useCallback((): void => {
+    const rejectParse = pendingTreeParseRejecterRef.current;
+    pendingTreeParseResolverRef.current = null;
+    pendingTreeParseRejecterRef.current = null;
     pendingPasteHideRef.current = false;
     pendingTreeSignatureRef.current = null;
     pendingTreeLabelRef.current = "";
@@ -2174,6 +2364,7 @@ export default function App() {
       message: "Tree worker message transfer failed.",
       error: "The browser could not deserialize the parsed tree payload.",
     });
+    rejectParse?.(new Error("The browser could not deserialize the parsed tree payload."));
   }, []);
 
   const ensureWorker = useCallback((): Worker => {
@@ -2198,7 +2389,23 @@ export default function App() {
   }, []);
 
   const parseText = useCallback(async (text: string, label: string): Promise<void> => {
+    pendingTreeParseRejecterRef.current?.(new Error("Tree parsing was superseded by another load request."));
+    pendingTreeParseResolverRef.current = null;
+    pendingTreeParseRejecterRef.current = null;
+    setLoadState({
+      loading: true,
+      message: `Preparing ${label}...`,
+      error: null,
+    });
     const normalizedText = normalizeImportedTreeText(text);
+    if (!looksLikeTreeText(normalizedText)) {
+      setLoadState({
+        loading: false,
+        message: "",
+        error: `${label} does not look like a Newick or NEXUS tree.`,
+      });
+      throw new Error(`${label} does not look like a Newick or NEXUS tree.`);
+    }
     pendingTreeSignatureRef.current = await computeTreeSignature(normalizedText);
     pendingTreeLabelRef.current = label;
     setLoadState({
@@ -2212,10 +2419,15 @@ export default function App() {
       message: `Parsing ${label}...`,
       error: null,
     });
+    const parseDone = new Promise<void>((resolve, reject) => {
+      pendingTreeParseResolverRef.current = resolve;
+      pendingTreeParseRejecterRef.current = reject;
+    });
     worker.postMessage({
       type: "parse-tree",
       text: normalizedText,
     });
+    await parseDone;
   }, [ensureWorker]);
 
   const runTaxonomyWorker = useCallback((request: { type: "download-taxonomy" } | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean }): Promise<TaxonomyWorkerResponse> => {
@@ -2248,10 +2460,24 @@ export default function App() {
   }, [appendDiagnostic]);
 
   useEffect(() => {
+    let cancelled = false;
+    setTaxonomyCached(null);
     void (async () => {
-      const cached = await getCachedTaxonomyArchive();
-      setTaxonomyCached(cached !== null);
+      try {
+        const cached = await getCachedTaxonomyArchive();
+        if (cancelled) {
+          return;
+        }
+        setTaxonomyCached(cached !== null);
+      } catch {
+        if (!cancelled) {
+          setTaxonomyCached(false);
+        }
+      }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const loadSubtreeFromUrl = useCallback(async (): Promise<boolean> => {
@@ -2322,19 +2548,64 @@ export default function App() {
     window.URL.revokeObjectURL(url);
   }, [loadedTreeLabel, tree]);
 
-  const requestSvgExport = useCallback((): void => {
+  const openExportOptions = useCallback((): void => {
+    if (!tree) {
+      return;
+    }
+    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
+    const extension = exportViewFormat === "svg" ? "svg" : "png";
+    setExportViewFilenameInput(`${baseLabel}-${viewMode}-view.${extension}`);
+    if (viewMode === "rectangular") {
+      setExportViewWidthInput(6000);
+      setExportViewHeightInput(4000);
+      setExportViewPrintWidthInchesInput(20);
+      setExportViewPrintHeightInchesInput(13.33);
+    } else {
+      setExportViewWidthInput(6000);
+      setExportViewHeightInput(6000);
+      setExportViewPrintWidthInchesInput(20);
+      setExportViewPrintHeightInchesInput(20);
+    }
+    setShowExportOptions((value) => !value);
+  }, [exportViewFormat, loadedTreeLabel, tree, viewMode]);
+
+  const applyPrintSizeToPngExport = useCallback((): void => {
+    const widthInches = Math.max(0.5, Math.min(100, Number(exportViewPrintWidthInchesInput) || 20));
+    const heightInches = Math.max(0.5, Math.min(100, Number(exportViewPrintHeightInchesInput) || widthInches));
+    const dpi = Math.max(72, Math.min(1200, Number(exportViewDpiInput) || 300));
+    setExportViewWidthInput(Math.max(320, Math.min(10000, Math.round(widthInches * dpi))));
+    setExportViewHeightInput(Math.max(320, Math.min(10000, Math.round(heightInches * dpi))));
+  }, [exportViewDpiInput, exportViewPrintHeightInchesInput, exportViewPrintWidthInchesInput]);
+
+  const exportCurrentView = useCallback((): void => {
     if (!tree || typeof window === "undefined") {
       return;
     }
     const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
-    const defaultFilename = `${baseLabel}-${viewMode}-view.svg`;
-    const requestedFilename = window.prompt("Save SVG as", defaultFilename);
-    if (requestedFilename === null) {
+    if (exportViewFormat === "svg") {
+      setExportSvgFilename(normalizeSvgExportFilename(exportViewFilenameInput, `${baseLabel}-${viewMode}-view`));
+      setExportSvgRequest((value) => value + 1);
+      setShowExportOptions(false);
       return;
     }
-    setExportSvgFilename(normalizeSvgExportFilename(requestedFilename, `${baseLabel}-${viewMode}-view`));
-    setExportSvgRequest((value) => value + 1);
-  }, [loadedTreeLabel, tree, viewMode]);
+    const width = Math.max(320, Math.min(10000, Math.round(Number(exportViewWidthInput) || 6000)));
+    const height = Math.max(320, Math.min(10000, Math.round(Number(exportViewHeightInput) || 6000)));
+    setExportViewWidthInput(width);
+    setExportViewHeightInput(height);
+    setExportPngWidth(width);
+    setExportPngHeight(height);
+    setExportPngFilename(normalizePngExportFilename(exportViewFilenameInput, `${baseLabel}-${viewMode}-view`));
+    setExportPngRequest((value) => value + 1);
+    setShowExportOptions(false);
+  }, [
+    exportViewFilenameInput,
+    exportViewFormat,
+    exportViewHeightInput,
+    exportViewWidthInput,
+    loadedTreeLabel,
+    tree,
+    viewMode,
+  ]);
 
   const handleSessionStateSnapshot = useCallback((state: TreeCanvasSessionState): void => {
     const resolver = pendingSessionSnapshotResolverRef.current;
@@ -2388,6 +2659,7 @@ export default function App() {
     errorBarCapSizePx,
     figureStyles,
     taxonomyEnabled,
+    taxonomyOverlayStyle,
     taxonomyRankVisibility,
     taxonomyCollapseRank,
     useAutomaticTaxonomyRankVisibility,
@@ -2397,6 +2669,8 @@ export default function App() {
     taxonomyCustomPaletteInput,
     taxonomyColorRootRank,
     taxonomyColorJitterRank,
+    phylopicRankSelection,
+    phylopicPlacement,
     branchThicknessScale,
     metadataEnabled,
     metadataFirstRowIsHeader,
@@ -2451,6 +2725,8 @@ export default function App() {
     metadataReverseScale,
     metadataValueColumn,
     order,
+    phylopicRankSelection,
+    phylopicPlacement,
     scaleTickIntervalInput,
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
@@ -2473,6 +2749,7 @@ export default function App() {
     taxonomyColorRootRank,
     taxonomyCustomPaletteInput,
     taxonomyEnabled,
+    taxonomyOverlayStyle,
     taxonomyRankVisibility,
     timeAxisLogBase,
     timeAxisScale,
@@ -2500,7 +2777,7 @@ export default function App() {
     setCircularRotationDegrees(settings.circularRotationDegrees);
     setSpiralTurns(settings.spiralTurns);
     setShowTimeStripes(settings.showTimeStripes);
-    setTimeStripeStyle(settings.timeStripeStyle);
+    setTimeStripeStyle(settings.timeStripeStyle === "age-gradient" || settings.timeStripeStyle === "dashed" ? settings.timeStripeStyle : "bands");
     setTimeStripeLineWeight(settings.timeStripeLineWeight);
     setTimeAxisScale(settings.timeAxisScale);
     setTimeAxisLogBase(settings.timeAxisLogBase);
@@ -2522,6 +2799,7 @@ export default function App() {
     setErrorBarCapSizePx(settings.errorBarCapSizePx);
     setFigureStyles(settings.figureStyles);
     setTaxonomyEnabled(settings.taxonomyEnabled);
+    setTaxonomyOverlayStyle(settings.taxonomyOverlayStyle === "strands" ? "strands" : "ribbons");
     setTaxonomyRankVisibility(settings.taxonomyRankVisibility);
     setTaxonomyCollapseRank(settings.taxonomyCollapseRank);
     setUseAutomaticTaxonomyRankVisibility(settings.useAutomaticTaxonomyRankVisibility);
@@ -2531,6 +2809,12 @@ export default function App() {
     setTaxonomyCustomPaletteInput(settings.taxonomyCustomPaletteInput);
     setTaxonomyColorRootRank(settings.taxonomyColorRootRank);
     setTaxonomyColorJitterRank(settings.taxonomyColorJitterRank);
+    if (settings.phylopicRankSelection) {
+      setPhyloPicRankSelection(settings.phylopicRankSelection);
+    }
+    if (settings.phylopicPlacement === "after-label" || settings.phylopicPlacement === "outside-ribbon") {
+      setPhyloPicPlacement(settings.phylopicPlacement);
+    }
     setBranchThicknessScale(settings.branchThicknessScale);
     setMetadataFirstRowIsHeader(settings.metadataFirstRowIsHeader);
     setMetadataEnabled(settings.metadataEnabled);
@@ -2701,8 +2985,10 @@ export default function App() {
     if (pendingSessionTaxonomyRef.current !== undefined) {
       const sessionTaxonomy = pendingSessionTaxonomyRef.current;
       const sessionTaxonomyEnabled = pendingSessionTaxonomyEnabledRef.current;
+      const resolveSessionRestore = pendingSessionRestoreResolverRef.current;
       pendingSessionTaxonomyRef.current = undefined;
       pendingSessionTaxonomyEnabledRef.current = null;
+      pendingSessionRestoreResolverRef.current = null;
       setTaxonomyMap(sessionTaxonomy ?? null);
       setTaxonomyEnabled(sessionTaxonomy ? sessionTaxonomyEnabled ?? true : false);
       setTaxonomyStatus(sessionTaxonomy
@@ -2713,6 +2999,9 @@ export default function App() {
         setSessionRestoreState(pendingSessionCanvasStateRef.current ?? null);
         setSessionRestoreRequest((value) => value + 1);
         pendingSessionCanvasStateRef.current = undefined;
+      }
+      if (resolveSessionRestore) {
+        window.requestAnimationFrame(() => resolveSessionRestore());
       }
       return;
     }
@@ -2750,16 +3039,6 @@ export default function App() {
       cancelled = true;
     };
   }, [tree, treeSignature]);
-
-  const onFileChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-    const text = await file.text();
-    await parseText(text, file.name);
-    event.target.value = "";
-  };
 
   const clearMetadata = useCallback((): void => {
     setMetadataTable(null);
@@ -2838,6 +3117,7 @@ export default function App() {
   }, [applyMetadataText, metadataFirstRowIsHeader]);
 
   const loadFullSessionFromObject = useCallback(async (session: BigTreeViewerSessionFile, label: string): Promise<boolean> => {
+    setSessionStatus(`Restoring session from ${label}...`);
     if (session.metadata?.text) {
       applyMetadataText(session.metadata.text, session.metadata.label, session.metadata.firstRowIsHeader);
     } else {
@@ -2845,12 +3125,25 @@ export default function App() {
     }
     applySessionSettings(session.settings);
     if (session.tree?.newick) {
+      setSessionStatus(`Parsing tree from ${label}...`);
       pendingSessionTaxonomyRef.current = session.taxonomy?.map ?? null;
       pendingSessionTaxonomyEnabledRef.current = session.settings.taxonomyEnabled;
       pendingSessionCanvasStateRef.current = session.canvas ?? null;
+      const restoreApplied = new Promise<void>((resolve) => {
+        pendingSessionRestoreResolverRef.current = resolve;
+      });
       setTree(null);
       setTreeSignature(null);
-      await parseText(session.tree.newick, session.tree.label || label);
+      try {
+        await parseText(session.tree.newick, session.tree.label || label);
+        setSessionStatus(session.taxonomy?.map
+          ? `Applying taxonomy mapping and saved view from ${label}...`
+          : `Applying saved view from ${label}...`);
+        await restoreApplied;
+      } catch (error) {
+        pendingSessionRestoreResolverRef.current = null;
+        throw error;
+      }
       return true;
     }
     setSessionStatus(`Loaded settings from ${label}.`);
@@ -2865,11 +3158,17 @@ export default function App() {
   const loadSession = useCallback(async (mode: "full" | "settings"): Promise<void> => {
     try {
       setSessionError(null);
+      setSessionLoading(true);
+      setSessionStatus(mode === "full" ? "Choose a session file to load..." : "Choose a session file for settings...");
       const file = await readSessionFile();
       if (!file) {
+        setSessionLoading(false);
+        setSessionStatus("");
         return;
       }
+      setSessionStatus(`Reading ${file.name}...`);
       const session = await parseSessionFile(file);
+      setSessionStatus(mode === "full" ? `Loading session from ${file.name}...` : `Loading settings from ${file.name}...`);
       if (mode === "full" && await loadFullSessionFromObject(session, file.name)) {
         setSessionStatus(`Loaded session from ${file.name}.`);
         return;
@@ -2889,6 +3188,8 @@ export default function App() {
     } catch (error) {
       setSessionStatus("");
       setSessionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSessionLoading(false);
     }
   }, [
     applySessionSettings,
@@ -2898,6 +3199,44 @@ export default function App() {
     tree,
     treeSignature,
   ]);
+
+  const loadFileAsTreeOrSession = useCallback(async (file: File): Promise<void> => {
+    setSessionError(null);
+    setLoadState((current) => ({ ...current, error: null }));
+    if (fileLooksLikeSession(file)) {
+      try {
+        setSessionLoading(true);
+        setSessionStatus(`Reading ${file.name}...`);
+        const session = await parseSessionFile(file);
+        setSessionStatus(`Loading session from ${file.name}...`);
+        if (!await loadFullSessionFromObject(session, file.name)) {
+          throw new Error("The session file did not include a tree.");
+        }
+        setSessionStatus(`Loaded session from ${file.name}.`);
+      } catch (error) {
+        setSessionStatus("");
+        setSessionError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setSessionLoading(false);
+      }
+      return;
+    }
+    const text = await file.text();
+    try {
+      await parseText(text, file.name);
+    } catch {
+      // parseText has already populated the user-facing load error.
+    }
+  }, [loadFullSessionFromObject, parseSessionFile, parseText]);
+
+  const onFileChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    await loadFileAsTreeOrSession(file);
+    event.target.value = "";
+  };
 
   const applyLaunchMetadata = useCallback((metadata: BigTreeViewerLaunchPayload["metadata"] | undefined): void => {
     if (!metadata?.text) {
@@ -2934,6 +3273,9 @@ export default function App() {
   }, [applyMetadataText]);
 
   const loadLaunchPayload = useCallback(async (payload: BigTreeViewerLaunchPayload, sourceLabel = "launch API"): Promise<boolean> => {
+    if (typeof payload.controls?.hideDownloadNewick === "boolean") {
+      setHideDownloadNewick(payload.controls.hideDownloadNewick);
+    }
     applyLaunchVisualSettings(payload.visual);
     applyLaunchMetadata(payload.metadata);
     if (!payload.newick?.trim()) {
@@ -2948,16 +3290,24 @@ export default function App() {
     waitForMessage: boolean;
     newickUrl?: string;
     sessionUrl?: string;
+    hideDownloadNewick: boolean;
   } => {
     if (typeof window === "undefined") {
-      return { payload: null, waitForMessage: false };
+      return { payload: null, waitForMessage: false, hideDownloadNewick: false };
     }
     const params = new URLSearchParams(window.location.search);
     const newickUrl = params.get("btv_newick_url") ?? undefined;
     const sessionUrl = params.get("btv_session_url") ?? undefined;
+    const hideDownloadNewick = readLaunchBoolParam(params, "btv_hide_download_newick") ?? false;
     const payload: BigTreeViewerLaunchPayload = {
       ...(parseLaunchJsonParam(params.get("btv_payload")) ?? {}),
     };
+    if (hideDownloadNewick) {
+      payload.controls = {
+        ...payload.controls,
+        hideDownloadNewick: true,
+      };
+    }
     const newick = readLaunchTextParam(params, "btv_newick", "btv_newick_b64");
     const metadataText = readLaunchTextParam(params, "btv_metadata", "btv_metadata_b64");
     if (newick) {
@@ -3055,12 +3405,14 @@ export default function App() {
         markerColumn: params.get("btv_metadata_marker_column") ?? payload.metadata?.markerColumn,
       };
     }
-    const hasPayload = Boolean(payload.newick || payload.metadata?.text || payload.visual);
+    const effectiveHideDownloadNewick = hideDownloadNewick || payload.controls?.hideDownloadNewick === true;
+    const hasPayload = Boolean(payload.newick || payload.metadata?.text || payload.visual || payload.controls);
     return {
       payload: hasPayload ? payload : null,
       waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",
       newickUrl,
       sessionUrl,
+      hideDownloadNewick: effectiveHideDownloadNewick,
     };
   }, []);
 
@@ -3071,6 +3423,7 @@ export default function App() {
     didAutoloadRef.current = true;
     void (async () => {
       const launch = readLaunchPayloadFromUrl();
+      setHideDownloadNewick(launch.hideDownloadNewick);
       if (launch.sessionUrl) {
         try {
           setLoadState({
@@ -3203,29 +3556,41 @@ export default function App() {
     }
     const file = dataTransfer.files?.[0];
     if (file) {
-      const text = await file.text();
       if (/\.(csv|tsv)$/i.test(file.name)) {
+        const text = await file.text();
         importMetadataText(text, file.name);
         return;
       }
-      await parseText(text, file.name);
+      await loadFileAsTreeOrSession(file);
       return;
     }
     const plainText = dataTransfer.getData("text/plain");
     if (plainText.trim()) {
       setPastedTreeText(plainText);
-      await parseText(plainText, "dropped tree text");
+      try {
+        await parseText(plainText, "dropped tree text");
+      } catch {
+        // parseText has already populated the user-facing load error.
+      }
     }
-  }, [importMetadataText, parseText]);
+  }, [importMetadataText, loadFileAsTreeOrSession, parseText]);
 
   const downloadTaxonomy = useCallback(async (): Promise<void> => {
     setTaxonomyLoading(true);
     setTaxonomyError(null);
-    setTaxonomyStatus("Preparing taxonomy download...");
+    setTaxonomyStatus("Checking local taxonomy cache...");
     appendDiagnostic("taxonomy-download-started", {
       treeLoaded: tree !== null,
     });
     try {
+      const cached = await getCachedTaxonomyArchive();
+      if (cached) {
+        setTaxonomyCached(true);
+        setTaxonomyStatus("Taxonomy cache found.");
+        appendDiagnostic("taxonomy-download-skipped-cache-found", {});
+        return;
+      }
+      setTaxonomyStatus("Preparing taxonomy download...");
       setTaxonomyStatus("Downloading NCBI taxonomy...");
       const response = await fetch(TAXONOMY_ARCHIVE_URL);
       if (!response.ok) {
@@ -3313,6 +3678,184 @@ export default function App() {
     }
   }, [appendDiagnostic, runTaxonomyWorker, tree, treeSignature, useLowMemoryTaxonomyMapping]);
 
+  const retrievePhyloPicForVisibleTaxa = useCallback(async (): Promise<void> => {
+    if (!taxonomyEnabled || !viewTaxonomyMap) {
+      setPhyloPicError("Run taxonomy mapping and show taxonomy overlays before retrieving silhouettes.");
+      return;
+    }
+    const renderDebug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug?.() as {
+      width?: number;
+      height?: number;
+    } | null | undefined;
+    const viewportWidth = Number.isFinite(renderDebug?.width) ? Number(renderDebug?.width) : 0;
+    const viewportHeight = Number.isFinite(renderDebug?.height) ? Number(renderDebug?.height) : 0;
+    const hitboxIntersectsCanvas = (hitbox: Record<string, unknown>): boolean => {
+      if (viewportWidth <= 0 || viewportHeight <= 0) {
+        return true;
+      }
+      const width = typeof hitbox.width === "number" ? hitbox.width : 0;
+      const height = typeof hitbox.height === "number" ? hitbox.height : 0;
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+      let left = 0;
+      let right = 0;
+      let top = 0;
+      let bottom = 0;
+      if (hitbox.kind === "rotated") {
+        const x = typeof hitbox.x === "number" ? hitbox.x : 0;
+        const y = typeof hitbox.y === "number" ? hitbox.y : 0;
+        const radius = Math.hypot(width, height) * 0.5;
+        left = x - radius;
+        right = x + radius;
+        top = y - radius;
+        bottom = y + radius;
+      } else {
+        left = typeof hitbox.x === "number" ? hitbox.x : 0;
+        top = typeof hitbox.y === "number" ? hitbox.y : 0;
+        right = left + width;
+        bottom = top + height;
+      }
+      const margin = 4;
+      return right >= -margin
+        && left <= viewportWidth + margin
+        && bottom >= -margin
+        && top <= viewportHeight + margin;
+    };
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [];
+    const taxonomyLabels = hitboxes.filter((hitbox): hitbox is Record<string, unknown> & {
+      text: string;
+      taxonomyRank: TaxonomyRank;
+    } => (
+      hitbox.labelKind === "taxonomy"
+      && typeof hitbox.text === "string"
+      && hitbox.text.trim().length > 0
+      && typeof hitbox.taxonomyRank === "string"
+      && TAXONOMY_RANKS.includes(hitbox.taxonomyRank as TaxonomyRank)
+      && typeof hitbox.width === "number"
+      && typeof hitbox.height === "number"
+      && hitbox.width >= 18
+      && hitbox.height >= 8
+      && hitboxIntersectsCanvas(hitbox)
+    ));
+    const selectedRanks = TAXONOMY_RANKS.filter((rank) => phylopicRankSelection[rank]);
+    if (selectedRanks.length === 0) {
+      setPhyloPicError("Select at least one taxonomy rank before retrieving silhouettes.");
+      return;
+    }
+    const visibleRankSet = new Set(phylopicViewportRanks);
+    const targetRanks = selectedRanks.filter((rank) => (
+      phylopicViewportRanks.length === 0
+        ? viewTaxonomyMap.activeRanks.includes(rank)
+        : visibleRankSet.has(rank)
+    ));
+    if (targetRanks.length === 0) {
+      setPhyloPicError("None of the selected taxonomy ranks is currently visible in the taxonomy overlays.");
+      return;
+    }
+    const candidateByKey = new Map<string, PhyloPicCandidate>();
+    for (const hitbox of taxonomyLabels) {
+      const rank = hitbox.taxonomyRank;
+      if (!targetRanks.includes(rank)) {
+        continue;
+      }
+      const taxId = typeof hitbox.taxonomyTaxId === "number" && Number.isFinite(hitbox.taxonomyTaxId)
+        ? hitbox.taxonomyTaxId
+        : null;
+      const taxonLabel = hitbox.text.trim();
+      const key = `${rank}:${taxonLabel}:${taxId ?? ""}`;
+      if (!candidateByKey.has(key)) {
+        candidateByKey.set(key, { key, taxonLabel, rank, taxId });
+      }
+    }
+    if (candidateByKey.size === 0) {
+      setPhyloPicError("No visible taxonomy labels were found for the selected taxonomy ranks.");
+      return;
+    }
+    const existingKeys = new Set(phylopicSilhouettes.map((silhouette) => silhouette.key));
+    const candidates = Array.from(candidateByKey.values()).filter((candidate) => !existingKeys.has(candidate.key));
+    if (candidates.length === 0) {
+      setPhyloPicEnabled(true);
+      setPhyloPicStatus("All selected target taxa already have cached or retrieved silhouettes.");
+      setPhyloPicError(null);
+      return;
+    }
+    setPhyloPicRetrieving(true);
+    setPhyloPicEnabled(true);
+    setPhyloPicError(null);
+    phylopicCancelRequestedRef.current = false;
+    try {
+      const cached: PhyloPicSilhouette[] = [];
+      const uncached: PhyloPicCandidate[] = [];
+      for (const candidate of candidates) {
+        const cachedSilhouette = readCachedPhyloPicSilhouette(candidate);
+        if (cachedSilhouette) {
+          cached.push(cachedSilhouette);
+        } else {
+          uncached.push(candidate);
+        }
+      }
+      const toFetch = uncached.slice(0, PHYLOPIC_MAX_RETRIEVE_PER_CLICK);
+      setPhyloPicStatus(
+        uncached.length > toFetch.length
+          ? `Loaded ${cached.length.toLocaleString()} cached silhouettes. Retrieving ${toFetch.length.toLocaleString()} of ${uncached.length.toLocaleString()} uncached selected taxa in this batch.`
+          : `Retrieving ${toFetch.length.toLocaleString()} PhyloPic silhouette${toFetch.length === 1 ? "" : "s"}...`,
+      );
+      const retrieved: PhyloPicSilhouette[] = [];
+      let rateLimited = false;
+      let cancelled = false;
+      for (let index = 0; index < toFetch.length; index += 1) {
+        if (phylopicCancelRequestedRef.current) {
+          cancelled = true;
+          break;
+        }
+        const candidate = toFetch[index];
+        setPhyloPicStatus(`Retrieving PhyloPic silhouettes (${index + 1}/${toFetch.length}): ${candidate.taxonLabel}`);
+        if (index > 0 && toFetch.length > 25) {
+          await sleep(index % 25 === 0 ? 800 : 120);
+          if (phylopicCancelRequestedRef.current) {
+            cancelled = true;
+            break;
+          }
+        }
+        try {
+          const silhouette = await retrievePhyloPicSilhouette(candidate);
+          if (silhouette) {
+            retrieved.push(silhouette);
+          }
+        } catch (error) {
+          if (error instanceof PhyloPicRateLimitError) {
+            rateLimited = true;
+            setPhyloPicStatus(`PhyloPic rate limit reached. Pausing for ${Math.ceil(error.retryAfterMs / 1000).toLocaleString()} seconds before stopping this batch.`);
+            await sleep(error.retryAfterMs);
+            break;
+          }
+          // Missing taxa or individual API failures should not stop the rest of the visible set.
+        }
+      }
+      const additions = [...cached, ...retrieved];
+      if (additions.length > 0) {
+        setPhyloPicSilhouettes((current) => {
+          const byKey = new Map(current.map((silhouette) => [silhouette.key, silhouette]));
+          for (const silhouette of additions) {
+            byKey.set(silhouette.key, silhouette);
+          }
+          return Array.from(byKey.values());
+        });
+      }
+      setPhyloPicStatus(
+        cancelled
+          ? `Cancelled PhyloPic retrieval${additions.length > 0 ? ` after adding ${additions.length.toLocaleString()} silhouette${additions.length === 1 ? "" : "s"}.` : "."}`
+          : additions.length > 0
+          ? `Added ${additions.length.toLocaleString()} silhouette${additions.length === 1 ? "" : "s"}${rateLimited ? " before the PhyloPic rate limit paused this batch." : "."}`
+          : "No publication-compatible PhyloPic silhouettes were found for the visible target taxa.",
+      );
+    } finally {
+      setPhyloPicRetrieving(false);
+      phylopicCancelRequestedRef.current = false;
+    }
+  }, [phylopicRankSelection, phylopicSilhouettes, phylopicViewportRanks, taxonomyEnabled, viewTaxonomyMap]);
+
   const stepSearch = (direction: -1 | 1): void => {
     if (searchResults.length === 0) {
       return;
@@ -3351,6 +3894,7 @@ export default function App() {
     setTaxonomyColorRootRank(DEFAULT_TAXONOMY_COLOR_ROOT_RANK);
     setTaxonomyColorJitterRank(DEFAULT_TAXONOMY_COLOR_JITTER_RANK);
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
+    setTaxonomyOverlayStyle(DEFAULT_TAXONOMY_OVERLAY_STYLE);
     setUseAutomaticTaxonomyRankVisibility(true);
     setTaxonomyRankVisibility({});
     setTaxonomyCollapseRank(DEFAULT_TAXONOMY_COLLAPSE_RANK);
@@ -3358,6 +3902,7 @@ export default function App() {
     setShowIntermediateScaleTicks(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
     setTimeAxisScale(DEFAULT_TIME_AXIS_SCALE);
     setTimeAxisLogBase(DEFAULT_TIME_AXIS_LOG_BASE);
+    setTimeAxisLogBaseDraft(DEFAULT_TIME_AXIS_LOG_BASE);
     setExtendRectScaleToTick(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
     setShowScaleZeroTick(DEFAULT_SHOW_SCALE_ZERO_TICK);
     setScaleTickIntervalInput("");
@@ -3693,6 +4238,7 @@ export default function App() {
     taxonomyEnabled,
     taxonomyError,
     taxonomyLoading,
+    taxonomyOverlayStyle,
     useLowMemoryTaxonomyMapping,
     taxonomyRankVisibility,
     taxonomyStatus,
@@ -3822,7 +4368,7 @@ export default function App() {
               className="secondary"
               onClick={() => fileInputRef.current?.click()}
             >
-              Open Newick
+              Open File
             </button>
             <button
               type="button"
@@ -3834,7 +4380,7 @@ export default function App() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".nwk,.newick,.tree,.tre,.txt,.nex,.nexus"
+              accept=".nwk,.newick,.tree,.tre,.txt,.nex,.nexus,.btvsession,.json"
               hidden
               onChange={(event) => void onFileChange(event)}
             />
@@ -3869,19 +4415,133 @@ export default function App() {
               type="button"
               className="secondary"
               disabled={!tree}
-              onClick={requestSvgExport}
+              onClick={openExportOptions}
             >
-              Export View SVG
+              Export View
             </button>
-            <button
-              type="button"
-              className="secondary"
-              disabled={!tree}
-              onClick={downloadCurrentTreeNewick}
-            >
-              Download Newick
-            </button>
+            {!hideDownloadNewick ? (
+              <button
+                type="button"
+                className="secondary"
+                disabled={!tree}
+                onClick={downloadCurrentTreeNewick}
+              >
+                Download Newick
+              </button>
+            ) : null}
           </div>
+          {showExportOptions ? (
+            <div className="export-options" role="dialog" aria-label="Export view settings">
+              <label>
+                Format
+                <select
+                  value={exportViewFormat}
+                  onChange={(event) => {
+                    const nextFormat = event.target.value === "svg" ? "svg" : "png";
+                    setExportViewFormat(nextFormat);
+                    setExportViewFilenameInput((value) => {
+                      const base = value.trim().replace(/\.(svg|png)$/i, "") || `${sanitizeExportBaseLabel(loadedTreeLabel)}-${viewMode}-view`;
+                      return `${base}.${nextFormat}`;
+                    });
+                  }}
+                >
+                  <option value="png">PNG raster image</option>
+                  <option value="svg">SVG vector file</option>
+                </select>
+              </label>
+              <label>
+                File name
+                <input
+                  type="text"
+                  value={exportViewFilenameInput}
+                  onChange={(event) => setExportViewFilenameInput(event.target.value)}
+                />
+              </label>
+              {exportViewFormat === "png" ? (
+                <>
+                  <div className="export-options-grid">
+                    <label>
+                      Width px
+                      <input
+                        type="number"
+                        min={320}
+                        max={10000}
+                        step={100}
+                        value={exportViewWidthInput}
+                        onChange={(event) => setExportViewWidthInput(Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      Height px
+                      <input
+                        type="number"
+                        min={320}
+                        max={10000}
+                        step={100}
+                        value={exportViewHeightInput}
+                        onChange={(event) => setExportViewHeightInput(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <div className="export-options-grid">
+                    <label>
+                      Print width (in)
+                      <input
+                        type="number"
+                        min={0.5}
+                        max={100}
+                        step={0.5}
+                        value={exportViewPrintWidthInchesInput}
+                        onChange={(event) => setExportViewPrintWidthInchesInput(Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      Print height (in)
+                      <input
+                        type="number"
+                        min={0.5}
+                        max={100}
+                        step={0.5}
+                        value={exportViewPrintHeightInchesInput}
+                        onChange={(event) => setExportViewPrintHeightInchesInput(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <div className="export-options-grid export-options-grid-single">
+                    <label>
+                      DPI
+                      <input
+                        type="number"
+                        min={72}
+                        max={1200}
+                        step={25}
+                        value={exportViewDpiInput}
+                        onChange={(event) => setExportViewDpiInput(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <button type="button" className="secondary export-helper-button" onClick={applyPrintSizeToPngExport}>
+                    Set pixels from print size
+                  </button>
+                  <p className="export-options-help">
+                    PNG exports the current viewport at the pixel dimensions above. Match the pixel aspect ratio to the figure shape you want; square dimensions usually work best for circular views. Very large exports can take a few seconds.
+                  </p>
+                </>
+              ) : (
+                <p className="export-options-help">
+                  SVG is best for smaller or moderately detailed views. For hundreds of thousands of visible branches, PNG is usually the safer print format.
+                </p>
+              )}
+              <div className="button-row">
+                <button type="button" onClick={exportCurrentView}>
+                  Export
+                </button>
+                <button type="button" className="secondary" onClick={() => setShowExportOptions(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="button-row" data-tour="sessions">
             <button type="button" className="secondary" onClick={() => void saveSession()}>
               Save Session
@@ -3893,6 +4553,7 @@ export default function App() {
               Load Settings
             </button>
           </div>
+          {(loadState.loading || sessionLoading) ? <div className="loading-progress" aria-hidden="true"><span /></div> : null}
           {loadState.loading && loadState.message ? <p className="status-line">{loadState.message}</p> : null}
           {loadState.error ? <p className="status-error">{loadState.error}</p> : null}
           {sessionStatus ? <p className="status-line">{sessionStatus}</p> : null}
@@ -4096,6 +4757,16 @@ export default function App() {
                   extraControls={(
                     <>
                       <label>
+                        Overlay style
+                        <select
+                          value={taxonomyOverlayStyle}
+                          onChange={(event) => setTaxonomyOverlayStyle(event.target.value === "strands" ? "strands" : "ribbons")}
+                        >
+                          <option value="ribbons">Filled ribbons</option>
+                          <option value="strands">Center strands</option>
+                        </select>
+                      </label>
+                      <label>
                         Color jitter
                         <input
                           type="range"
@@ -4113,7 +4784,7 @@ export default function App() {
                           value={taxonomyColorPalette}
                           onChange={(event) => setTaxonomyColorPalette(event.target.value as TaxonomyColorPaletteKey)}
                         >
-                          {TAXONOMY_COLOR_PALETTE_KEYS.map((paletteKey) => (
+                          {taxonomyColorPaletteOptions.map((paletteKey) => (
                             <option key={paletteKey} value={paletteKey}>
                               {TAXONOMY_COLOR_PALETTES[paletteKey].label}
                             </option>
@@ -4365,12 +5036,21 @@ export default function App() {
                           min={MIN_TIME_AXIS_LOG_BASE}
                           max={MAX_TIME_AXIS_LOG_BASE}
                           step={0.1}
-                          value={timeAxisLogBase}
+                          value={timeAxisLogBaseDraft}
                           disabled={viewMode !== "spiral" && timeAxisScale !== "log"}
-                          onChange={(event) => setTimeAxisLogBase(Number(event.target.value))}
+                          onChange={(event) => setTimeAxisLogBaseDraft(Number(event.target.value))}
+                          onPointerUp={commitTimeAxisLogBaseDraft}
+                          onMouseUp={commitTimeAxisLogBaseDraft}
+                          onTouchEnd={commitTimeAxisLogBaseDraft}
+                          onBlur={commitTimeAxisLogBaseDraft}
+                          onKeyUp={(event) => {
+                            if (event.key === "Enter" || event.key === " " || event.key.startsWith("Arrow")) {
+                              commitTimeAxisLogBaseDraft();
+                            }
+                          }}
                         />
                       </label>
-                      <div className="figure-style-value">{timeAxisLogBase.toFixed(1)}</div>
+                      <div className="figure-style-value">{timeAxisLogBaseDraft.toFixed(1)}</div>
                       <label className="label-style-inline-toggle">
                         <input
                           type="checkbox"
@@ -4453,8 +5133,9 @@ export default function App() {
                 >
                   <label>
                     Stripe style
-                    <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as "bands" | "dashed")}>
+                    <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as TimeStripeStyle)}>
                       <option value="bands">Shaded bands</option>
+                      <option value="age-gradient">Old-to-young gradient</option>
                       <option value="dashed">Dashed guides</option>
                     </select>
                   </label>
@@ -4529,7 +5210,9 @@ export default function App() {
 
         <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)} tourId="taxonomy">
           <div className="search-controls">
-            {taxonomyCached ? (
+            {taxonomyCached === null ? (
+              <p className="status-line">Checking local taxonomy cache...</p>
+            ) : taxonomyCached ? (
               <>
                 <p className="status-line">Taxonomy cache found.</p>
                 <button
@@ -4612,6 +5295,143 @@ export default function App() {
                     * This taxon is a lower rank than {taxonomyRankLabel(taxonomyCollapseActiveRank)} because this lineage lacked a {taxonomyRankLabel(taxonomyCollapseActiveRank)} in the NCBI taxonomy.
                   </p>
                 ) : null}
+                <div className="taxonomy-silhouette-controls">
+                  <button
+                    type="button"
+                    className="section-toggle taxonomy-subsection-toggle"
+                    aria-expanded={phylopicOpen}
+                    onClick={() => setPhyloPicOpen(!phylopicOpen)}
+                  >
+                    <span className={`section-toggle-mark${phylopicOpen ? " open" : ""}`}>▸</span>
+                    <span>Silhouettes</span>
+                  </button>
+                  {phylopicOpen ? (
+                    <div className="taxonomy-silhouette-body">
+                      <div className="taxonomy-silhouette-ranks" aria-label="Taxonomy ranks for silhouette retrieval">
+                        {phylopicSelectableRanks.map((rank) => {
+                          const rankVisible = !phylopicHasViewportRankInfo || phylopicViewportRankSet.has(rank);
+                          return (
+                            <label key={rank} className={`taxonomy-rank-checkbox${rankVisible ? "" : " taxonomy-rank-checkbox-disabled"}`} title={rankVisible ? undefined : "This rank is not visible in the current viewport."}>
+                              <input
+                                type="checkbox"
+                                disabled={!rankVisible}
+                                checked={phylopicRankSelection[rank] ?? false}
+                                onChange={(event) => {
+                                  setPhyloPicRankSelection((current) => ({
+                                    ...current,
+                                    [rank]: event.target.checked,
+                                  }));
+                                }}
+                              />
+                              <span>{taxonomyRankLabel(rank)}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <div className="button-row">
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={phylopicRetrieving || !taxonomyEnabled || !phylopicHasSelectedVisibleRank}
+                          title={disabledControlTitle(!taxonomyEnabled ? "Show taxonomy overlays first." : phylopicRetrieving ? "PhyloPic retrieval is already running." : !phylopicHasSelectedVisibleRank ? "Select at least one visible rank." : undefined) ?? "Retrieve publication-compatible PhyloPic silhouettes for the selected visible taxonomy ranks, cache them locally, and generate an attribution caption."}
+                          onClick={() => void retrievePhyloPicForVisibleTaxa()}
+                        >
+                          Retrieve Silhouettes
+                        </button>
+                        {phylopicRetrieving ? (
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => {
+                              phylopicCancelRequestedRef.current = true;
+                              setPhyloPicStatus("Cancelling PhyloPic retrieval after the current request finishes...");
+                            }}
+                          >
+                            Cancel Retrieval
+                          </button>
+                        ) : null}
+                        {phylopicSilhouettes.length > 0 ? (
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => {
+                              setPhyloPicSilhouettes([]);
+                              setPhyloPicEnabled(false);
+                            }}
+                          >
+                            Clear Silhouettes
+                          </button>
+                        ) : null}
+                      </div>
+                      {phylopicSilhouettes.length > 0 ? (
+                        <div className="taxonomy-silhouette-settings">
+                          <label>
+                            Placement
+                            <select value={phylopicPlacement} onChange={(event) => setPhyloPicPlacement(event.target.value as "after-label" | "outside-ribbon")}>
+                              <option value="after-label">After label along ribbon</option>
+                              <option value="outside-ribbon">Outside rectangular ribbon</option>
+                            </select>
+                          </label>
+                          <label>
+                            Silhouette size
+                            <input
+                              type="range"
+                              min={0.35}
+                              max={4}
+                              step={0.05}
+                              value={phylopicSizeScale}
+                              onChange={(event) => setPhyloPicSizeScale(Number(event.target.value))}
+                            />
+                          </label>
+                          <div className="figure-style-value">x{phylopicSizeScale.toFixed(2)} ribbon width</div>
+                          <label>
+                            {viewMode === "rectangular" ? "Along-label offset" : "Angular offset"}
+                            <input
+                              type="range"
+                              min={-160}
+                              max={160}
+                              step={1}
+                              value={phylopicOffsetXPx}
+                              onChange={(event) => setPhyloPicOffsetXPx(Number(event.target.value))}
+                            />
+                          </label>
+                          <div className="figure-style-value">{phylopicOffsetXPx.toFixed(0)}px</div>
+                          <label>
+                            {viewMode === "rectangular" ? "Across-ribbon offset" : "Radial offset"}
+                            <input
+                              type="range"
+                              min={-160}
+                              max={160}
+                              step={1}
+                              value={phylopicOffsetYPx}
+                              onChange={(event) => setPhyloPicOffsetYPx(Number(event.target.value))}
+                            />
+                          </label>
+                          <div className="figure-style-value">{phylopicOffsetYPx.toFixed(0)}px</div>
+                          <p className="status-line">
+                            Retrieves at most {PHYLOPIC_MAX_RETRIEVE_PER_CLICK} selected visible labels per click with light throttling for large batches, excludes NonCommercial licenses, and caches successful PNG silhouettes in this browser for display and export.
+                          </p>
+                        </div>
+                      ) : null}
+                      {phylopicStatus ? <p className="status-line">{phylopicStatus}</p> : null}
+                      {phylopicError ? <p className="status-error">{phylopicError}</p> : null}
+                      {phylopicCaption ? (
+                        <>
+                          <button
+                            type="button"
+                            className="text-link-button"
+                            onClick={() => setPhyloPicCaptionVisible((visible) => !visible)}
+                          >
+                            {phylopicCaptionVisible ? "Hide PhyloPic attribution caption" : "Show PhyloPic attribution caption"}
+                          </button>
+                          {phylopicCaptionVisible ? (
+                            <textarea className="taxonomy-caption-textarea" readOnly value={phylopicCaption} />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </>
             ) : null}
           </div>
@@ -5166,6 +5986,7 @@ export default function App() {
           showTipLabels={showTipLabels}
           showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}
+          taxonomyOverlayStyle={taxonomyOverlayStyle}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
           taxonomyColorJitter={taxonomyColorJitter}
           taxonomyColorPalette={taxonomyColorPalette}
@@ -5177,6 +5998,12 @@ export default function App() {
           taxonomyCollapseRank={taxonomyCollapseRank}
           taxonomyMap={viewTaxonomyMap}
           taxonomyColorSourceMap={taxonomyMap}
+          phylopicEnabled={phylopicEnabled}
+          phylopicSilhouettes={phylopicSilhouettes}
+          phylopicPlacement={phylopicPlacement}
+          phylopicSizeScale={phylopicSizeScale}
+          phylopicOffsetXPx={phylopicOffsetXPx}
+          phylopicOffsetYPx={phylopicOffsetYPx}
           sharedSubtreeSourceTree={tree}
           sharedSubtreeSourceTaxonomyMap={taxonomyMap}
           sharedSubtreeSourceNodeByViewNode={collapsedTaxonomyView?.sourceNodeByNode ?? null}
@@ -5209,6 +6036,10 @@ export default function App() {
           fitRequest={fitRequest}
           exportSvgRequest={exportSvgRequest}
           exportSvgFilename={exportSvgFilename}
+          exportPngRequest={exportPngRequest}
+          exportPngFilename={exportPngFilename}
+          exportPngWidth={exportPngWidth}
+          exportPngHeight={exportPngHeight}
           sessionStateRequest={sessionStateRequest}
           sessionRestoreRequest={sessionRestoreRequest}
           sessionRestoreState={sessionRestoreState}
@@ -5219,6 +6050,31 @@ export default function App() {
           onViewModeChange={setViewMode}
           onSessionStateSnapshot={handleSessionStateSnapshot}
         />
+        {phylopicEnabled && phylopicSilhouettes.length > 0 && !phylopicReminderDismissed ? (
+          <div className="phylopic-attribution-reminder">
+            <button
+              type="button"
+              className="phylopic-attribution-close"
+              aria-label="Dismiss PhyloPic attribution reminder"
+              onClick={() => setPhyloPicReminderDismissed(true)}
+            >
+              ×
+            </button>
+            <strong>PhyloPic attribution required</strong>
+            <span>Include the generated attribution caption if you use this figure.</span>
+            <button
+              type="button"
+              className="text-link-button"
+              onClick={() => {
+                setTaxonomyOpen(true);
+                setPhyloPicOpen(true);
+                setPhyloPicCaptionVisible(true);
+              }}
+            >
+              Open caption
+            </button>
+          </div>
+        ) : null}
       </main>
     </div>
   );

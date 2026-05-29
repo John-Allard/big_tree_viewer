@@ -50,6 +50,8 @@ textarea:focus {
 }
 
 input[type="search"],
+input[type="number"],
+input[type="text"],
 select {
   width: 100%;
   border: 1px solid #cbd5e1;
@@ -61,6 +63,8 @@ select {
 }
 
 input[type="search"]:focus,
+input[type="number"]:focus,
+input[type="text"]:focus,
 select:focus {
   outline: 2px solid rgba(37, 99, 235, 0.16);
   border-color: #2563eb;
@@ -336,6 +340,116 @@ button.secondary {
 .taxonomy-storage-note code {
   color: #0f172a;
   font-size: 0.74rem;
+}
+
+.taxonomy-silhouette-controls {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+  margin-left: 0.35rem;
+  padding: 0.75rem 0 0 0.75rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  border-left: 2px solid rgba(37, 99, 235, 0.18);
+}
+
+.taxonomy-subsection-toggle {
+  width: max-content;
+  padding: 0.12rem 0.35rem;
+  border-radius: 7px;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.taxonomy-subsection-toggle:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.08);
+  color: #0f172a;
+}
+
+.taxonomy-silhouette-body {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.taxonomy-silhouette-ranks {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.45rem;
+}
+
+.taxonomy-silhouette-settings {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.taxonomy-silhouette-settings label {
+  display: grid;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.86rem;
+}
+
+.taxonomy-caption-textarea {
+  width: 100%;
+  min-height: 8.5rem;
+  resize: vertical;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.94);
+  color: #0f172a;
+  font: 0.74rem/1.45 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.phylopic-attribution-reminder {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 25;
+  display: grid;
+  gap: 0.25rem;
+  width: min(360px, calc(100% - 2rem));
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(37, 99, 235, 0.26);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 52px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(16px);
+  color: #334155;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.phylopic-attribution-reminder strong {
+  color: #0f172a;
+  font-size: 0.86rem;
+}
+
+.phylopic-attribution-close {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.5rem;
+  width: 1.55rem;
+  height: 1.55rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.phylopic-attribution-close:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.18);
+  color: #0f172a;
 }
 
 .about-page {
@@ -754,6 +868,29 @@ button.secondary {
   line-height: 1.45;
 }
 
+.share-option-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+  color: #0f172a;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.share-option-toggle input {
+  flex: 0 0 auto;
+  margin-top: 0.12rem;
+}
+
+.share-note {
+  margin: 0.35rem 0 0;
+  color: #64748b;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .share-actions {
   display: flex;
   flex-wrap: wrap;
@@ -920,6 +1057,72 @@ button.secondary {
 .section-body > .button-row + .segmented,
 .section-body > .button-row + .button-row {
   margin-top: 0.2rem;
+}
+
+.export-options {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.55rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.export-options label {
+  display: grid;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.export-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.export-options-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.export-helper-button {
+  width: 100%;
+}
+
+.export-options-help {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.loading-progress {
+  position: relative;
+  height: 0.42rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.loading-progress span {
+  position: absolute;
+  inset-block: 0;
+  left: -38%;
+  width: 38%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.18), rgba(37, 99, 235, 0.82), rgba(20, 184, 166, 0.72));
+  animation: loading-progress-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes loading-progress-slide {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(365%);
+  }
 }
 
 .view-group-divider {
@@ -1166,16 +1369,25 @@ button.secondary {
   gap: 0.55rem 0.8rem;
 }
 
-.taxonomy-rank-checkbox {
-  display: flex;
+.taxonomy-rank-checkbox,
+.search-controls label.taxonomy-rank-checkbox {
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
   color: #334155;
   font-size: 0.88rem;
+  min-width: 0;
 }
 
-.taxonomy-rank-checkbox input[type="checkbox"] {
+.taxonomy-rank-checkbox-disabled {
+  color: #94a3b8;
+}
+
+.taxonomy-rank-checkbox input[type="checkbox"],
+.search-controls label.taxonomy-rank-checkbox > input[type="checkbox"] {
+  flex: 0 0 auto;
   width: auto;
+  margin: 0;
 }
 
 .visual-options-actions {

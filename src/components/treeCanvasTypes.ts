@@ -1,10 +1,14 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { FigureStyleSettings } from "../lib/figureStyles";
 import type { MetadataMarkerStyle } from "../lib/metadataColors";
+import type { PhyloPicSilhouette } from "../lib/phylopic";
 import type { TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
 import type { TimeAxisScale } from "../lib/timeAxis";
 import type { TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
+
+export type TimeStripeStyle = "bands" | "age-gradient" | "dashed";
+export type TaxonomyOverlayStyle = "ribbons" | "strands";
 
 export interface TreeCanvasProps {
   tree: TreeModel | null;
@@ -14,7 +18,7 @@ export interface TreeCanvasProps {
   circularRotation: number;
   spiralTurns: number;
   showTimeStripes: boolean;
-  timeStripeStyle: "bands" | "dashed";
+  timeStripeStyle: TimeStripeStyle;
   timeStripeLineWeight: number;
   showScaleBars: boolean;
   timeAxisScale: TimeAxisScale;
@@ -29,6 +33,7 @@ export interface TreeCanvasProps {
   showTipLabels: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
+  taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyBranchColoringEnabled: boolean;
   taxonomyColorJitter: number;
   taxonomyColorPalette: TaxonomyColorPaletteKey;
@@ -40,6 +45,12 @@ export interface TreeCanvasProps {
   taxonomyCollapseRank: TaxonomyCollapseRank;
   taxonomyMap: TaxonomyMapPayload | null;
   taxonomyColorSourceMap?: TaxonomyMapPayload | null;
+  phylopicEnabled: boolean;
+  phylopicSilhouettes: PhyloPicSilhouette[];
+  phylopicPlacement: "after-label" | "outside-ribbon";
+  phylopicSizeScale: number;
+  phylopicOffsetXPx: number;
+  phylopicOffsetYPx: number;
   sharedSubtreeSourceTree?: TreeModel | null;
   sharedSubtreeSourceTaxonomyMap?: TaxonomyMapPayload | null;
   sharedSubtreeSourceNodeByViewNode?: Int32Array | null;
@@ -72,6 +83,10 @@ export interface TreeCanvasProps {
   fitRequest: number;
   exportSvgRequest: number;
   exportSvgFilename: string;
+  exportPngRequest: number;
+  exportPngFilename: string;
+  exportPngWidth: number;
+  exportPngHeight: number;
   sessionStateRequest: number;
   sessionRestoreRequest: number;
   sessionRestoreState: TreeCanvasSessionState | null;
@@ -141,7 +156,10 @@ export interface ScreenLabel {
   rank?: string;
   theta?: number;
   fontSize?: number;
+  bandSizePx?: number;
   rotation?: number;
+  phylopicNormalX?: number;
+  phylopicNormalY?: number;
   align?: CanvasTextAlign;
   color?: string;
   searchHighlightColor?: string;
