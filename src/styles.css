@@ -395,9 +395,101 @@ button.secondary {
   font-size: 0.86rem;
 }
 
+.taxonomy-silhouette-source {
+  margin: 0.15rem 0 0.7rem;
+  color: #475569;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.taxonomy-silhouette-source a {
+  color: #1d4ed8;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.taxonomy-silhouette-source a:hover {
+  text-decoration: underline;
+}
+
+.taxonomy-silhouette-attribution-box {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 12px;
+  background: rgba(239, 246, 255, 0.56);
+}
+
+.taxonomy-silhouette-attribution-box:not([open]) {
+  gap: 0;
+}
+
+.taxonomy-silhouette-attribution-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.taxonomy-silhouette-attribution-header::-webkit-details-marker {
+  display: none;
+}
+
+.taxonomy-silhouette-attribution-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.taxonomy-silhouette-attribution-chevron {
+  display: inline-block;
+  color: #2563eb;
+  font-size: 0.78rem;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+.taxonomy-silhouette-attribution-box[open] .taxonomy-silhouette-attribution-chevron {
+  transform: rotate(90deg);
+}
+
+.taxonomy-silhouette-attribution-header strong {
+  color: #0f172a;
+  font-size: 0.86rem;
+}
+
+.taxonomy-silhouette-attribution-cue::after {
+  content: "Show";
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.taxonomy-silhouette-attribution-box[open] .taxonomy-silhouette-attribution-cue::after {
+  content: "Hide";
+}
+
+.taxonomy-silhouette-attribution-section {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.taxonomy-silhouette-attribution-section strong,
+.taxonomy-silhouette-attribution-section summary {
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
 .taxonomy-caption-textarea {
   width: 100%;
-  min-height: 8.5rem;
+  min-height: 4.5rem;
   resize: vertical;
   padding: 0.7rem 0.75rem;
   border: 1px solid rgba(15, 23, 42, 0.14);
@@ -450,6 +542,28 @@ button.secondary {
 .phylopic-attribution-close:hover:not(:disabled) {
   background: rgba(148, 163, 184, 0.18);
   color: #0f172a;
+}
+
+.phylopic-attribution-caption {
+  width: 100%;
+  min-height: 7.5rem;
+  margin-top: 0.4rem;
+  padding: 0.65rem 0.7rem;
+  resize: vertical;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.96);
+  color: #0f172a;
+  font: 0.72rem/1.42 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.phylopic-attribution-caption-note {
+  margin: 0.4rem 0 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #475569;
 }
 
 .about-page {
@@ -732,6 +846,52 @@ button.secondary {
 
 .api-page .about-page-frame {
   width: min(980px, 100%);
+}
+
+.faq-page .about-page-frame {
+  width: min(1060px, 100%);
+}
+
+.faq-list {
+  display: grid;
+  gap: 1.8rem;
+  padding-top: 1.6rem;
+}
+
+.faq-entry {
+  display: grid;
+  gap: 1rem;
+}
+
+.faq-entry h2 {
+  max-width: 34ch;
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-size: clamp(1.65rem, 2.5vw, 2.35rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
+.faq-figure {
+  width: min(780px, 100%);
+}
+
+.faq-figure .about-media-frame {
+  aspect-ratio: 16 / 10;
+  padding: 0.4rem;
+}
+
+.faq-answer {
+  max-width: 90ch;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.faq-answer p {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: #334155;
 }
 
 .api-doc-section {
@@ -1519,9 +1679,11 @@ button.secondary {
 }
 
 .status-line,
+.status-warning,
 .status-error,
 .empty-note {
   margin: 0.8rem 0 0;
+  font-size: 0.84rem;
   line-height: 1.4;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1530,6 +1692,14 @@ button.secondary {
 
 .status-line {
   color: #334155;
+}
+
+.status-warning {
+  padding: 0.55rem 0.6rem;
+  border: 1px solid rgba(217, 119, 6, 0.24);
+  border-radius: 10px;
+  background: rgba(255, 251, 235, 0.86);
+  color: #92400e;
 }
 
 .view-zoom-hint {

@@ -58,12 +58,20 @@ const figureSections = [
   },
 ] as const;
 
-type AboutFigure = typeof figureSections[number];
+type AboutFigure = {
+  title: string;
+  alt: string;
+  text: string;
+  image?: string;
+  videoWebm?: string;
+  videoMp4?: string;
+  poster?: string;
+};
 
 function AboutMedia({ item, eager = false }: { item: AboutFigure; eager?: boolean }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [shouldLoadVideo, setShouldLoadVideo] = useState(eager);
-  const isVideo = "videoWebm" in item;
+  const isVideo = Boolean(item.videoWebm && item.videoMp4 && item.poster);
 
   useEffect(() => {
     if (!isVideo || shouldLoadVideo || typeof IntersectionObserver === "undefined") {
@@ -100,7 +108,7 @@ function AboutMedia({ item, eager = false }: { item: AboutFigure; eager?: boolea
             <source src={item.videoMp4} type="video/mp4" />
           </video>
         ) : (
-          <img src={item.poster} alt={item.alt} loading="lazy" />
+          <img src={item.poster ?? ""} alt={item.alt} loading="lazy" />
         )}
       </div>
     );
@@ -108,7 +116,7 @@ function AboutMedia({ item, eager = false }: { item: AboutFigure; eager?: boolea
 
   return (
     <div ref={rootRef} className="about-media-frame">
-      <img src={item.image} alt={item.alt} loading={eager ? "eager" : "lazy"} />
+      <img src={item.image ?? ""} alt={item.alt} loading={eager ? "eager" : "lazy"} />
     </div>
   );
 }
@@ -155,6 +163,7 @@ export default function AboutPage() {
         <nav className="site-doc-nav" aria-label="Documentation">
           <a href={`${import.meta.env.BASE_URL}#`}>Viewer</a>
           <a href={`${import.meta.env.BASE_URL}#about`} aria-current="page">About</a>
+          <a href={`${import.meta.env.BASE_URL}#faq`}>FAQ</a>
           <a href={`${import.meta.env.BASE_URL}#share`}>Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`}>API</a>
         </nav>
@@ -175,10 +184,6 @@ export default function AboutPage() {
             <span aria-hidden="true">|</span>
             <a className="about-top-link" href={`${import.meta.env.BASE_URL}#tutorial`}>
               Start tutorial
-            </a>
-            <span aria-hidden="true">|</span>
-            <a className="about-top-link" href={`${import.meta.env.BASE_URL}#share`}>
-              Share sessions
             </a>
           </div>
         </header>

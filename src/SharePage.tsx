@@ -76,6 +76,7 @@ export default function SharePage() {
         <nav className="site-doc-nav" aria-label="Documentation">
           <a href={`${import.meta.env.BASE_URL}#`}>Viewer</a>
           <a href={`${import.meta.env.BASE_URL}#about`}>About</a>
+          <a href={`${import.meta.env.BASE_URL}#faq`}>FAQ</a>
           <a href={`${import.meta.env.BASE_URL}#share`} aria-current="page">Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`}>API</a>
         </nav>
