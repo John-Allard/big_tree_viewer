@@ -93,6 +93,13 @@ const WHEEL_ZOOM_SENSITIVITY = 0.0015;
 const TRACKPAD_PIXEL_ZOOM_MULTIPLIER = 5;
 const TRACKPAD_PIXEL_DELTA_THRESHOLD = 32;
 const MAC_GESTURE_ZOOM_EXPONENT = 1.7;
+const HUGE_TREE_TIP_LIMIT = 500_000;
+const HUGE_TREE_CACHED_CIRCULAR_PATH_MAX_ZOOM_MULTIPLIER = 1.6;
+const HUGE_TREE_MAX_CIRCULAR_ZOOM_MULTIPLIER = 32_768;
+const HUGE_TREE_MAX_TIP_SPACING_PX = 64;
+const HUGE_TREE_ZOOMED_SAMPLE_LEAF_LIMIT = 1_500;
+const HUGE_TREE_ZOOMED_SEGMENT_BUDGET = 12_000;
+const MAX_TIME_STRIPE_BANDS_PER_DRAW = 4_096;
 
 type PhyloPicHitbox = {
   silhouette: PhyloPicSilhouette;
@@ -125,6 +132,16 @@ function circularFitMinTreeRadiusPx(width: number, height: number): number {
 
 function circularZoomOutScaleMultiplier(width: number, height: number): number {
   return compactCircularOverlayScale(width, height) < 1 ? 0.32 : 0.55;
+}
+
+function maxCircularZoomScale(width: number, height: number, tree: TreeModel, rotation: number): number {
+  const fit = fitCircularCamera(width, height, tree, rotation);
+  if (tree.leafCount <= HUGE_TREE_TIP_LIMIT) {
+    return fit.scale * 1_000_000;
+  }
+  const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive, 1e-9);
+  const tipSpacingScale = (HUGE_TREE_MAX_TIP_SPACING_PX * tree.leafCount) / (Math.PI * 2 * maxRadius);
+  return Math.max(fit.scale * 128, Math.min(fit.scale * HUGE_TREE_MAX_CIRCULAR_ZOOM_MULTIPLIER, tipSpacingScale));
 }
 
 function isHorizontalWheelPanEvent(event: WheelEvent): boolean {
@@ -988,7 +1005,6 @@ const SPIRAL_TIME_AXIS_LOG_BASE_MULTIPLIER = 100;
 const SPIRAL_TAXONOMY_RANK_COUNT_ZOOM_THRESHOLDS = [1, 1.45, 2.25, 3.5, 5.25] as const;
 const SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX = 2.9;
 const SPIRAL_TAXONOMY_COMPRESSION_COMPLETE_SPACING_PX = 12;
-const HUGE_TREE_SPATIAL_INDEX_TIP_LIMIT = 500_000;
 
 const MANUAL_BRANCH_SWATCHES = [
   { label: "Slate", color: "#334155" },
@@ -3568,7 +3584,7 @@ export default function TreeCanvas({
     if (!tree) {
       return false;
     }
-    if (tree.leafCount > HUGE_TREE_SPATIAL_INDEX_TIP_LIMIT) {
+    if (tree.leafCount > HUGE_TREE_TIP_LIMIT) {
       return false;
     }
     if (camera.kind === "rect") {
@@ -4631,7 +4647,8 @@ export default function TreeCanvas({
       const world = screenToWorldCircular(camera, localX, localY);
       const fit = fitCircularCamera(size.width, size.height, tree, camera.rotation);
       const minScale = fit.scale * circularZoomOutScaleMultiplier(size.width, size.height);
-      camera.scale = Math.max(minScale, camera.scale * zoom);
+      const maxScale = maxCircularZoomScale(size.width, size.height, tree, camera.rotation);
+      camera.scale = Math.max(minScale, Math.min(maxScale, camera.scale * zoom));
       const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
       camera.translateX = localX - (rotated.x * camera.scale);
       camera.translateY = localY - (rotated.y * camera.scale);
@@ -5756,13 +5773,16 @@ export default function TreeCanvas({
           }
           ctx.restore();
         } else {
-          const drawBands = (step: number, alpha: number, gradient = false) => {
-            if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
-              return;
-            }
-            const bandCount = Math.max(1, Math.ceil(rectStripeExtent / step));
-            for (let start = 0, index = 0; start < rectStripeExtent; start += step, index += 1) {
-              const next = Math.min(rectStripeExtent, start + step);
+            const drawBands = (step: number, alpha: number, gradient = false) => {
+              if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
+                return;
+              }
+              const bandCount = Math.max(1, Math.ceil(rectStripeExtent / step));
+              if (bandCount > MAX_TIME_STRIPE_BANDS_PER_DRAW) {
+                return;
+              }
+              for (let start = 0, index = 0; start < rectStripeExtent; start += step, index += 1) {
+                const next = Math.min(rectStripeExtent, start + step);
               const left = worldToScreenRect(camera, tree.isUltrametric ? rectAxisDepthForBoundary(next) : rectAxisDepthForBoundary(start), 0).x;
               const right = worldToScreenRect(camera, tree.isUltrametric ? rectAxisDepthForBoundary(start) : rectAxisDepthForBoundary(next), 0).x;
               ctx.fillStyle = gradient
@@ -8154,17 +8174,25 @@ export default function TreeCanvas({
           cachedCircularTaxonomyBitmap = null;
         }
       }
-      const useCachedCircularBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0;
+      const useHugeTreeZoomedCircularRendering = tree.leafCount > HUGE_TREE_TIP_LIMIT
+        && fitLikeCircular?.kind === "circular"
+        && camera.scale > (fitLikeCircular.scale * HUGE_TREE_CACHED_CIRCULAR_PATH_MAX_ZOOM_MULTIPLIER);
+      const useCachedCircularBasePath = !exportCapture
+        && !useColoredBranchRendering
+        && collapsedNodes.size === 0
+        && !useHugeTreeZoomedCircularRendering;
       const cachedCircularBasePath = useCachedCircularBasePath
         ? getCircularBasePath(order, layout)
         : null;
       timing.circularTaxonomyCacheMs += performance.now() - circularTaxonomyCacheStartTime;
-      const circularBranchRenderMode = cachedCircularTaxonomyBitmap
-        ? "taxonomy-cached-bitmap"
-        : useCachedCircularTaxonomyPaths
-          ? "taxonomy-cached-paths"
-        : cachedCircularBasePath
-          ? "cached-path"
+        const circularBranchRenderMode = cachedCircularTaxonomyBitmap
+          ? "taxonomy-cached-bitmap"
+          : useCachedCircularTaxonomyPaths
+            ? "taxonomy-cached-paths"
+          : cachedCircularBasePath
+            ? "cached-path"
+          : useHugeTreeZoomedCircularRendering && !useColoredBranchRendering && collapsedNodes.size === 0
+            ? "huge-tree-sampled"
           : useColoredBranchRendering
             ? taxonomyBranchRenderingVisible
               ? collapsedNodes.size === 0
@@ -8215,13 +8243,16 @@ export default function TreeCanvas({
           }
           ctx.restore();
         } else {
-          const drawBands = (step: number, alpha: number, gradient = false) => {
-            if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
-              return;
-            }
-            const bandCount = Math.max(1, Math.ceil(stripeExtent / step));
-            for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
-              const next = Math.min(stripeExtent, start + step);
+            const drawBands = (step: number, alpha: number, gradient = false) => {
+              if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
+                return;
+              }
+              const bandCount = Math.max(1, Math.ceil(stripeExtent / step));
+              if (bandCount > MAX_TIME_STRIPE_BANDS_PER_DRAW) {
+                return;
+              }
+              for (let start = 0, index = 0; start < stripeExtent; start += step, index += 1) {
+                const next = Math.min(stripeExtent, start + step);
               const outer = (tree.isUltrametric ? circularRadiusForBoundary(start) : circularRadiusForBoundary(next)) * camera.scale;
               const inner = (tree.isUltrametric ? circularRadiusForBoundary(next) : circularRadiusForBoundary(start)) * camera.scale;
               ctx.beginPath();
@@ -8261,7 +8292,7 @@ export default function TreeCanvas({
       const circularConnectorKeys = useDenseCircularLOD ? new Set<string>() : null;
       const circularStemKeys = useDenseCircularLOD ? new Set<string>() : null;
       let visibleCircularSegments: ReturnType<typeof cache.circularIndices[typeof order]["query"]> | null = null;
-      if (needsVisibleCircularSegments && collapsedNodes.size === 0) {
+      if (needsVisibleCircularSegments && collapsedNodes.size === 0 && !useHugeTreeZoomedCircularRendering) {
         const cornerWorldPoints = [
           screenToWorldCircular(camera, 0, 0),
           screenToWorldCircular(camera, renderSize.width, 0),
@@ -8319,26 +8350,126 @@ export default function TreeCanvas({
         });
         ctx.globalAlpha = 1;
         ctx.restore();
-      } else if (cachedCircularBasePath) {
-        ctx.save();
-        ctx.translate(camera.translateX, camera.translateY);
-        ctx.scale(camera.scale, camera.scale);
-        ctx.rotate(rotationAngle);
+        } else if (cachedCircularBasePath) {
+          ctx.save();
+          ctx.translate(camera.translateX, camera.translateY);
+          ctx.scale(camera.scale, camera.scale);
+          ctx.rotate(rotationAngle);
         ctx.strokeStyle = BRANCH_COLOR;
         ctx.lineWidth = branchStrokeScale / Math.max(camera.scale, 1e-6);
-        ctx.lineCap = "butt";
-        ctx.stroke(cachedCircularBasePath.connectors);
-        ctx.stroke(cachedCircularBasePath.stems);
-        ctx.restore();
-      } else if (!useColoredBranchRendering) {
-        ctx.strokeStyle = BRANCH_COLOR;
-        ctx.lineWidth = branchStrokeScale;
-        const connectorPath = new Path2D();
-        const stemPath = new Path2D();
-        if (visibleCircularSegments) {
-          const drawnConnectorNodes = new Set<number>();
-          for (let index = 0; index < visibleCircularSegments.length; index += 1) {
-            const segment = visibleCircularSegments[index];
+          ctx.lineCap = "butt";
+          ctx.stroke(cachedCircularBasePath.connectors);
+          ctx.stroke(cachedCircularBasePath.stems);
+          ctx.restore();
+        } else if (!useColoredBranchRendering) {
+          ctx.strokeStyle = BRANCH_COLOR;
+          ctx.lineWidth = branchStrokeScale;
+          const connectorPath = new Path2D();
+          const stemPath = new Path2D();
+          if (useHugeTreeZoomedCircularRendering && collapsedNodes.size === 0) {
+            const tau = Math.PI * 2;
+            const screenCenterWorld = screenToWorldCircular(camera, renderSize.width * 0.5, renderSize.height * 0.5);
+            const screenCenterTheta = wrapPositive(Math.atan2(screenCenterWorld.y, screenCenterWorld.x) - rotationAngle);
+            const viewportContainsOrigin = centerPoint.x >= 0
+              && centerPoint.x <= renderSize.width
+              && centerPoint.y >= 0
+              && centerPoint.y <= renderSize.height;
+            let angularHalfSpan = Math.PI;
+            if (!viewportContainsOrigin) {
+              const cornerAngles = [
+                screenToWorldCircular(camera, 0, 0),
+                screenToWorldCircular(camera, renderSize.width, 0),
+                screenToWorldCircular(camera, 0, renderSize.height),
+                screenToWorldCircular(camera, renderSize.width, renderSize.height),
+              ].map((point) => {
+                let delta = wrapPositive(Math.atan2(point.y, point.x) - rotationAngle) - screenCenterTheta;
+                if (delta > Math.PI) {
+                  delta -= tau;
+                } else if (delta < -Math.PI) {
+                  delta += tau;
+                }
+                return delta;
+              });
+              angularHalfSpan = Math.min(
+                Math.PI,
+                Math.max(...cornerAngles.map((angle) => Math.abs(angle))) + (96 / Math.max(1, camera.scale * maxRadius)),
+              );
+            }
+            const ordered = orderedLeaves;
+            const drawLeafPath = (leafIndex: number, drawnStems: Set<number>, drawnConnectors: Set<number>, budget: { count: number }): void => {
+              let node = ordered[Math.max(0, Math.min(ordered.length - 1, leafIndex))];
+              while (node >= 0 && budget.count < HUGE_TREE_ZOOMED_SEGMENT_BUDGET) {
+                const parent = tree.buffers.parent[node];
+                if (parent >= 0 && !drawnStems.has(node)) {
+                  drawnStems.add(node);
+                  const theta = thetaFor(layout.center, node, tree.leafCount);
+                  const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
+                  const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+                  const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
+                  const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
+                  if (lineIntersectsRect(start.x, start.y, end.x, end.y, -80, -80, renderSize.width + 160, renderSize.height + 160)) {
+                    stemPath.moveTo(start.x, start.y);
+                    stemPath.lineTo(end.x, end.y);
+                    budget.count += 1;
+                  }
+                }
+                if (parent >= 0 && !drawnConnectors.has(parent) && children[parent]?.length >= 2) {
+                  drawnConnectors.add(parent);
+                  const siblings = children[parent];
+                  const radiusPx = tree.buffers.depth[parent] * camera.scale;
+                  if (radiusPx >= 0.25) {
+                    const startTheta = thetaFor(layout.center, siblings[0], tree.leafCount);
+                    const endTheta = thetaFor(layout.center, siblings[siblings.length - 1], tree.leafCount);
+                    const arcStart = thetaFor(layout.min, parent, tree.leafCount);
+                    const arcEnd = thetaFor(layout.max, parent, tree.leafCount);
+                    const arcLength = Math.max(0, arcEnd - arcStart);
+                    const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+                    const start = arcAngles.start + rotationAngle;
+                    const end = arcAngles.end + rotationAngle;
+                    if (arcIntersectsViewport(centerPoint.x, centerPoint.y, radiusPx, start, end, renderSize.width, renderSize.height)) {
+                      connectorPath.moveTo(
+                        centerPoint.x + Math.cos(start) * radiusPx,
+                        centerPoint.y + Math.sin(start) * radiusPx,
+                      );
+                      connectorPath.arc(centerPoint.x, centerPoint.y, radiusPx, start, end, false);
+                      budget.count += 1;
+                    }
+                  }
+                }
+                node = parent;
+              }
+            };
+            const drawnStems = new Set<number>();
+            const drawnConnectors = new Set<number>();
+            const budget = { count: 0 };
+            const drawIndexRange = (rawStart: number, rawEnd: number): void => {
+              const start = Math.max(0, Math.min(ordered.length - 1, Math.floor(rawStart)));
+              const end = Math.max(start, Math.min(ordered.length - 1, Math.ceil(rawEnd)));
+              const count = end - start + 1;
+              const step = Math.max(1, Math.ceil(count / HUGE_TREE_ZOOMED_SAMPLE_LEAF_LIMIT));
+              for (let leafIndex = start; leafIndex <= end && budget.count < HUGE_TREE_ZOOMED_SEGMENT_BUDGET; leafIndex += step) {
+                drawLeafPath(leafIndex, drawnStems, drawnConnectors, budget);
+              }
+            };
+            if (viewportContainsOrigin || angularHalfSpan >= Math.PI) {
+              drawIndexRange(0, ordered.length - 1);
+            } else {
+              const startTheta = screenCenterTheta - angularHalfSpan;
+              const endTheta = screenCenterTheta + angularHalfSpan;
+              if (startTheta < 0) {
+                drawIndexRange(((startTheta + tau) / tau) * tree.leafCount, tree.leafCount - 1);
+                drawIndexRange(0, (endTheta / tau) * tree.leafCount);
+              } else if (endTheta >= tau) {
+                drawIndexRange((startTheta / tau) * tree.leafCount, tree.leafCount - 1);
+                drawIndexRange(0, ((endTheta - tau) / tau) * tree.leafCount);
+              } else {
+                drawIndexRange((startTheta / tau) * tree.leafCount, (endTheta / tau) * tree.leafCount);
+              }
+            }
+          } else if (visibleCircularSegments) {
+            const drawnConnectorNodes = new Set<number>();
+            for (let index = 0; index < visibleCircularSegments.length; index += 1) {
+              const segment = visibleCircularSegments[index];
             const start = worldToScreenCircular(camera, segment.x1, segment.y1);
             const end = worldToScreenCircular(camera, segment.x2, segment.y2);
             if (useDenseCircularLOD) {
@@ -8398,6 +8529,17 @@ export default function TreeCanvas({
             const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
             const radiusPx = radius * camera.scale;
             if (radiusPx < 0.25) {
+              continue;
+            }
+            if (!arcIntersectsViewport(
+              centerPoint.x,
+              centerPoint.y,
+              radiusPx,
+              arcAngles.start + rotationAngle,
+              arcAngles.end + rotationAngle,
+              renderSize.width,
+              renderSize.height,
+            )) {
               continue;
             }
             const startX = centerPoint.x + Math.cos(arcAngles.start + rotationAngle) * radiusPx;
@@ -11454,7 +11596,7 @@ export default function TreeCanvas({
         return null;
       }
       const branchHoverEnabled = isBranchHoverEnabled(camera);
-      const skipSpatialBranchHitTesting = tree.leafCount > HUGE_TREE_SPATIAL_INDEX_TIP_LIMIT;
+      const skipSpatialBranchHitTesting = tree.leafCount > HUGE_TREE_TIP_LIMIT;
       const tipDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       let hover: CanvasHoverInfo | null = null;
       const buildHoverInfo = (
@@ -12073,20 +12215,23 @@ export default function TreeCanvas({
       const localY = event.clientY - rect.top;
       markPanBenchmarkInput();
       clearHoverState();
-      if (isHorizontalWheelPanEvent(event)) {
-        if (camera.kind === "rect") {
-          camera.translateX -= event.deltaX;
-          camera.translateY -= event.deltaY;
+        if (isHorizontalWheelPanEvent(event)) {
+          if (camera.kind === "rect") {
+            camera.translateX -= event.deltaX;
+            camera.translateY -= event.deltaY;
           clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
         } else {
           camera.translateX -= event.deltaX;
           camera.translateY -= event.deltaY;
           clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera));
         }
-        scheduleDraw();
-        return;
-      }
-      const deltaY = normalizedWheelZoomDelta(event, size.height);
+          scheduleDraw();
+          return;
+        }
+        if (tree.leafCount > HUGE_TREE_TIP_LIMIT && frameRequestRef.current !== null) {
+          return;
+        }
+        const deltaY = normalizedWheelZoomDelta(event, size.height);
       const zoom = Math.exp(-deltaY * WHEEL_ZOOM_SENSITIVITY);
       zoomAtPoint(localX, localY, zoom);
       scheduleDraw();
