@@ -103,6 +103,7 @@ declare global {
       setCircularCamera: (partial: Record<string, unknown>) => void;
       getLeafIndexMap: () => Record<number, number> | null;
       getLabelHitboxes: () => Array<Record<string, unknown>>;
+      getPhyloPicHitboxes: () => Array<Record<string, unknown>>;
       probeHoverForTest: (localX: number, localY: number) => Record<string, unknown> | null;
       buildSharedSubtreePayloadForTest: (node: number) => Record<string, unknown> | null;
       zoomToSubtreeTarget: (node: number) => void;

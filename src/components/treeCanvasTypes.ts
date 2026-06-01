@@ -51,6 +51,9 @@ export interface TreeCanvasProps {
   phylopicSizeScale: number;
   phylopicOffsetXPx: number;
   phylopicOffsetYPx: number;
+  onPhyloPicRemoveSilhouette?: (silhouette: PhyloPicSilhouette) => void;
+  onPhyloPicTryAnotherSilhouette?: (silhouette: PhyloPicSilhouette) => void;
+  hideDownloadNewick?: boolean;
   sharedSubtreeSourceTree?: TreeModel | null;
   sharedSubtreeSourceTaxonomyMap?: TaxonomyMapPayload | null;
   sharedSubtreeSourceNodeByViewNode?: Int32Array | null;

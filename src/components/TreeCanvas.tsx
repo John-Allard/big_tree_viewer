@@ -11,6 +11,7 @@ import type { SharedSubtreeStoragePayload, SharedSubtreeTaxonomyEntry, SharedSub
 import { distanceToSegmentSquared } from "../lib/spatialIndex";
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, taxonomyEntityKey, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { TAXONOMY_COLOR_PALETTES, type TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
+import type { PhyloPicSilhouette } from "../lib/phylopic";
 import { depthToTimeAxisDepth, timeAxisDepthToRawDepth, timeAxisLogUnit, treeTimeAxisExtent, type TimeAxisScale } from "../lib/timeAxis";
 import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 import { buildCache } from "./treeCanvasCache";
@@ -92,6 +93,20 @@ const WHEEL_ZOOM_SENSITIVITY = 0.0015;
 const TRACKPAD_PIXEL_ZOOM_MULTIPLIER = 5;
 const TRACKPAD_PIXEL_DELTA_THRESHOLD = 32;
 const MAC_GESTURE_ZOOM_EXPONENT = 1.7;
+
+type PhyloPicHitbox = {
+  silhouette: PhyloPicSilhouette;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  taxonLabel: string;
+  rank: TaxonomyRank;
+  taxId: number | null;
+  firstNode?: number;
+  lastNode?: number;
+  taxonomyTipCount?: number;
+};
 
 function compactCircularOverlayScale(width: number, height: number): number {
   const minDimension = Math.min(width, height);
@@ -910,12 +925,16 @@ function buildSharedSubtreeStoragePayload(
   taxonomyMap: TaxonomyMapPayload | null,
   taxonomyEnabled: boolean,
   visual: SharedSubtreeVisualPayload,
+  controls?: SharedSubtreeStoragePayload["controls"],
 ): SharedSubtreeStoragePayload {
   const payload: SharedSubtreeStoragePayload = {
     version: 2,
     newick: serializeSubtreeToNewick(tree, rootNode),
     visual,
   };
+  if (controls?.hideDownloadNewick === true) {
+    payload.controls = { hideDownloadNewick: true };
+  }
   if (!taxonomyEnabled || !taxonomyMap) {
     return payload;
   }
@@ -969,6 +988,7 @@ const SPIRAL_TIME_AXIS_LOG_BASE_MULTIPLIER = 100;
 const SPIRAL_TAXONOMY_RANK_COUNT_ZOOM_THRESHOLDS = [1, 1.45, 2.25, 3.5, 5.25] as const;
 const SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX = 2.9;
 const SPIRAL_TAXONOMY_COMPRESSION_COMPLETE_SPACING_PX = 12;
+const HUGE_TREE_SPATIAL_INDEX_TIP_LIMIT = 500_000;
 
 const MANUAL_BRANCH_SWATCHES = [
   { label: "Slate", color: "#334155" },
@@ -3357,6 +3377,9 @@ export default function TreeCanvas({
   phylopicSizeScale,
   phylopicOffsetXPx,
   phylopicOffsetYPx,
+  onPhyloPicRemoveSilhouette,
+  onPhyloPicTryAnotherSilhouette,
+  hideDownloadNewick = false,
   sharedSubtreeSourceTree,
   sharedSubtreeSourceTaxonomyMap,
   sharedSubtreeSourceNodeByViewNode,
@@ -3421,6 +3444,7 @@ export default function TreeCanvas({
   const hoverTooltipLabelRef = useRef<HTMLDivElement | null>(null);
   const hoverTooltipBodyRef = useRef<HTMLDivElement | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
+  const phylopicHitsRef = useRef<PhyloPicHitbox[]>([]);
   const phylopicImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [phylopicImageLoadVersion, setPhyloPicImageLoadVersion] = useState(0);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
@@ -3525,10 +3549,26 @@ export default function TreeCanvas({
       taxId: number | null;
       tutorialDemo?: boolean;
     }
+    | {
+      kind: "phylopic";
+      x: number;
+      y: number;
+      name: string;
+      rank: TaxonomyRank;
+      firstNode?: number;
+      lastNode?: number;
+      descendantTipCount: number;
+      taxId: number | null;
+      silhouette: PhyloPicSilhouette;
+      tutorialDemo?: boolean;
+    }
   ) | null>(null);
 
   const isBranchHoverEnabled = useCallback((camera: CameraState): boolean => {
     if (!tree) {
+      return false;
+    }
+    if (tree.leafCount > HUGE_TREE_SPATIAL_INDEX_TIP_LIMIT) {
       return false;
     }
     if (camera.kind === "rect") {
@@ -5238,6 +5278,8 @@ export default function TreeCanvas({
       width: number;
       height: number;
       position: (width: number, height: number) => { drawX: number; drawY: number };
+      alternatePosition?: (width: number, height: number) => { drawX: number; drawY: number };
+      hitbox?: Omit<PhyloPicHitbox, "x" | "y" | "width" | "height">;
     };
     const pendingPhyloPicImages: PendingPhyloPicImage[] = [];
     const phylopicRectsOverlap = (
@@ -5257,22 +5299,27 @@ export default function TreeCanvas({
       width: number,
       height: number,
       position: (width: number, height: number) => { drawX: number; drawY: number },
+      alternatePosition?: (width: number, height: number) => { drawX: number; drawY: number },
+      hitbox?: Omit<PhyloPicHitbox, "x" | "y" | "width" | "height">,
     ): void => {
       if (isOverrideRender && !dataUrl.startsWith("data:")) {
         return;
       }
-      pendingPhyloPicImages.push({ image, dataUrl, alpha, width, height, position });
+      pendingPhyloPicImages.push({ image, dataUrl, alpha, width, height, position, alternatePosition, hitbox });
     };
     const flushPhyloPicImages = (): void => {
       if (pendingPhyloPicImages.length === 0) {
         return;
       }
       const scales = new Array<number>(pendingPhyloPicImages.length).fill(1);
+      const useAlternatePositions = new Array<boolean>(pendingPhyloPicImages.length).fill(false);
       const rectFor = (index: number): { left: number; right: number; top: number; bottom: number; drawX: number; drawY: number; width: number; height: number } => {
         const pending = pendingPhyloPicImages[index];
         const width = pending.width * scales[index];
         const height = pending.height * scales[index];
-        const position = pending.position(width, height);
+        const position = useAlternatePositions[index] && pending.alternatePosition
+          ? pending.alternatePosition(width, height)
+          : pending.position(width, height);
         return {
           left: position.drawX,
           right: position.drawX + width,
@@ -5284,8 +5331,44 @@ export default function TreeCanvas({
           height,
         };
       };
+      const collisionCount = (rects: Array<{ left: number; right: number; top: number; bottom: number }>): number => {
+        let count = 0;
+        for (let leftIndex = 0; leftIndex < rects.length; leftIndex += 1) {
+          for (let rightIndex = leftIndex + 1; rightIndex < rects.length; rightIndex += 1) {
+            if (phylopicRectsOverlap(rects[leftIndex], rects[rightIndex], 4)) {
+              count += 1;
+            }
+          }
+        }
+        return count;
+      };
       for (let iteration = 0; iteration < 8; iteration += 1) {
-        const rects = pendingPhyloPicImages.map((_, index) => rectFor(index));
+        let rects = pendingPhyloPicImages.map((_, index) => rectFor(index));
+        let currentCollisionCount = collisionCount(rects);
+        if (currentCollisionCount > 0) {
+          let improved = true;
+          while (improved && currentCollisionCount > 0) {
+            improved = false;
+            for (let index = 0; index < pendingPhyloPicImages.length; index += 1) {
+              if (!pendingPhyloPicImages[index].alternatePosition) {
+                continue;
+              }
+              useAlternatePositions[index] = !useAlternatePositions[index];
+              const candidateRects = pendingPhyloPicImages.map((_, candidateIndex) => rectFor(candidateIndex));
+              const candidateCollisionCount = collisionCount(candidateRects);
+              if (candidateCollisionCount < currentCollisionCount) {
+                rects = candidateRects;
+                currentCollisionCount = candidateCollisionCount;
+                improved = true;
+                if (currentCollisionCount === 0) {
+                  break;
+                }
+              } else {
+                useAlternatePositions[index] = !useAlternatePositions[index];
+              }
+            }
+          }
+        }
         const parents = rects.map((_, index) => index);
         const find = (index: number): number => {
           let root = index;
@@ -5333,12 +5416,23 @@ export default function TreeCanvas({
         const pending = pendingPhyloPicImages[index];
         const width = pending.width * scales[index];
         const height = pending.height * scales[index];
-        const { drawX, drawY } = pending.position(width, height);
+        const { drawX, drawY } = useAlternatePositions[index] && pending.alternatePosition
+          ? pending.alternatePosition(width, height)
+          : pending.position(width, height);
         ctx.save();
         ctx.globalAlpha = pending.alpha;
         ctx.drawImage(pending.image, drawX, drawY, width, height);
         ctx.restore();
         pushSceneImage(pending.dataUrl, drawX, drawY, width, height, pending.alpha);
+        if (!isOverrideRender && pending.hitbox) {
+          phylopicHitsRef.current.push({
+            ...pending.hitbox,
+            x: drawX,
+            y: drawY,
+            width,
+            height,
+          });
+        }
       }
     };
     const drawPhyloPicForTaxonomyLabel = (
@@ -5350,7 +5444,11 @@ export default function TreeCanvas({
       if (!phylopicEnabled || !label.rank || !label.text) {
         return;
       }
-      const key = `${label.rank}:${label.text}:${label.taxId ?? ""}`;
+      if (!TAXONOMY_RANKS.includes(label.rank as TaxonomyRank)) {
+        return;
+      }
+      const rank = label.rank as TaxonomyRank;
+      const key = `${rank}:${label.text}:${label.taxId ?? ""}`;
       const silhouette = phylopicByKey.get(key);
       if (!silhouette) {
         return;
@@ -5363,6 +5461,15 @@ export default function TreeCanvas({
       const baseHeightPx = Math.max(fontSizePx, label.bandSizePx ?? fontSizePx);
       const boxHeight = Math.max(4, baseHeightPx * Math.max(0.2, phylopicSizeScale));
       const boxWidth = Math.max(boxHeight, boxHeight * 1.55);
+      const phylopicHitbox: Omit<PhyloPicHitbox, "x" | "y" | "width" | "height"> = {
+        silhouette,
+        taxonLabel: label.text,
+        rank,
+        taxId: label.taxId ?? null,
+        firstNode: label.firstNode,
+        lastNode: label.lastNode,
+        taxonomyTipCount: label.taxonomyTipCount,
+      };
       let imageWidth = naturalAspect >= 1
         ? Math.min(boxWidth, boxHeight * naturalAspect)
         : Math.min(boxWidth, boxHeight * naturalAspect);
@@ -5370,7 +5477,7 @@ export default function TreeCanvas({
         ? imageWidth / naturalAspect
         : Math.min(boxHeight, imageWidth / naturalAspect);
       const isRectangularTaxonomyLabel = viewMode === "rectangular" && Math.abs(Math.abs(label.rotation ?? 0) - (Math.PI * 0.5)) < 0.001;
-      const alpha = Math.min(1, Math.max(0.15, label.alpha ?? 1));
+      const alpha = 1;
       if (phylopicPlacement === "outside-ribbon" && isRectangularTaxonomyLabel) {
         const marginPx = Math.max(6, fontSizePx * 0.45);
         const alongX = Math.cos(label.rotation ?? 0);
@@ -5383,7 +5490,7 @@ export default function TreeCanvas({
             + (label.offsetY ?? 0)
             + (alongY * phylopicOffsetXPx);
           return { drawX: centerX - (width * 0.5), drawY: centerY - (height * 0.5) };
-        });
+        }, undefined, phylopicHitbox);
         return;
       }
       const rotation = label.rotation ?? 0;
@@ -5405,28 +5512,40 @@ export default function TreeCanvas({
       const normalX = rawNormalX / normalLength;
       const normalY = rawNormalY / normalLength;
       const align = label.align ?? "center";
-      const endOffset = align === "right" || align === "end"
-        ? 0
+      const startOffset = align === "right" || align === "end"
+        ? -textWidthPx
         : align === "center"
-          ? textWidthPx * 0.5
-          : textWidthPx;
+          ? -textWidthPx * 0.5
+          : 0;
+      const endOffset = startOffset + textWidthPx;
       const marginPx = Math.max(2, Math.min(8, (label.bandSizePx ?? fontSizePx) * 0.08));
       const perpendicularNudgePx = isRectangularTaxonomyLabel
         ? Math.max(2, Math.min(7, (label.bandSizePx ?? fontSizePx) * 0.09))
         : 0;
       const baselineX = label.x + (textNormalX * (label.offsetY ?? 0));
       const baselineY = label.y + (textNormalY * (label.offsetY ?? 0));
-      const positionFor = (width: number, height: number): { drawX: number; drawY: number } => {
+      const positionForSide = (side: 1 | -1, width: number, height: number): { drawX: number; drawY: number } => {
         const projectedHalfExtentPx = ((Math.abs(directionX) * width) + (Math.abs(directionY) * height)) * 0.5;
+        const sideOffset = side > 0
+          ? endOffset + marginPx + projectedHalfExtentPx + phylopicOffsetXPx
+          : startOffset - marginPx - projectedHalfExtentPx + phylopicOffsetXPx;
         const centerX = baselineX
-          + (directionX * (endOffset + marginPx + projectedHalfExtentPx + phylopicOffsetXPx))
+          + (directionX * sideOffset)
           + (normalX * (perpendicularNudgePx + phylopicOffsetYPx));
         const centerY = baselineY
-          + (directionY * (endOffset + marginPx + projectedHalfExtentPx + phylopicOffsetXPx))
+          + (directionY * sideOffset)
           + (normalY * (perpendicularNudgePx + phylopicOffsetYPx));
         return { drawX: centerX - (width * 0.5), drawY: centerY - (height * 0.5) };
       };
-      let { drawX, drawY } = positionFor(imageWidth, imageHeight);
+      const positionFor = (width: number, height: number): { drawX: number; drawY: number } => positionForSide(1, width, height);
+      const alternatePositionFor = viewMode === "rectangular"
+        ? undefined
+        : (width: number, height: number): { drawX: number; drawY: number } => positionForSide(-1, width, height);
+      let useAlternateForLabelAvoidance = false;
+      const activePositionFor = (): ((width: number, height: number) => { drawX: number; drawY: number }) => (
+        useAlternateForLabelAvoidance && alternatePositionFor ? alternatePositionFor : positionFor
+      );
+      let { drawX, drawY } = activePositionFor()(imageWidth, imageHeight);
       if (avoidLabels.length > 0) {
         const previousFont = ctx.font;
         const overlapsAnotherLabel = (imageRect: { left: number; right: number; top: number; bottom: number }): boolean => avoidLabels.some((other) => {
@@ -5484,10 +5603,26 @@ export default function TreeCanvas({
           bottom: drawY + imageHeight,
         });
         if (overlapsAnotherLabel(currentRect())) {
+          if (alternatePositionFor) {
+            const alternatePosition = alternatePositionFor(imageWidth, imageHeight);
+            const alternateRect = {
+              left: alternatePosition.drawX,
+              right: alternatePosition.drawX + imageWidth,
+              top: alternatePosition.drawY,
+              bottom: alternatePosition.drawY + imageHeight,
+            };
+            if (!overlapsAnotherLabel(alternateRect)) {
+              useAlternateForLabelAvoidance = true;
+              drawX = alternatePosition.drawX;
+              drawY = alternatePosition.drawY;
+            }
+          }
+        }
+        if (overlapsAnotherLabel(currentRect())) {
           for (const shrink of [0.82, 0.68, 0.55]) {
             const candidateWidth = imageWidth * shrink;
             const candidateHeight = imageHeight * shrink;
-            const candidatePosition = positionFor(candidateWidth, candidateHeight);
+            const candidatePosition = activePositionFor()(candidateWidth, candidateHeight);
             imageWidth = candidateWidth;
             imageHeight = candidateHeight;
             drawX = candidatePosition.drawX;
@@ -5499,9 +5634,14 @@ export default function TreeCanvas({
         }
         ctx.font = previousFont;
       }
-      enqueuePhyloPicImage(image, silhouette.dataUrl, alpha, imageWidth, imageHeight, positionFor);
+      const primaryPositionFor = useAlternateForLabelAvoidance && alternatePositionFor ? alternatePositionFor : positionFor;
+      const fallbackPositionFor = useAlternateForLabelAvoidance ? positionFor : alternatePositionFor;
+      enqueuePhyloPicImage(image, silhouette.dataUrl, alpha, imageWidth, imageHeight, primaryPositionFor, fallbackPositionFor, phylopicHitbox);
     };
-    labelHitsRef.current = [];
+    if (!isOverrideRender) {
+      labelHitsRef.current = [];
+      phylopicHitsRef.current = [];
+    }
     const renderDebug: Record<string, unknown> = {
       viewMode,
       order,
@@ -5593,7 +5733,7 @@ export default function TreeCanvas({
       const cachedRectTaxonomyBitmap = useCachedRectTaxonomyBitmap
         ? getRectTaxonomyBitmapCache(order, coloredBranchKey, cachedRectTaxonomyPaths, camera)
         : null;
-      const useCachedRectBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0 && nearRectFit;
+      const useCachedRectBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0;
       const cachedRectBasePaths = useCachedRectBasePath
         ? getRectBasePaths(order, layout)
         : null;
@@ -8014,7 +8154,7 @@ export default function TreeCanvas({
           cachedCircularTaxonomyBitmap = null;
         }
       }
-      const useCachedCircularBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0 && angularSpacingPx < 1.1;
+      const useCachedCircularBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0;
       const cachedCircularBasePath = useCachedCircularBasePath
         ? getCircularBasePath(order, layout)
         : null;
@@ -11293,6 +11433,20 @@ export default function TreeCanvas({
       }
       return null;
     };
+    const findPhyloPicHitboxAt = (localX: number, localY: number): PhyloPicHitbox | null => {
+      for (let index = phylopicHitsRef.current.length - 1; index >= 0; index -= 1) {
+        const hitbox = phylopicHitsRef.current[index];
+        if (
+          localX >= hitbox.x
+          && localX <= hitbox.x + hitbox.width
+          && localY >= hitbox.y
+          && localY <= hitbox.y + hitbox.height
+        ) {
+          return hitbox;
+        }
+      }
+      return null;
+    };
 
     const hitTestAt = (localX: number, localY: number): CanvasHoverInfo | null => {
       const camera = cameraRef.current;
@@ -11300,6 +11454,7 @@ export default function TreeCanvas({
         return null;
       }
       const branchHoverEnabled = isBranchHoverEnabled(camera);
+      const skipSpatialBranchHitTesting = tree.leafCount > HUGE_TREE_SPATIAL_INDEX_TIP_LIMIT;
       const tipDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       let hover: CanvasHoverInfo | null = null;
       const buildHoverInfo = (
@@ -11330,6 +11485,32 @@ export default function TreeCanvas({
           collapsedTaxonomyMrcaAge: collapsedTaxonomySummary?.mrcaAge ?? null,
         };
       };
+
+      const phylopicHitbox = findPhyloPicHitboxAt(localX, localY);
+      if (
+        phylopicHitbox
+        && typeof phylopicHitbox.firstNode === "number"
+        && typeof phylopicHitbox.lastNode === "number"
+      ) {
+        const mrcaNode = lowestCommonAncestor(tree, phylopicHitbox.firstNode, phylopicHitbox.lastNode);
+        const parent = tree.buffers.parent[mrcaNode];
+        const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
+        return {
+          node: mrcaNode,
+          branchLength: tree.buffers.branchLength[mrcaNode],
+          parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
+          parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+          childAge: mrcaAge,
+          descendantTipCount: phylopicHitbox.taxonomyTipCount ?? tree.buffers.leafCount[mrcaNode],
+          name: phylopicHitbox.taxonLabel,
+          screenX: localX,
+          screenY: localY,
+          targetKind: "label",
+          kind: "taxonomy",
+          taxonomyRank: phylopicHitbox.rank,
+          mrcaAge,
+        };
+      }
 
       const labelHitbox = findLabelHitboxAt(localX, localY);
       if (labelHitbox) {
@@ -11485,7 +11666,7 @@ export default function TreeCanvas({
         }
 
         const tipScreenX = camera.translateX + (tipDepth * camera.scaleX);
-        if (localX <= tipScreenX - threshold) {
+        if (!skipSpatialBranchHitTesting && localX <= tipScreenX - threshold) {
           const candidates = cache.rectIndices[order].queryPoint(world.x, world.y, 1, 1);
           bestDistance = Number.POSITIVE_INFINITY;
           for (let index = 0; index < candidates.length; index += 1) {
@@ -11566,7 +11747,7 @@ export default function TreeCanvas({
 
         const tipRadiusPx = tipDepth * camera.scale;
         const pointerRadiusPx = Math.hypot(localX - camera.translateX, localY - camera.translateY);
-        if (pointerRadiusPx <= tipRadiusPx - threshold) {
+        if (!skipSpatialBranchHitTesting && pointerRadiusPx <= tipRadiusPx - threshold) {
           const radius = 6 / camera.scale;
           const candidates = cache.circularIndices[order].query(world.x, world.y, radius, radius);
           bestDistance = Number.POSITIVE_INFINITY;
@@ -11922,6 +12103,32 @@ export default function TreeCanvas({
 
     const showContextMenuAt = (localX: number, localY: number): void => {
       setContextMenuColorMode(null);
+      const phylopicHitbox = findPhyloPicHitboxAt(localX, localY);
+      if (phylopicHitbox) {
+        const descendantTipCount = tree
+          && typeof phylopicHitbox.firstNode === "number"
+          && typeof phylopicHitbox.lastNode === "number"
+          ? tree.buffers.leafCount[lowestCommonAncestor(tree, phylopicHitbox.firstNode, phylopicHitbox.lastNode)]
+          : phylopicHitbox.taxonomyTipCount ?? 0;
+        hoverRef.current = null;
+        updateHoverTooltip(null);
+        drawHoverHighlightOverlay();
+        onHoverChange(null);
+        setContextMenu({
+          kind: "phylopic",
+          x: Math.min(size.width - 260, localX + 14),
+          y: Math.min(size.height - 170, localY + 14),
+          name: phylopicHitbox.taxonLabel,
+          rank: phylopicHitbox.rank,
+          firstNode: phylopicHitbox.firstNode,
+          lastNode: phylopicHitbox.lastNode,
+          descendantTipCount,
+          taxId: phylopicHitbox.taxId,
+          silhouette: phylopicHitbox.silhouette,
+        });
+        scheduleDraw();
+        return;
+      }
       const labelHitbox = findLabelHitboxAt(localX, localY);
       if (
         labelHitbox?.labelKind === "taxonomy"
@@ -12144,7 +12351,7 @@ export default function TreeCanvas({
       taxonomyColorRootRank,
       taxonomyColorJitterRank,
       branchThicknessScale,
-    });
+    }, { hideDownloadNewick });
     try {
       await putSharedSubtreePayload(key, payload);
     } catch {
@@ -12166,6 +12373,7 @@ export default function TreeCanvas({
     errorBarThicknessPx,
     extendRectScaleToTick,
     figureStyles,
+    hideDownloadNewick,
     order,
     scaleTickInterval,
     showBootstrapLabels,
@@ -12256,7 +12464,7 @@ export default function TreeCanvas({
   }, [contextMenu, onRerootRequest]);
 
   const handleContextCopyTaxonomyName = useCallback(() => {
-    if (!contextMenu || contextMenu.kind !== "taxonomy") {
+    if (!contextMenu || (contextMenu.kind !== "taxonomy" && contextMenu.kind !== "phylopic")) {
       return;
     }
     void copyTextToClipboard(contextMenu.name);
@@ -12288,6 +12496,22 @@ export default function TreeCanvas({
     window.open(`https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=${contextMenu.taxId}`, "_blank", "noopener,noreferrer");
     setContextMenu(null);
   }, [contextMenu]);
+
+  const handleContextTryAnotherPhyloPic = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "phylopic" || !onPhyloPicTryAnotherSilhouette) {
+      return;
+    }
+    onPhyloPicTryAnotherSilhouette(contextMenu.silhouette);
+    setContextMenu(null);
+  }, [contextMenu, onPhyloPicTryAnotherSilhouette]);
+
+  const handleContextRemovePhyloPic = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "phylopic" || !onPhyloPicRemoveSilhouette) {
+      return;
+    }
+    onPhyloPicRemoveSilhouette(contextMenu.silhouette);
+    setContextMenu(null);
+  }, [contextMenu, onPhyloPicRemoveSilhouette]);
 
   const setTaxonomyRootColor = useCallback((label: string, color: string) => {
     setTaxonomyRootColorAssignments((current) => {
@@ -12575,6 +12799,10 @@ export default function TreeCanvas({
         return result;
       },
       getLabelHitboxes: () => labelHitsRef.current.map((hitbox) => ({ ...hitbox })),
+      getPhyloPicHitboxes: () => phylopicHitsRef.current.map((hitbox) => ({
+        ...hitbox,
+        silhouette: { ...hitbox.silhouette },
+      })),
       probeHoverForTest: (localX: number, localY: number) => {
         const hover = hoverProbeRef.current?.(localX, localY) ?? null;
         return hover ? { ...hover } : null;
@@ -12626,7 +12854,7 @@ export default function TreeCanvas({
           taxonomyColorRootRank,
           taxonomyColorJitterRank,
           branchThicknessScale,
-        });
+        }, { hideDownloadNewick });
       },
       zoomToSubtreeTarget,
     };
@@ -12648,6 +12876,7 @@ export default function TreeCanvas({
     errorBarThicknessPx,
     extendRectScaleToTick,
     figureStyles,
+    hideDownloadNewick,
     rectClampPadding,
     scaleTickInterval,
     showBootstrapLabels,
@@ -12984,7 +13213,7 @@ export default function TreeCanvas({
                 ) : null}
               </div>
             </>
-          ) : (
+          ) : contextMenu.kind === "taxonomy" ? (
             <>
               <div className="tree-context-menu-meta">
                 Rank: {contextMenu.rank} · Tips: {contextMenu.descendantTipCount.toLocaleString()}
@@ -13034,6 +13263,44 @@ export default function TreeCanvas({
                   ) : null}
                 </div>
               ) : null}
+            </>
+          ) : (
+            <>
+              <div className="tree-context-menu-meta">
+                Silhouette · {contextMenu.rank} · Tips: {contextMenu.descendantTipCount.toLocaleString()}
+              </div>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                onClick={handleContextTryAnotherPhyloPic}
+                disabled={!onPhyloPicTryAnotherSilhouette}
+              >
+                Try Another Silhouette
+              </button>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                onClick={handleContextRemovePhyloPic}
+                disabled={!onPhyloPicRemoveSilhouette}
+              >
+                Remove Silhouette
+              </button>
+              <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTaxonomyName}>
+                Copy Name
+              </button>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                onClick={() => {
+                  if (contextMenu.taxId && typeof window !== "undefined") {
+                    window.open(`https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=${contextMenu.taxId}`, "_blank", "noopener,noreferrer");
+                  }
+                  setContextMenu(null);
+                }}
+                disabled={!contextMenu.taxId}
+              >
+                Open In NCBI Taxonomy
+              </button>
             </>
           )}
         </div>

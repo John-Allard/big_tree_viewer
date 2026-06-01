@@ -10,6 +10,26 @@ import {
   arcAnglesWithinSpan,
 } from "./treeCanvasUtils";
 
+const ORDER_KEYS: LayoutOrder[] = ["input", "desc", "asc"];
+
+function lazyOrderRecord<T>(factory: (order: LayoutOrder) => T): Record<LayoutOrder, T> {
+  const values: Partial<Record<LayoutOrder, T>> = {};
+  const record = {} as Record<LayoutOrder, T>;
+  for (const order of ORDER_KEYS) {
+    Object.defineProperty(record, order, {
+      enumerable: true,
+      configurable: false,
+      get: () => {
+        if (!(order in values)) {
+          values[order] = factory(order);
+        }
+        return values[order] as T;
+      },
+    });
+  }
+  return record;
+}
+
 export function computeOrderedLeaves(tree: TreeModel, order: LayoutOrder): number[] {
   return [...tree.leafNodes].sort((left, right) => tree.layouts[order].center[left] - tree.layouts[order].center[right]);
 }
@@ -88,37 +108,10 @@ export function computeOrderedChildren(tree: TreeModel, order: LayoutOrder): num
 }
 
 export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "linear", timeAxisLogBase = DEFAULT_TIME_AXIS_LOG_BASE): RenderCache {
-  const orderedChildren = {
-    input: computeOrderedChildren(tree, "input"),
-    desc: computeOrderedChildren(tree, "desc"),
-    asc: computeOrderedChildren(tree, "asc"),
-  } satisfies Record<LayoutOrder, number[][]>;
-  const orderedLeaves = {
-    input: computeOrderedLeaves(tree, "input"),
-    desc: computeOrderedLeaves(tree, "desc"),
-    asc: computeOrderedLeaves(tree, "asc"),
-  } satisfies Record<LayoutOrder, number[]>;
-  const genusBlocks = {
-    input: computeGenusBlocks(tree, orderedLeaves.input, timeAxisScale, timeAxisLogBase),
-    desc: computeGenusBlocks(tree, orderedLeaves.desc, timeAxisScale, timeAxisLogBase),
-    asc: computeGenusBlocks(tree, orderedLeaves.asc, timeAxisScale, timeAxisLogBase),
-  } satisfies Record<LayoutOrder, GenusBlock[]>;
-  const genusBlocksPriority = {
-    input: prioritizeGenusBlocks(tree, "input", genusBlocks.input),
-    desc: prioritizeGenusBlocks(tree, "desc", genusBlocks.desc),
-    asc: prioritizeGenusBlocks(tree, "asc", genusBlocks.asc),
-  } satisfies Record<LayoutOrder, GenusBlock[]>;
-
-  const rectSegments = {
-    input: [] as IndexedSegment[],
-    desc: [] as IndexedSegment[],
-    asc: [] as IndexedSegment[],
-  };
-  const circularSegments = {
-    input: [] as IndexedSegment[],
-    desc: [] as IndexedSegment[],
-    asc: [] as IndexedSegment[],
-  };
+  const orderedChildren = lazyOrderRecord((order) => computeOrderedChildren(tree, order));
+  const orderedLeaves = lazyOrderRecord((order) => computeOrderedLeaves(tree, order));
+  const genusBlocks = lazyOrderRecord((order) => computeGenusBlocks(tree, orderedLeaves[order], timeAxisScale, timeAxisLogBase));
+  const genusBlocksPriority = lazyOrderRecord((order) => prioritizeGenusBlocks(tree, order, genusBlocks[order]));
 
   const axisExtent = timeAxisScale === "log" ? treeTimeAxisExtent(tree) : Math.max(tree.maxDepth, 1);
   const axisDepth = (node: number): number => depthToTimeAxisDepth(tree, tree.buffers.depth[node], timeAxisScale, timeAxisLogBase);
@@ -136,12 +129,10 @@ export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "line
     maxY: radius,
   };
 
-  for (const order of ["input", "desc", "asc"] as const) {
+  const buildRectSegments = (order: LayoutOrder): IndexedSegment[] => {
     const center = tree.layouts[order].center;
-    const layout = tree.layouts[order];
     const children = orderedChildren[order];
-    const rect = rectSegments[order];
-    const radial = circularSegments[order];
+    const rect: IndexedSegment[] = [];
     for (let node = 0; node < tree.nodeCount; node += 1) {
       const parent = tree.buffers.parent[node];
       if (parent < 0) {
@@ -154,15 +145,6 @@ export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "line
             x2: axisDepth(node),
             y2: center[children[node][children[node].length - 1]],
           });
-        }
-        if (children[node].length >= 2) {
-          const startTheta = thetaFor(center, children[node][0], tree.leafCount);
-          const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount);
-          const arcStart = thetaFor(layout.min, node, tree.leafCount);
-          const arcEnd = thetaFor(layout.max, node, tree.leafCount);
-          const arcLength = Math.max(0, arcEnd - arcStart);
-          const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-          appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
         }
         continue;
       }
@@ -185,7 +167,29 @@ export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "line
           y2: center[children[node][children[node].length - 1]],
         });
       }
+    }
+    return rect;
+  };
 
+  const buildCircularSegments = (order: LayoutOrder): IndexedSegment[] => {
+    const center = tree.layouts[order].center;
+    const layout = tree.layouts[order];
+    const children = orderedChildren[order];
+    const radial: IndexedSegment[] = [];
+    for (let node = 0; node < tree.nodeCount; node += 1) {
+      const parent = tree.buffers.parent[node];
+      if (parent < 0) {
+        if (children[node].length >= 2) {
+          const startTheta = thetaFor(center, children[node][0], tree.leafCount);
+          const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount);
+          const arcStart = thetaFor(layout.min, node, tree.leafCount);
+          const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+          const arcLength = Math.max(0, arcEnd - arcStart);
+          const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
+          appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
+        }
+        continue;
+      }
       const theta = thetaFor(center, node, tree.leafCount);
       const start = polarToCartesian(axisDepth(parent), theta);
       const end = polarToCartesian(axisDepth(node), theta);
@@ -207,7 +211,13 @@ export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "line
         appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
       }
     }
-  }
+    return radial;
+  };
+
+  const rectSegments = lazyOrderRecord(buildRectSegments);
+  const circularSegments = lazyOrderRecord(buildCircularSegments);
+  const rectIndices = lazyOrderRecord((order) => new UniformGridIndex(rectSegments[order], boundsRect));
+  const circularIndices = lazyOrderRecord((order) => new UniformGridIndex(circularSegments[order], boundsCircular));
 
   return {
     orderedChildren,
@@ -215,16 +225,8 @@ export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "line
     genusBlocks,
     genusBlocksPriority,
     rectSegments,
-    rectIndices: {
-      input: new UniformGridIndex(rectSegments.input, boundsRect),
-      desc: new UniformGridIndex(rectSegments.desc, boundsRect),
-      asc: new UniformGridIndex(rectSegments.asc, boundsRect),
-    },
+    rectIndices,
     circularSegments,
-    circularIndices: {
-      input: new UniformGridIndex(circularSegments.input, boundsCircular),
-      desc: new UniformGridIndex(circularSegments.desc, boundsCircular),
-      asc: new UniformGridIndex(circularSegments.asc, boundsCircular),
-    },
+    circularIndices,
   };
 }

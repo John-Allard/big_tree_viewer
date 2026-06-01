@@ -8,6 +8,7 @@ export type ParsedTaxonomyForMapping = {
   rankNames: Map<number, string>;
   speciesIndex: Map<string, number[]>;
   genusIndex: Map<string, number[]>;
+  namedTaxonIndex: Map<string, number[]>;
 };
 
 export const TAXONOMY_SPECIES_INDEX_NAME_CLASSES = new Set<string>([
@@ -124,6 +125,11 @@ export function candidateSpeciesNames(name: string): string[] {
 export function extractGenus(name: string): string {
   const parts = normalizeTaxonomyName(name).split(/\s+/).filter(Boolean);
   return parts[0] ?? "";
+}
+
+export function candidateExactTaxonName(name: string): string | null {
+  const parts = normalizeTaxonomyName(name).split(/\s+/).filter(Boolean);
+  return parts.length === 1 ? parts[0] : null;
 }
 
 function ancestorAtRank(
@@ -292,10 +298,18 @@ function collectCandidatesForTip(
 ): CandidateLineage[] {
   const speciesCandidates = candidateSpeciesNames(tip.name)
     .flatMap((candidate) => taxonomy.speciesIndex.get(candidate) ?? []);
-  const genusCandidates = speciesCandidates.length > 0
+  const exactTaxonName = speciesCandidates.length > 0 ? null : candidateExactTaxonName(tip.name);
+  const exactTaxonCandidates = exactTaxonName
+    ? [...(taxonomy.namedTaxonIndex.get(exactTaxonName) ?? [])]
+    : [];
+  const genusCandidates = speciesCandidates.length > 0 || exactTaxonCandidates.length > 0
     ? []
     : [...(taxonomy.genusIndex.get(extractGenus(tip.name)) ?? [])];
-  const source = speciesCandidates.length > 0 ? speciesCandidates : genusCandidates;
+  const source = speciesCandidates.length > 0
+    ? speciesCandidates
+    : exactTaxonCandidates.length > 0
+      ? exactTaxonCandidates
+      : genusCandidates;
   const unique = [...new Set(source)];
   const candidates: CandidateLineage[] = [];
   for (let index = 0; index < unique.length; index += 1) {

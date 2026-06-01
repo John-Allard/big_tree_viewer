@@ -15,6 +15,7 @@ function buildParsedTaxonomy(): ParsedTaxonomyForMapping {
   const rankNames = new Map<number, string>();
   const speciesIndex = new Map<string, number[]>();
   const genusIndex = new Map<string, number[]>();
+  const namedTaxonIndex = new Map<string, number[]>();
 
   const addNode = (taxId: number, parentId: number, rank: string, name?: string): void => {
     nodes.set(taxId, { parentId, rank });
@@ -56,8 +57,13 @@ function buildParsedTaxonomy(): ParsedTaxonomyForMapping {
   addTaxonomyIndexEntry(genusIndex, "panthera", 16);
   addTaxonomyIndexEntry(genusIndex, "rosa", 24);
   addTaxonomyIndexEntry(genusIndex, "malus", 26);
+  addTaxonomyIndexEntry(namedTaxonIndex, "felis", 14);
+  addTaxonomyIndexEntry(namedTaxonIndex, "panthera", 16);
+  addTaxonomyIndexEntry(namedTaxonIndex, "rosaceae", 23);
+  addTaxonomyIndexEntry(namedTaxonIndex, "rosa", 24);
+  addTaxonomyIndexEntry(namedTaxonIndex, "malus", 26);
 
-  return { nodes, rankNames, speciesIndex, genusIndex };
+  return { nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex };
 }
 
 test("context-aware taxonomy resolver disambiguates reused species names by nearby mapped clades", async () => {
@@ -93,6 +99,7 @@ test("species synonym matches win before a conflicting genus fallback", async ()
   const rankNames = new Map<number, string>();
   const speciesIndex = new Map<string, number[]>();
   const genusIndex = new Map<string, number[]>();
+  const namedTaxonIndex = new Map<string, number[]>();
 
   const addNode = (taxId: number, parentId: number, rank: string, name?: string): void => {
     nodes.set(taxId, { parentId, rank });
@@ -119,10 +126,11 @@ test("species synonym matches win before a conflicting genus fallback", async ()
   addTaxonomyIndexEntry(speciesIndex, normalizeTaxonomyName("[Sclerotium] perniciosum"), 14);
   addTaxonomyIndexEntry(speciesIndex, normalizeTaxonomyName("Sclerotium perniciosum"), 14);
   addTaxonomyIndexEntry(genusIndex, "sclerotium", 24);
+  addTaxonomyIndexEntry(namedTaxonIndex, "sclerotium", 24);
 
   const payload = mapTipsWithContext([
     { node: 300, name: "Sclerotium perniciosum" },
-  ], { nodes, rankNames, speciesIndex, genusIndex }, TARGET_RANKS, 99);
+  ], { nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex }, TARGET_RANKS, 99);
 
   expect(payload.mappedCount).toBe(1);
   expect(payload.tipRanks).toHaveLength(1);
@@ -138,6 +146,7 @@ test("resolver records best lower-rank fallbacks for missing collapse ranks", as
   const rankNames = new Map<number, string>();
   const speciesIndex = new Map<string, number[]>();
   const genusIndex = new Map<string, number[]>();
+  const namedTaxonIndex = new Map<string, number[]>();
 
   const addNode = (taxId: number, parentId: number, rank: string, name?: string): void => {
     nodes.set(taxId, { parentId, rank });
@@ -165,11 +174,13 @@ test("resolver records best lower-rank fallbacks for missing collapse ranks", as
   addTaxonomyIndexEntry(speciesIndex, "mysteria_obscura", 23);
   addTaxonomyIndexEntry(genusIndex, "testudo", 13);
   addTaxonomyIndexEntry(genusIndex, "mysteria", 22);
+  addTaxonomyIndexEntry(namedTaxonIndex, "testudo", 13);
+  addTaxonomyIndexEntry(namedTaxonIndex, "mysteria", 22);
 
   const payload = mapTipsWithContext([
     { node: 400, name: "Testudo graeca" },
     { node: 401, name: "Mysteria obscura" },
-  ], { nodes, rankNames, speciesIndex, genusIndex }, TARGET_RANKS, 99);
+  ], { nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex }, TARGET_RANKS, 99);
 
   const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
   expect(byNode.get(400)?.ranks.class).toBeUndefined();
@@ -178,4 +189,18 @@ test("resolver records best lower-rank fallbacks for missing collapse ranks", as
   expect(byNode.get(401)?.ranks.class).toBeUndefined();
   expect(byNode.get(401)?.collapseFallbacks?.class?.label).toBe("Chelonoidea");
   expect(byNode.get(401)?.collapseFallbacks?.class?.rank).toBe("superfamily");
+});
+
+test("single-token higher-rank tip labels map by exact NCBI taxon name", async () => {
+  const taxonomy = buildParsedTaxonomy();
+  const payload = mapTipsWithContext([
+    { node: 500, name: "Rosaceae" },
+  ], taxonomy, TARGET_RANKS, 99);
+
+  expect(payload.mappedCount).toBe(1);
+  const mapped = payload.tipRanks[0];
+  expect(mapped?.ranks.family).toBe("Rosaceae");
+  expect(mapped?.ranks.order).toBe("Rosales");
+  expect(mapped?.ranks.phylum).toBe("Tracheophyta");
+  expect(mapped?.ranks.genus).toBeUndefined();
 });

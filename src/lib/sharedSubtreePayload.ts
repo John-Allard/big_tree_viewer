@@ -28,6 +28,9 @@ export type SharedSubtreeStoragePayload = {
   newick: string;
   taxonomy?: SharedSubtreeTaxonomyPayload;
   visual?: SharedSubtreeVisualPayload;
+  controls?: {
+    hideDownloadNewick?: boolean;
+  };
 };
 
 export type SharedSubtreeVisualPayload = {
@@ -215,6 +218,9 @@ export function parseSharedSubtreeStoragePayload(raw: string): SharedSubtreeStor
           }
           : undefined,
         visual: parseSharedSubtreeVisualPayload(parsed.visual),
+        controls: parsed.controls && typeof parsed.controls === "object"
+          ? { hideDownloadNewick: parsed.controls.hideDownloadNewick === true }
+          : undefined,
       };
     }
   } catch {

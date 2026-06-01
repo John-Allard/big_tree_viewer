@@ -34,10 +34,14 @@ import {
 } from "./lib/metadataColors";
 import {
   buildPhyloPicAttributionCaption,
+  buildPhyloPicLicenseDetails,
+  deleteCachedPhyloPicSilhouette,
   PHYLOPIC_MAX_RETRIEVE_PER_CLICK,
   PhyloPicRateLimitError,
+  isUsablePhyloPicSilhouette,
   readCachedPhyloPicSilhouette,
   retrievePhyloPicSilhouette,
+  writeCachedPhyloPicSilhouette,
   type PhyloPicCandidate,
   type PhyloPicSilhouette,
 } from "./lib/phylopic";
@@ -199,8 +203,12 @@ type BigTreeViewerSessionSettings = {
   taxonomyCustomPaletteInput: string;
   taxonomyColorRootRank: TaxonomyRank | "auto";
   taxonomyColorJitterRank: TaxonomyRank;
+  phylopicEnabled?: boolean;
   phylopicRankSelection?: Partial<Record<TaxonomyRank, boolean>>;
   phylopicPlacement?: "after-label" | "outside-ribbon";
+  phylopicSizeScale?: number;
+  phylopicOffsetXPx?: number;
+  phylopicOffsetYPx?: number;
   branchThicknessScale: number;
   metadataEnabled: boolean;
   metadataFirstRowIsHeader: boolean;
@@ -231,6 +239,9 @@ type BigTreeViewerSessionFile = {
   version: 1;
   savedAt: string;
   settings: BigTreeViewerSessionSettings;
+  controls?: {
+    hideDownloadNewick?: boolean;
+  };
   tree?: {
     label: string;
     newick: string;
@@ -243,6 +254,10 @@ type BigTreeViewerSessionFile = {
   };
   taxonomy?: {
     map: TaxonomyMapPayload | null;
+  };
+  phylopic?: {
+    enabled: boolean;
+    silhouettes: PhyloPicSilhouette[];
   };
   canvas?: TreeCanvasSessionState | null;
 };
@@ -407,6 +422,77 @@ function readLaunchBoolParam(params: URLSearchParams, key: string): boolean | un
     return false;
   }
   return undefined;
+}
+
+function looksLikeBinomialSpeciesName(name: string): boolean {
+  const normalized = name
+    .trim()
+    .replace(/[_\s]+/g, " ")
+    .replace(/^['"]+|['"]+$/g, "");
+  const parts = normalized.split(" ").filter(Boolean);
+  if (parts.length < 2) {
+    return false;
+  }
+  const [genus, species] = parts;
+  const wordLike = /^[\p{L}][\p{L}.-]*$/u;
+  return wordLike.test(genus)
+    && wordLike.test(species)
+    && /[\p{L}]/u.test(genus)
+    && /[\p{L}]/u.test(species)
+    && !/\d/.test(genus)
+    && !/\d/.test(species);
+}
+
+function looksLikeSingleTokenTaxonName(name: string): boolean {
+  const normalized = name
+    .trim()
+    .replaceAll("_", " ")
+    .replace(/^['"]+|['"]+$/g, "");
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  if (parts.length !== 1) {
+    return false;
+  }
+  const wordLike = /^[\p{L}][\p{L}.-]*$/u;
+  return wordLike.test(parts[0]) && /[\p{L}]/u.test(parts[0]) && !/\d/.test(parts[0]);
+}
+
+function buildTaxonomyMappingWarning(tree: TreeModel | null, taxonomyMap: TaxonomyMapPayload | null): string {
+  if (!tree || !taxonomyMap || taxonomyMap.totalTips <= 0) {
+    return "";
+  }
+  const unmappedCount = Math.max(0, taxonomyMap.totalTips - taxonomyMap.mappedCount);
+  const unmappedFraction = unmappedCount / Math.max(1, taxonomyMap.totalTips);
+  if (unmappedCount < 100 && unmappedFraction < 0.1) {
+    return "";
+  }
+  const mappedNodes = new Set(taxonomyMap.tipRanks.map((tip) => tip.node));
+  const examples: string[] = [];
+  let labelsOutsideSupportedShapeCount = 0;
+  let singleTokenUnmappedCount = 0;
+  for (const node of tree.leafNodes) {
+    if (mappedNodes.has(node)) {
+      continue;
+    }
+    const name = tree.names[node] || "";
+    const looksSingleToken = looksLikeSingleTokenTaxonName(name);
+    if (looksSingleToken) {
+      singleTokenUnmappedCount += 1;
+    }
+    if (!looksLikeBinomialSpeciesName(name) && !looksSingleToken) {
+      labelsOutsideSupportedShapeCount += 1;
+      if (examples.length < 4 && name.trim()) {
+        examples.push(name.trim());
+      }
+    }
+  }
+  const base = `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips (${Math.round(unmappedFraction * 100).toLocaleString()}%) were not mapped to NCBI taxonomy. Big Tree Viewer maps binomial species names and exact single-token NCBI taxa, such as genus, family, or order names.`;
+  const singleTokenNote = singleTokenUnmappedCount > 0
+    ? ` ${singleTokenUnmappedCount.toLocaleString()} unmapped single-token labels did not exactly match a supported NCBI taxon name.`
+    : "";
+  if (labelsOutsideSupportedShapeCount >= Math.max(25, unmappedCount * 0.25)) {
+    return `${base}${singleTokenNote} At least ${labelsOutsideSupportedShapeCount.toLocaleString()} unmapped labels do not look like either binomial species names or single-token taxon names${examples.length > 0 ? `, for example: ${examples.join(", ")}.` : "."} If your tips use accession numbers, sample IDs, strain labels, or other identifiers, replace or annotate them with species names or NCBI taxon names before mapping.`;
+  }
+  return `${base}${singleTokenNote} If your tips use accession numbers, sample IDs, strain labels, or other identifiers instead of taxon names, replace or annotate them with species names or NCBI taxon names before mapping.`;
 }
 
 function readLaunchNumberParam(params: URLSearchParams, key: string): number | undefined {
@@ -1138,6 +1224,7 @@ export default function App() {
   const pendingTreeReplacementTaxonomyEnabledRef = useRef<boolean | null>(null);
   const pendingSessionTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
   const pendingSessionTaxonomyEnabledRef = useRef<boolean | null>(null);
+  const pendingSessionPhyloPicRef = useRef<BigTreeViewerSessionFile["phylopic"] | undefined>(undefined);
   const pendingSessionCanvasStateRef = useRef<TreeCanvasSessionState | null | undefined>(undefined);
   const pendingSessionRestoreResolverRef = useRef<(() => void) | null>(null);
   const pendingSessionSnapshotResolverRef = useRef<((state: TreeCanvasSessionState | null) => void) | null>(null);
@@ -1260,6 +1347,7 @@ export default function App() {
   const [taxonomyLoading, setTaxonomyLoading] = useState(false);
   const [taxonomyStatus, setTaxonomyStatus] = useState("");
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+  const [taxonomyMappingWarning, setTaxonomyMappingWarning] = useState("");
   const [taxonomyStorageInfoVisible, setTaxonomyStorageInfoVisible] = useState(false);
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
   const [taxonomyOverlayStyle, setTaxonomyOverlayStyle] = useState<TaxonomyOverlayStyle>(DEFAULT_TAXONOMY_OVERLAY_STYLE);
@@ -2144,6 +2232,10 @@ export default function App() {
     () => buildPhyloPicAttributionCaption(phylopicSilhouettes),
     [phylopicSilhouettes],
   );
+  const phylopicLicenseDetails = useMemo(
+    () => buildPhyloPicLicenseDetails(phylopicSilhouettes),
+    [phylopicSilhouettes],
+  );
   const customTaxonomyPaletteColors = useMemo(
     () => parseCustomTaxonomyPalette(taxonomyCustomPaletteInput),
     [taxonomyCustomPaletteInput],
@@ -2221,17 +2313,21 @@ export default function App() {
 
   useEffect(() => {
     setPhyloPicRankSelection((current) => {
-      const next: Partial<Record<TaxonomyRank, boolean>> = {};
-      const visibleRanks = phylopicViewportRanks.length > 0 ? phylopicViewportRanks : phylopicSelectableRanks;
-      const visibleRankSet = new Set(visibleRanks);
-      let hasSelectedAvailableRank = false;
-      for (const rank of phylopicSelectableRanks) {
-        const selected = (current[rank] ?? false) && visibleRankSet.has(rank);
-        next[rank] = selected;
-        hasSelectedAvailableRank ||= selected;
+      if (phylopicSelectableRanks.length === 0) {
+        return current;
       }
-      const defaultRank = phylopicSelectableRanks.find((rank) => visibleRankSet.has(rank));
-      if (!hasSelectedAvailableRank && defaultRank) {
+      const next: Partial<Record<TaxonomyRank, boolean>> = {};
+      const visibleRankSet = new Set(phylopicViewportRanks);
+      let hasSelectedRank = false;
+      for (const rank of phylopicSelectableRanks) {
+        const selected = current[rank] ?? false;
+        next[rank] = selected;
+        hasSelectedRank ||= selected;
+      }
+      const defaultRank = phylopicSelectableRanks.find((rank) => (
+        phylopicViewportRanks.length === 0 || visibleRankSet.has(rank)
+      )) ?? phylopicSelectableRanks[0];
+      if (!hasSelectedRank && defaultRank) {
         next[defaultRank] = true;
       }
       return next;
@@ -2270,6 +2366,39 @@ export default function App() {
   }, [taxonomyEnabled, taxonomyMap, viewMode]);
 
   useEffect(() => {
+    const sessionPhyloPic = pendingSessionPhyloPicRef.current;
+    pendingSessionPhyloPicRef.current = undefined;
+    if (sessionPhyloPic) {
+      const silhouettes = Array.isArray(sessionPhyloPic.silhouettes)
+        ? sessionPhyloPic.silhouettes.filter((silhouette) => (
+          silhouette
+          && typeof silhouette.key === "string"
+          && typeof silhouette.taxonLabel === "string"
+          && TAXONOMY_RANKS.includes(silhouette.rank)
+          && typeof silhouette.dataUrl === "string"
+          && silhouette.dataUrl.startsWith("data:image/")
+          && typeof silhouette.imageUuid === "string"
+          && isUsablePhyloPicSilhouette(silhouette)
+        ))
+        : [];
+      for (const silhouette of silhouettes) {
+        writeCachedPhyloPicSilhouette({
+          key: silhouette.key,
+          taxonLabel: silhouette.taxonLabel,
+          rank: silhouette.rank,
+          taxId: typeof silhouette.taxId === "number" ? silhouette.taxId : null,
+        }, silhouette);
+      }
+      setPhyloPicEnabled(sessionPhyloPic.enabled && silhouettes.length > 0);
+      setPhyloPicSilhouettes(silhouettes);
+      setPhyloPicStatus(silhouettes.length > 0
+        ? `Loaded ${silhouettes.length.toLocaleString()} PhyloPic silhouette${silhouettes.length === 1 ? "" : "s"} from session.`
+        : "");
+      setPhyloPicError(null);
+      setPhyloPicCaptionVisible(false);
+      setPhyloPicReminderDismissed(false);
+      return;
+    }
     setPhyloPicEnabled(false);
     setPhyloPicSilhouettes([]);
     setPhyloPicStatus("");
@@ -2505,11 +2634,13 @@ export default function App() {
     if (payload.visual) {
       applySharedSubtreeVisualSettings(payload.visual);
     }
+    setHideDownloadNewick(payload.controls?.hideDownloadNewick === true);
     await parseText(payload.newick, "shared subtree");
     return true;
   }, [applySharedSubtreeVisualSettings, parseText]);
 
   const loadExample = async (): Promise<void> => {
+    setHideDownloadNewick(true);
     setLoadState({
       loading: true,
       message: "Loading bundled example tree...",
@@ -2669,8 +2800,12 @@ export default function App() {
     taxonomyCustomPaletteInput,
     taxonomyColorRootRank,
     taxonomyColorJitterRank,
+    phylopicEnabled,
     phylopicRankSelection,
     phylopicPlacement,
+    phylopicSizeScale,
+    phylopicOffsetXPx,
+    phylopicOffsetYPx,
     branchThicknessScale,
     metadataEnabled,
     metadataFirstRowIsHeader,
@@ -2725,8 +2860,12 @@ export default function App() {
     metadataReverseScale,
     metadataValueColumn,
     order,
+    phylopicEnabled,
+    phylopicOffsetXPx,
+    phylopicOffsetYPx,
     phylopicRankSelection,
     phylopicPlacement,
+    phylopicSizeScale,
     scaleTickIntervalInput,
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
@@ -2809,11 +2948,23 @@ export default function App() {
     setTaxonomyCustomPaletteInput(settings.taxonomyCustomPaletteInput);
     setTaxonomyColorRootRank(settings.taxonomyColorRootRank);
     setTaxonomyColorJitterRank(settings.taxonomyColorJitterRank);
+    if (typeof settings.phylopicEnabled === "boolean") {
+      setPhyloPicEnabled(settings.phylopicEnabled);
+    }
     if (settings.phylopicRankSelection) {
       setPhyloPicRankSelection(settings.phylopicRankSelection);
     }
     if (settings.phylopicPlacement === "after-label" || settings.phylopicPlacement === "outside-ribbon") {
       setPhyloPicPlacement(settings.phylopicPlacement);
+    }
+    if (typeof settings.phylopicSizeScale === "number" && Number.isFinite(settings.phylopicSizeScale)) {
+      setPhyloPicSizeScale(settings.phylopicSizeScale);
+    }
+    if (typeof settings.phylopicOffsetXPx === "number" && Number.isFinite(settings.phylopicOffsetXPx)) {
+      setPhyloPicOffsetXPx(settings.phylopicOffsetXPx);
+    }
+    if (typeof settings.phylopicOffsetYPx === "number" && Number.isFinite(settings.phylopicOffsetYPx)) {
+      setPhyloPicOffsetYPx(settings.phylopicOffsetYPx);
     }
     setBranchThicknessScale(settings.branchThicknessScale);
     setMetadataFirstRowIsHeader(settings.metadataFirstRowIsHeader);
@@ -2935,12 +3086,17 @@ export default function App() {
           newick: serializeSubtreeToNewick(tree, tree.root),
           signature: treeSignature,
         } : undefined,
+        controls: hideDownloadNewick ? { hideDownloadNewick: true } : undefined,
         metadata: metadataRawText ? {
           text: metadataRawText,
           label: metadataFileName || "metadata.csv",
           firstRowIsHeader: metadataFirstRowIsHeader,
         } : undefined,
         taxonomy: tree ? { map: taxonomyMap } : undefined,
+        phylopic: phylopicSilhouettes.length > 0 ? {
+          enabled: phylopicEnabled,
+          silhouettes: phylopicSilhouettes,
+        } : undefined,
         canvas,
       };
       const saved = await writeSessionFile(session);
@@ -2952,9 +3108,12 @@ export default function App() {
   }, [
     captureSessionSettings,
     loadedTreeLabel,
+    hideDownloadNewick,
     metadataFileName,
     metadataFirstRowIsHeader,
     metadataRawText,
+    phylopicEnabled,
+    phylopicSilhouettes,
     requestCanvasSessionState,
     taxonomyMap,
     tree,
@@ -2966,6 +3125,7 @@ export default function App() {
     if (!tree || !treeSignature) {
       setTaxonomyMap(null);
       setTaxonomyEnabled(false);
+      setTaxonomyMappingWarning("");
       return;
     }
     setFitRequest((value) => value + 1);
@@ -2980,6 +3140,7 @@ export default function App() {
         ? `Updated taxonomy mapping after reroot (${replacementTaxonomy.mappedCount.toLocaleString()} mapped tips).`
         : "");
       setTaxonomyError(null);
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, replacementTaxonomy ?? null));
       return;
     }
     if (pendingSessionTaxonomyRef.current !== undefined) {
@@ -2995,6 +3156,7 @@ export default function App() {
         ? `Loaded taxonomy mapping from session (${sessionTaxonomy.mappedCount.toLocaleString()} mapped tips).`
         : "");
       setTaxonomyError(null);
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, sessionTaxonomy ?? null));
       if (pendingSessionCanvasStateRef.current !== undefined) {
         setSessionRestoreState(pendingSessionCanvasStateRef.current ?? null);
         setSessionRestoreRequest((value) => value + 1);
@@ -3016,6 +3178,7 @@ export default function App() {
         setTaxonomyEnabled(inheritedSubtreeVisual?.taxonomyEnabled ?? true);
         setTaxonomyStatus(`Loaded shared taxonomy mapping for this subtree (${rebuilt.mappedCount.toLocaleString()} mapped tips).`);
         setTaxonomyError(null);
+        setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, rebuilt));
         void putCachedTaxonomyMapping(treeSignature, rebuilt);
         return;
       }
@@ -3024,6 +3187,7 @@ export default function App() {
     pendingSharedSubtreeVisualRef.current = null;
     setTaxonomyMap(null);
     setTaxonomyEnabled(false);
+    setTaxonomyMappingWarning("");
     let cancelled = false;
     void (async () => {
       const cached = await getCachedTaxonomyMapping(treeSignature);
@@ -3034,6 +3198,7 @@ export default function App() {
       setTaxonomyEnabled(inheritedTaxonomyEnabled ?? true);
       setTaxonomyStatus(`Loaded cached taxonomy mapping for this tree (${cached.mappedCount.toLocaleString()} mapped tips).`);
       setTaxonomyError(null);
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, cached));
     })();
     return () => {
       cancelled = true;
@@ -3124,10 +3289,12 @@ export default function App() {
       clearMetadata();
     }
     applySessionSettings(session.settings);
+    setHideDownloadNewick(session.controls?.hideDownloadNewick === true);
     if (session.tree?.newick) {
       setSessionStatus(`Parsing tree from ${label}...`);
       pendingSessionTaxonomyRef.current = session.taxonomy?.map ?? null;
       pendingSessionTaxonomyEnabledRef.current = session.settings.taxonomyEnabled;
+      pendingSessionPhyloPicRef.current = session.phylopic;
       pendingSessionCanvasStateRef.current = session.canvas ?? null;
       const restoreApplied = new Promise<void>((resolve) => {
         pendingSessionRestoreResolverRef.current = resolve;
@@ -3224,6 +3391,7 @@ export default function App() {
     const text = await file.text();
     try {
       await parseText(text, file.name);
+      setHideDownloadNewick(false);
     } catch {
       // parseText has already populated the user-facing load error.
     }
@@ -3275,6 +3443,8 @@ export default function App() {
   const loadLaunchPayload = useCallback(async (payload: BigTreeViewerLaunchPayload, sourceLabel = "launch API"): Promise<boolean> => {
     if (typeof payload.controls?.hideDownloadNewick === "boolean") {
       setHideDownloadNewick(payload.controls.hideDownloadNewick);
+    } else {
+      setHideDownloadNewick(false);
     }
     applyLaunchVisualSettings(payload.visual);
     applyLaunchMetadata(payload.metadata);
@@ -3544,6 +3714,7 @@ export default function App() {
     }
     pendingPasteHideRef.current = true;
     await parseText(text, "pasted tree");
+    setHideDownloadNewick(false);
   }, [parseText, pastedTreeText]);
 
   const handleDrop = useCallback(async (event: DragEvent<HTMLDivElement>): Promise<void> => {
@@ -3569,6 +3740,7 @@ export default function App() {
       setPastedTreeText(plainText);
       try {
         await parseText(plainText, "dropped tree text");
+        setHideDownloadNewick(false);
       } catch {
         // parseText has already populated the user-facing load error.
       }
@@ -3656,6 +3828,7 @@ export default function App() {
       }
       setTaxonomyMap(response.payload);
       setTaxonomyEnabled(true);
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, response.payload));
       setTaxonomyStatus(
         useLowMemoryTaxonomyMapping
           ? `Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips in low-memory mobile mode.`
@@ -3670,6 +3843,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setTaxonomyError(message);
+      setTaxonomyMappingWarning("");
       appendDiagnostic("taxonomy-mapping-failed", {
         message,
       });
@@ -3735,7 +3909,7 @@ export default function App() {
       && typeof hitbox.width === "number"
       && typeof hitbox.height === "number"
       && hitbox.width >= 18
-      && hitbox.height >= 8
+      && hitbox.height >= 4
       && hitboxIntersectsCanvas(hitbox)
     ));
     const selectedRanks = TAXONOMY_RANKS.filter((rank) => phylopicRankSelection[rank]);
@@ -3753,7 +3927,7 @@ export default function App() {
       setPhyloPicError("None of the selected taxonomy ranks is currently visible in the taxonomy overlays.");
       return;
     }
-    const candidateByKey = new Map<string, PhyloPicCandidate>();
+    const candidateByKey = new Map<string, { candidate: PhyloPicCandidate; priority: number }>();
     for (const hitbox of taxonomyLabels) {
       const rank = hitbox.taxonomyRank;
       if (!targetRanks.includes(rank)) {
@@ -3764,8 +3938,15 @@ export default function App() {
         : null;
       const taxonLabel = hitbox.text.trim();
       const key = `${rank}:${taxonLabel}:${taxId ?? ""}`;
-      if (!candidateByKey.has(key)) {
-        candidateByKey.set(key, { key, taxonLabel, rank, taxId });
+      const width = typeof hitbox.width === "number" ? hitbox.width : 0;
+      const height = typeof hitbox.height === "number" ? hitbox.height : 0;
+      const priority = width * height;
+      const current = candidateByKey.get(key);
+      if (!current || priority > current.priority) {
+        candidateByKey.set(key, {
+          candidate: { key, taxonLabel, rank, taxId },
+          priority,
+        });
       }
     }
     if (candidateByKey.size === 0) {
@@ -3773,10 +3954,14 @@ export default function App() {
       return;
     }
     const existingKeys = new Set(phylopicSilhouettes.map((silhouette) => silhouette.key));
-    const candidates = Array.from(candidateByKey.values()).filter((candidate) => !existingKeys.has(candidate.key));
+    const candidates = Array.from(candidateByKey.values())
+      .sort((left, right) => right.priority - left.priority)
+      .map((entry) => entry.candidate)
+      .filter((candidate) => !existingKeys.has(candidate.key));
+    const alreadyShownCount = candidateByKey.size - candidates.length;
     if (candidates.length === 0) {
       setPhyloPicEnabled(true);
-      setPhyloPicStatus("All selected target taxa already have cached or retrieved silhouettes.");
+      setPhyloPicStatus(`All ${candidateByKey.size.toLocaleString()} visible target taxon label${candidateByKey.size === 1 ? "" : "s"} already have silhouettes in the current view.`);
       setPhyloPicError(null);
       return;
     }
@@ -3798,10 +3983,12 @@ export default function App() {
       const toFetch = uncached.slice(0, PHYLOPIC_MAX_RETRIEVE_PER_CLICK);
       setPhyloPicStatus(
         uncached.length > toFetch.length
-          ? `Loaded ${cached.length.toLocaleString()} cached silhouettes. Retrieving ${toFetch.length.toLocaleString()} of ${uncached.length.toLocaleString()} uncached selected taxa in this batch.`
-          : `Retrieving ${toFetch.length.toLocaleString()} PhyloPic silhouette${toFetch.length === 1 ? "" : "s"}...`,
+          ? `Found ${candidateByKey.size.toLocaleString()} visible target label${candidateByKey.size === 1 ? "" : "s"}: ${alreadyShownCount.toLocaleString()} already shown, ${cached.length.toLocaleString()} cache hit${cached.length === 1 ? "" : "s"}, ${uncached.length.toLocaleString()} uncached. Retrieving ${toFetch.length.toLocaleString()} this batch.`
+          : `Found ${candidateByKey.size.toLocaleString()} visible target label${candidateByKey.size === 1 ? "" : "s"}: ${alreadyShownCount.toLocaleString()} already shown, ${cached.length.toLocaleString()} cache hit${cached.length === 1 ? "" : "s"}. Retrieving ${toFetch.length.toLocaleString()} uncached silhouette${toFetch.length === 1 ? "" : "s"}...`,
       );
       const retrieved: PhyloPicSilhouette[] = [];
+      const noResultLabels: string[] = [];
+      const failedLabels: string[] = [];
       let rateLimited = false;
       let cancelled = false;
       for (let index = 0; index < toFetch.length; index += 1) {
@@ -3822,6 +4009,8 @@ export default function App() {
           const silhouette = await retrievePhyloPicSilhouette(candidate);
           if (silhouette) {
             retrieved.push(silhouette);
+          } else {
+            noResultLabels.push(candidate.taxonLabel);
           }
         } catch (error) {
           if (error instanceof PhyloPicRateLimitError) {
@@ -3830,7 +4019,7 @@ export default function App() {
             await sleep(error.retryAfterMs);
             break;
           }
-          // Missing taxa or individual API failures should not stop the rest of the visible set.
+          failedLabels.push(candidate.taxonLabel);
         }
       }
       const additions = [...cached, ...retrieved];
@@ -3847,14 +4036,62 @@ export default function App() {
         cancelled
           ? `Cancelled PhyloPic retrieval${additions.length > 0 ? ` after adding ${additions.length.toLocaleString()} silhouette${additions.length === 1 ? "" : "s"}.` : "."}`
           : additions.length > 0
-          ? `Added ${additions.length.toLocaleString()} silhouette${additions.length === 1 ? "" : "s"}${rateLimited ? " before the PhyloPic rate limit paused this batch." : "."}`
-          : "No publication-compatible PhyloPic silhouettes were found for the visible target taxa.",
+          ? `Visible targets: ${candidateByKey.size.toLocaleString()}; already shown: ${alreadyShownCount.toLocaleString()}; cache hits: ${cached.length.toLocaleString()}; fetched: ${retrieved.length.toLocaleString()}; no result: ${noResultLabels.length.toLocaleString()}; failed: ${failedLabels.length.toLocaleString()}${rateLimited ? "; stopped after the PhyloPic rate limit paused this batch." : "."}`
+          : `No publication-compatible PhyloPic silhouettes were found for the visible target taxa${noResultLabels.length > 0 ? ` (${noResultLabels.slice(0, 6).join(", ")}${noResultLabels.length > 6 ? ", ..." : ""})` : ""}${failedLabels.length > 0 ? `; failed requests: ${failedLabels.slice(0, 6).join(", ")}${failedLabels.length > 6 ? ", ..." : ""}` : ""}.`,
       );
     } finally {
       setPhyloPicRetrieving(false);
       phylopicCancelRequestedRef.current = false;
     }
   }, [phylopicRankSelection, phylopicSilhouettes, phylopicViewportRanks, taxonomyEnabled, viewTaxonomyMap]);
+
+  const removePhyloPicSilhouette = useCallback((silhouette: PhyloPicSilhouette): void => {
+    deleteCachedPhyloPicSilhouette({
+      key: silhouette.key,
+      taxonLabel: silhouette.taxonLabel,
+      rank: silhouette.rank,
+      taxId: typeof silhouette.taxId === "number" ? silhouette.taxId : null,
+    });
+    setPhyloPicSilhouettes((current) => current.filter((item) => item.key !== silhouette.key));
+    setPhyloPicStatus(`Removed PhyloPic silhouette for ${silhouette.taxonLabel}.`);
+    setPhyloPicError(null);
+  }, []);
+
+  const tryAnotherPhyloPicSilhouette = useCallback((silhouette: PhyloPicSilhouette): void => {
+    if (phylopicRetrieving) {
+      setPhyloPicError("PhyloPic retrieval is already running.");
+      return;
+    }
+    const candidate: PhyloPicCandidate = {
+      key: silhouette.key,
+      taxonLabel: silhouette.taxonLabel,
+      rank: silhouette.rank,
+      taxId: typeof silhouette.taxId === "number" ? silhouette.taxId : null,
+    };
+    void (async () => {
+      setPhyloPicRetrieving(true);
+      setPhyloPicError(null);
+      setPhyloPicStatus(`Trying another PhyloPic silhouette for ${silhouette.taxonLabel}...`);
+      try {
+        const replacement = await retrievePhyloPicSilhouette(candidate, [silhouette.imageUuid]);
+        if (!replacement) {
+          setPhyloPicStatus(`No alternate publication-compatible PhyloPic silhouette was found for ${silhouette.taxonLabel}.`);
+          return;
+        }
+        setPhyloPicSilhouettes((current) => {
+          const byKey = new Map(current.map((item) => [item.key, item]));
+          byKey.set(replacement.key, replacement);
+          return Array.from(byKey.values());
+        });
+        setPhyloPicStatus(`Replaced PhyloPic silhouette for ${silhouette.taxonLabel}.`);
+      } catch (error) {
+        setPhyloPicStatus("");
+        setPhyloPicError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setPhyloPicRetrieving(false);
+      }
+    })();
+  }, [phylopicRetrieving]);
 
   const stepSearch = (direction: -1 | 1): void => {
     if (searchResults.length === 0) {
@@ -4360,13 +4597,14 @@ export default function App() {
 
         <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)} tourId="data">
           <div className="button-row">
-            <button type="button" onClick={() => void loadExample()} disabled={loadState.loading}>
+            <button type="button" onClick={() => void loadExample()} disabled={loadState.loading} title="Load the bundled example tree and reset the current tree view.">
               Load Example
             </button>
             <button
               type="button"
               className="secondary"
               onClick={() => fileInputRef.current?.click()}
+              title="Open a Newick, NEXUS, or Big Tree Viewer session file from your computer."
             >
               Open File
             </button>
@@ -4374,6 +4612,7 @@ export default function App() {
               type="button"
               className="secondary"
               onClick={() => setShowPasteInput((value) => !value)}
+              title="Paste a Newick or NEXUS tree directly instead of opening a file."
             >
               Paste Newick
             </button>
@@ -4416,6 +4655,7 @@ export default function App() {
               className="secondary"
               disabled={!tree}
               onClick={openExportOptions}
+              title="Export the current visible view as a PNG or SVG figure."
             >
               Export View
             </button>
@@ -4425,6 +4665,7 @@ export default function App() {
                 className="secondary"
                 disabled={!tree}
                 onClick={downloadCurrentTreeNewick}
+                title="Download the currently loaded tree topology as a Newick file."
               >
                 Download Newick
               </button>
@@ -4543,13 +4784,13 @@ export default function App() {
             </div>
           ) : null}
           <div className="button-row" data-tour="sessions">
-            <button type="button" className="secondary" onClick={() => void saveSession()}>
+            <button type="button" className="secondary" onClick={() => void saveSession()} title="Save the current tree, view, taxonomy, silhouettes, and display settings to a .btvsession file.">
               Save Session
             </button>
-            <button type="button" className="secondary" onClick={() => void loadSession("full")}>
+            <button type="button" className="secondary" onClick={() => void loadSession("full")} title="Load a .btvsession file, including its tree when the session contains one.">
               Load Session
             </button>
-            <button type="button" className="secondary" onClick={() => void loadSession("settings")}>
+            <button type="button" className="secondary" onClick={() => void loadSession("settings")} title="Apply view and display settings from a .btvsession file to the currently loaded tree.">
               Load Settings
             </button>
           </div>
@@ -4566,6 +4807,7 @@ export default function App() {
               type="button"
               className={viewMode === "rectangular" ? "active" : ""}
               onClick={() => setViewMode("rectangular")}
+              title="Draw the tree in a linear rectangular layout."
             >
               Rectangular
             </button>
@@ -4573,6 +4815,7 @@ export default function App() {
               type="button"
               className={viewMode === "circular" ? "active" : ""}
               onClick={() => setViewMode("circular")}
+              title="Draw the tree radially around a circle."
             >
               Circular
             </button>
@@ -4581,6 +4824,7 @@ export default function App() {
                 type="button"
                 className={viewMode === "spiral" ? "active" : ""}
                 onClick={() => setViewMode("spiral")}
+                title="Draw time-calibrated trees as a spiral so deep time and recent tips can share the same figure."
               >
                 Spiral
               </button>
@@ -4588,13 +4832,13 @@ export default function App() {
           </div>
           <div className="view-group-divider" aria-hidden="true" />
           <div className="segmented">
-            <button type="button" className={order === "asc" ? "active" : ""} onClick={() => setOrder("asc")}>
+            <button type="button" className={order === "asc" ? "active" : ""} onClick={() => setOrder("asc")} title="Sort sibling clades with smaller clades first.">
               Smallest First
             </button>
-            <button type="button" className={order === "desc" ? "active" : ""} onClick={() => setOrder("desc")}>
+            <button type="button" className={order === "desc" ? "active" : ""} onClick={() => setOrder("desc")} title="Sort sibling clades with larger clades first.">
               Largest First
             </button>
-            <button type="button" className={order === "input" ? "active" : ""} onClick={() => setOrder("input")}>
+            <button type="button" className={order === "input" ? "active" : ""} onClick={() => setOrder("input")} title="Keep the child order from the loaded tree file.">
               Input Order
             </button>
           </div>
@@ -4605,7 +4849,7 @@ export default function App() {
               className={zoomAxisMode === "both" ? "active" : ""}
               onClick={() => setZoomAxisMode("both")}
               disabled={viewMode !== "rectangular"}
-              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined)}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom both time/depth and vertical spread together."}
             >
               Zoom Both
             </button>
@@ -4614,7 +4858,7 @@ export default function App() {
               className={zoomAxisMode === "x" ? "active" : ""}
               onClick={() => setZoomAxisMode("x")}
               disabled={viewMode !== "rectangular"}
-              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined)}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the horizontal time/depth axis in rectangular view."}
             >
               Zoom X
             </button>
@@ -4623,13 +4867,13 @@ export default function App() {
               className={zoomAxisMode === "y" ? "active" : ""}
               onClick={() => setZoomAxisMode("y")}
               disabled={viewMode !== "rectangular"}
-              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined)}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the vertical tip-spacing axis in rectangular view."}
             >
               Zoom Y
             </button>
           </div>
           <div className="button-row">
-            <button type="button" className="secondary" onClick={() => setFitRequest((value) => value + 1)}>
+            <button type="button" className="secondary" onClick={() => setFitRequest((value) => value + 1)} title="Reset pan and zoom so the full tree fits in the canvas.">
               Fit View
             </button>
           </div>
@@ -4639,7 +4883,7 @@ export default function App() {
           </p>
           {viewMode === "circular" || viewMode === "spiral" ? (
             <div className="rotation-controls">
-              <label htmlFor="circular-rotation">Rotation</label>
+              <label htmlFor="circular-rotation" title="Rotate the circular or spiral tree around its center.">Rotation</label>
               <input
                 id="circular-rotation"
                 type="range"
@@ -4670,7 +4914,7 @@ export default function App() {
               </div>
               {viewMode === "spiral" ? (
                 <>
-                  <label htmlFor="spiral-turns">Spiral turns</label>
+                  <label htmlFor="spiral-turns" title="Change how many rotations the spiral uses from root to tips.">Spiral turns</label>
                   <input
                     id="spiral-turns"
                     type="range"
@@ -4690,7 +4934,7 @@ export default function App() {
         <PanelSection title="Visual Options" isOpen={visualOpen} onToggle={() => setVisualOpen(!visualOpen)} tourId="visual">
           <div className="option-list">
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title="Show labels for terminal tips when there is enough screen space.">
                 <input
                   type="checkbox"
                   checked={showTipLabels}
@@ -4756,9 +5000,9 @@ export default function App() {
                   disabledReason="Turn on taxonomy overlays first."
                   extraControls={(
                     <>
-                      <label>
-                        Overlay style
-                        <select
+                          <label title="Choose whether taxonomy groups are drawn as filled bands around clades or thin center lines.">
+                            Overlay style
+                            <select
                           value={taxonomyOverlayStyle}
                           onChange={(event) => setTaxonomyOverlayStyle(event.target.value === "strands" ? "strands" : "ribbons")}
                         >
@@ -4766,8 +5010,8 @@ export default function App() {
                           <option value="strands">Center strands</option>
                         </select>
                       </label>
-                      <label>
-                        Color jitter
+                          <label title="Adds deterministic color variation within taxonomy groups so adjacent branches are easier to distinguish without changing group identity.">
+                            Color jitter
                         <input
                           type="range"
                           min={0}
@@ -4778,8 +5022,8 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">x{taxonomyColorJitter.toFixed(2)}</div>
-                      <label>
-                        Color palette
+                          <label title="Choose the color set used for taxonomy ribbons and taxonomy branch coloring.">
+                            Color palette
                         <select
                           value={taxonomyColorPalette}
                           onChange={(event) => setTaxonomyColorPalette(event.target.value as TaxonomyColorPaletteKey)}
@@ -4793,7 +5037,7 @@ export default function App() {
                       </label>
                       {taxonomyColorPalette === "custom" ? (
                         <>
-                          <label>
+                          <label title="Paste custom colors as hex codes or CSS color names, separated by commas, spaces, or lines.">
                             Custom palette colors
                             <textarea
                               rows={3}
@@ -4802,7 +5046,7 @@ export default function App() {
                               onChange={(event) => setTaxonomyCustomPaletteInput(event.target.value)}
                             />
                           </label>
-                          <label>
+                          <label title="Load a text file containing custom palette colors.">
                             Upload palette text
                             <input
                               type="file"
@@ -4823,7 +5067,7 @@ export default function App() {
                       ) : null}
                       {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
                         <>
-                          <label>
+                          <label title="Choose the taxonomy rank that receives the base palette colors. Auto selects a balanced visible rank for the current tree.">
                             Palette anchor rank
                             <select
                               value={taxonomyColorRootRank}
@@ -4835,7 +5079,7 @@ export default function App() {
                               ))}
                             </select>
                           </label>
-                          <label>
+                          <label title="Lowest taxonomy rank allowed to receive branch color variation. Higher settings keep related branches more similar.">
                             Branch jitter floor
                             <select
                               value={taxonomyColorJitterRank}
@@ -4848,7 +5092,7 @@ export default function App() {
                           </label>
                         </>
                       ) : null}
-                      <label className="label-style-inline-toggle">
+                      <label className="label-style-inline-toggle" title="Color branches by their mapped taxonomy group instead of only drawing taxonomy ribbons.">
                         <input
                           type="checkbox"
                           checked={taxonomyBranchColoringEnabled}
@@ -4858,7 +5102,7 @@ export default function App() {
                       </label>
                       {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
                         <>
-                          <label className="label-style-inline-toggle">
+                          <label className="label-style-inline-toggle" title="Let Big Tree Viewer choose which taxonomy ranks are visible based on zoom and layout. Turn this off to pick ranks manually.">
                             <input
                               type="checkbox"
                               checked={useAutomaticTaxonomyRankVisibility}
@@ -4867,7 +5111,7 @@ export default function App() {
                             Automatic visible ranks
                           </label>
                           <div className="taxonomy-rank-controls">
-                            <div className="taxonomy-rank-controls-title">Visible taxonomy ranks</div>
+                            <div className="taxonomy-rank-controls-title" title="Manual rank visibility controls which mapped taxonomy levels are drawn when automatic visible ranks is off.">Visible taxonomy ranks</div>
                             <div className="taxonomy-rank-checkboxes">
                               {availableTaxonomyRanks.map((rank) => (
                                 <label
@@ -4905,7 +5149,7 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined)}>
+              <label className="visual-option-checkbox" title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined) ?? "Show labels attached to internal nodes, such as named clades or node IDs."}>
                 <input
                   type="checkbox"
                   checked={showInternalNodeLabels}
@@ -4927,7 +5171,7 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title="Show numeric bootstrap or support values from internal node labels when available.">
                 <input
                   type="checkbox"
                   checked={showBootstrapLabels}
@@ -4949,7 +5193,7 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title="Show node ages or heights when the tree contains branch length information.">
                 <input
                   type="checkbox"
                   checked={showNodeHeightLabels}
@@ -4971,7 +5215,7 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined) ?? "Show confidence or credibility intervals around node heights when interval annotations are present."}>
                 <input
                   type="checkbox"
                   checked={showNodeErrorBars}
@@ -4983,7 +5227,7 @@ export default function App() {
               </label>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title="Show time or branch-length scale bars for the current view.">
                 <input
                   type="checkbox"
                   checked={showScaleBars}
@@ -5001,7 +5245,7 @@ export default function App() {
                   disabledReason="Enable scale bars first."
                   extraControls={(
                     <>
-                      <label>
+                      <label title="Set a fixed scale-bar tick interval. Leave blank to choose ticks automatically from the visible range.">
                         Tick interval
                         <input
                           type="number"
@@ -5051,7 +5295,7 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">{timeAxisLogBaseDraft.toFixed(1)}</div>
-                      <label className="label-style-inline-toggle">
+                      <label className="label-style-inline-toggle" title="Draw lighter intermediate tick marks between major scale-bar ticks.">
                         <input
                           type="checkbox"
                           checked={showIntermediateScaleTicks}
@@ -5059,7 +5303,7 @@ export default function App() {
                         />
                         Show fading subdivision ticks
                       </label>
-                      <label className="label-style-inline-toggle">
+                      <label className="label-style-inline-toggle" title="Extend the rectangular scale axis to the next clean tick beyond the tree extent.">
                         <input
                           type="checkbox"
                           checked={extendRectScaleToTick}
@@ -5067,7 +5311,7 @@ export default function App() {
                         />
                         Extend rectangular scale to next tick
                       </label>
-                      <label className="label-style-inline-toggle">
+                      <label className="label-style-inline-toggle" title="Include the present-day or zero-distance tick on scale bars.">
                         <input
                           type="checkbox"
                           checked={showScaleZeroTick}
@@ -5075,7 +5319,7 @@ export default function App() {
                         />
                         Show zero tick
                       </label>
-                      <label className="label-style-inline-toggle">
+                      <label className="label-style-inline-toggle" title="Choose the circular center scale angle from the tree orientation automatically.">
                         <input
                           type="checkbox"
                           checked={useAutoCircularCenterScaleAngle}
@@ -5083,7 +5327,7 @@ export default function App() {
                         />
                         Auto angle from tip ordering
                       </label>
-                      <label>
+                      <label title="Manually rotate the circular center scale when automatic angle selection is off.">
                         Circular center scale angle
                         <input
                           type="range"
@@ -5099,7 +5343,7 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">{effectiveCircularCenterScaleAngleDegrees.toFixed(0)} deg</div>
-                      <label className="label-style-inline-toggle">
+                      <label className="label-style-inline-toggle" title="Draw a radial scale bar from the center of a circular tree.">
                         <input
                           type="checkbox"
                           checked={showCircularCenterRadialScaleBar}
@@ -5115,7 +5359,7 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox">
+              <label className="visual-option-checkbox" title="Draw temporal guide bands or lines behind the tree.">
                 <input
                   type="checkbox"
                   checked={showTimeStripes}
@@ -5131,8 +5375,8 @@ export default function App() {
                   disabledReason="Enable time stripes first."
                   onToggle={() => setActiveLabelStylePopover((current) => current === "timeStripes" ? null : "timeStripes")}
                 >
-                  <label>
-                    Stripe style
+                    <label title="Choose whether time stripes are bands, a gradient, or dashed guide lines.">
+                      Stripe style
                     <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as TimeStripeStyle)}>
                       <option value="bands">Shaded bands</option>
                       <option value="age-gradient">Old-to-young gradient</option>
@@ -5141,7 +5385,7 @@ export default function App() {
                   </label>
                   {timeStripeStyle === "dashed" ? (
                     <>
-                      <label>
+                      <label title="Adjust the stroke width for dashed time-stripe guides.">
                         Stripe line weight
                         <input
                           type="range"
@@ -5162,7 +5406,7 @@ export default function App() {
           <div className="visual-options-controls">
             {showNodeErrorBars ? (
               <>
-                <label>
+                <label title="Adjust the stroke width for node height interval bars.">
                   Error bar thickness
                   <input
                     type="range"
@@ -5174,7 +5418,7 @@ export default function App() {
                   />
                 </label>
                 <div className="figure-style-value">{errorBarThicknessPx.toFixed(1)}px</div>
-                <label>
+                <label title="Adjust the width of the caps at the ends of node interval bars.">
                   Error bar cap size
                   <input
                     type="range"
@@ -5188,7 +5432,7 @@ export default function App() {
                 <div className="figure-style-value">{errorBarCapSizePx.toFixed(0)}px</div>
               </>
             ) : null}
-            <label>
+            <label title="Scale all tree branch strokes thicker or thinner.">
               Branch thickness
               <input
                 type="range"
@@ -5248,7 +5492,7 @@ export default function App() {
                   type="button"
                   className="secondary"
                   disabled={taxonomyLoading}
-                  title={disabledControlTitle(taxonomyLoading ? "Taxonomy download already in progress." : undefined)}
+                  title={disabledControlTitle(taxonomyLoading ? "Taxonomy download already in progress." : undefined) ?? "Download and cache the NCBI taxonomy archive used for taxonomic mapping."}
                   onClick={() => void downloadTaxonomy()}
                 >
                   Download Taxonomy
@@ -5267,7 +5511,7 @@ export default function App() {
                       : !tree
                         ? "Load a tree first."
                         : undefined,
-                  )}
+                  ) ?? "Match tree tips to NCBI taxonomy so taxonomy labels, coloring, and silhouettes can be used."}
                   onClick={() => void runTaxonomyMapping()}
                 >
                   Run Taxonomy Mapping
@@ -5275,10 +5519,11 @@ export default function App() {
               </div>
             ) : null}
             {taxonomyStatus ? <p className="status-line">{taxonomyStatus}</p> : null}
+            {taxonomyMappingWarning ? <p className="status-warning">{taxonomyMappingWarning}</p> : null}
             {taxonomyError ? <p className="status-error">{taxonomyError}</p> : null}
             {taxonomyMap ? (
               <>
-                <label>
+                <label title="Optionally replace mapped species tips with one representative tip per selected taxonomic group. Species keeps the original tree tips; higher ranks create a compact taxonomy-collapsed view.">
                   Collapse mapped tips to
                   <select
                     value={taxonomyCollapseRank}
@@ -5301,17 +5546,23 @@ export default function App() {
                     className="section-toggle taxonomy-subsection-toggle"
                     aria-expanded={phylopicOpen}
                     onClick={() => setPhyloPicOpen(!phylopicOpen)}
+                    title="Show or hide controls for retrieving and placing PhyloPic silhouettes."
                   >
                     <span className={`section-toggle-mark${phylopicOpen ? " open" : ""}`}>▸</span>
                     <span>Silhouettes</span>
                   </button>
                   {phylopicOpen ? (
                     <div className="taxonomy-silhouette-body">
+                      <p className="taxonomy-silhouette-source">
+                        Silhouettes are retrieved from{" "}
+                        <a href="https://www.phylopic.org/" target="_blank" rel="noreferrer">PhyloPic.org</a>
+                        {" "}using publication-compatible licenses and cached in this browser.
+                      </p>
                       <div className="taxonomy-silhouette-ranks" aria-label="Taxonomy ranks for silhouette retrieval">
                         {phylopicSelectableRanks.map((rank) => {
                           const rankVisible = !phylopicHasViewportRankInfo || phylopicViewportRankSet.has(rank);
                           return (
-                            <label key={rank} className={`taxonomy-rank-checkbox${rankVisible ? "" : " taxonomy-rank-checkbox-disabled"}`} title={rankVisible ? undefined : "This rank is not visible in the current viewport."}>
+                            <label key={rank} className={`taxonomy-rank-checkbox${rankVisible ? "" : " taxonomy-rank-checkbox-disabled"}`} title={rankVisible ? "Retrieve silhouettes for visible taxonomy labels at this rank." : "This rank is not visible in the current viewport."}>
                               <input
                                 type="checkbox"
                                 disabled={!rankVisible}
@@ -5346,6 +5597,7 @@ export default function App() {
                               phylopicCancelRequestedRef.current = true;
                               setPhyloPicStatus("Cancelling PhyloPic retrieval after the current request finishes...");
                             }}
+                            title="Stop the current silhouette retrieval after the request already in flight finishes."
                           >
                             Cancel Retrieval
                           </button>
@@ -5358,6 +5610,7 @@ export default function App() {
                               setPhyloPicSilhouettes([]);
                               setPhyloPicEnabled(false);
                             }}
+                            title="Remove all currently displayed silhouettes from the view."
                           >
                             Clear Silhouettes
                           </button>
@@ -5366,14 +5619,14 @@ export default function App() {
                       {phylopicSilhouettes.length > 0 ? (
                         <div className="taxonomy-silhouette-settings">
                           <label>
-                            Placement
+                            <span title="Choose where silhouettes are positioned relative to taxonomy labels and ribbons.">Placement</span>
                             <select value={phylopicPlacement} onChange={(event) => setPhyloPicPlacement(event.target.value as "after-label" | "outside-ribbon")}>
                               <option value="after-label">After label along ribbon</option>
                               <option value="outside-ribbon">Outside rectangular ribbon</option>
                             </select>
                           </label>
                           <label>
-                            Silhouette size
+                            <span title="Scale retrieved silhouettes relative to the taxonomy ribbon or label size.">Silhouette size</span>
                             <input
                               type="range"
                               min={0.35}
@@ -5385,7 +5638,7 @@ export default function App() {
                           </label>
                           <div className="figure-style-value">x{phylopicSizeScale.toFixed(2)} ribbon width</div>
                           <label>
-                            {viewMode === "rectangular" ? "Along-label offset" : "Angular offset"}
+                            <span title="Move silhouettes along the label direction.">{viewMode === "rectangular" ? "Along-label offset" : "Angular offset"}</span>
                             <input
                               type="range"
                               min={-160}
@@ -5397,7 +5650,7 @@ export default function App() {
                           </label>
                           <div className="figure-style-value">{phylopicOffsetXPx.toFixed(0)}px</div>
                           <label>
-                            {viewMode === "rectangular" ? "Across-ribbon offset" : "Radial offset"}
+                            <span title="Move silhouettes away from or toward the ribbon.">{viewMode === "rectangular" ? "Across-ribbon offset" : "Radial offset"}</span>
                             <input
                               type="range"
                               min={-160}
@@ -5415,19 +5668,43 @@ export default function App() {
                       ) : null}
                       {phylopicStatus ? <p className="status-line">{phylopicStatus}</p> : null}
                       {phylopicError ? <p className="status-error">{phylopicError}</p> : null}
-                      {phylopicCaption ? (
-                        <>
-                          <button
-                            type="button"
-                            className="text-link-button"
-                            onClick={() => setPhyloPicCaptionVisible((visible) => !visible)}
-                          >
-                            {phylopicCaptionVisible ? "Hide PhyloPic attribution caption" : "Show PhyloPic attribution caption"}
-                          </button>
-                          {phylopicCaptionVisible ? (
-                            <textarea className="taxonomy-caption-textarea" readOnly value={phylopicCaption} />
+                      {phylopicCaption || phylopicLicenseDetails ? (
+                        <details className="taxonomy-silhouette-attribution-box">
+                          <summary className="taxonomy-silhouette-attribution-header" title="Expand to copy compact attribution text for the current silhouettes.">
+                            <span className="taxonomy-silhouette-attribution-title">
+                              <span className="taxonomy-silhouette-attribution-chevron" aria-hidden="true">▸</span>
+                              <strong>PhyloPic attribution</strong>
+                              <span className="taxonomy-silhouette-attribution-cue" aria-hidden="true" />
+                            </span>
+                            {phylopicReminderDismissed ? (
+                              <button
+                                type="button"
+                                className="text-link-button"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setPhyloPicReminderDismissed(false);
+                                }}
+                              >
+                                Show floating reminder
+                              </button>
+                            ) : null}
+                          </summary>
+                          {phylopicCaption ? (
+                            <div className="taxonomy-silhouette-attribution-section">
+                              <strong>Required attribution</strong>
+                              <textarea className="taxonomy-caption-textarea" readOnly value={phylopicCaption} />
+                            </div>
+                          ) : (
+                            <p className="status-line">No attribution is required for the current silhouettes.</p>
+                          )}
+                          {phylopicLicenseDetails ? (
+                            <details className="taxonomy-silhouette-attribution-section">
+                              <summary>Additional non-required attributions</summary>
+                              <textarea className="taxonomy-caption-textarea" readOnly value={phylopicLicenseDetails} />
+                            </details>
                           ) : null}
-                        </>
+                        </details>
                       ) : null}
                     </div>
                   ) : null}
@@ -5447,10 +5724,10 @@ export default function App() {
               onChange={(event) => void onMetadataFileChange(event)}
             />
             <div className="button-row">
-              <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()}>
+              <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()} title="Open a CSV or TSV table with one row per tip or node. Include a column containing the exact labels used in the tree; after loading, choose that column under Match tree labels by column.">
                 Open CSV / TSV
               </button>
-              <button type="button" className="secondary" disabled={!metadataTable} onClick={clearMetadata}>
+              <button type="button" className="secondary" disabled={!metadataTable} onClick={clearMetadata} title={disabledControlTitle(!metadataTable ? "No metadata table is loaded." : undefined) ?? "Remove the loaded metadata table and all metadata overlays."}>
                 Clear Metadata
               </button>
             </div>
@@ -5459,7 +5736,7 @@ export default function App() {
                 <p className="status-line">
                   {metadataFileName || "metadata"}: {metadataTable.rows.length.toLocaleString()} rows, {metadataTable.columns.length.toLocaleString()} columns
                 </p>
-                <label className="metadata-inline-toggle">
+                <label className="metadata-inline-toggle" title="Use the first row of the table as column names instead of data.">
                   <input
                     type="checkbox"
                     checked={metadataFirstRowIsHeader}
@@ -5473,7 +5750,7 @@ export default function App() {
                   />
                   Treat first line as a header
                 </label>
-                <label>
+                <label title="Choose the metadata column whose values should match tree tip or node labels.">
                   Match tree labels by column
                   <select value={metadataKeyColumn} onChange={(event) => setMetadataKeyColumn(event.target.value)}>
                     {metadataColumns.map((column) => (
@@ -5482,7 +5759,7 @@ export default function App() {
                   </select>
                 </label>
                 <div className="metadata-toggle-row">
-                  <label className="metadata-inline-toggle metadata-toggle-main">
+                  <label className="metadata-inline-toggle metadata-toggle-main" title="Color branches using values from the loaded metadata table.">
                     <input
                       type="checkbox"
                       checked={metadataEnabled}
@@ -5497,7 +5774,7 @@ export default function App() {
                     disabledReason="Enable metadata branch colors first."
                     onToggle={() => setActiveLabelStylePopover((current) => current === "metadataBranchColors" ? null : "metadataBranchColors")}
                   >
-                    <label>
+                    <label title="Choose the metadata column that determines branch colors.">
                       Color by column
                       <select value={metadataValueColumn} onChange={(event) => {
                         const nextColumn = event.target.value;
@@ -5510,14 +5787,14 @@ export default function App() {
                         ))}
                       </select>
                     </label>
-                    <label>
+                    <label title="Matched branches colors only the matching node or tip; matched subtrees colors descendants too.">
                       Apply colors to
                       <select value={metadataApplyScope} onChange={(event) => setMetadataApplyScope(event.target.value as MetadataApplyScope)}>
                         <option value="branch">Matched branches</option>
                         <option value="subtree">Matched subtrees</option>
                       </select>
                     </label>
-                    <label>
+                    <label title="Categorical assigns a color per value; continuous maps numeric values through a gradient.">
                       Color mode
                       <select
                         value={metadataColorMode}
@@ -5529,7 +5806,7 @@ export default function App() {
                     </label>
                     {metadataColorMode === "continuous" ? (
                       <>
-                        <label>
+                        <label title="Choose the gradient used for numeric metadata values.">
                           Palette
                           <select
                             value={metadataContinuousPalette}
@@ -5540,7 +5817,7 @@ export default function App() {
                             ))}
                           </select>
                         </label>
-                        <label>
+                        <label title="Transform numeric values before mapping them to the continuous color scale.">
                           Transform
                           <select
                             value={metadataContinuousTransform}
@@ -5551,7 +5828,7 @@ export default function App() {
                             <option value="log">Signed log1p</option>
                           </select>
                         </label>
-                        <label>
+                        <label title="Optionally set the lower bound of the continuous color scale. Leave blank for the data minimum.">
                           Clamp minimum
                           <input
                             type="number"
@@ -5560,7 +5837,7 @@ export default function App() {
                             onChange={(event) => setMetadataContinuousMinInput(event.target.value)}
                           />
                         </label>
-                        <label>
+                        <label title="Optionally set the upper bound of the continuous color scale. Leave blank for the data maximum.">
                           Clamp maximum
                           <input
                             type="number"
@@ -5569,7 +5846,7 @@ export default function App() {
                             onChange={(event) => setMetadataContinuousMaxInput(event.target.value)}
                           />
                         </label>
-                        <label className="metadata-inline-toggle">
+                        <label className="metadata-inline-toggle" title="Reverse the direction of the continuous color gradient.">
                           <input
                             type="checkbox"
                             checked={metadataReverseScale}
@@ -5625,7 +5902,7 @@ export default function App() {
                   </SettingsPopoverButton>
                 </div>
                 <div className="metadata-toggle-row">
-                  <label className="metadata-inline-toggle metadata-toggle-main">
+                  <label className="metadata-inline-toggle metadata-toggle-main" title="Draw text labels from a metadata column on matched nodes.">
                     <input
                       type="checkbox"
                       checked={metadataLabelsEnabled}
@@ -5640,7 +5917,7 @@ export default function App() {
                     disabledReason="Enable metadata text labels first."
                     onToggle={() => setActiveLabelStylePopover((current) => current === "metadataLabels" ? null : "metadataLabels")}
                   >
-                    <label>
+                    <label title="Choose the metadata column whose values will be drawn as text labels.">
                       Text label column
                       <select value={metadataLabelColumn} onChange={(event) => setMetadataLabelColumn(event.target.value)}>
                         {metadataColumns.map((column) => (
@@ -5648,7 +5925,7 @@ export default function App() {
                         ))}
                       </select>
                     </label>
-                    <label>
+                    <label title="Choose the font family for metadata text labels.">
                       Font family
                       <select
                         value={figureStyles.internalNode.fontFamily}
@@ -5659,7 +5936,7 @@ export default function App() {
                         ))}
                       </select>
                     </label>
-                    <label>
+                    <label title="Scale metadata text labels relative to the base internal-node label size.">
                       Size scale
                       <input
                         type="range"
@@ -5671,7 +5948,7 @@ export default function App() {
                       />
                     </label>
                     <div className="figure-style-value">x{figureStyles.internalNode.sizeScale.toFixed(2)}</div>
-                    <label>
+                    <label title="Maximum number of metadata text labels to draw in the current view.">
                       Metadata label max count
                       <input
                         type="range"
@@ -5683,7 +5960,7 @@ export default function App() {
                       />
                     </label>
                     <div className="figure-style-value">{metadataLabelMaxCount.toLocaleString()}</div>
-                    <label>
+                    <label title="Minimum screen-space gap between metadata text labels. Higher values reduce overlap.">
                       Metadata label spacing
                       <input
                         type="range"
@@ -5695,7 +5972,7 @@ export default function App() {
                       />
                     </label>
                     <div className="figure-style-value">{metadataLabelMinSpacingPx}px</div>
-                    <label>
+                    <label title="Move metadata text labels horizontally in screen pixels.">
                       Metadata label X offset
                       <input
                         type="range"
@@ -5707,7 +5984,7 @@ export default function App() {
                       />
                     </label>
                     <div className="figure-style-value">{metadataLabelOffsetXPx}px</div>
-                    <label>
+                    <label title="Move metadata text labels vertically in screen pixels.">
                       Metadata label Y offset
                       <input
                         type="range"
@@ -5722,7 +5999,7 @@ export default function App() {
                   </SettingsPopoverButton>
                 </div>
                 <div className="metadata-toggle-row">
-                  <label className="metadata-inline-toggle metadata-toggle-main">
+                  <label className="metadata-inline-toggle metadata-toggle-main" title="Draw categorical marker symbols from a metadata column on matched nodes.">
                     <input
                       type="checkbox"
                       checked={metadataMarkersEnabled}
@@ -5737,7 +6014,7 @@ export default function App() {
                     disabledReason="Enable metadata markers first."
                     onToggle={() => setActiveLabelStylePopover((current) => current === "metadataMarkers" ? null : "metadataMarkers")}
                   >
-                    <label>
+                    <label title="Choose the metadata column that determines marker categories.">
                       Marker category column
                       <select value={metadataMarkerColumn} onChange={(event) => setMetadataMarkerColumn(event.target.value)}>
                         {metadataColumns.map((column) => (
@@ -5745,7 +6022,7 @@ export default function App() {
                         ))}
                       </select>
                     </label>
-                    <label>
+                    <label title="Set the size of metadata marker symbols.">
                       Marker size
                       <input
                         type="range"
@@ -6049,6 +6326,9 @@ export default function App() {
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={setViewMode}
           onSessionStateSnapshot={handleSessionStateSnapshot}
+          onPhyloPicRemoveSilhouette={removePhyloPicSilhouette}
+          onPhyloPicTryAnotherSilhouette={tryAnotherPhyloPicSilhouette}
+          hideDownloadNewick={hideDownloadNewick}
         />
         {phylopicEnabled && phylopicSilhouettes.length > 0 && !phylopicReminderDismissed ? (
           <div className="phylopic-attribution-reminder">
@@ -6060,19 +6340,34 @@ export default function App() {
             >
               ×
             </button>
-            <strong>PhyloPic attribution required</strong>
-            <span>Include the generated attribution caption if you use this figure.</span>
+            <strong>{phylopicCaption ? "PhyloPic attribution required" : "PhyloPic silhouettes in use"}</strong>
+            <span>
+              {phylopicCaption
+                ? "Include the generated attribution caption if you use this figure."
+                : "No attribution caption is required for the current silhouettes because their stored licenses are CC0 or Public Domain Mark."}
+            </span>
             <button
               type="button"
               className="text-link-button"
               onClick={() => {
                 setTaxonomyOpen(true);
                 setPhyloPicOpen(true);
-                setPhyloPicCaptionVisible(true);
+                setPhyloPicCaptionVisible((visible) => !visible);
               }}
             >
-              Open caption
+              {phylopicCaptionVisible ? "Hide caption" : "Open caption"}
             </button>
+            {phylopicCaptionVisible ? (
+              phylopicCaption ? (
+                <textarea className="phylopic-attribution-caption" readOnly value={phylopicCaption} />
+              ) : (
+                <>
+                  <p className="phylopic-attribution-caption-note">
+                    No attribution is required for the current silhouettes.
+                  </p>
+                </>
+              )
+            ) : null}
           </div>
         ) : null}
       </main>

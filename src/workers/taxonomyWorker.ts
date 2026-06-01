@@ -3,6 +3,7 @@
 import { DecodeUTF8, Unzip, UnzipInflate } from "fflate";
 import {
   addTaxonomyIndexEntry,
+  candidateExactTaxonName,
   candidateSpeciesNames,
   extractGenus,
   mapTipsWithContext,
@@ -23,7 +24,7 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-error"; message: string };
 
 const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
-const TAXONOMY_MAPPING_VERSION = 7;
+const TAXONOMY_MAPPING_VERSION = 8;
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };
@@ -32,11 +33,13 @@ type ParsedTaxonomy = {
   rankNames: Map<number, string>;
   speciesIndex: Map<string, number[]>;
   genusIndex: Map<string, number[]>;
+  namedTaxonIndex: Map<string, number[]>;
 };
 
 type TaxonomyLookupFilters = {
   speciesNames: Set<string>;
   genera: Set<string>;
+  namedTaxa: Set<string>;
 };
 
 let parsedCache: ParsedTaxonomy | null = null;
@@ -68,6 +71,7 @@ function parseTaxonomyNameLine(
   rankNames: Map<number, string>,
   speciesIndex: Map<string, number[]>,
   genusIndex: Map<string, number[]>,
+  namedTaxonIndex: Map<string, number[]>,
   lowMemoryMode: boolean,
   lookupFilters: TaxonomyLookupFilters,
 ): void {
@@ -93,6 +97,15 @@ function parseTaxonomyNameLine(
       addTaxonomyIndexEntry(genusIndex, normalized, taxId);
     }
   }
+  if (
+    nameClass === "scientific name"
+    && TAXONOMY_NAMED_LINEAGE_RANKS.has(rank)
+  ) {
+    const normalized = normalizeTaxonomyName(scientificName);
+    if (lookupFilters.namedTaxa.has(normalized)) {
+      addTaxonomyIndexEntry(namedTaxonIndex, normalized, taxId);
+    }
+  }
   const shouldCacheRankName = lowMemoryMode
     ? (TARGET_RANKS as string[]).includes(rank)
     : TAXONOMY_NAMED_LINEAGE_RANKS.has(rank);
@@ -104,6 +117,7 @@ function parseTaxonomyNameLine(
 function buildLookupFilters(tips: Array<{ node: number; name: string }>): TaxonomyLookupFilters {
   const speciesNames = new Set<string>();
   const genera = new Set<string>();
+  const namedTaxa = new Set<string>();
   for (let index = 0; index < tips.length; index += 1) {
     const tip = tips[index];
     const candidates = candidateSpeciesNames(tip.name);
@@ -114,8 +128,12 @@ function buildLookupFilters(tips: Array<{ node: number; name: string }>): Taxono
     if (genus) {
       genera.add(genus);
     }
+    const exactTaxonName = candidateExactTaxonName(tip.name);
+    if (exactTaxonName) {
+      namedTaxa.add(exactTaxonName);
+    }
   }
-  return { speciesNames, genera };
+  return { speciesNames, genera, namedTaxa };
 }
 
 function createLineStreamParser(onLine: (line: string) => void): (chunk: Uint8Array, final: boolean) => void {
@@ -222,15 +240,16 @@ async function parseArchive(
   const rankNames = new Map<number, string>();
   const speciesIndex = new Map<string, number[]>();
   const genusIndex = new Map<string, number[]>();
+  const namedTaxonIndex = new Map<string, number[]>();
 
   await parseZipFileLines(archiveBlob, "nodes.dmp", "Parsing taxonomy nodes...", (line) => {
     parseNodeLine(line, nodes);
   });
   await parseZipFileLines(archiveBlob, "names.dmp", "Parsing taxonomy names...", (line) => {
-    parseTaxonomyNameLine(line, nodes, rankNames, speciesIndex, genusIndex, lowMemoryMode, lookupFilters);
+    parseTaxonomyNameLine(line, nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex, lowMemoryMode, lookupFilters);
   });
 
-  const parsed = { nodes, rankNames, speciesIndex, genusIndex };
+  const parsed = { nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex };
   if (!lowMemoryMode) {
     parsedCache = parsed;
   }
@@ -264,7 +283,7 @@ self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerReques
     const lookupFilters = buildLookupFilters(request.tips);
     post({
       type: "taxonomy-progress",
-      message: `Preparing taxonomy lookup filters (${lookupFilters.speciesNames.size.toLocaleString()} species names, ${lookupFilters.genera.size.toLocaleString()} genera)...`,
+      message: `Preparing taxonomy lookup filters (${lookupFilters.speciesNames.size.toLocaleString()} species names, ${lookupFilters.genera.size.toLocaleString()} genera, ${lookupFilters.namedTaxa.size.toLocaleString()} exact taxa)...`,
     });
     const taxonomy = await parseArchive(request.archive, lowMemoryMode, lookupFilters);
     post({ type: "taxonomy-progress", message: "Mapping taxonomy to tree tips..." });

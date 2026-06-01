@@ -298,11 +298,16 @@ export function displayNodeName(tree: TreeModel, node: number): string {
 }
 
 export function extractGenusToken(name: string): string | null {
-  const match = name.trim().replace(/^['"]+|['"]+$/g, "").match(/^([^_ ]+)[_ ]+/);
+  const normalized = name.trim().replace(/^['"]+|['"]+$/g, "");
+  const match = normalized.match(/^([^_ ]+)[_ ]+([^_ ]+)/);
   if (!match) {
     return null;
   }
   const token = match[1].trim();
+  const secondToken = match[2].trim();
+  if (!/[\p{L}]/u.test(secondToken)) {
+    return null;
+  }
   return token.length >= 2 ? token : null;
 }
 
