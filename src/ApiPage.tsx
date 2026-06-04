@@ -3,7 +3,6 @@ export default function ApiPage() {
   const simpleNewick = `${origin}?btv_newick=%28A%3A1%2CB%3A1%29Root%3B`;
   const remoteNewick = `${origin}?btv_newick_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.nwk&btv_view=circular`;
   const remoteSession = `${origin}?btv_session_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.btvsession`;
-  const viewOnlySession = `${remoteSession}&btv_hide_download_newick=1`;
   const metadataExample = `${origin}?btv_newick=%28A%3A1%2C%28B%3A1%2CC%3A1%29Clade1%3A1%29Root%3B&btv_metadata=name%2Cgroup%0AA%2Cred_group%0AB%2Cblue_group%0AC%2Cblue_group%0A&btv_metadata_key=name&btv_metadata_value=group&btv_metadata_enabled=true`;
 
   return (
@@ -60,12 +59,6 @@ window.open(url, "_blank");`}</code></pre>
           </p>
           <pre><code>{remoteNewick}</code></pre>
           <pre><code>{remoteSession}</code></pre>
-          <p>
-            Add `btv_hide_download_newick=1` to hide the Download Newick button
-            in a shared viewer link. This is a presentation safeguard only: a
-            `.btvsession` still contains the tree data.
-          </p>
-          <pre><code>{viewOnlySession}</code></pre>
         </section>
 
         <section className="api-doc-section">
@@ -113,7 +106,6 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_metadata_markers</dt><dd>Show metadata markers.</dd></div>
             <div><dt>btv_newick_url</dt><dd>Public URL for a Newick or NEXUS file. Requires host CORS support.</dd></div>
             <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
-            <div><dt>btv_hide_download_newick</dt><dd>`true` or `1` hides the Download Newick button for a shared viewer link.</dd></div>
           </dl>
         </section>
 
@@ -154,9 +146,6 @@ window.addEventListener("message", (event) => {
           <pre><code>{`{
   newick: string,
   label?: string,
-  controls?: {
-    hideDownloadNewick?: boolean
-  },
   visual?: {
     viewMode?: "rectangular" | "circular" | "spiral",
     order?: "asc" | "desc" | "input",

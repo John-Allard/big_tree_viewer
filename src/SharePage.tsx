@@ -24,7 +24,6 @@ function normalizeSessionUrl(value: string): string | null {
 
 export default function SharePage() {
   const [sessionUrl, setSessionUrl] = useState("");
-  const [hideDownloadNewick, setHideDownloadNewick] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const normalizedSessionUrl = useMemo(() => normalizeSessionUrl(sessionUrl), [sessionUrl]);
@@ -33,11 +32,8 @@ export default function SharePage() {
       return "";
     }
     const params = new URLSearchParams({ btv_session_url: normalizedSessionUrl });
-    if (hideDownloadNewick) {
-      params.set("btv_hide_download_newick", "1");
-    }
     return `${window.location.origin}${import.meta.env.BASE_URL}?${params.toString()}`;
-  }, [hideDownloadNewick, normalizedSessionUrl]);
+  }, [normalizedSessionUrl]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -182,19 +178,6 @@ export default function SharePage() {
                   <span>Share link</span>
                   <textarea value={shareLink} readOnly rows={4} placeholder="Paste a session URL above." />
                 </label>
-                <label className="share-option-toggle">
-                  <input
-                    type="checkbox"
-                    checked={hideDownloadNewick}
-                    onChange={(event) => setHideDownloadNewick(event.target.checked)}
-                  />
-                  <span>Hide the Download Newick button for this shared view</span>
-                </label>
-                <p className="share-note">
-                  This hides the casual download control in the viewer. The
-                  session file still contains the tree, so use this only as a
-                  presentation safeguard, not as data protection.
-                </p>
                 <div className="share-actions">
                   <button type="button" onClick={copyShareLink} disabled={!shareLink}>Copy link</button>
                   <button type="button" onClick={openTestLink} disabled={!shareLink}>Test in new tab</button>

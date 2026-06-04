@@ -9543,16 +9543,6 @@ export default function TreeCanvas({
               });
               continue;
             }
-            if (totalTipCount <= 1) {
-              pushTaxonomyCandidateDebug({
-                rank,
-                label: block.label,
-                accepted: false,
-                reason: "single-tip-block",
-                arcLengthPx: bestLabelCandidate.arcLengthPx,
-              });
-              continue;
-            }
             const minFontSize = rank === "genus"
               ? (isPreservedLabel ? 4.5 : 5.2)
               : rank === "family"
