@@ -100,6 +100,9 @@ const HUGE_TREE_MAX_TIP_SPACING_PX = 64;
 const HUGE_TREE_ZOOMED_SAMPLE_LEAF_LIMIT = 1_500;
 const HUGE_TREE_ZOOMED_SEGMENT_BUDGET = 12_000;
 const MAX_TIME_STRIPE_BANDS_PER_DRAW = 4_096;
+const MIN_ZOOMED_RECT_TREE_SPAN_PX = 96;
+const MIN_ZOOMED_CIRCULAR_TREE_RADIUS_PX = 56;
+const MAX_TAXONOMY_ARC_HITBOXES = 4_096;
 
 type PhyloPicHitbox = {
   silhouette: PhyloPicSilhouette;
@@ -113,6 +116,24 @@ type PhyloPicHitbox = {
   firstNode?: number;
   lastNode?: number;
   taxonomyTipCount?: number;
+};
+
+type CircularTaxonomyArcMetadata = {
+  rank: TaxonomyRank;
+  label: string;
+  taxId: number | null;
+  firstNode: number;
+  lastNode: number;
+  taxonomyTipCount: number;
+};
+
+type TaxonomyArcHitbox = CircularTaxonomyArcMetadata & {
+  startTheta: number;
+  endTheta: number;
+  innerRadiusPx: number;
+  outerRadiusPx: number;
+  screenPolygonPoints?: Array<{ x: number; y: number }>;
+  screenPolygonBounds?: { left: number; right: number; top: number; bottom: number };
 };
 
 function compactCircularOverlayScale(width: number, height: number): number {
@@ -130,8 +151,18 @@ function circularFitMinTreeRadiusPx(width: number, height: number): number {
   return compactCircularOverlayScale(width, height) < 1 ? 42 : 120;
 }
 
-function circularZoomOutScaleMultiplier(width: number, height: number): number {
-  return compactCircularOverlayScale(width, height) < 1 ? 0.32 : 0.55;
+function minRectZoomScales(tree: TreeModel): { scaleX: number; scaleY: number } {
+  const depthExtent = Math.max(tree.maxDepth, tree.branchLengthMinPositive, 1e-9);
+  const tipExtent = Math.max(1, tree.leafCount - 1);
+  return {
+    scaleX: MIN_ZOOMED_RECT_TREE_SPAN_PX / depthExtent,
+    scaleY: MIN_ZOOMED_RECT_TREE_SPAN_PX / tipExtent,
+  };
+}
+
+function minCircularZoomScale(tree: TreeModel): number {
+  const radius = Math.max(tree.maxDepth, tree.branchLengthMinPositive, 1e-9);
+  return MIN_ZOOMED_CIRCULAR_TREE_RADIUS_PX / radius;
 }
 
 function maxCircularZoomScale(width: number, height: number, tree: TreeModel, rotation: number): number {
@@ -2020,6 +2051,36 @@ function wrappedAnglesEqual(left: number, right: number, epsilon = 1e-6): boolea
   return delta <= epsilon || Math.abs(delta - (Math.PI * 2)) <= epsilon;
 }
 
+function pointInPolygon(pointX: number, pointY: number, points: Array<{ x: number; y: number }>): boolean {
+  let inside = false;
+  for (let index = 0, previousIndex = points.length - 1; index < points.length; previousIndex = index, index += 1) {
+    const point = points[index];
+    const previousPoint = points[previousIndex];
+    if (
+      ((point.y > pointY) !== (previousPoint.y > pointY))
+      && pointX < ((previousPoint.x - point.x) * (pointY - point.y) / ((previousPoint.y - point.y) || 1e-9)) + point.x
+    ) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function polygonBounds(points: Array<{ x: number; y: number }>): { left: number; right: number; top: number; bottom: number } {
+  let left = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    left = Math.min(left, point.x);
+    right = Math.max(right, point.x);
+    top = Math.min(top, point.y);
+    bottom = Math.max(bottom, point.y);
+  }
+  return { left, right, top, bottom };
+}
+
 function isScreenPointVisible(x: number, y: number, width: number, height: number, margin = 12): boolean {
   return x >= -margin && x <= (width + margin) && y >= -margin && y <= (height + margin);
 }
@@ -2612,7 +2673,16 @@ type RectTaxonomyBitmapCache = {
 };
 
 type CircularOverlayArc =
-  | { mode: "stroke"; lineRadiusPx: number; lineWidthPx: number; startTheta: number; endTheta: number; color: string; key?: string }
+  | {
+    mode: "stroke";
+    lineRadiusPx: number;
+    lineWidthPx: number;
+    startTheta: number;
+    endTheta: number;
+    color: string;
+    key?: string;
+    taxonomy?: CircularTaxonomyArcMetadata;
+  }
   | {
     mode: "ribbon";
     lineRadiusPx: number;
@@ -2623,6 +2693,7 @@ type CircularOverlayArc =
     outerRadiusPx: number;
     color: string;
     screenPolygonPoints?: Array<{ x: number; y: number }>;
+    taxonomy?: CircularTaxonomyArcMetadata;
   }
   | {
     mode: "band";
@@ -2632,6 +2703,7 @@ type CircularOverlayArc =
     endTheta: number;
     color: string;
     screenPolygonPoints?: Array<{ x: number; y: number }>;
+    taxonomy?: CircularTaxonomyArcMetadata;
   };
 
 type CircularTaxonomyOverlayLayoutCache = {
@@ -3461,6 +3533,7 @@ export default function TreeCanvas({
   const hoverTooltipBodyRef = useRef<HTMLDivElement | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const phylopicHitsRef = useRef<PhyloPicHitbox[]>([]);
+  const taxonomyArcHitsRef = useRef<TaxonomyArcHitbox[]>([]);
   const phylopicImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [phylopicImageLoadVersion, setPhyloPicImageLoadVersion] = useState(0);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
@@ -4631,9 +4704,7 @@ export default function TreeCanvas({
     }
     if (camera.kind === "rect") {
       const world = screenToWorldRect(camera, localX, localY);
-      const fit = fitRectCamera(size.width, size.height, tree);
-      const minScaleX = fit.scaleX * 0.55;
-      const minScaleY = fit.scaleY * 0.55;
+      const { scaleX: minScaleX, scaleY: minScaleY } = minRectZoomScales(tree);
       if (zoomAxisMode !== "y") {
         camera.scaleX = Math.max(minScaleX, camera.scaleX * zoom);
         camera.translateX = localX - (world.x * camera.scaleX);
@@ -4645,8 +4716,7 @@ export default function TreeCanvas({
       clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
     } else {
       const world = screenToWorldCircular(camera, localX, localY);
-      const fit = fitCircularCamera(size.width, size.height, tree, camera.rotation);
-      const minScale = fit.scale * circularZoomOutScaleMultiplier(size.width, size.height);
+      const minScale = minCircularZoomScale(tree);
       const maxScale = maxCircularZoomScale(size.width, size.height, tree, camera.rotation);
       camera.scale = Math.max(minScale, Math.min(maxScale, camera.scale * zoom));
       const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
@@ -5658,6 +5728,7 @@ export default function TreeCanvas({
     if (!isOverrideRender) {
       labelHitsRef.current = [];
       phylopicHitsRef.current = [];
+      taxonomyArcHitsRef.current = [];
     }
     const renderDebug: Record<string, unknown> = {
       viewMode,
@@ -9230,10 +9301,19 @@ export default function TreeCanvas({
               };
             });
             for (let segmentIndex = 0; segmentIndex < blockSegments.length; segmentIndex += 1) {
+              const blockSegment = blockSegments[segmentIndex];
               const segmentDrawSpans = segmentVisibleDrawSpans[segmentIndex];
               const visibleDrawSpans = segmentDrawSpans?.visibleDrawSpans ?? [];
               const segmentStartTheta = segmentDrawSpans?.segmentStartTheta ?? 0;
               const segmentEndTheta = segmentDrawSpans?.segmentEndTheta ?? 0;
+              const taxonomyArcMetadata: CircularTaxonomyArcMetadata = {
+                rank,
+                label: block.label,
+                taxId: block.taxId ?? null,
+                firstNode: blockSegment.firstNode,
+                lastNode: blockSegment.lastNode,
+                taxonomyTipCount: totalTipCount,
+              };
               for (let visibleSpanIndex = 0; visibleSpanIndex < visibleDrawSpans.length; visibleSpanIndex += 1) {
                 const visibleDrawSpan = visibleDrawSpans[visibleSpanIndex];
                 const candidateSpanTheta = visibleDrawSpan.end >= visibleDrawSpan.start
@@ -9294,6 +9374,7 @@ export default function TreeCanvas({
                     endTheta: insetRenderedEnd - rotationAngle,
                     color: block.color,
                     key: blockKey,
+                    taxonomy: taxonomyArcMetadata,
                   });
                   pushScenePath(
                     svgArcPath(centerPoint.x, centerPoint.y, lineRadiusPx, insetRenderedStart, insetRenderedEnd),
@@ -9313,6 +9394,7 @@ export default function TreeCanvas({
                     outerRadiusPx,
                     color: block.color,
                     screenPolygonPoints: screenPolygonPoints.length >= 3 ? screenPolygonPoints : undefined,
+                    taxonomy: taxonomyArcMetadata,
                   });
                   pushScenePath(
                     screenPolygonPoints.length >= 3
@@ -9996,6 +10078,25 @@ export default function TreeCanvas({
       if (circularGenusArcs.length > 0) {
         for (let index = 0; index < circularGenusArcs.length; index += 1) {
           const arc = circularGenusArcs[index];
+          if (!isOverrideRender && arc.taxonomy && taxonomyArcHitsRef.current.length < MAX_TAXONOMY_ARC_HITBOXES) {
+            const innerRadiusPx = circularOverlayInnerRadiusPx(arc);
+            const outerRadiusPx = circularOverlayOuterRadiusPx(arc);
+            if (innerRadiusPx !== null && outerRadiusPx !== null) {
+              const hitPaddingPx = arc.mode === "stroke" ? 6 : 2;
+              const screenPolygonPoints = "screenPolygonPoints" in arc ? arc.screenPolygonPoints : undefined;
+              taxonomyArcHitsRef.current.push({
+                ...arc.taxonomy,
+                startTheta: arc.startTheta + rotationAngle,
+                endTheta: arc.endTheta + rotationAngle,
+                innerRadiusPx: Math.max(0, innerRadiusPx - hitPaddingPx),
+                outerRadiusPx: outerRadiusPx + hitPaddingPx,
+                screenPolygonPoints,
+                screenPolygonBounds: screenPolygonPoints && screenPolygonPoints.length >= 3
+                  ? polygonBounds(screenPolygonPoints)
+                  : undefined,
+              });
+            }
+          }
           ctx.globalAlpha = CIRCULAR_TAXONOMY_OVERLAY_ALPHA;
           if (arc.mode === "ribbon") {
             if (arc.screenPolygonPoints && arc.screenPolygonPoints.length >= 3) {
@@ -11589,6 +11690,62 @@ export default function TreeCanvas({
       }
       return null;
     };
+    const findTaxonomyArcHitboxAt = (localX: number, localY: number): TaxonomyArcHitbox | null => {
+      const camera = cameraRef.current;
+      if (!camera || camera.kind !== "circular") {
+        return null;
+      }
+      const centerX = camera.translateX;
+      const centerY = camera.translateY;
+      const dx = localX - centerX;
+      const dy = localY - centerY;
+      const radius = Math.hypot(dx, dy);
+      const theta = wrapPositive(Math.atan2(dy, dx));
+      for (let index = taxonomyArcHitsRef.current.length - 1; index >= 0; index -= 1) {
+        const hitbox = taxonomyArcHitsRef.current[index];
+        if (hitbox.screenPolygonPoints && hitbox.screenPolygonPoints.length >= 3) {
+          const bounds = hitbox.screenPolygonBounds ?? polygonBounds(hitbox.screenPolygonPoints);
+          if (
+            localX >= bounds.left
+            && localX <= bounds.right
+            && localY >= bounds.top
+            && localY <= bounds.bottom
+            && pointInPolygon(localX, localY, hitbox.screenPolygonPoints)
+          ) {
+            return hitbox;
+          }
+          continue;
+        }
+        if (
+          radius >= hitbox.innerRadiusPx
+          && radius <= hitbox.outerRadiusPx
+          && wrappedAngleWithinInterval(theta, hitbox.startTheta, hitbox.endTheta)
+        ) {
+          return hitbox;
+        }
+      }
+      return null;
+    };
+    const taxonomyHoverInfoFromArcHitbox = (hitbox: TaxonomyArcHitbox, localX: number, localY: number): CanvasHoverInfo => {
+      const mrcaNode = lowestCommonAncestor(tree, hitbox.firstNode, hitbox.lastNode);
+      const parent = tree.buffers.parent[mrcaNode];
+      const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
+      return {
+        node: mrcaNode,
+        branchLength: tree.buffers.branchLength[mrcaNode],
+        parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
+        parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+        childAge: mrcaAge,
+        descendantTipCount: hitbox.taxonomyTipCount ?? tree.buffers.leafCount[mrcaNode],
+        name: hitbox.label,
+        screenX: localX,
+        screenY: localY,
+        targetKind: "label",
+        kind: "taxonomy",
+        taxonomyRank: hitbox.rank,
+        mrcaAge,
+      };
+    };
 
     const hitTestAt = (localX: number, localY: number): CanvasHoverInfo | null => {
       const camera = cameraRef.current;
@@ -11689,6 +11846,10 @@ export default function TreeCanvas({
 
       if (hover) {
         return hover;
+      }
+      const taxonomyArcHitbox = findTaxonomyArcHitboxAt(localX, localY);
+      if (taxonomyArcHitbox) {
+        return taxonomyHoverInfoFromArcHitbox(taxonomyArcHitbox, localX, localY);
       }
       if (viewMode === "spiral") {
         if (camera.kind !== "circular") {
@@ -12296,6 +12457,26 @@ export default function TreeCanvas({
           lastNode: labelHitbox.taxonomyLastNode,
           descendantTipCount: labelHitbox.taxonomyTipCount ?? 0,
           taxId: labelHitbox.taxonomyTaxId ?? null,
+        });
+        scheduleDraw();
+        return;
+      }
+      const taxonomyArcHitbox = findTaxonomyArcHitboxAt(localX, localY);
+      if (taxonomyArcHitbox) {
+        hoverRef.current = null;
+        updateHoverTooltip(null);
+        drawHoverHighlightOverlay();
+        onHoverChange(null);
+        setContextMenu({
+          kind: "taxonomy",
+          x: Math.min(size.width - 260, localX + 14),
+          y: Math.min(size.height - 210, localY + 14),
+          name: taxonomyArcHitbox.label,
+          rank: taxonomyArcHitbox.rank,
+          firstNode: taxonomyArcHitbox.firstNode,
+          lastNode: taxonomyArcHitbox.lastNode,
+          descendantTipCount: taxonomyArcHitbox.taxonomyTipCount,
+          taxId: taxonomyArcHitbox.taxId,
         });
         scheduleDraw();
         return;
@@ -12944,6 +13125,10 @@ export default function TreeCanvas({
         return result;
       },
       getLabelHitboxes: () => labelHitsRef.current.map((hitbox) => ({ ...hitbox })),
+      getTaxonomyArcHitboxes: () => taxonomyArcHitsRef.current.map((hitbox) => ({
+        ...hitbox,
+        screenPolygonPoints: hitbox.screenPolygonPoints?.map((point) => ({ ...point })),
+      })),
       getPhyloPicHitboxes: () => phylopicHitsRef.current.map((hitbox) => ({
         ...hitbox,
         silhouette: { ...hitbox.silhouette },
