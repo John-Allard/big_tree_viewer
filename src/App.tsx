@@ -1231,6 +1231,7 @@ export default function App() {
   const pendingTreeParseResolverRef = useRef<(() => void) | null>(null);
   const pendingTreeParseRejecterRef = useRef<((error: Error) => void) | null>(null);
   const phylopicCancelRequestedRef = useRef(false);
+  const phylopicTriedImageUuidsByKeyRef = useRef<Map<string, Set<string>>>(new Map());
   const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
@@ -2391,6 +2392,10 @@ export default function App() {
       }
       setPhyloPicEnabled(sessionPhyloPic.enabled && silhouettes.length > 0);
       setPhyloPicSilhouettes(silhouettes);
+      phylopicTriedImageUuidsByKeyRef.current = new Map(silhouettes.map((silhouette) => [
+        silhouette.key,
+        new Set([silhouette.imageUuid]),
+      ]));
       setPhyloPicStatus(silhouettes.length > 0
         ? `Loaded ${silhouettes.length.toLocaleString()} PhyloPic silhouette${silhouettes.length === 1 ? "" : "s"} from session.`
         : "");
@@ -2401,6 +2406,7 @@ export default function App() {
     }
     setPhyloPicEnabled(false);
     setPhyloPicSilhouettes([]);
+    phylopicTriedImageUuidsByKeyRef.current.clear();
     setPhyloPicStatus("");
     setPhyloPicError(null);
     setPhyloPicCaptionVisible(false);
@@ -4028,6 +4034,9 @@ export default function App() {
           const byKey = new Map(current.map((silhouette) => [silhouette.key, silhouette]));
           for (const silhouette of additions) {
             byKey.set(silhouette.key, silhouette);
+            const tried = phylopicTriedImageUuidsByKeyRef.current.get(silhouette.key) ?? new Set<string>();
+            tried.add(silhouette.imageUuid);
+            phylopicTriedImageUuidsByKeyRef.current.set(silhouette.key, tried);
           }
           return Array.from(byKey.values());
         });
@@ -4053,6 +4062,7 @@ export default function App() {
       taxId: typeof silhouette.taxId === "number" ? silhouette.taxId : null,
     });
     setPhyloPicSilhouettes((current) => current.filter((item) => item.key !== silhouette.key));
+    phylopicTriedImageUuidsByKeyRef.current.delete(silhouette.key);
     setPhyloPicStatus(`Removed PhyloPic silhouette for ${silhouette.taxonLabel}.`);
     setPhyloPicError(null);
   }, []);
@@ -4073,11 +4083,15 @@ export default function App() {
       setPhyloPicError(null);
       setPhyloPicStatus(`Trying another PhyloPic silhouette for ${silhouette.taxonLabel}...`);
       try {
-        const replacement = await retrievePhyloPicSilhouette(candidate, [silhouette.imageUuid]);
+        const triedImageUuids = phylopicTriedImageUuidsByKeyRef.current.get(candidate.key) ?? new Set<string>();
+        triedImageUuids.add(silhouette.imageUuid);
+        phylopicTriedImageUuidsByKeyRef.current.set(candidate.key, triedImageUuids);
+        const replacement = await retrievePhyloPicSilhouette(candidate, triedImageUuids);
         if (!replacement) {
           setPhyloPicStatus(`No alternate publication-compatible PhyloPic silhouette was found for ${silhouette.taxonLabel}.`);
           return;
         }
+        triedImageUuids.add(replacement.imageUuid);
         setPhyloPicSilhouettes((current) => {
           const byKey = new Map(current.map((item) => [item.key, item]));
           byKey.set(replacement.key, replacement);
@@ -5608,6 +5622,7 @@ export default function App() {
                             className="secondary"
                             onClick={() => {
                               setPhyloPicSilhouettes([]);
+                              phylopicTriedImageUuidsByKeyRef.current.clear();
                               setPhyloPicEnabled(false);
                             }}
                             title="Remove all currently displayed silhouettes from the view."

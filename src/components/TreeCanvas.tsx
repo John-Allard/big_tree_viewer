@@ -136,6 +136,10 @@ type TaxonomyArcHitbox = CircularTaxonomyArcMetadata & {
   screenPolygonBounds?: { left: number; right: number; top: number; bottom: number };
 };
 
+function phylopicImageElementKey(silhouette: Pick<PhyloPicSilhouette, "key" | "imageUuid">): string {
+  return `${silhouette.key}:${silhouette.imageUuid}`;
+}
+
 function compactCircularOverlayScale(width: number, height: number): number {
   const minDimension = Math.min(width, height);
   if (minDimension >= 620) {
@@ -3746,24 +3750,25 @@ export default function TreeCanvas({
   }, [tree, updateHoverTooltip]);
 
   useEffect(() => {
-    const allowedKeys = new Set(phylopicSilhouettes.map((silhouette) => silhouette.key));
+    const allowedKeys = new Set(phylopicSilhouettes.map((silhouette) => phylopicImageElementKey(silhouette)));
     for (const key of Array.from(phylopicImagesRef.current.keys())) {
       if (!allowedKeys.has(key)) {
         phylopicImagesRef.current.delete(key);
       }
     }
     for (const silhouette of phylopicSilhouettes) {
-      if (phylopicImagesRef.current.has(silhouette.key)) {
+      const imageKey = phylopicImageElementKey(silhouette);
+      if (phylopicImagesRef.current.has(imageKey)) {
         continue;
       }
       const image = new Image();
       image.decoding = "async";
       image.onload = () => setPhyloPicImageLoadVersion((version) => version + 1);
       image.onerror = () => {
-        phylopicImagesRef.current.delete(silhouette.key);
+        phylopicImagesRef.current.delete(imageKey);
         setPhyloPicImageLoadVersion((version) => version + 1);
       };
-      phylopicImagesRef.current.set(silhouette.key, image);
+      phylopicImagesRef.current.set(imageKey, image);
       image.src = silhouette.dataUrl;
     }
   }, [phylopicSilhouettes]);
@@ -5540,7 +5545,7 @@ export default function TreeCanvas({
       if (!silhouette) {
         return;
       }
-      const image = phylopicImagesRef.current.get(key);
+      const image = phylopicImagesRef.current.get(phylopicImageElementKey(silhouette));
       if (!image || !image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
         return;
       }
