@@ -1,5 +1,4 @@
 export default function AgenticAiPage() {
-  const skillBase = `${import.meta.env.BASE_URL}agentic-ai/bigtreeviewer-agent-skill`;
   return (
     <main className="about-page api-page">
       <div className="about-page-frame">
@@ -40,11 +39,7 @@ export default function AgenticAiPage() {
           <p>
             <a href={`${import.meta.env.BASE_URL}agentic-ai/bigtreeviewer-agent-skill.zip`}>Download the skill ZIP</a>
             {" · "}
-            <a href={`${skillBase}/SKILL.md`}>View the skill instructions</a>
-            {" · "}
-            <a href={`${skillBase}/scripts/btv_open.py`}>btv_open.py</a>
-            {" · "}
-            <a href={`${skillBase}/scripts/btv_render.py`}>btv_render.py</a>
+            <a href={`${import.meta.env.BASE_URL}agentic-ai/bigtreeviewer-agent-skill/SKILL.md`}>View the skill instructions</a>
           </p>
           <p>
             Codex skill documentation is available from{" "}
@@ -92,20 +87,22 @@ unzip bigtreeviewer-agent-skill.zip`}</code></pre>
           <p>
             `btv_open.py` uses only Python&apos;s standard library. It creates a
             temporary launcher page, opens Big Tree Viewer, and sends the local
-            tree text through the launch API so the browser can display it
-            interactively.
+            tree text or session through the launch API so the browser can
+            display it interactively. It can also ask Big Tree Viewer to trigger
+            an SVG or PNG download in the browser without installing Playwright.
           </p>
           <p>
-            `btv_render.py` uses Playwright only when a file needs to be saved
-            automatically. The script opens Big Tree Viewer in a browser,
-            requests an SVG or PNG export with `postMessage`, and writes the
-            returned data to disk.
+            `btv_render.py` uses Playwright only when an agent needs to save a
+            rendered file to a specific path automatically. The script opens Big
+            Tree Viewer headlessly, requests an SVG or PNG export with
+            `postMessage`, and writes the returned data to disk.
           </p>
         </section>
 
         <section className="api-doc-section">
           <h2>Example commands</h2>
           <pre><code>{`python scripts/btv_open.py tree.nwk --view circular --tip-labels true
+python scripts/btv_open.py tree.nwk --download-export svg --export-filename tree.svg
 python scripts/btv_render.py tree.nwk --format svg --out tree.svg --view circular
 python scripts/btv_render.py tree.nwk --format png --out tree.png --view spiral --width 3000 --height 3000
 python scripts/btv_render.py saved-view.btvsession --out saved-view.svg`}</code></pre>

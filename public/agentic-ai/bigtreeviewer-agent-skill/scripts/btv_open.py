@@ -14,6 +14,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Open a tree or session in Big Tree Viewer.")
     add_common_arguments(parser)
     parser.add_argument("--session-url", help="Public URL for a .btvsession file.")
+    parser.add_argument("--download-export", choices=["svg", "png"], help="Ask Big Tree Viewer to download an SVG or PNG from the opened browser. Does not require Playwright.")
+    parser.add_argument("--export-filename", help="Suggested filename for --download-export.")
+    parser.add_argument("--width", type=int, default=2400, help="PNG download width when using --download-export png.")
+    parser.add_argument("--height", type=int, default=2400, help="PNG download height when using --download-export png.")
     parser.add_argument("--print-url", action="store_true", help="Print the opened URL or launcher path.")
     args = parser.parse_args()
 
@@ -26,6 +30,14 @@ def main() -> None:
         return
 
     payload = load_payload(args)
+    if args.download_export:
+        payload["export"] = {
+            "format": args.download_export,
+            "delivery": "download",
+            "filename": args.export_filename,
+            "width": args.width,
+            "height": args.height,
+        }
     launcher = write_launcher_html(payload, args.btv_url)
     url = launcher.as_uri()
     if args.print_url:
