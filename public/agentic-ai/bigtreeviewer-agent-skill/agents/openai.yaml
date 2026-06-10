@@ -1,0 +1,4 @@
+display_name: Big Tree Viewer
+short_description: Open and render phylogenetic trees with Big Tree Viewer.
+default_prompt: Render this phylogenetic tree with Big Tree Viewer and save a publication-ready figure.
+

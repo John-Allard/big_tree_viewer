@@ -3508,6 +3508,7 @@ export default function TreeCanvas({
   exportPngFilename,
   exportPngWidth,
   exportPngHeight,
+  automationExportRequest,
   sessionStateRequest,
   sessionRestoreRequest,
   sessionRestoreState,
@@ -3517,6 +3518,7 @@ export default function TreeCanvas({
   onRerootRequest,
   onViewModeChange,
   onSessionStateSnapshot,
+  onAutomationExportComplete,
 }: TreeCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -3579,6 +3581,7 @@ export default function TreeCanvas({
   const handledFocusRequestRef = useRef(0);
   const handledExportRequestRef = useRef(0);
   const handledPngExportRequestRef = useRef(0);
+  const handledAutomationExportRequestRef = useRef(0);
   const handledSessionStateRequestRef = useRef(sessionStateRequest);
   const handledSessionRestoreRequestRef = useRef(sessionRestoreRequest);
   const activePointersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
@@ -11151,6 +11154,69 @@ export default function TreeCanvas({
     return nextCamera;
   }, [size.height, size.width]);
 
+  const downloadBlob = useCallback((blob: Blob, filename: string): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+  }, []);
+
+  const blobToDataUrl = useCallback(async (blob: Blob): Promise<string> => (
+    await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error("Unable to read exported image."));
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsDataURL(blob);
+    })
+  ), []);
+
+  const buildCurrentPngBlob = useCallback(async (
+    targetPixelSize: { width: number; height: number },
+  ): Promise<{ blob: Blob; width: number; height: number } | null> => {
+    const sourceCamera = cameraRef.current;
+    if (!sourceCamera || typeof window === "undefined") {
+      return null;
+    }
+    const safeTargetPixelSize = {
+      width: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.width) ? targetPixelSize.width : size.width))),
+      height: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.height) ? targetPixelSize.height : size.height))),
+    };
+    const exportScale = Math.max(
+      1,
+      Math.min(
+        safeTargetPixelSize.width / Math.max(1, size.width),
+        safeTargetPixelSize.height / Math.max(1, size.height),
+      ),
+    );
+    const renderSize = {
+      width: safeTargetPixelSize.width / exportScale,
+      height: safeTargetPixelSize.height / exportScale,
+    };
+    const exportCanvas = document.createElement("canvas");
+    renderCanvasOverrideRef.current = exportCanvas;
+    renderSizeOverrideRef.current = renderSize;
+    renderDprOverrideRef.current = exportScale;
+    renderCameraOverrideRef.current = cameraForRenderSize(sourceCamera, renderSize);
+    try {
+      draw();
+    } finally {
+      renderCanvasOverrideRef.current = null;
+      renderSizeOverrideRef.current = null;
+      renderDprOverrideRef.current = null;
+      renderCameraOverrideRef.current = null;
+      draw();
+    }
+    const blob = await new Promise<Blob | null>((resolve) => {
+      exportCanvas.toBlob(resolve, "image/png");
+    });
+    return blob ? { blob, width: safeTargetPixelSize.width, height: safeTargetPixelSize.height } : null;
+  }, [cameraForRenderSize, draw, size.height, size.width]);
+
   const scheduleDraw = useCallback(() => {
     const benchmark = panBenchmarkRef.current;
     if (frameRequestRef.current !== null) {
@@ -11588,64 +11654,98 @@ export default function TreeCanvas({
       return;
     }
     const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = exportSvgFilename || `big-tree-view-${viewMode}.svg`;
-    link.click();
-    window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
-  }, [buildCurrentSvgString, exportSvgFilename, exportSvgRequest, viewMode]);
+    downloadBlob(blob, exportSvgFilename || `big-tree-view-${viewMode}.svg`);
+  }, [buildCurrentSvgString, downloadBlob, exportSvgFilename, exportSvgRequest, viewMode]);
 
   useEffect(() => {
     if (exportPngRequest === 0 || handledPngExportRequestRef.current === exportPngRequest) {
       return;
     }
     handledPngExportRequestRef.current = exportPngRequest;
-    const sourceCamera = cameraRef.current;
-    if (!sourceCamera || typeof window === "undefined") {
+    void buildCurrentPngBlob({ width: exportPngWidth, height: exportPngHeight }).then((result) => {
+      if (result) {
+        downloadBlob(result.blob, exportPngFilename || `big-tree-view-${viewMode}.png`);
+      }
+    });
+  }, [buildCurrentPngBlob, downloadBlob, exportPngFilename, exportPngHeight, exportPngRequest, exportPngWidth, viewMode]);
+
+  useEffect(() => {
+    const request = automationExportRequest;
+    if (!request || request.id === 0 || handledAutomationExportRequestRef.current === request.id) {
       return;
     }
-    const targetPixelSize = {
-      width: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(exportPngWidth) ? exportPngWidth : size.width))),
-      height: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(exportPngHeight) ? exportPngHeight : size.height))),
-    };
-    const exportScale = Math.max(
-      1,
-      Math.min(
-        targetPixelSize.width / Math.max(1, size.width),
-        targetPixelSize.height / Math.max(1, size.height),
-      ),
-    );
-    const renderSize = {
-      width: targetPixelSize.width / exportScale,
-      height: targetPixelSize.height / exportScale,
-    };
-    const exportCanvas = document.createElement("canvas");
-    renderCanvasOverrideRef.current = exportCanvas;
-    renderSizeOverrideRef.current = renderSize;
-    renderDprOverrideRef.current = exportScale;
-    renderCameraOverrideRef.current = cameraForRenderSize(sourceCamera, renderSize);
-    try {
-      draw();
-    } finally {
-      renderCanvasOverrideRef.current = null;
-      renderSizeOverrideRef.current = null;
-      renderDprOverrideRef.current = null;
-      renderCameraOverrideRef.current = null;
-      draw();
-    }
-    exportCanvas.toBlob((blob) => {
-      if (!blob) {
-        return;
+    handledAutomationExportRequestRef.current = request.id;
+    const filename = request.filename || `big-tree-view-${viewMode}.${request.format}`;
+    void (async () => {
+      try {
+        if (request.format === "svg") {
+          const svg = buildCurrentSvgString();
+          if (!svg) {
+            throw new Error("Unable to build SVG export.");
+          }
+          const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+          if (request.delivery === "download") {
+            downloadBlob(blob, filename);
+          }
+          onAutomationExportComplete?.({
+            id: request.id,
+            format: request.format,
+            delivery: request.delivery,
+            filename,
+            mimeType: "image/svg+xml;charset=utf-8",
+            ok: true,
+            text: svg,
+            width: size.width,
+            height: size.height,
+          });
+          return;
+        }
+        const result = await buildCurrentPngBlob({
+          width: request.width ?? exportPngWidth,
+          height: request.height ?? exportPngHeight,
+        });
+        if (!result) {
+          throw new Error("Unable to build PNG export.");
+        }
+        if (request.delivery === "download") {
+          downloadBlob(result.blob, filename);
+        }
+        onAutomationExportComplete?.({
+          id: request.id,
+          format: request.format,
+          delivery: request.delivery,
+          filename,
+          mimeType: "image/png",
+          ok: true,
+          dataUrl: await blobToDataUrl(result.blob),
+          width: result.width,
+          height: result.height,
+        });
+      } catch (error) {
+        onAutomationExportComplete?.({
+          id: request.id,
+          format: request.format,
+          delivery: request.delivery,
+          filename,
+          mimeType: request.format === "svg" ? "image/svg+xml;charset=utf-8" : "image/png",
+          ok: false,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = exportPngFilename || `big-tree-view-${viewMode}.png`;
-      link.click();
-      window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
-    }, "image/png");
-  }, [cameraForRenderSize, draw, exportPngFilename, exportPngHeight, exportPngRequest, exportPngWidth, viewMode]);
+    })();
+  }, [
+    automationExportRequest,
+    blobToDataUrl,
+    buildCurrentPngBlob,
+    buildCurrentSvgString,
+    downloadBlob,
+    exportPngHeight,
+    exportPngWidth,
+    onAutomationExportComplete,
+    size.height,
+    size.width,
+    viewMode,
+  ]);
 
   useEffect(() => () => {
     if (frameRequestRef.current !== null) {

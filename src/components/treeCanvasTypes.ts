@@ -9,6 +9,31 @@ import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "
 
 export type TimeStripeStyle = "bands" | "age-gradient" | "dashed";
 export type TaxonomyOverlayStyle = "ribbons" | "strands";
+export type AutomationExportFormat = "svg" | "png";
+export type AutomationExportDelivery = "download" | "postMessage";
+
+export interface AutomationExportRequest {
+  id: number;
+  format: AutomationExportFormat;
+  delivery: AutomationExportDelivery;
+  filename: string;
+  width?: number;
+  height?: number;
+}
+
+export interface AutomationExportResult {
+  id: number;
+  format: AutomationExportFormat;
+  delivery: AutomationExportDelivery;
+  filename: string;
+  mimeType: string;
+  ok: boolean;
+  text?: string;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+  message?: string;
+}
 
 export interface TreeCanvasProps {
   tree: TreeModel | null;
@@ -90,6 +115,7 @@ export interface TreeCanvasProps {
   exportPngFilename: string;
   exportPngWidth: number;
   exportPngHeight: number;
+  automationExportRequest: AutomationExportRequest | null;
   sessionStateRequest: number;
   sessionRestoreRequest: number;
   sessionRestoreState: TreeCanvasSessionState | null;
@@ -99,6 +125,7 @@ export interface TreeCanvasProps {
   onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;
   onViewModeChange?: (mode: ViewMode) => void;
   onSessionStateSnapshot?: (state: TreeCanvasSessionState) => void;
+  onAutomationExportComplete?: (result: AutomationExportResult) => void;
 }
 
 export interface RectCamera {

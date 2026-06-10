@@ -77,7 +77,13 @@ import { TAXONOMY_RANKS, type TaxonomyCollapseRank, type TaxonomyMapPayload, typ
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
-import type { TreeCanvasSessionState } from "./components/treeCanvasTypes";
+import type {
+  AutomationExportDelivery,
+  AutomationExportFormat,
+  AutomationExportRequest,
+  AutomationExportResult,
+  TreeCanvasSessionState,
+} from "./components/treeCanvasTypes";
 
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
@@ -127,6 +133,13 @@ type BigTreeViewerLaunchPayload = {
   version?: 1;
   newick?: string;
   label?: string;
+  export?: {
+    format?: AutomationExportFormat;
+    delivery?: AutomationExportDelivery;
+    filename?: string;
+    width?: number;
+    height?: number;
+  };
   controls?: {
     hideDownloadNewick?: boolean;
   };
@@ -161,6 +174,14 @@ type BigTreeViewerLaunchPayload = {
     markersEnabled?: boolean;
     markerColumn?: string;
   };
+};
+
+type NormalizedLaunchExport = {
+  format: AutomationExportFormat;
+  delivery: AutomationExportDelivery;
+  filename?: string;
+  width?: number;
+  height?: number;
 };
 
 type BigTreeViewerSessionSettings = {
@@ -502,6 +523,41 @@ function readLaunchNumberParam(params: URLSearchParams, key: string): number | u
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeLaunchExport(raw: BigTreeViewerLaunchPayload["export"] | undefined): NormalizedLaunchExport | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const format = raw.format === "png" ? "png" : raw.format === "svg" ? "svg" : undefined;
+  if (!format) {
+    return undefined;
+  }
+  const delivery = raw.delivery === "postMessage" ? "postMessage" : "download";
+  return {
+    format,
+    delivery,
+    filename: typeof raw.filename === "string" && raw.filename.trim() ? raw.filename.trim() : undefined,
+    width: typeof raw.width === "number" && Number.isFinite(raw.width) ? raw.width : undefined,
+    height: typeof raw.height === "number" && Number.isFinite(raw.height) ? raw.height : undefined,
+  };
+}
+
+function readLaunchExportParam(params: URLSearchParams): NormalizedLaunchExport | undefined {
+  const rawFormat = params.get("btv_export");
+  const format = rawFormat === "png" ? "png" : rawFormat === "svg" ? "svg" : undefined;
+  if (!format) {
+    return undefined;
+  }
+  const rawDelivery = params.get("btv_export_delivery");
+  const delivery = rawDelivery === "postMessage" ? "postMessage" : "download";
+  return normalizeLaunchExport({
+    format,
+    delivery,
+    filename: params.get("btv_export_filename") ?? undefined,
+    width: readLaunchNumberParam(params, "btv_export_width"),
+    height: readLaunchNumberParam(params, "btv_export_height"),
+  });
 }
 
 function normalizeSearchQuery(value: string): string {
@@ -1232,6 +1288,8 @@ export default function App() {
   const pendingTreeParseRejecterRef = useRef<((error: Error) => void) | null>(null);
   const phylopicCancelRequestedRef = useRef(false);
   const phylopicTriedImageUuidsByKeyRef = useRef<Map<string, Set<string>>>(new Map());
+  const automationExportRequestCounterRef = useRef(0);
+  const automationExportReplyTargetsRef = useRef<Map<number, { target: Window | null; origin: string }>>(new Map());
   const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
@@ -1299,6 +1357,7 @@ export default function App() {
   const [exportPngFilename, setExportPngFilename] = useState("big-tree-view.png");
   const [exportPngWidth, setExportPngWidth] = useState(6000);
   const [exportPngHeight, setExportPngHeight] = useState(6000);
+  const [automationExportRequest, setAutomationExportRequest] = useState<AutomationExportRequest | null>(null);
   const [showExportOptions, setShowExportOptions] = useState(false);
   const [exportViewFormat, setExportViewFormat] = useState<ExportViewFormat>("png");
   const [exportViewFilenameInput, setExportViewFilenameInput] = useState("big-tree-view.png");
@@ -2744,6 +2803,52 @@ export default function App() {
     viewMode,
   ]);
 
+  const queueAutomationExport = useCallback((
+    request: BigTreeViewerLaunchPayload["export"],
+    replyTarget?: { target: Window | null; origin: string },
+  ): void => {
+    const normalized = normalizeLaunchExport(request);
+    if (!normalized) {
+      return;
+    }
+    const id = automationExportRequestCounterRef.current + 1;
+    automationExportRequestCounterRef.current = id;
+    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel || "big-tree-viewer");
+    const defaultFilename = `${baseLabel}-${viewMode}-view.${normalized.format}`;
+    if (replyTarget && normalized.delivery === "postMessage") {
+      automationExportReplyTargetsRef.current.set(id, replyTarget);
+    }
+    setAutomationExportRequest({
+      id,
+      format: normalized.format,
+      delivery: normalized.delivery ?? "download",
+      filename: normalized.filename || defaultFilename,
+      width: normalized.width,
+      height: normalized.height,
+    });
+  }, [loadedTreeLabel, viewMode]);
+
+  const handleAutomationExportComplete = useCallback((result: AutomationExportResult): void => {
+    const replyTarget = automationExportReplyTargetsRef.current.get(result.id);
+    automationExportReplyTargetsRef.current.delete(result.id);
+    if (result.delivery !== "postMessage") {
+      return;
+    }
+    const message = {
+      type: result.ok ? "big-tree-viewer:exported" : "big-tree-viewer:export-error",
+      version: 1,
+      ...result,
+    };
+    if (replyTarget?.target) {
+      replyTarget.target.postMessage(message, replyTarget.origin || "*");
+      return;
+    }
+    window.opener?.postMessage(message, "*");
+    if (window.parent !== window) {
+      window.parent.postMessage(message, "*");
+    }
+  }, []);
+
   const handleSessionStateSnapshot = useCallback((state: TreeCanvasSessionState): void => {
     const resolver = pendingSessionSnapshotResolverRef.current;
     pendingSessionSnapshotResolverRef.current = null;
@@ -3478,6 +3583,11 @@ export default function App() {
     const payload: BigTreeViewerLaunchPayload = {
       ...(parseLaunchJsonParam(params.get("btv_payload")) ?? {}),
     };
+    const urlExport = readLaunchExportParam(params);
+    const payloadExport = normalizeLaunchExport(payload.export);
+    if (urlExport || payloadExport) {
+      payload.export = urlExport ?? payloadExport;
+    }
     if (hideDownloadNewick) {
       payload.controls = {
         ...payload.controls,
@@ -3582,7 +3692,7 @@ export default function App() {
       };
     }
     const effectiveHideDownloadNewick = hideDownloadNewick || payload.controls?.hideDownloadNewick === true;
-    const hasPayload = Boolean(payload.newick || payload.metadata?.text || payload.visual || payload.controls);
+    const hasPayload = Boolean(payload.newick || payload.metadata?.text || payload.visual || payload.controls || payload.export);
     return {
       payload: hasPayload ? payload : null,
       waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",
@@ -3613,6 +3723,12 @@ export default function App() {
           if (!await loadFullSessionFromObject(session, label)) {
             throw new Error("The remote session did not include a tree.");
           }
+          if (launch.payload?.visual) {
+            applyLaunchVisualSettings(launch.payload.visual);
+          }
+          if (launch.payload?.export) {
+            queueAutomationExport(launch.payload.export);
+          }
           setSessionStatus(`Loaded session from ${label}.`);
           return;
         } catch (error) {
@@ -3635,6 +3751,9 @@ export default function App() {
           const label = launch.payload?.label?.trim() || launchLabelFromUrl(launch.newickUrl, "remote Newick");
           const loaded = await loadLaunchPayload({ ...(launch.payload ?? {}), newick, label }, "URL Newick");
           if (loaded) {
+            if (launch.payload?.export) {
+              queueAutomationExport(launch.payload.export);
+            }
             return;
           }
         } catch (error) {
@@ -3647,6 +3766,9 @@ export default function App() {
         }
       }
       if (launch.payload && await loadLaunchPayload(launch.payload, "URL launch")) {
+        if (launch.payload.export) {
+          queueAutomationExport(launch.payload.export);
+        }
         return;
       }
       if (launch.waitForMessage) {
@@ -3662,12 +3784,21 @@ export default function App() {
         await loadExample();
       }
     })();
-  }, [loadExample, loadFullSessionFromObject, loadLaunchPayload, loadSubtreeFromUrl, readLaunchPayloadFromUrl]);
+  }, [
+    applyLaunchVisualSettings,
+    loadExample,
+    loadFullSessionFromObject,
+    loadLaunchPayload,
+    loadSubtreeFromUrl,
+    queueAutomationExport,
+    readLaunchPayloadFromUrl,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
     }
+    window.__BIG_TREE_VIEWER_API_READY__ = true;
     const readyMessage = { type: "big-tree-viewer:ready", version: 1 };
     window.opener?.postMessage(readyMessage, "*");
     window.parent !== window && window.parent.postMessage(readyMessage, "*");
@@ -3686,6 +3817,12 @@ export default function App() {
             { type: loaded ? "big-tree-viewer:loaded" : "big-tree-viewer:error", version: 1, message: loaded ? undefined : "No Newick string was provided." },
             replyOrigin,
           );
+          if (loaded && payload.export) {
+            queueAutomationExport(payload.export, {
+              target: event.source as Window | null,
+              origin: replyOrigin,
+            });
+          }
         })
         .catch((error) => {
           (event.source as Window | null)?.postMessage(
@@ -3696,7 +3833,7 @@ export default function App() {
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [loadLaunchPayload]);
+  }, [loadLaunchPayload, queueAutomationExport]);
 
   const onMetadataFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -6332,6 +6469,7 @@ export default function App() {
           exportPngFilename={exportPngFilename}
           exportPngWidth={exportPngWidth}
           exportPngHeight={exportPngHeight}
+          automationExportRequest={automationExportRequest}
           sessionStateRequest={sessionStateRequest}
           sessionRestoreRequest={sessionRestoreRequest}
           sessionRestoreState={sessionRestoreState}
@@ -6341,6 +6479,7 @@ export default function App() {
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={setViewMode}
           onSessionStateSnapshot={handleSessionStateSnapshot}
+          onAutomationExportComplete={handleAutomationExportComplete}
           onPhyloPicRemoveSilhouette={removePhyloPicSilhouette}
           onPhyloPicTryAnotherSilhouette={tryAnotherPhyloPicSilhouette}
           hideDownloadNewick={hideDownloadNewick}

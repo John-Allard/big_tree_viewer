@@ -3,6 +3,7 @@ export default function ApiPage() {
   const simpleNewick = `${origin}?btv_newick=%28A%3A1%2CB%3A1%29Root%3B`;
   const remoteNewick = `${origin}?btv_newick_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.nwk&btv_view=circular`;
   const remoteSession = `${origin}?btv_session_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.btvsession`;
+  const exportSvg = `${origin}?btv_newick=%28A%3A1%2CB%3A1%29Root%3B&btv_view=circular&btv_export=svg&btv_export_filename=tree.svg`;
   const metadataExample = `${origin}?btv_newick=%28A%3A1%2C%28B%3A1%2CC%3A1%29Clade1%3A1%29Root%3B&btv_metadata=name%2Cgroup%0AA%2Cred_group%0AB%2Cblue_group%0AC%2Cblue_group%0A&btv_metadata_key=name&btv_metadata_value=group&btv_metadata_enabled=true`;
 
   return (
@@ -14,6 +15,7 @@ export default function ApiPage() {
           <a href={`${import.meta.env.BASE_URL}#faq`}>FAQ</a>
           <a href={`${import.meta.env.BASE_URL}#share`}>Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`} aria-current="page">API</a>
+          <a href={`${import.meta.env.BASE_URL}#agentic-ai`}>Agentic AI</a>
         </nav>
         <header className="about-header">
           <div>
@@ -91,6 +93,30 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
         </section>
 
         <section className="api-doc-section">
+          <h2>Automated export</h2>
+          <p>
+            Add `btv_export=svg` or `btv_export=png` to launch, render, and
+            export the loaded view automatically. Browser links normally use
+            `btv_export_delivery=download`. Agent scripts can use
+            `btv_export_delivery=postMessage` to receive the rendered SVG text
+            or PNG data URL programmatically.
+          </p>
+          <pre><code>{exportSvg}</code></pre>
+          <pre><code>{`viewer.postMessage({
+  type: "big-tree-viewer:load",
+  payload: {
+    newick: "(A:1,B:1)Root;",
+    visual: { viewMode: "circular" },
+    export: {
+      format: "svg",
+      delivery: "postMessage",
+      filename: "tree.svg"
+    }
+  }
+}, "${origin.replace(/\/$/, "")}");`}</code></pre>
+        </section>
+
+        <section className="api-doc-section">
           <h2>Useful URL options</h2>
           <dl className="api-option-list">
             <div><dt>btv_view</dt><dd>`rectangular`, `circular`, or `spiral`.</dd></div>
@@ -106,6 +132,10 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_metadata_markers</dt><dd>Show metadata markers.</dd></div>
             <div><dt>btv_newick_url</dt><dd>Public URL for a Newick or NEXUS file. Requires host CORS support.</dd></div>
             <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
+            <div><dt>btv_export</dt><dd>`svg` or `png`; exports after launch.</dd></div>
+            <div><dt>btv_export_delivery</dt><dd>`download` or `postMessage`.</dd></div>
+            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels.</dd></div>
+            <div><dt>btv_export_filename</dt><dd>Suggested filename for downloads and automation results.</dd></div>
           </dl>
         </section>
 
@@ -146,6 +176,13 @@ window.addEventListener("message", (event) => {
           <pre><code>{`{
   newick: string,
   label?: string,
+  export?: {
+    format?: "svg" | "png",
+    delivery?: "download" | "postMessage",
+    filename?: string,
+    width?: number,
+    height?: number
+  },
   visual?: {
     viewMode?: "rectangular" | "circular" | "spiral",
     order?: "asc" | "desc" | "input",

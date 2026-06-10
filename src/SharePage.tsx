@@ -75,6 +75,7 @@ export default function SharePage() {
           <a href={`${import.meta.env.BASE_URL}#faq`}>FAQ</a>
           <a href={`${import.meta.env.BASE_URL}#share`} aria-current="page">Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`}>API</a>
+          <a href={`${import.meta.env.BASE_URL}#agentic-ai`}>Agentic AI</a>
         </nav>
 
         <header className="about-header">

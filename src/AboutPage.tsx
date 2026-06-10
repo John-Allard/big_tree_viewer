@@ -166,6 +166,7 @@ export default function AboutPage() {
           <a href={`${import.meta.env.BASE_URL}#faq`}>FAQ</a>
           <a href={`${import.meta.env.BASE_URL}#share`}>Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`}>API</a>
+          <a href={`${import.meta.env.BASE_URL}#agentic-ai`}>Agentic AI</a>
         </nav>
         <header className="about-header">
           <div>

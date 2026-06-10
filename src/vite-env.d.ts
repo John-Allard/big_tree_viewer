@@ -85,6 +85,7 @@ declare global {
       requestFit: () => void;
     };
     __BIG_TREE_VIEWER_RENDER_DEBUG__?: Record<string, unknown> | null;
+    __BIG_TREE_VIEWER_API_READY__?: boolean;
     __BIG_TREE_VIEWER_APP_TEST_INTERNAL__?: {
       leafNodes: number[];
       names?: string[];

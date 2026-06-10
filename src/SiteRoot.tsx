@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import App from "./App";
 import AboutPage from "./AboutPage";
+import AgenticAiPage from "./AgenticAiPage";
 import ApiPage from "./ApiPage";
 import FaqPage from "./FaqPage";
 import SharePage from "./SharePage";
 
-type SitePage = "viewer" | "about" | "api" | "faq" | "share";
+type SitePage = "viewer" | "about" | "api" | "faq" | "share" | "agentic-ai";
 
 function currentSitePage(): SitePage {
   if (typeof window === "undefined") {
@@ -27,6 +28,9 @@ function currentSitePage(): SitePage {
   if (route === "share") {
     return "share";
   }
+  if (route === "agentic-ai") {
+    return "agentic-ai";
+  }
   return "viewer";
 }
 
@@ -45,7 +49,7 @@ export default function SiteRoot() {
   }, []);
 
   useEffect(() => {
-    const isDocumentPage = page === "about" || page === "api" || page === "faq" || page === "share";
+    const isDocumentPage = page === "about" || page === "api" || page === "faq" || page === "share" || page === "agentic-ai";
     document.body.style.overflow = isDocumentPage ? "auto" : "hidden";
     document.body.style.overscrollBehavior = isDocumentPage ? "auto" : "none";
     document.title = page === "about"
@@ -56,7 +60,9 @@ export default function SiteRoot() {
           ? "Big Tree Viewer | FAQ"
           : page === "share"
             ? "Big Tree Viewer | Share sessions"
-            : "Big Tree Viewer";
+            : page === "agentic-ai"
+              ? "Big Tree Viewer | Using BTV with agentic AI"
+              : "Big Tree Viewer";
     return () => {
       document.body.style.overflow = "";
       document.body.style.overscrollBehavior = "";
@@ -74,6 +80,9 @@ export default function SiteRoot() {
   }
   if (page === "share") {
     return <SharePage />;
+  }
+  if (page === "agentic-ai") {
+    return <AgenticAiPage />;
   }
   return <App />;
 }
