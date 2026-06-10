@@ -50,7 +50,9 @@ export default function AgenticAiPage() {
             Codex skill documentation is available from{" "}
             <a href="https://developers.openai.com/codex/skills" rel="noreferrer" target="_blank">OpenAI</a>.
             Claude Agent Skills documentation is available from{" "}
-            <a href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview" rel="noreferrer" target="_blank">Anthropic</a>.
+            <a href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview" rel="noreferrer" target="_blank">Anthropic</a>,
+            and Claude Code documentation is available from{" "}
+            <a href="https://docs.anthropic.com/en/docs/claude-code/overview" rel="noreferrer" target="_blank">Anthropic Docs</a>.
           </p>
           <pre><code>{`curl -L -o bigtreeviewer-agent-skill.zip \\
   https://bigtreeviewer.net/agentic-ai/bigtreeviewer-agent-skill.zip

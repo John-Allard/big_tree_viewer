@@ -95,8 +95,9 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
         <section className="api-doc-section">
           <h2>Automated export</h2>
           <p>
-            Add `btv_export=svg` or `btv_export=png` to launch, render, and
-            export the loaded view automatically. Browser links normally use
+            Rendering is available directly through the launch API. Add
+            `btv_export=svg` or `btv_export=png` to launch, render, and export
+            the loaded view automatically. Browser links normally use
             `btv_export_delivery=download`. Agent scripts can use
             `btv_export_delivery=postMessage` to receive the rendered SVG text
             or PNG data URL programmatically.
