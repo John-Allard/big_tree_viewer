@@ -62,6 +62,12 @@ unzip bigtreeviewer-agent-skill.zip`}</code></pre>
             needed because both systems read the `SKILL.md` workflow and bundled
             scripts.
           </p>
+          <p>
+            For detailed styling, agents can pass a JSON launch payload with a
+            `visual` object. Those setting names mirror the settings saved in
+            `.btvsession` files, so the same API can control common view options
+            and more detailed figure styling.
+          </p>
         </section>
 
         <section className="api-doc-section">

@@ -173,6 +173,14 @@ window.addEventListener("message", (event) => {
 
         <section className="api-doc-section">
           <h2>Payload shape</h2>
+          <p>
+            The `visual` object accepts the same setting names saved in a
+            `.btvsession` file, so automation can control detailed styling such
+            as time stripe style, label classes, taxonomy rank visibility,
+            metadata marker settings, and PhyloPic placement. URL query
+            parameters cover common settings; use `btv_payload` or postMessage
+            JSON for full control.
+          </p>
           <pre><code>{`{
   newick: string,
   label?: string,
@@ -190,7 +198,11 @@ window.addEventListener("message", (event) => {
     showGenusLabels?: boolean,
     branchThicknessScale?: number,
     taxonomyEnabled?: boolean,
-    taxonomyBranchColoringEnabled?: boolean
+    taxonomyBranchColoringEnabled?: boolean,
+    taxonomyRankVisibility?: { genus?: boolean, family?: boolean, order?: boolean },
+    figureStyles?: object,
+    metadataMarkersEnabled?: boolean,
+    phylopicPlacement?: "after-label" | "outside-ribbon"
   },
   metadata?: {
     text?: string,
@@ -202,7 +214,10 @@ window.addEventListener("message", (event) => {
     colorMode?: "categorical" | "continuous",
     applyScope?: "branch" | "subtree",
     labelsEnabled?: boolean,
-    markersEnabled?: boolean
+    markersEnabled?: boolean,
+    reverseScale?: boolean,
+    categoryColorOverrides?: object,
+    markerStyleOverrides?: object
   }
 }`}</code></pre>
         </section>

@@ -75,6 +75,21 @@ python scripts/btv_render.py tree.nwk --out figure.svg --payload-json settings.j
 ```
 
 The JSON file may include Big Tree Viewer launch API fields such as `visual` and `metadata`. Command-line options are applied after the JSON payload.
+For full programmatic styling, put session-style settings in `visual`; Big Tree Viewer accepts the same setting names saved in `.btvsession` files for view mode, time stripes, label classes, taxonomy ribbons, metadata display settings, branch thickness, and PhyloPic placement.
+
+Example `settings.json`:
+
+```json
+{
+  "visual": {
+    "viewMode": "circular",
+    "showTipLabels": false,
+    "taxonomyEnabled": true,
+    "taxonomyRankVisibility": { "family": true, "order": true },
+    "branchThicknessScale": 1.4
+  }
+}
+```
 
 ## Defaults
 

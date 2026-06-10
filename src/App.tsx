@@ -143,23 +143,7 @@ type BigTreeViewerLaunchPayload = {
   controls?: {
     hideDownloadNewick?: boolean;
   };
-  visual?: {
-    viewMode?: ViewMode;
-    order?: LayoutOrder;
-    zoomAxisMode?: ZoomAxisMode;
-    circularRotationDegrees?: number;
-    spiralTurns?: number;
-    showTipLabels?: boolean;
-    showGenusLabels?: boolean;
-    showTimeStripes?: boolean;
-    showScaleBars?: boolean;
-    timeAxisScale?: TimeAxisScale;
-    timeAxisLogBase?: number;
-    branchThicknessScale?: number;
-    taxonomyEnabled?: boolean;
-    taxonomyBranchColoringEnabled?: boolean;
-    taxonomyColorPalette?: TaxonomyColorPaletteKey;
-  };
+  visual?: Partial<BigTreeViewerSessionSettings>;
   metadata?: {
     text?: string;
     label?: string;
@@ -173,6 +157,18 @@ type BigTreeViewerLaunchPayload = {
     labelColumn?: string;
     markersEnabled?: boolean;
     markerColumn?: string;
+    reverseScale?: boolean;
+    continuousPalette?: MetadataContinuousPalette;
+    continuousTransform?: MetadataContinuousTransform;
+    continuousMinInput?: string;
+    continuousMaxInput?: string;
+    categoryColorOverrides?: Record<string, string>;
+    markerStyleOverrides?: Record<string, { color?: string; shape?: MetadataMarkerShape }>;
+    markerSizePx?: number;
+    labelMaxCount?: number;
+    labelMinSpacingPx?: number;
+    labelOffsetXPx?: number;
+    labelOffsetYPx?: number;
   };
 };
 
@@ -558,6 +554,56 @@ function readLaunchExportParam(params: URLSearchParams): NormalizedLaunchExport 
     width: readLaunchNumberParam(params, "btv_export_width"),
     height: readLaunchNumberParam(params, "btv_export_height"),
   });
+}
+
+function cleanTaxonomyRankVisibility(value: unknown): Partial<Record<TaxonomyRank, boolean>> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const result: Partial<Record<TaxonomyRank, boolean>> = {};
+  for (const rank of TAXONOMY_RANKS) {
+    const rankValue = (value as Partial<Record<TaxonomyRank, unknown>>)[rank];
+    if (typeof rankValue === "boolean") {
+      result[rank] = rankValue;
+    }
+  }
+  return result;
+}
+
+function cleanColorRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const result: Record<string, string> = {};
+  for (const [key, color] of Object.entries(value)) {
+    if (typeof key === "string" && typeof color === "string") {
+      result[key] = color;
+    }
+  }
+  return result;
+}
+
+function cleanMarkerStyleOverrides(value: unknown): Record<string, { color?: string; shape?: MetadataMarkerShape }> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const result: Record<string, { color?: string; shape?: MetadataMarkerShape }> = {};
+  const allowedShapes = new Set<MetadataMarkerShape>(["circle", "square", "triangle", "diamond"]);
+  for (const [key, rawStyle] of Object.entries(value)) {
+    if (!rawStyle || typeof rawStyle !== "object") {
+      continue;
+    }
+    const source = rawStyle as { color?: unknown; shape?: unknown };
+    const style: { color?: string; shape?: MetadataMarkerShape } = {};
+    if (typeof source.color === "string") {
+      style.color = source.color;
+    }
+    if (typeof source.shape === "string" && allowedShapes.has(source.shape as MetadataMarkerShape)) {
+      style.shape = source.shape as MetadataMarkerShape;
+    }
+    result[key] = style;
+  }
+  return result;
 }
 
 function normalizeSearchQuery(value: string): string {
@@ -1908,8 +1954,35 @@ export default function App() {
     if (typeof visual.showTimeStripes === "boolean") {
       setShowTimeStripes(visual.showTimeStripes);
     }
+    if (visual.timeStripeStyle === "age-gradient" || visual.timeStripeStyle === "dashed" || visual.timeStripeStyle === "bands") {
+      setTimeStripeStyle(visual.timeStripeStyle);
+    }
+    if (typeof visual.timeStripeLineWeight === "number" && Number.isFinite(visual.timeStripeLineWeight)) {
+      setTimeStripeLineWeight(visual.timeStripeLineWeight);
+    }
     if (typeof visual.showScaleBars === "boolean") {
       setShowScaleBars(visual.showScaleBars);
+    }
+    if (typeof visual.showIntermediateScaleTicks === "boolean") {
+      setShowIntermediateScaleTicks(visual.showIntermediateScaleTicks);
+    }
+    if (typeof visual.extendRectScaleToTick === "boolean") {
+      setExtendRectScaleToTick(visual.extendRectScaleToTick);
+    }
+    if (typeof visual.showScaleZeroTick === "boolean") {
+      setShowScaleZeroTick(visual.showScaleZeroTick);
+    }
+    if (typeof visual.scaleTickIntervalInput === "string") {
+      setScaleTickIntervalInput(visual.scaleTickIntervalInput);
+    }
+    if (typeof visual.useAutoCircularCenterScaleAngle === "boolean") {
+      setUseAutoCircularCenterScaleAngle(visual.useAutoCircularCenterScaleAngle);
+    }
+    if (typeof visual.circularCenterScaleAngleDegrees === "number" && Number.isFinite(visual.circularCenterScaleAngleDegrees)) {
+      setCircularCenterScaleAngleDegrees(visual.circularCenterScaleAngleDegrees);
+    }
+    if (typeof visual.showCircularCenterRadialScaleBar === "boolean") {
+      setShowCircularCenterRadialScaleBar(visual.showCircularCenterRadialScaleBar);
     }
     if (visual.timeAxisScale === "linear" || visual.timeAxisScale === "log") {
       setTimeAxisScale(visual.timeAxisScale);
@@ -1920,14 +1993,165 @@ export default function App() {
     if (typeof visual.branchThicknessScale === "number" && Number.isFinite(visual.branchThicknessScale)) {
       setBranchThicknessScale(visual.branchThicknessScale);
     }
+    if (typeof visual.showInternalNodeLabels === "boolean") {
+      setShowInternalNodeLabels(visual.showInternalNodeLabels);
+    }
+    if (typeof visual.showBootstrapLabels === "boolean") {
+      setShowBootstrapLabels(visual.showBootstrapLabels);
+    }
+    if (typeof visual.showNodeHeightLabels === "boolean") {
+      setShowNodeHeightLabels(visual.showNodeHeightLabels);
+    }
+    if (typeof visual.showNodeErrorBars === "boolean") {
+      setShowNodeErrorBars(visual.showNodeErrorBars);
+    }
+    if (typeof visual.errorBarThicknessPx === "number" && Number.isFinite(visual.errorBarThicknessPx)) {
+      setErrorBarThicknessPx(visual.errorBarThicknessPx);
+    }
+    if (typeof visual.errorBarCapSizePx === "number" && Number.isFinite(visual.errorBarCapSizePx)) {
+      setErrorBarCapSizePx(visual.errorBarCapSizePx);
+    }
+    if (visual.figureStyles && typeof visual.figureStyles === "object") {
+      setFigureStyles((current) => {
+        const next = { ...current };
+        for (const labelClass of Object.keys(current) as Array<keyof FigureStyleSettings>) {
+          const source = visual.figureStyles?.[labelClass];
+          if (source && typeof source === "object") {
+            next[labelClass] = { ...current[labelClass], ...source };
+          }
+        }
+        return next;
+      });
+    }
     if (typeof visual.taxonomyEnabled === "boolean") {
       setTaxonomyEnabled(visual.taxonomyEnabled);
+    }
+    if (visual.taxonomyOverlayStyle === "strands" || visual.taxonomyOverlayStyle === "ribbons") {
+      setTaxonomyOverlayStyle(visual.taxonomyOverlayStyle);
     }
     if (typeof visual.taxonomyBranchColoringEnabled === "boolean") {
       setTaxonomyBranchColoringEnabled(visual.taxonomyBranchColoringEnabled);
     }
+    if (typeof visual.useAutomaticTaxonomyRankVisibility === "boolean") {
+      setUseAutomaticTaxonomyRankVisibility(visual.useAutomaticTaxonomyRankVisibility);
+    }
+    const rankVisibility = cleanTaxonomyRankVisibility(visual.taxonomyRankVisibility);
+    if (rankVisibility) {
+      setTaxonomyRankVisibility(rankVisibility);
+    }
+    if (visual.taxonomyCollapseRank === "species" || (typeof visual.taxonomyCollapseRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyCollapseRank))) {
+      setTaxonomyCollapseRank(visual.taxonomyCollapseRank as TaxonomyCollapseRank);
+    }
+    if (typeof visual.taxonomyColorJitter === "number" && Number.isFinite(visual.taxonomyColorJitter)) {
+      setTaxonomyColorJitter(visual.taxonomyColorJitter);
+    }
     if (visual.taxonomyColorPalette && (TAXONOMY_COLOR_PALETTE_KEYS as readonly string[]).includes(visual.taxonomyColorPalette)) {
       setTaxonomyColorPalette(visual.taxonomyColorPalette);
+    }
+    if (typeof visual.taxonomyCustomPaletteInput === "string") {
+      setTaxonomyCustomPaletteInput(visual.taxonomyCustomPaletteInput);
+    }
+    if (visual.taxonomyColorRootRank === "auto" || (typeof visual.taxonomyColorRootRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyColorRootRank))) {
+      setTaxonomyColorRootRank(visual.taxonomyColorRootRank as TaxonomyRank | "auto");
+    }
+    if (typeof visual.taxonomyColorJitterRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyColorJitterRank)) {
+      setTaxonomyColorJitterRank(visual.taxonomyColorJitterRank as TaxonomyRank);
+    }
+    if (typeof visual.phylopicEnabled === "boolean") {
+      setPhyloPicEnabled(visual.phylopicEnabled);
+    }
+    const phylopicRankSelection = cleanTaxonomyRankVisibility(visual.phylopicRankSelection);
+    if (phylopicRankSelection) {
+      setPhyloPicRankSelection(phylopicRankSelection);
+    }
+    if (visual.phylopicPlacement === "after-label" || visual.phylopicPlacement === "outside-ribbon") {
+      setPhyloPicPlacement(visual.phylopicPlacement);
+    }
+    if (typeof visual.phylopicSizeScale === "number" && Number.isFinite(visual.phylopicSizeScale)) {
+      setPhyloPicSizeScale(visual.phylopicSizeScale);
+    }
+    if (typeof visual.phylopicOffsetXPx === "number" && Number.isFinite(visual.phylopicOffsetXPx)) {
+      setPhyloPicOffsetXPx(visual.phylopicOffsetXPx);
+    }
+    if (typeof visual.phylopicOffsetYPx === "number" && Number.isFinite(visual.phylopicOffsetYPx)) {
+      setPhyloPicOffsetYPx(visual.phylopicOffsetYPx);
+    }
+    if (typeof visual.metadataFirstRowIsHeader === "boolean") {
+      setMetadataFirstRowIsHeader(visual.metadataFirstRowIsHeader);
+    }
+    if (typeof visual.metadataEnabled === "boolean") {
+      setMetadataEnabled(visual.metadataEnabled);
+    }
+    if (typeof visual.metadataKeyColumn === "string") {
+      setMetadataKeyColumn(visual.metadataKeyColumn);
+    }
+    if (typeof visual.metadataValueColumn === "string") {
+      setMetadataValueColumn(visual.metadataValueColumn);
+    }
+    if (visual.metadataColorMode === "categorical" || visual.metadataColorMode === "continuous") {
+      setMetadataColorMode(visual.metadataColorMode);
+    }
+    if (visual.metadataApplyScope === "branch" || visual.metadataApplyScope === "subtree") {
+      setMetadataApplyScope(visual.metadataApplyScope);
+    }
+    if (typeof visual.metadataReverseScale === "boolean") {
+      setMetadataReverseScale(visual.metadataReverseScale);
+    }
+    if (
+      visual.metadataContinuousPalette === "blueOrange"
+      || visual.metadataContinuousPalette === "viridis"
+      || visual.metadataContinuousPalette === "redBlue"
+      || visual.metadataContinuousPalette === "tealRose"
+    ) {
+      setMetadataContinuousPalette(visual.metadataContinuousPalette);
+    }
+    if (
+      visual.metadataContinuousTransform === "linear"
+      || visual.metadataContinuousTransform === "sqrt"
+      || visual.metadataContinuousTransform === "log"
+    ) {
+      setMetadataContinuousTransform(visual.metadataContinuousTransform);
+    }
+    if (typeof visual.metadataContinuousMinInput === "string") {
+      setMetadataContinuousMinInput(visual.metadataContinuousMinInput);
+    }
+    if (typeof visual.metadataContinuousMaxInput === "string") {
+      setMetadataContinuousMaxInput(visual.metadataContinuousMaxInput);
+    }
+    if (typeof visual.metadataLabelsEnabled === "boolean") {
+      setMetadataLabelsEnabled(visual.metadataLabelsEnabled);
+    }
+    if (typeof visual.metadataLabelColumn === "string") {
+      setMetadataLabelColumn(visual.metadataLabelColumn);
+    }
+    if (typeof visual.metadataMarkersEnabled === "boolean") {
+      setMetadataMarkersEnabled(visual.metadataMarkersEnabled);
+    }
+    if (typeof visual.metadataMarkerColumn === "string") {
+      setMetadataMarkerColumn(visual.metadataMarkerColumn);
+    }
+    const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
+    if (categoryColorOverrides) {
+      setMetadataCategoryColorOverrides(categoryColorOverrides);
+    }
+    const markerStyleOverrides = cleanMarkerStyleOverrides(visual.metadataMarkerStyleOverrides);
+    if (markerStyleOverrides) {
+      setMetadataMarkerStyleOverrides(markerStyleOverrides);
+    }
+    if (typeof visual.metadataMarkerSizePx === "number" && Number.isFinite(visual.metadataMarkerSizePx)) {
+      setMetadataMarkerSizePx(visual.metadataMarkerSizePx);
+    }
+    if (typeof visual.metadataLabelMaxCount === "number" && Number.isFinite(visual.metadataLabelMaxCount)) {
+      setMetadataLabelMaxCount(visual.metadataLabelMaxCount);
+    }
+    if (typeof visual.metadataLabelMinSpacingPx === "number" && Number.isFinite(visual.metadataLabelMinSpacingPx)) {
+      setMetadataLabelMinSpacingPx(visual.metadataLabelMinSpacingPx);
+    }
+    if (typeof visual.metadataLabelOffsetXPx === "number" && Number.isFinite(visual.metadataLabelOffsetXPx)) {
+      setMetadataLabelOffsetXPx(visual.metadataLabelOffsetXPx);
+    }
+    if (typeof visual.metadataLabelOffsetYPx === "number" && Number.isFinite(visual.metadataLabelOffsetYPx)) {
+      setMetadataLabelOffsetYPx(visual.metadataLabelOffsetYPx);
     }
   }, []);
 
@@ -3549,6 +3773,53 @@ export default function App() {
     if (metadata.markerColumn) {
       setMetadataMarkerColumn(metadata.markerColumn);
     }
+    if (typeof metadata.reverseScale === "boolean") {
+      setMetadataReverseScale(metadata.reverseScale);
+    }
+    if (
+      metadata.continuousPalette === "blueOrange"
+      || metadata.continuousPalette === "viridis"
+      || metadata.continuousPalette === "redBlue"
+      || metadata.continuousPalette === "tealRose"
+    ) {
+      setMetadataContinuousPalette(metadata.continuousPalette);
+    }
+    if (
+      metadata.continuousTransform === "linear"
+      || metadata.continuousTransform === "sqrt"
+      || metadata.continuousTransform === "log"
+    ) {
+      setMetadataContinuousTransform(metadata.continuousTransform);
+    }
+    if (typeof metadata.continuousMinInput === "string") {
+      setMetadataContinuousMinInput(metadata.continuousMinInput);
+    }
+    if (typeof metadata.continuousMaxInput === "string") {
+      setMetadataContinuousMaxInput(metadata.continuousMaxInput);
+    }
+    const categoryColorOverrides = cleanColorRecord(metadata.categoryColorOverrides);
+    if (categoryColorOverrides) {
+      setMetadataCategoryColorOverrides(categoryColorOverrides);
+    }
+    const markerStyleOverrides = cleanMarkerStyleOverrides(metadata.markerStyleOverrides);
+    if (markerStyleOverrides) {
+      setMetadataMarkerStyleOverrides(markerStyleOverrides);
+    }
+    if (typeof metadata.markerSizePx === "number" && Number.isFinite(metadata.markerSizePx)) {
+      setMetadataMarkerSizePx(metadata.markerSizePx);
+    }
+    if (typeof metadata.labelMaxCount === "number" && Number.isFinite(metadata.labelMaxCount)) {
+      setMetadataLabelMaxCount(metadata.labelMaxCount);
+    }
+    if (typeof metadata.labelMinSpacingPx === "number" && Number.isFinite(metadata.labelMinSpacingPx)) {
+      setMetadataLabelMinSpacingPx(metadata.labelMinSpacingPx);
+    }
+    if (typeof metadata.labelOffsetXPx === "number" && Number.isFinite(metadata.labelOffsetXPx)) {
+      setMetadataLabelOffsetXPx(metadata.labelOffsetXPx);
+    }
+    if (typeof metadata.labelOffsetYPx === "number" && Number.isFinite(metadata.labelOffsetYPx)) {
+      setMetadataLabelOffsetYPx(metadata.labelOffsetYPx);
+    }
   }, [applyMetadataText]);
 
   const loadLaunchPayload = useCallback(async (payload: BigTreeViewerLaunchPayload, sourceLabel = "launch API"): Promise<boolean> => {
@@ -3557,8 +3828,8 @@ export default function App() {
     } else {
       setHideDownloadNewick(false);
     }
-    applyLaunchVisualSettings(payload.visual);
     applyLaunchMetadata(payload.metadata);
+    applyLaunchVisualSettings(payload.visual);
     if (!payload.newick?.trim()) {
       return false;
     }
