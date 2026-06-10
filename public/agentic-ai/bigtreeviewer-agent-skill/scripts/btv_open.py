@@ -14,7 +14,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Open a tree or session in Big Tree Viewer.")
     add_common_arguments(parser)
     parser.add_argument("--session-url", help="Public URL for a .btvsession file.")
-    parser.add_argument("--download-export", choices=["svg", "png"], help="Ask Big Tree Viewer to download an SVG or PNG from the opened browser. Does not require Playwright.")
+    parser.add_argument("--download-export", choices=["svg", "png"], help="Ask Big Tree Viewer to download an SVG or PNG from the opened browser.")
     parser.add_argument("--export-filename", help="Suggested filename for --download-export.")
     parser.add_argument("--width", type=int, default=2400, help="PNG download width when using --download-export png.")
     parser.add_argument("--height", type=int, default=2400, help="PNG download height when using --download-export png.")

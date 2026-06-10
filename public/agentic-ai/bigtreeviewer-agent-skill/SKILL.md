@@ -13,7 +13,6 @@ Use this skill when a user asks to open, inspect, style, or render a phylogeneti
 
 - To show an interactive tree or saved session to the user, run `scripts/btv_open.py`.
 - To trigger a browser SVG/PNG download without extra dependencies, run `scripts/btv_open.py --download-export svg` or `--download-export png`.
-- To save an SVG or PNG to a specific path without browser interaction, run `scripts/btv_render.py`.
 - For large local trees, prefer the scripts' postMessage launch path instead of putting Newick directly into a URL.
 
 ## Open an Interactive Viewer
@@ -35,47 +34,21 @@ python scripts/btv_open.py tree.nwk --view rectangular --order input --branch-th
 python scripts/btv_open.py --session-url https://example.org/tree.btvsession
 ```
 
-`btv_open.py` uses only Python's standard library. It creates a temporary launcher page, opens Big Tree Viewer, and sends the local tree text or session object through the Big Tree Viewer launch API. With `--download-export`, it asks the user's browser to download an SVG or PNG after the tree loads. This is the easiest export route for ordinary desktop use.
-It needs a desktop browser. In SSH, CI, containers, or other headless environments, use `btv_render.py` instead.
-
-## Save a File Automatically
-
-Use `btv_render.py` only when the agent must write the rendered SVG or PNG to an exact output path, run headlessly, or batch-render without browser download prompts. This requires Playwright because a browser engine must run Big Tree Viewer and return the rendered bytes to Python:
-
-```bash
-python scripts/btv_render.py tree.nwk --format svg --out tree.svg --view circular
-python scripts/btv_render.py tree.nwk --format png --out tree.png --view spiral --width 3000 --height 3000
-python scripts/btv_render.py saved-view.btvsession --out saved-view.svg
-```
-
-If Playwright is missing, install it:
-
-```bash
-python -m pip install playwright
-python -m playwright install chromium
-```
-
-On Linux CI images, Playwright may also need browser system packages:
-
-```bash
-python -m playwright install --with-deps chromium
-```
-
-The render script opens Big Tree Viewer headlessly, posts the tree/session and requested settings, receives the exported SVG or PNG through `postMessage`, and writes it to the requested output path.
-It supports local Newick, NEXUS, and `.btvsession` files. For remote session links, use `btv_open.py --session-url` interactively or pass a `sessionUrl` field through `--payload-json`.
+`btv_open.py` uses only Python's standard library. It creates a temporary launcher page, opens Big Tree Viewer, and sends the local tree text or session object through the Big Tree Viewer launch API. With `--download-export`, it asks the user's browser to download an SVG or PNG after the tree loads. This is the recommended export route for ordinary desktop use.
+It needs a desktop browser.
 
 ## Styling
 
 Use command-line options for common settings:
 
 ```bash
-python scripts/btv_render.py tree.nwk --out figure.svg --view circular --tip-labels false --genus-labels true --branch-thickness 1.2
+python scripts/btv_open.py tree.nwk --download-export svg --export-filename figure.svg --view circular --tip-labels false --genus-labels true --branch-thickness 1.2
 ```
 
 For advanced settings, pass a JSON launch payload:
 
 ```bash
-python scripts/btv_render.py tree.nwk --out figure.svg --payload-json settings.json
+python scripts/btv_open.py tree.nwk --download-export svg --export-filename figure.svg --payload-json settings.json
 ```
 
 The JSON file may include Big Tree Viewer launch API fields such as `newickUrl`, `sessionUrl`, `session`, `visual`, and `metadata`. Command-line options are applied after the JSON payload.
