@@ -74,8 +74,9 @@ For advanced settings, pass a JSON launch payload:
 python scripts/btv_render.py tree.nwk --out figure.svg --payload-json settings.json
 ```
 
-The JSON file may include Big Tree Viewer launch API fields such as `visual` and `metadata`. Command-line options are applied after the JSON payload.
-For full programmatic styling, put session-style settings in `visual`; Big Tree Viewer accepts the same setting names saved in `.btvsession` files for view mode, time stripes, label classes, taxonomy ribbons, metadata display settings, branch thickness, and PhyloPic placement.
+The JSON file may include Big Tree Viewer launch API fields such as `newickUrl`, `visual`, and `metadata`. Command-line options are applied after the JSON payload.
+For session-style programmatic styling, put saved setting names in `visual`; Big Tree Viewer accepts the same setting names saved in `.btvsession` files for view mode, time stripes, label classes, taxonomy ribbons, metadata display settings, branch thickness, and PhyloPic placement.
+Use `canvas` when the user needs session-style viewport state, collapsed clades, or manual branch/subtree colors. `canvas` accepts the same shape saved in `.btvsession` files: `camera`, `viewportWidth`, `viewportHeight`, `collapsedNodes`, `manualBranchColors`, and `manualSubtreeColors`.
 
 Example `settings.json`:
 
@@ -87,6 +88,10 @@ Example `settings.json`:
     "taxonomyEnabled": true,
     "taxonomyRankVisibility": { "family": true, "order": true },
     "branchThicknessScale": 1.4
+  },
+  "canvas": {
+    "collapsedNodes": [12],
+    "manualSubtreeColors": [[12, "#1f77b4"]]
   }
 }
 ```

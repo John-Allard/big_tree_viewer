@@ -82,6 +82,7 @@ import type {
   AutomationExportFormat,
   AutomationExportRequest,
   AutomationExportResult,
+  CameraState,
   TreeCanvasSessionState,
 } from "./components/treeCanvasTypes";
 
@@ -132,6 +133,7 @@ type ExportViewFormat = "png" | "svg";
 type BigTreeViewerLaunchPayload = {
   version?: 1;
   newick?: string;
+  newickUrl?: string;
   label?: string;
   export?: {
     format?: AutomationExportFormat;
@@ -144,6 +146,7 @@ type BigTreeViewerLaunchPayload = {
     hideDownloadNewick?: boolean;
   };
   visual?: Partial<BigTreeViewerSessionSettings>;
+  canvas?: TreeCanvasSessionState | null;
   metadata?: {
     text?: string;
     label?: string;
@@ -536,6 +539,78 @@ function normalizeLaunchExport(raw: BigTreeViewerLaunchPayload["export"] | undef
     filename: typeof raw.filename === "string" && raw.filename.trim() ? raw.filename.trim() : undefined,
     width: typeof raw.width === "number" && Number.isFinite(raw.width) ? raw.width : undefined,
     height: typeof raw.height === "number" && Number.isFinite(raw.height) ? raw.height : undefined,
+  };
+}
+
+function normalizeLaunchCamera(raw: unknown): CameraState | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const camera = raw as Record<string, unknown>;
+  const readNumber = (key: string): number | null => {
+    const value = camera[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  if (camera.kind === "rect") {
+    const scaleX = readNumber("scaleX");
+    const scaleY = readNumber("scaleY");
+    const translateX = readNumber("translateX");
+    const translateY = readNumber("translateY");
+    if (scaleX !== null && scaleY !== null && translateX !== null && translateY !== null) {
+      return { kind: "rect", scaleX, scaleY, translateX, translateY };
+    }
+  }
+  if (camera.kind === "circular") {
+    const scale = readNumber("scale");
+    const translateX = readNumber("translateX");
+    const translateY = readNumber("translateY");
+    const rotation = readNumber("rotation");
+    const rotationCos = readNumber("rotationCos");
+    const rotationSin = readNumber("rotationSin");
+    if (scale !== null && translateX !== null && translateY !== null && rotation !== null && rotationCos !== null && rotationSin !== null) {
+      return { kind: "circular", scale, translateX, translateY, rotation, rotationCos, rotationSin };
+    }
+  }
+  return null;
+}
+
+function normalizeLaunchCanvasState(raw: unknown): TreeCanvasSessionState | null | undefined {
+  if (raw === null) {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const value = raw as Record<string, unknown>;
+  const cleanNodeList = (nodes: unknown): number[] => (
+    Array.isArray(nodes)
+      ? nodes.filter((node): node is number => Number.isInteger(node) && node >= 0)
+      : []
+  );
+  const cleanColorAssignments = (assignments: unknown): Array<[number, string]> => (
+    Array.isArray(assignments)
+      ? assignments.filter((entry): entry is [number, string] => (
+          Array.isArray(entry)
+          && Number.isInteger(entry[0])
+          && entry[0] >= 0
+          && typeof entry[1] === "string"
+          && entry[1].trim() !== ""
+        ))
+      : []
+  );
+  const viewportWidth = typeof value.viewportWidth === "number" && Number.isFinite(value.viewportWidth)
+    ? value.viewportWidth
+    : undefined;
+  const viewportHeight = typeof value.viewportHeight === "number" && Number.isFinite(value.viewportHeight)
+    ? value.viewportHeight
+    : undefined;
+  return {
+    camera: normalizeLaunchCamera(value.camera),
+    viewportWidth,
+    viewportHeight,
+    collapsedNodes: cleanNodeList(value.collapsedNodes),
+    manualBranchColors: cleanColorAssignments(value.manualBranchColors),
+    manualSubtreeColors: cleanColorAssignments(value.manualSubtreeColors),
   };
 }
 
@@ -3079,6 +3154,12 @@ export default function App() {
     resolver?.(state);
   }, []);
 
+  const handleSessionRestoreComplete = useCallback((): void => {
+    const resolver = pendingSessionRestoreResolverRef.current;
+    pendingSessionRestoreResolverRef.current = null;
+    resolver?.();
+  }, []);
+
   const requestCanvasSessionState = useCallback(async (): Promise<TreeCanvasSessionState | null> => {
     if (!tree || typeof window === "undefined") {
       return null;
@@ -3478,13 +3559,13 @@ export default function App() {
       setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, replacementTaxonomy ?? null));
       return;
     }
-    if (pendingSessionTaxonomyRef.current !== undefined) {
+    if (pendingSessionTaxonomyRef.current !== undefined || pendingSessionCanvasStateRef.current !== undefined) {
       const sessionTaxonomy = pendingSessionTaxonomyRef.current;
       const sessionTaxonomyEnabled = pendingSessionTaxonomyEnabledRef.current;
+      const hasPendingCanvasState = pendingSessionCanvasStateRef.current !== undefined;
       const resolveSessionRestore = pendingSessionRestoreResolverRef.current;
       pendingSessionTaxonomyRef.current = undefined;
       pendingSessionTaxonomyEnabledRef.current = null;
-      pendingSessionRestoreResolverRef.current = null;
       setTaxonomyMap(sessionTaxonomy ?? null);
       setTaxonomyEnabled(sessionTaxonomy ? sessionTaxonomyEnabled ?? true : false);
       setTaxonomyStatus(sessionTaxonomy
@@ -3492,13 +3573,13 @@ export default function App() {
         : "");
       setTaxonomyError(null);
       setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, sessionTaxonomy ?? null));
-      if (pendingSessionCanvasStateRef.current !== undefined) {
+      if (hasPendingCanvasState) {
         setSessionRestoreState(pendingSessionCanvasStateRef.current ?? null);
         setSessionRestoreRequest((value) => value + 1);
         pendingSessionCanvasStateRef.current = undefined;
-      }
-      if (resolveSessionRestore) {
-        window.requestAnimationFrame(() => resolveSessionRestore());
+      } else if (resolveSessionRestore) {
+        pendingSessionRestoreResolverRef.current = null;
+        resolveSessionRestore();
       }
       return;
     }
@@ -3830,10 +3911,37 @@ export default function App() {
     }
     applyLaunchMetadata(payload.metadata);
     applyLaunchVisualSettings(payload.visual);
-    if (!payload.newick?.trim()) {
+    const treeText = payload.newick?.trim()
+      ? payload.newick
+      : typeof payload.newickUrl === "string" && payload.newickUrl.trim()
+        ? await fetchRemoteLaunchText(payload.newickUrl.trim(), "Newick")
+        : "";
+    if (!treeText.trim()) {
       return false;
     }
-    await parseText(payload.newick, payload.label?.trim() || sourceLabel);
+    const label = payload.label?.trim()
+      || (typeof payload.newickUrl === "string" && payload.newickUrl.trim()
+        ? launchLabelFromUrl(payload.newickUrl.trim(), "remote Newick")
+        : sourceLabel);
+    const canvas = normalizeLaunchCanvasState(payload.canvas);
+    const restoreApplied = canvas !== undefined
+      ? new Promise<void>((resolve) => {
+          pendingSessionCanvasStateRef.current = canvas;
+          pendingSessionRestoreResolverRef.current = resolve;
+        })
+      : null;
+    try {
+      await parseText(treeText, label);
+      if (restoreApplied) {
+        await restoreApplied;
+      }
+    } catch (error) {
+      if (restoreApplied) {
+        pendingSessionCanvasStateRef.current = undefined;
+        pendingSessionRestoreResolverRef.current = null;
+      }
+      throw error;
+    }
     return true;
   }, [applyLaunchMetadata, applyLaunchVisualSettings, parseText]);
 
@@ -3859,6 +3967,12 @@ export default function App() {
     if (urlExport || payloadExport) {
       payload.export = urlExport ?? payloadExport;
     }
+    const canvas = normalizeLaunchCanvasState(payload.canvas);
+    if (canvas !== undefined) {
+      payload.canvas = canvas;
+    } else {
+      delete payload.canvas;
+    }
     if (hideDownloadNewick) {
       payload.controls = {
         ...payload.controls,
@@ -3869,6 +3983,9 @@ export default function App() {
     const metadataText = readLaunchTextParam(params, "btv_metadata", "btv_metadata_b64");
     if (newick) {
       payload.newick = newick;
+    }
+    if (newickUrl) {
+      payload.newickUrl = newickUrl;
     }
     if (params.get("btv_label")) {
       payload.label = params.get("btv_label") ?? undefined;
@@ -3963,7 +4080,7 @@ export default function App() {
       };
     }
     const effectiveHideDownloadNewick = hideDownloadNewick || payload.controls?.hideDownloadNewick === true;
-    const hasPayload = Boolean(payload.newick || payload.metadata?.text || payload.visual || payload.controls || payload.export);
+    const hasPayload = Boolean(payload.newick || payload.newickUrl || payload.metadata?.text || payload.visual || payload.controls || payload.export);
     return {
       payload: hasPayload ? payload : null,
       waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",
@@ -4011,18 +4128,10 @@ export default function App() {
           return;
         }
       }
-      if (launch.newickUrl) {
+      if (launch.payload) {
         try {
-          setLoadState({
-            loading: true,
-            message: "Fetching remote Newick tree...",
-            error: null,
-          });
-          const newick = await fetchRemoteLaunchText(launch.newickUrl, "Newick");
-          const label = launch.payload?.label?.trim() || launchLabelFromUrl(launch.newickUrl, "remote Newick");
-          const loaded = await loadLaunchPayload({ ...(launch.payload ?? {}), newick, label }, "URL Newick");
-          if (loaded) {
-            if (launch.payload?.export) {
+          if (await loadLaunchPayload(launch.payload, "URL launch")) {
+            if (launch.payload.export) {
               queueAutomationExport(launch.payload.export);
             }
             return;
@@ -4035,12 +4144,6 @@ export default function App() {
           });
           return;
         }
-      }
-      if (launch.payload && await loadLaunchPayload(launch.payload, "URL launch")) {
-        if (launch.payload.export) {
-          queueAutomationExport(launch.payload.export);
-        }
-        return;
       }
       if (launch.waitForMessage) {
         setLoadState({
@@ -6750,6 +6853,7 @@ export default function App() {
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={setViewMode}
           onSessionStateSnapshot={handleSessionStateSnapshot}
+          onSessionRestoreComplete={handleSessionRestoreComplete}
           onAutomationExportComplete={handleAutomationExportComplete}
           onPhyloPicRemoveSilhouette={removePhyloPicSilhouette}
           onPhyloPicTryAnotherSilhouette={tryAnotherPhyloPicSilhouette}

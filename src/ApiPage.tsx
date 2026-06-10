@@ -180,10 +180,13 @@ window.addEventListener("message", (event) => {
             as time stripe style, label classes, taxonomy rank visibility,
             metadata marker settings, and PhyloPic placement. URL query
             parameters cover common settings; use `btv_payload` or postMessage
-            JSON for full control.
+            JSON for session-style visual and rendering control. Use `canvas`
+            for session-style viewport state, collapsed clades, and manual
+            branch or subtree colors.
           </p>
           <pre><code>{`{
   newick: string,
+  newickUrl?: string,
   label?: string,
   export?: {
     format?: "svg" | "png",
@@ -204,6 +207,14 @@ window.addEventListener("message", (event) => {
     figureStyles?: object,
     metadataMarkersEnabled?: boolean,
     phylopicPlacement?: "after-label" | "outside-ribbon"
+  },
+  canvas?: {
+    camera?: object | null,
+    viewportWidth?: number,
+    viewportHeight?: number,
+    collapsedNodes?: number[],
+    manualBranchColors?: Array<[number, string]>,
+    manualSubtreeColors?: Array<[number, string]>
   },
   metadata?: {
     text?: string,

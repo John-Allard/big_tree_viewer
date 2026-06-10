@@ -125,6 +125,7 @@ export interface TreeCanvasProps {
   onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;
   onViewModeChange?: (mode: ViewMode) => void;
   onSessionStateSnapshot?: (state: TreeCanvasSessionState) => void;
+  onSessionRestoreComplete?: () => void;
   onAutomationExportComplete?: (result: AutomationExportResult) => void;
 }
 

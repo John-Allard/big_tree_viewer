@@ -3518,6 +3518,7 @@ export default function TreeCanvas({
   onRerootRequest,
   onViewModeChange,
   onSessionStateSnapshot,
+  onSessionRestoreComplete,
   onAutomationExportComplete,
 }: TreeCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -11349,6 +11350,7 @@ export default function TreeCanvas({
     }
     handledSessionRestoreRequestRef.current = sessionRestoreRequest;
     if (!sessionRestoreState) {
+      onSessionRestoreComplete?.();
       return;
     }
     const isValidNode = (node: number): boolean => Number.isInteger(node) && node >= 0 && node < tree.nodeCount;
@@ -11364,29 +11366,35 @@ export default function TreeCanvas({
       const nextCamera = restoreRectSessionCamera(camera, sessionRestoreState);
       if (!nextCamera) {
         draw();
+        onSessionRestoreComplete?.();
         return;
       }
       clampRectCamera(nextCamera, tree, size.width, size.height, rectClampPadding(nextCamera));
       cameraRef.current = nextCamera;
       draw();
+      onSessionRestoreComplete?.();
       return;
     }
     if (camera?.kind === "circular" && viewMode !== "rectangular") {
       const nextCamera = restoreCircularSessionCamera(camera, sessionRestoreState);
       if (!nextCamera) {
         draw();
+        onSessionRestoreComplete?.();
         return;
       }
       cameraRef.current = nextCamera;
       finalizeCircularCamera(nextCamera);
       draw();
+      onSessionRestoreComplete?.();
       return;
     }
     draw();
+    onSessionRestoreComplete?.();
   }, [
     clampRectCamera,
     draw,
     finalizeCircularCamera,
+    onSessionRestoreComplete,
     rectClampPadding,
     restoreCircularSessionCamera,
     restoreRectSessionCamera,

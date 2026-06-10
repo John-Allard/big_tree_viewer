@@ -68,7 +68,9 @@ unzip bigtreeviewer-agent-skill.zip`}</code></pre>
             For detailed styling, agents can pass a JSON launch payload with a
             `visual` object. Those setting names mirror the settings saved in
             `.btvsession` files, so the same API can control common view options
-            and more detailed figure styling.
+            and more detailed figure styling. Agents can also pass a `canvas`
+            object for saved viewport state, collapsed clades, and manual branch
+            or subtree colors.
           </p>
         </section>
 
