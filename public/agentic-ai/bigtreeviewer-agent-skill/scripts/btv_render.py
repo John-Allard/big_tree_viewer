@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a local tree with Big Tree Viewer and save SVG or PNG."""
+"""Render a local tree or session with Big Tree Viewer and save SVG or PNG."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def write_export(path: str, result: dict) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render a tree with Big Tree Viewer.")
+    parser = argparse.ArgumentParser(description="Render a tree or session with Big Tree Viewer.")
     add_common_arguments(parser)
     parser.add_argument("--out", required=True, help="Output SVG or PNG path.")
     parser.add_argument("--format", choices=["svg", "png"], help="Output format. Defaults from --out extension.")

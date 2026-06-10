@@ -182,11 +182,15 @@ window.addEventListener("message", (event) => {
             parameters cover common settings; use `btv_payload` or postMessage
             JSON for session-style visual and rendering control. Use `canvas`
             for session-style viewport state, collapsed clades, and manual
-            branch or subtree colors.
+            branch or subtree colors. Use `session` or `sessionUrl` to launch
+            from a saved Big Tree Viewer session, including saved taxonomy,
+            silhouettes, metadata, and canvas state.
           </p>
           <pre><code>{`{
   newick: string,
   newickUrl?: string,
+  session?: object,
+  sessionUrl?: string,
   label?: string,
   export?: {
     format?: "svg" | "png",

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import html
 import json
 import pathlib
@@ -17,6 +18,23 @@ DEFAULT_BTV_URL = "https://bigtreeviewer.net/"
 
 def read_text(path: str) -> str:
     return pathlib.Path(path).read_text(encoding="utf-8")
+
+
+def read_session(path: str) -> dict[str, Any]:
+    data = pathlib.Path(path).read_bytes()
+    if data.startswith(b"\x1f\x8b"):
+        data = gzip.decompress(data)
+    try:
+        parsed = json.loads(data.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"{path} is not a valid Big Tree Viewer session file.") from error
+    if not isinstance(parsed, dict) or parsed.get("format") != "big-tree-viewer-session" or parsed.get("version") != 1:
+        raise SystemExit(f"{path} is not a valid Big Tree Viewer session file.")
+    return parsed
+
+
+def path_looks_like_session(path: str) -> bool:
+    return pathlib.Path(path).suffix.lower() in {".btvsession", ".json"}
 
 
 def base64url_text(value: str) -> str:
@@ -36,7 +54,7 @@ def parse_bool(value: str | bool | None) -> bool | None:
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("tree", nargs="?", help="Local Newick or NEXUS tree file.")
+    parser.add_argument("tree", nargs="?", help="Local Newick/NEXUS tree file or .btvsession session file.")
     parser.add_argument("--btv-url", default=DEFAULT_BTV_URL, help="Big Tree Viewer URL. Default: https://bigtreeviewer.net/")
     parser.add_argument("--payload-json", help="JSON file containing a Big Tree Viewer launch payload.")
     parser.add_argument("--metadata", help="Optional local CSV/TSV metadata file.")
@@ -62,7 +80,10 @@ def load_payload(args: argparse.Namespace) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise SystemExit("--payload-json must contain a JSON object.")
     if args.tree:
-        payload["newick"] = read_text(args.tree)
+        if path_looks_like_session(args.tree):
+            payload["session"] = read_session(args.tree)
+        else:
+            payload["newick"] = read_text(args.tree)
         payload.setdefault("label", pathlib.Path(args.tree).stem)
     if args.metadata:
         payload["metadata"] = {
@@ -93,8 +114,8 @@ def load_payload(args: argparse.Namespace) -> dict[str, Any]:
             visual[payload_name] = value
     if visual:
         payload["visual"] = visual
-    if "newick" not in payload and "newickUrl" not in payload:
-        raise SystemExit("Provide a local tree file or --payload-json with newick/newickUrl.")
+    if not any(key in payload for key in ("newick", "newickUrl", "session", "sessionUrl")):
+        raise SystemExit("Provide a local tree/session file or --payload-json with newick/newickUrl/session/sessionUrl.")
     return payload
 
 

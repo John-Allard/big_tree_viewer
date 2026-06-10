@@ -134,6 +134,8 @@ type BigTreeViewerLaunchPayload = {
   version?: 1;
   newick?: string;
   newickUrl?: string;
+  session?: BigTreeViewerSessionFile;
+  sessionUrl?: string;
   label?: string;
   export?: {
     format?: AutomationExportFormat;
@@ -612,6 +614,17 @@ function normalizeLaunchCanvasState(raw: unknown): TreeCanvasSessionState | null
     manualBranchColors: cleanColorAssignments(value.manualBranchColors),
     manualSubtreeColors: cleanColorAssignments(value.manualSubtreeColors),
   };
+}
+
+function normalizeLaunchSession(raw: unknown): BigTreeViewerSessionFile | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const session = raw as Partial<BigTreeViewerSessionFile>;
+  if (session.format !== "big-tree-viewer-session" || session.version !== 1 || !session.settings) {
+    return null;
+  }
+  return session as BigTreeViewerSessionFile;
 }
 
 function readLaunchExportParam(params: URLSearchParams): NormalizedLaunchExport | undefined {
@@ -3352,7 +3365,18 @@ export default function App() {
     setShowNodeErrorBars(settings.showNodeErrorBars);
     setErrorBarThicknessPx(settings.errorBarThicknessPx);
     setErrorBarCapSizePx(settings.errorBarCapSizePx);
-    setFigureStyles(settings.figureStyles);
+    setFigureStyles(() => {
+      const next = cloneDefaultFigureStyles();
+      if (settings.figureStyles && typeof settings.figureStyles === "object") {
+        for (const labelClass of Object.keys(next) as Array<keyof FigureStyleSettings>) {
+          const source = settings.figureStyles[labelClass];
+          if (source && typeof source === "object") {
+            next[labelClass] = { ...next[labelClass], ...source };
+          }
+        }
+      }
+      return next;
+    });
     setTaxonomyEnabled(settings.taxonomyEnabled);
     setTaxonomyOverlayStyle(settings.taxonomyOverlayStyle === "strands" ? "strands" : "ribbons");
     setTaxonomyRankVisibility(settings.taxonomyRankVisibility);
@@ -3909,6 +3933,26 @@ export default function App() {
     } else {
       setHideDownloadNewick(false);
     }
+    const launchSession = normalizeLaunchSession(payload.session);
+    const sessionUrl = typeof payload.sessionUrl === "string" && payload.sessionUrl.trim() ? payload.sessionUrl.trim() : "";
+    if (launchSession || sessionUrl) {
+      const session = launchSession ?? await parseSessionBytes(await fetchRemoteLaunchBytes(sessionUrl, "session"));
+      const label = payload.label?.trim() || (sessionUrl ? launchLabelFromUrl(sessionUrl, "remote session") : "launch session");
+      if (!await loadFullSessionFromObject(session, label)) {
+        return false;
+      }
+      applyLaunchMetadata(payload.metadata);
+      applyLaunchVisualSettings(payload.visual);
+      const canvas = normalizeLaunchCanvasState(payload.canvas);
+      if (canvas !== undefined) {
+        await new Promise<void>((resolve) => {
+          pendingSessionRestoreResolverRef.current = resolve;
+          setSessionRestoreState(canvas);
+          setSessionRestoreRequest((value) => value + 1);
+        });
+      }
+      return true;
+    }
     applyLaunchMetadata(payload.metadata);
     applyLaunchVisualSettings(payload.visual);
     const treeText = payload.newick?.trim()
@@ -3943,7 +3987,7 @@ export default function App() {
       throw error;
     }
     return true;
-  }, [applyLaunchMetadata, applyLaunchVisualSettings, parseText]);
+  }, [applyLaunchMetadata, applyLaunchVisualSettings, loadFullSessionFromObject, parseText]);
 
   const readLaunchPayloadFromUrl = useCallback((): {
     payload: BigTreeViewerLaunchPayload | null;
@@ -3972,6 +4016,15 @@ export default function App() {
       payload.canvas = canvas;
     } else {
       delete payload.canvas;
+    }
+    const session = normalizeLaunchSession(payload.session);
+    if (session) {
+      payload.session = session;
+    } else {
+      delete payload.session;
+    }
+    if (sessionUrl) {
+      payload.sessionUrl = sessionUrl;
     }
     if (hideDownloadNewick) {
       payload.controls = {
@@ -4080,7 +4133,7 @@ export default function App() {
       };
     }
     const effectiveHideDownloadNewick = hideDownloadNewick || payload.controls?.hideDownloadNewick === true;
-    const hasPayload = Boolean(payload.newick || payload.newickUrl || payload.metadata?.text || payload.visual || payload.controls || payload.export);
+    const hasPayload = Boolean(payload.newick || payload.newickUrl || payload.session || payload.sessionUrl || payload.metadata?.text || payload.visual || payload.controls || payload.export);
     return {
       payload: hasPayload ? payload : null,
       waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",

@@ -70,7 +70,8 @@ unzip bigtreeviewer-agent-skill.zip`}</code></pre>
             `.btvsession` files, so the same API can control common view options
             and more detailed figure styling. Agents can also pass a `canvas`
             object for saved viewport state, collapsed clades, and manual branch
-            or subtree colors.
+            or subtree colors, or pass a saved BTV session when the task should
+            reuse a full saved state.
           </p>
         </section>
 
@@ -81,6 +82,7 @@ unzip bigtreeviewer-agent-skill.zip`}</code></pre>
             <li>Render this tree as an SVG with tip labels hidden and thicker branches.</li>
             <li>Make a 3000 by 3000 PNG spiral view of this tree for a slide.</li>
             <li>Load this metadata table, color branches by group, and export the current view.</li>
+            <li>Render this saved BTV session as an SVG without opening the UI.</li>
             <li>Create several alternate tree figures with different palettes and save them to a figures folder.</li>
           </ul>
         </section>
@@ -105,7 +107,8 @@ unzip bigtreeviewer-agent-skill.zip`}</code></pre>
           <h2>Example commands</h2>
           <pre><code>{`python scripts/btv_open.py tree.nwk --view circular --tip-labels true
 python scripts/btv_render.py tree.nwk --format svg --out tree.svg --view circular
-python scripts/btv_render.py tree.nwk --format png --out tree.png --view spiral --width 3000 --height 3000`}</code></pre>
+python scripts/btv_render.py tree.nwk --format png --out tree.png --view spiral --width 3000 --height 3000
+python scripts/btv_render.py saved-view.btvsession --out saved-view.svg`}</code></pre>
         </section>
       </div>
     </main>

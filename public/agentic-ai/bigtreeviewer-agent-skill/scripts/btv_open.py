@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Open a local tree in Big Tree Viewer."""
+"""Open a local tree or session in Big Tree Viewer."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from btv_common import add_common_arguments, load_payload, normalize_btv_url, wr
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Open a tree in Big Tree Viewer.")
+    parser = argparse.ArgumentParser(description="Open a tree or session in Big Tree Viewer.")
     add_common_arguments(parser)
     parser.add_argument("--session-url", help="Public URL for a .btvsession file.")
     parser.add_argument("--print-url", action="store_true", help="Print the opened URL or launcher path.")
@@ -35,4 +35,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
