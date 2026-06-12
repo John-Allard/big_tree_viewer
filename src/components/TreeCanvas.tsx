@@ -1166,6 +1166,15 @@ function pushMetadataPieScenePaths(
   pushScenePath(metadataMarkerPath("circle", x, y, sizePx), "rgba(255,255,255,0.94)", 1.15, "none", 1);
 }
 
+function scaledMetadataPieSizePx(sizePx: number, zoomMetric: number, readableZoomMetric: number): number {
+  const baseSize = Math.max(4, sizePx);
+  const scale = Number.isFinite(zoomMetric) && Number.isFinite(readableZoomMetric) && readableZoomMetric > 0
+    ? zoomMetric / readableZoomMetric
+    : 1;
+  const renderedSize = baseSize * Math.max(0, Math.min(3.2, scale));
+  return renderedSize < 5 ? 0 : Math.min(96, renderedSize);
+}
+
 function drawMetadataMarker(
   ctx: CanvasRenderingContext2D,
   shape: "circle" | "square" | "diamond" | "triangle",
@@ -1202,15 +1211,11 @@ function metadataRectMarkerScreenPosition(
   node: number,
   centerY: number,
   camera: RectCamera,
-  sizePx: number,
+  _sizePx: number,
 ): { x: number; y: number } {
-  const isLeaf = tree.buffers.firstChild[node] < 0;
-  const tipDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
-  const xDepth = isLeaf ? tipDepth : tree.buffers.depth[node];
-  const screen = worldToScreenRect(camera, xDepth, centerY);
-  const outwardOffsetPx = isLeaf ? Math.max(1, sizePx * 0.25) : 0;
+  const screen = worldToScreenRect(camera, tree.buffers.depth[node], centerY);
   return {
-    x: Math.round(screen.x + outwardOffsetPx),
+    x: Math.round(screen.x),
     y: Math.round(screen.y),
   };
 }
@@ -1220,14 +1225,44 @@ function metadataCircularMarkerScreenPosition(
   node: number,
   theta: number,
   camera: CircularCamera,
+  _sizePx: number,
+): { x: number; y: number } {
+  const point = polarToCartesian(tree.buffers.depth[node], theta);
+  const screen = worldToScreenCircular(camera, point.x, point.y);
+  return {
+    x: Math.round(screen.x),
+    y: Math.round(screen.y),
+  };
+}
+
+function metadataRectPieScreenPosition(
+  tree: TreeModel,
+  node: number,
+  centerY: number,
+  camera: RectCamera,
   sizePx: number,
 ): { x: number; y: number } {
-  const isLeaf = tree.buffers.firstChild[node] < 0;
-  const tipRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
-  const worldRadius = isLeaf
-    ? tipRadius + (Math.max(1, sizePx * 0.25) / Math.max(camera.scale, 0.001))
-    : tree.buffers.depth[node];
-  const point = polarToCartesian(worldRadius, theta);
+  if (tree.buffers.firstChild[node] >= 0) {
+    return metadataRectMarkerScreenPosition(tree, node, centerY, camera, sizePx);
+  }
+  const screen = worldToScreenRect(camera, tree.buffers.depth[node], centerY);
+  return {
+    x: Math.round(screen.x),
+    y: Math.round(screen.y),
+  };
+}
+
+function metadataCircularPieScreenPosition(
+  tree: TreeModel,
+  node: number,
+  theta: number,
+  camera: CircularCamera,
+  sizePx: number,
+): { x: number; y: number } {
+  if (tree.buffers.firstChild[node] >= 0) {
+    return metadataCircularMarkerScreenPosition(tree, node, theta, camera, sizePx);
+  }
+  const point = polarToCartesian(tree.buffers.depth[node], theta);
   const screen = worldToScreenCircular(camera, point.x, point.y);
   return {
     x: Math.round(screen.x),
@@ -4076,6 +4111,25 @@ export default function TreeCanvas({
     }
     return nodes;
   }, [metadataPies, tree]);
+  const metadataTipDecorationMaxSizePx = useMemo(() => {
+    if (!tree) {
+      return 0;
+    }
+    let maxSize = 0;
+    for (let index = 0; index < metadataMarkerNodes.length; index += 1) {
+      const node = metadataMarkerNodes[index];
+      if (tree.buffers.firstChild[node] < 0) {
+        maxSize = Math.max(maxSize, metadataMarkerSizePx);
+      }
+    }
+    for (let index = 0; index < metadataPieNodes.length; index += 1) {
+      const node = metadataPieNodes[index];
+      if (tree.buffers.firstChild[node] < 0) {
+        maxSize = Math.max(maxSize, metadataPieSizePx);
+      }
+    }
+    return maxSize;
+  }, [metadataMarkerNodes, metadataMarkerSizePx, metadataPieNodes, metadataPieSizePx, tree]);
   const metadataMarkerNodesByOrder = useMemo<Record<LayoutOrder, number[]>>(() => {
     if (!tree || metadataMarkerNodes.length === 0) {
       return {
@@ -6332,6 +6386,14 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
+      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, camera.scaleY, 4.2);
+      const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
+        ? Math.max(8, (Math.max(
+          metadataMarkerNodes.length > 0 ? metadataMarkerSizePx : 0,
+          metadataPieNodes.length > 0 ? renderedMetadataPieSizePx : 0,
+        ) * 0.5) + 6)
+        : 8;
+      const metadataTipDecorationLabelExtraPx = Math.max(0, metadataTipDecorationLabelClearancePx - 8);
       const globalTipLabelSpacePx = showTipLabels
         ? interpolateTipBandWidthPx(
           camera.scaleY,
@@ -6340,8 +6402,15 @@ export default function TreeCanvas({
           4.2,
           microBandWidthPx,
           readableBandWidthPx,
-        )
+        ) + metadataTipDecorationLabelExtraPx
         : 0;
+      const rectTipLabelOffsetPx = (node: number): number => {
+        const tipGlyphSizePx = Math.max(
+          metadataMarkers?.[node] ? metadataMarkerSizePx : 0,
+          metadataPies?.[node] ? renderedMetadataPieSizePx : 0,
+        );
+        return Math.max(8, tipGlyphSizePx > 0 ? (tipGlyphSizePx * 0.5) + 6 : 8);
+      };
       const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + (showTipLabels ? 8 : 0);
       const orderedLeaves = cache.orderedLeaves[order];
@@ -6376,7 +6445,7 @@ export default function TreeCanvas({
           const y = layout.center[node];
           const text = displayTipLabelForView(node);
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
-          const x = screen.x + 8 + figureStyles.tip.offsetPx;
+          const x = screen.x + rectTipLabelOffsetPx(node) + figureStyles.tip.offsetPx;
           const width = ctx.measureText(text).width;
           const fittedFontSize = Math.max(
             4,
@@ -7303,7 +7372,7 @@ export default function TreeCanvas({
         }
       }
 
-      if (metadataPieNodes.length > 0 && metadataPies && camera.scaleX > 0.95) {
+      if (metadataPieNodes.length > 0 && metadataPies && camera.scaleX > 0.95 && renderedMetadataPieSizePx > 0) {
         const maxVisibleMetadataPies = 1200;
         const visiblePies: Array<{
           pie: NonNullable<(typeof metadataPies)[number]>;
@@ -7325,7 +7394,7 @@ export default function TreeCanvas({
           if (x < minX || x > maxX || y < minY || y > maxY) {
             continue;
           }
-          const screen = metadataRectMarkerScreenPosition(tree, node, y, camera, metadataPieSizePx);
+          const screen = metadataRectPieScreenPosition(tree, node, y, camera, renderedMetadataPieSizePx);
           visiblePies.push({
             pie,
             x: screen.x,
@@ -7335,8 +7404,8 @@ export default function TreeCanvas({
         const sampledPies = evenlySampleSortedItems(visiblePies, maxVisibleMetadataPies);
         for (let index = 0; index < sampledPies.length; index += 1) {
           const pie = sampledPies[index];
-          drawMetadataPie(ctx, pie.pie, pie.x, pie.y, metadataPieSizePx);
-          pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, metadataPieSizePx);
+          drawMetadataPie(ctx, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
+          pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
         }
       }
 
@@ -9016,6 +9085,14 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
+      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, angularSpacingPx, 4.5);
+      const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
+        ? Math.max(20, (Math.max(
+          metadataMarkerNodes.length > 0 ? metadataMarkerSizePx : 0,
+          metadataPieNodes.length > 0 ? renderedMetadataPieSizePx : 0,
+        ) * 0.5) + 6)
+        : 20;
+      const metadataTipDecorationLabelExtraPx = Math.max(0, metadataTipDecorationLabelClearancePx - 20);
       const globalTipLabelSpacePx = showTipLabels
         ? interpolateTipBandWidthPx(
           angularSpacingPx,
@@ -9024,10 +9101,10 @@ export default function TreeCanvas({
           4.5,
           microBandWidthPx,
           readableBandWidthPx,
-        )
+        ) + metadataTipDecorationLabelExtraPx
         : 0;
-      const tipLabelRadius = maxRadius + (20 / camera.scale);
-      const cueTipLabelRadius = maxRadius + (8 / camera.scale);
+      const tipLabelRadius = maxRadius + (metadataTipDecorationLabelClearancePx / camera.scale);
+      const cueTipLabelRadius = maxRadius + (Math.max(8, metadataTipDecorationLabelClearancePx * 0.55) / camera.scale);
       const tipBandAnchorRadius = microTipLabelsVisible || tipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
       const circularTipVisibilityMargin = Math.max(140, Math.ceil(globalTipLabelSpacePx + 96));
       const taxonomyVisibilityOuterRadiusPx = taxonomyEnabled && taxonomyBlocks && visibleTaxonomyRanks.length > 0
@@ -10769,7 +10846,7 @@ export default function TreeCanvas({
         }
       }
 
-      if (metadataPieNodes.length > 0 && metadataPies && camera.scale > 4.5) {
+      if (metadataPieNodes.length > 0 && metadataPies && camera.scale > 4.5 && renderedMetadataPieSizePx > 0) {
         const maxVisibleMetadataPies = 1000;
         const visiblePies: Array<{
           pie: NonNullable<(typeof metadataPies)[number]>;
@@ -10787,7 +10864,7 @@ export default function TreeCanvas({
             continue;
           }
           const theta = thetaFor(layout.center, node, tree.leafCount);
-          const screen = metadataCircularMarkerScreenPosition(tree, node, theta, camera, metadataPieSizePx);
+          const screen = metadataCircularPieScreenPosition(tree, node, theta, camera, renderedMetadataPieSizePx);
           if (screen.x < -30 || screen.x > renderSize.width + 30 || screen.y < -30 || screen.y > renderSize.height + 30) {
             continue;
           }
@@ -10800,8 +10877,8 @@ export default function TreeCanvas({
         const sampledPies = evenlySampleSortedItems(visiblePies, maxVisibleMetadataPies);
         for (let index = 0; index < sampledPies.length; index += 1) {
           const pie = sampledPies[index];
-          drawMetadataPie(ctx, pie.pie, pie.x, pie.y, metadataPieSizePx);
-          pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, metadataPieSizePx);
+          drawMetadataPie(ctx, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
+          pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
         }
       }
 
