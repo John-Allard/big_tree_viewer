@@ -19,6 +19,7 @@ import {
   buildMetadataColorOverlay,
   buildMetadataLabelOverlay,
   buildMetadataMarkerOverlay,
+  buildMetadataPieOverlay,
   METADATA_CONTINUOUS_PALETTES,
   metadataColumnLooksContinuous,
   parseMetadataTable,
@@ -30,6 +31,8 @@ import {
   type MetadataLabelOverlayResult,
   type MetadataMarkerShape,
   type MetadataMarkerOverlayResult,
+  type MetadataPieOverlayResult,
+  type MetadataPiePalette,
   type ParsedMetadataTable,
 } from "./lib/metadataColors";
 import {
@@ -247,6 +250,12 @@ type BigTreeViewerSessionSettings = {
   metadataLabelColumn: string;
   metadataMarkersEnabled: boolean;
   metadataMarkerColumn: string;
+  metadataPiesEnabled?: boolean;
+  metadataPieStartColumn?: string;
+  metadataPieEndColumn?: string;
+  metadataPiePalette?: MetadataPiePalette;
+  metadataPieColorOverrides?: Record<string, string>;
+  metadataPieSizePx?: number;
   metadataCategoryColorOverrides: Record<string, string>;
   metadataMarkerStyleOverrides: Record<string, { color?: string; shape?: MetadataMarkerShape }>;
   metadataMarkerSizePx: number;
@@ -806,6 +815,7 @@ const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
+const DEFAULT_METADATA_PIE_SIZE_PX = 18;
 const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
 const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
 const TUTORIAL_HASH = "#tutorial";
@@ -907,7 +917,8 @@ type VisualPopoverId =
   | "phylopic"
   | "metadataBranchColors"
   | "metadataLabels"
-  | "metadataMarkers";
+  | "metadataMarkers"
+  | "metadataPies";
 
 function disabledControlTitle(reason?: string): string | undefined {
   return reason ? `Disabled: ${reason}` : undefined;
@@ -1280,6 +1291,18 @@ const EMPTY_METADATA_MARKER_OVERLAY: MetadataMarkerOverlayResult = {
   version: "",
 };
 
+const EMPTY_METADATA_PIE_OVERLAY: MetadataPieOverlayResult = {
+  pies: [],
+  hasAny: false,
+  matchedRowCount: 0,
+  pieNodeCount: 0,
+  unmappedRowCount: 0,
+  invalidValueRowCount: 0,
+  legend: [],
+  columns: [],
+  version: "",
+};
+
 const SEARCH_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "superkingdom",
   "phylum",
@@ -1528,6 +1551,12 @@ export default function App() {
   const [metadataLabelColumn, setMetadataLabelColumn] = useState("");
   const [metadataMarkersEnabled, setMetadataMarkersEnabled] = useState(false);
   const [metadataMarkerColumn, setMetadataMarkerColumn] = useState("");
+  const [metadataPiesEnabled, setMetadataPiesEnabled] = useState(false);
+  const [metadataPieStartColumn, setMetadataPieStartColumn] = useState("");
+  const [metadataPieEndColumn, setMetadataPieEndColumn] = useState("");
+  const [metadataPiePalette, setMetadataPiePalette] = useState<MetadataPiePalette>("categorical");
+  const [metadataPieColorOverrides, setMetadataPieColorOverrides] = useState<Record<string, string>>({});
+  const [metadataPieSizePx, setMetadataPieSizePx] = useState(DEFAULT_METADATA_PIE_SIZE_PX);
   const [metadataCategoryColorOverrides, setMetadataCategoryColorOverrides] = useState<Record<string, string>>({});
   const [metadataMarkerStyleOverrides, setMetadataMarkerStyleOverrides] = useState<Record<string, { color?: string; shape?: MetadataMarkerShape }>>({});
   const [metadataMarkerSizePx, setMetadataMarkerSizePx] = useState(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -2218,6 +2247,25 @@ export default function App() {
     if (typeof visual.metadataMarkerColumn === "string") {
       setMetadataMarkerColumn(visual.metadataMarkerColumn);
     }
+    if (typeof visual.metadataPiesEnabled === "boolean") {
+      setMetadataPiesEnabled(visual.metadataPiesEnabled);
+    }
+    if (typeof visual.metadataPieStartColumn === "string") {
+      setMetadataPieStartColumn(visual.metadataPieStartColumn);
+    }
+    if (typeof visual.metadataPieEndColumn === "string") {
+      setMetadataPieEndColumn(visual.metadataPieEndColumn);
+    }
+    if (visual.metadataPiePalette === "categorical" || visual.metadataPiePalette === "viridis" || visual.metadataPiePalette === "warm") {
+      setMetadataPiePalette(visual.metadataPiePalette);
+    }
+    const pieColorOverrides = cleanColorRecord(visual.metadataPieColorOverrides);
+    if (pieColorOverrides) {
+      setMetadataPieColorOverrides(pieColorOverrides);
+    }
+    if (typeof visual.metadataPieSizePx === "number" && Number.isFinite(visual.metadataPieSizePx)) {
+      setMetadataPieSizePx(visual.metadataPieSizePx);
+    }
     const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
     if (categoryColorOverrides) {
       setMetadataCategoryColorOverrides(categoryColorOverrides);
@@ -2499,6 +2547,19 @@ export default function App() {
     setUseAutoCircularCenterScaleAngle(enabled);
   }, [effectiveCircularCenterScaleAngleDegrees]);
   const metadataColumns = metadataTable?.columns ?? [];
+  const metadataPieColumns = useMemo(() => {
+    if (metadataColumns.length === 0 || !metadataPieStartColumn || !metadataPieEndColumn) {
+      return [];
+    }
+    const startIndex = metadataColumns.indexOf(metadataPieStartColumn);
+    const endIndex = metadataColumns.indexOf(metadataPieEndColumn);
+    if (startIndex < 0 || endIndex < 0) {
+      return [];
+    }
+    const left = Math.min(startIndex, endIndex);
+    const right = Math.max(startIndex, endIndex);
+    return metadataColumns.slice(left, right + 1).filter((column) => column !== metadataKeyColumn);
+  }, [metadataColumns, metadataKeyColumn, metadataPieEndColumn, metadataPieStartColumn]);
   const metadataValueColumnSupportsContinuous = useMemo(
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
     [metadataTable, metadataValueColumn],
@@ -2579,6 +2640,21 @@ export default function App() {
       },
     );
   }, [metadataKeyColumn, metadataMarkerColumn, metadataMarkerStyleOverrides, metadataTable, tree]);
+  const metadataPieOverlay = useMemo<MetadataPieOverlayResult>(() => {
+    if (!tree || !metadataTable || !metadataKeyColumn || metadataPieColumns.length === 0) {
+      return EMPTY_METADATA_PIE_OVERLAY;
+    }
+    return buildMetadataPieOverlay(
+      tree,
+      metadataTable.rows,
+      metadataKeyColumn,
+      {
+        columns: metadataPieColumns,
+        palette: metadataPiePalette,
+        colorOverrides: metadataPieColorOverrides,
+      },
+    );
+  }, [metadataKeyColumn, metadataPieColorOverrides, metadataPieColumns, metadataPiePalette, metadataTable, tree]);
   const metadataOverlaysSuppressed = taxonomyCollapseIsSynthetic;
   const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(viewTaxonomyMap?.activeRanks ?? [])].sort(
@@ -3251,6 +3327,12 @@ export default function App() {
     metadataLabelColumn,
     metadataMarkersEnabled,
     metadataMarkerColumn,
+    metadataPiesEnabled,
+    metadataPieStartColumn,
+    metadataPieEndColumn,
+    metadataPiePalette,
+    metadataPieColorOverrides,
+    metadataPieSizePx,
     metadataCategoryColorOverrides,
     metadataMarkerStyleOverrides,
     metadataMarkerSizePx,
@@ -3283,6 +3365,12 @@ export default function App() {
     metadataLabelOffsetYPx,
     metadataLabelsEnabled,
     metadataMarkerColumn,
+    metadataPieColorOverrides,
+    metadataPieEndColumn,
+    metadataPiePalette,
+    metadataPiesEnabled,
+    metadataPieSizePx,
+    metadataPieStartColumn,
     metadataMarkerSizePx,
     metadataMarkerStyleOverrides,
     metadataMarkersEnabled,
@@ -3422,6 +3510,12 @@ export default function App() {
     setMetadataLabelColumn(settings.metadataLabelColumn);
     setMetadataMarkersEnabled(settings.metadataMarkersEnabled);
     setMetadataMarkerColumn(settings.metadataMarkerColumn);
+    setMetadataPiesEnabled(settings.metadataPiesEnabled === true);
+    setMetadataPieStartColumn(settings.metadataPieStartColumn ?? "");
+    setMetadataPieEndColumn(settings.metadataPieEndColumn ?? "");
+    setMetadataPiePalette(settings.metadataPiePalette === "viridis" || settings.metadataPiePalette === "warm" ? settings.metadataPiePalette : "categorical");
+    setMetadataPieColorOverrides(settings.metadataPieColorOverrides ?? {});
+    setMetadataPieSizePx(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX);
     setMetadataCategoryColorOverrides(settings.metadataCategoryColorOverrides);
     setMetadataMarkerStyleOverrides(settings.metadataMarkerStyleOverrides);
     setMetadataMarkerSizePx(settings.metadataMarkerSizePx);
@@ -3664,6 +3758,12 @@ export default function App() {
     setMetadataLabelColumn("");
     setMetadataMarkersEnabled(false);
     setMetadataMarkerColumn("");
+    setMetadataPiesEnabled(false);
+    setMetadataPieStartColumn("");
+    setMetadataPieEndColumn("");
+    setMetadataPiePalette("categorical");
+    setMetadataPieColorOverrides({});
+    setMetadataPieSizePx(DEFAULT_METADATA_PIE_SIZE_PX);
     setMetadataCategoryColorOverrides({});
     setMetadataMarkerStyleOverrides({});
     setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -3701,6 +3801,12 @@ export default function App() {
       setMetadataContinuousMaxInput("");
       setMetadataMarkersEnabled(false);
       setMetadataMarkerColumn(table.columns[3] ?? table.columns[1]);
+      setMetadataPiesEnabled(false);
+      setMetadataPieStartColumn(table.columns[1] ?? "");
+      setMetadataPieEndColumn(table.columns[table.columns.length - 1] ?? table.columns[1] ?? "");
+      setMetadataPiePalette("categorical");
+      setMetadataPieColorOverrides({});
+      setMetadataPieSizePx(DEFAULT_METADATA_PIE_SIZE_PX);
       setMetadataCategoryColorOverrides({});
       setMetadataMarkerStyleOverrides({});
       setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -6661,6 +6767,84 @@ export default function App() {
                     ) : null}
                   </SettingsPopoverButton>
                 </div>
+                <div className="metadata-toggle-row">
+                  <label className="metadata-inline-toggle metadata-toggle-main" title="Draw pie charts on matched tip or internal nodes using a contiguous range of numeric metadata columns.">
+                    <input
+                      type="checkbox"
+                      checked={metadataPiesEnabled}
+                      onChange={(event) => setMetadataPiesEnabled(event.target.checked)}
+                    />
+                    Show metadata pie charts
+                  </label>
+                  <SettingsPopoverButton
+                    title="Metadata pie charts"
+                    isOpen={activeLabelStylePopover === "metadataPies"}
+                    disabled={!metadataPiesEnabled}
+                    disabledReason="Enable metadata pie charts first."
+                    onToggle={() => setActiveLabelStylePopover((current) => current === "metadataPies" ? null : "metadataPies")}
+                  >
+                    <label title="First metadata column included in each pie chart. The matching key column is skipped if it falls in the selected range.">
+                      First pie column
+                      <select value={metadataPieStartColumn} onChange={(event) => setMetadataPieStartColumn(event.target.value)}>
+                        {metadataColumns.map((column) => (
+                          <option key={column} value={column}>{column}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label title="Last metadata column included in each pie chart. The range is inclusive.">
+                      Last pie column
+                      <select value={metadataPieEndColumn} onChange={(event) => setMetadataPieEndColumn(event.target.value)}>
+                        {metadataColumns.map((column) => (
+                          <option key={column} value={column}>{column}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label title="Choose the default colors used for pie slices. Individual slice colors can be edited below.">
+                      Pie palette
+                      <select value={metadataPiePalette} onChange={(event) => setMetadataPiePalette(event.target.value as MetadataPiePalette)}>
+                        <option value="categorical">Categorical</option>
+                        <option value="viridis">Viridis</option>
+                        <option value="warm">Warm</option>
+                      </select>
+                    </label>
+                    <label title="Set the diameter of metadata pie charts in screen pixels.">
+                      Pie size
+                      <input
+                        type="range"
+                        min={8}
+                        max={42}
+                        step={1}
+                        value={metadataPieSizePx}
+                        onChange={(event) => setMetadataPieSizePx(Number(event.target.value))}
+                      />
+                    </label>
+                    <div className="figure-style-value">{metadataPieSizePx}px</div>
+                    {metadataPieOverlay.legend.length > 0 ? (
+                      <div className="metadata-legend" data-testid="metadata-pie-legend">
+                        {metadataPieOverlay.legend.map((item) => (
+                          <div key={item.label} className="metadata-legend-item">
+                            <div className="metadata-legend-item-controls">
+                              <input
+                                className="metadata-legend-swatch-input"
+                                type="color"
+                                aria-label={`Set metadata pie color for ${item.label}`}
+                                value={item.color}
+                                onChange={(event) => {
+                                  setMetadataPieColorOverrides((current) => ({
+                                    ...current,
+                                    [item.label]: event.target.value,
+                                  }));
+                                }}
+                              />
+                            </div>
+                            <span className="metadata-legend-label">{item.label}</span>
+                            <span className="metadata-legend-count">{formatNumber(item.total)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </SettingsPopoverButton>
+                </div>
                 <div className="metadata-summary">
                   <span>Matched rows: {metadataOverlay.matchedRowCount.toLocaleString()}</span>
                   {metadataOverlay.matchedNodeCount !== metadataOverlay.matchedRowCount ? (
@@ -6675,6 +6859,9 @@ export default function App() {
                   {metadataMarkersEnabled && metadataMarkerOverlay.markedNodeCount !== metadataOverlay.matchedNodeCount ? (
                     <span>Markers: {metadataMarkerOverlay.markedNodeCount.toLocaleString()}</span>
                   ) : null}
+                  {metadataPiesEnabled ? (
+                    <span>Pie charts: {metadataPieOverlay.pieNodeCount.toLocaleString()}</span>
+                  ) : null}
                 </div>
                 {metadataOverlay.unmappedRowCount > 0 ? (
                   <p className="status-line">
@@ -6684,6 +6871,11 @@ export default function App() {
                 {metadataOverlay.invalidValueRowCount > 0 ? (
                   <p className="status-line">
                     Invalid numeric rows: {metadataOverlay.invalidValueRowCount.toLocaleString()}
+                  </p>
+                ) : null}
+                {metadataPiesEnabled && metadataPieOverlay.invalidValueRowCount > 0 ? (
+                  <p className="status-line">
+                    Invalid pie rows: {metadataPieOverlay.invalidValueRowCount.toLocaleString()}
                   </p>
                 ) : null}
               </>
@@ -6869,6 +7061,9 @@ export default function App() {
           metadataLabelVersion={metadataLabelsEnabled ? metadataLabelOverlay.version : ""}
           metadataMarkers={metadataMarkersEnabled && !metadataOverlaysSuppressed && metadataMarkerOverlay.hasAny ? metadataMarkerOverlay.markers : null}
           metadataMarkerVersion={metadataMarkersEnabled ? metadataMarkerOverlay.version : ""}
+          metadataPies={metadataPiesEnabled && !metadataOverlaysSuppressed && metadataPieOverlay.hasAny ? metadataPieOverlay.pies : null}
+          metadataPieVersion={metadataPiesEnabled ? metadataPieOverlay.version : ""}
+          metadataPieSizePx={metadataPieSizePx}
           metadataMarkerSizePx={metadataMarkerSizePx}
           metadataLabelMaxCount={metadataLabelMaxCount}
           metadataLabelMinSpacingPx={metadataLabelMinSpacingPx}

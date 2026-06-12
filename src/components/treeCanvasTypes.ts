@@ -1,6 +1,6 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { FigureStyleSettings } from "../lib/figureStyles";
-import type { MetadataMarkerStyle } from "../lib/metadataColors";
+import type { MetadataMarkerStyle, MetadataPieDatum } from "../lib/metadataColors";
 import type { PhyloPicSilhouette } from "../lib/phylopic";
 import type { TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
 import type { TimeAxisScale } from "../lib/timeAxis";
@@ -88,6 +88,9 @@ export interface TreeCanvasProps {
   metadataLabelVersion: string;
   metadataMarkers: Array<MetadataMarkerStyle | null> | null;
   metadataMarkerVersion: string;
+  metadataPies: Array<MetadataPieDatum | null> | null;
+  metadataPieVersion: string;
+  metadataPieSizePx: number;
   metadataMarkerSizePx: number;
   metadataLabelMaxCount: number;
   metadataLabelMinSpacingPx: number;

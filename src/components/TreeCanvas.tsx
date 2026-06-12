@@ -1105,6 +1105,67 @@ function metadataMarkerPath(shape: "circle" | "square" | "diamond" | "triangle",
   return `M ${x} ${y - radius} L ${x + radius} ${y + radius} L ${x - radius} ${y + radius} Z`;
 }
 
+function metadataPieSlicePath(x: number, y: number, radius: number, startAngle: number, endAngle: number): string {
+  const span = Math.max(0, endAngle - startAngle);
+  if (span >= (Math.PI * 2) - 1e-5) {
+    return [
+      `M ${x + radius} ${y}`,
+      `A ${radius} ${radius} 0 1 1 ${x - radius} ${y}`,
+      `A ${radius} ${radius} 0 1 1 ${x + radius} ${y}`,
+      "Z",
+    ].join(" ");
+  }
+  const startX = x + Math.cos(startAngle) * radius;
+  const startY = y + Math.sin(startAngle) * radius;
+  const endX = x + Math.cos(endAngle) * radius;
+  const endY = y + Math.sin(endAngle) * radius;
+  const largeArc = span > Math.PI ? 1 : 0;
+  return `M ${x} ${y} L ${startX} ${startY} A ${radius} ${radius} 0 ${largeArc} 1 ${endX} ${endY} Z`;
+}
+
+function drawMetadataPie(
+  ctx: CanvasRenderingContext2D,
+  pie: { slices: Array<{ fraction: number; color: string }> },
+  x: number,
+  y: number,
+  sizePx: number,
+): void {
+  const radius = Math.max(3, sizePx * 0.5);
+  let angle = -Math.PI / 2;
+  for (const slice of pie.slices) {
+    const nextAngle = angle + (slice.fraction * Math.PI * 2);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.arc(x, y, radius, angle, nextAngle);
+    ctx.closePath();
+    ctx.fillStyle = slice.color;
+    ctx.fill();
+    angle = nextAngle;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(255,255,255,0.94)";
+  ctx.lineWidth = 1.15;
+  ctx.stroke();
+}
+
+function pushMetadataPieScenePaths(
+  pushScenePath: (d: string, stroke: string | undefined, strokeWidth: number | undefined, fill: string | undefined, opacity?: number) => void,
+  pie: { slices: Array<{ fraction: number; color: string }> },
+  x: number,
+  y: number,
+  sizePx: number,
+): void {
+  const radius = Math.max(3, sizePx * 0.5);
+  let angle = -Math.PI / 2;
+  for (const slice of pie.slices) {
+    const nextAngle = angle + (slice.fraction * Math.PI * 2);
+    pushScenePath(metadataPieSlicePath(x, y, radius, angle, nextAngle), undefined, undefined, slice.color, 1);
+    angle = nextAngle;
+  }
+  pushScenePath(metadataMarkerPath("circle", x, y, sizePx), "rgba(255,255,255,0.94)", 1.15, "none", 1);
+}
+
 function drawMetadataMarker(
   ctx: CanvasRenderingContext2D,
   shape: "circle" | "square" | "diamond" | "triangle",
@@ -3481,6 +3542,9 @@ export default function TreeCanvas({
   metadataLabelVersion,
   metadataMarkers,
   metadataMarkerVersion,
+  metadataPies,
+  metadataPieVersion,
+  metadataPieSizePx,
   metadataMarkerSizePx,
   metadataLabelMaxCount,
   metadataLabelMinSpacingPx,
@@ -4000,6 +4064,18 @@ export default function TreeCanvas({
     }
     return nodes;
   }, [metadataMarkers, tree]);
+  const metadataPieNodes = useMemo(() => {
+    if (!tree || !metadataPies || metadataPies.length !== tree.nodeCount) {
+      return [] as number[];
+    }
+    const nodes: number[] = [];
+    for (let node = 0; node < tree.nodeCount; node += 1) {
+      if (metadataPies[node]) {
+        nodes.push(node);
+      }
+    }
+    return nodes;
+  }, [metadataPies, tree]);
   const metadataMarkerNodesByOrder = useMemo<Record<LayoutOrder, number[]>>(() => {
     if (!tree || metadataMarkerNodes.length === 0) {
       return {
@@ -4017,6 +4093,23 @@ export default function TreeCanvas({
       asc: sortForOrder("asc"),
     };
   }, [metadataMarkerNodes, tree]);
+  const metadataPieNodesByOrder = useMemo<Record<LayoutOrder, number[]>>(() => {
+    if (!tree || metadataPieNodes.length === 0) {
+      return {
+        input: [],
+        desc: [],
+        asc: [],
+      };
+    }
+    const sortForOrder = (orderKey: LayoutOrder): number[] => (
+      [...metadataPieNodes].sort((left, right) => tree.layouts[orderKey].center[left] - tree.layouts[orderKey].center[right])
+    );
+    return {
+      input: sortForOrder("input"),
+      desc: sortForOrder("desc"),
+      asc: sortForOrder("asc"),
+    };
+  }, [metadataPieNodes, tree]);
   useLayoutEffect(() => {
     taxonomyBlocksByOrderCacheRef.current = {};
     taxonomyBranchColorsCacheRef.current.clear();
@@ -7207,6 +7300,43 @@ export default function TreeCanvas({
           ctx.fill();
           ctx.stroke();
           pushScenePath(metadataMarkerPath(marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.marker.color, 1);
+        }
+      }
+
+      if (metadataPieNodes.length > 0 && metadataPies && camera.scaleX > 0.95) {
+        const maxVisibleMetadataPies = 1200;
+        const visiblePies: Array<{
+          pie: NonNullable<(typeof metadataPies)[number]>;
+          x: number;
+          y: number;
+        }> = [];
+        const orderedPieNodes = metadataPieNodesByOrder[order];
+        for (let index = 0; index < orderedPieNodes.length; index += 1) {
+          const node = orderedPieNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const pie = metadataPies[node];
+          if (!pie) {
+            continue;
+          }
+          const x = tree.buffers.depth[node];
+          const y = layout.center[node];
+          if (x < minX || x > maxX || y < minY || y > maxY) {
+            continue;
+          }
+          const screen = metadataRectMarkerScreenPosition(tree, node, y, camera, metadataPieSizePx);
+          visiblePies.push({
+            pie,
+            x: screen.x,
+            y: screen.y,
+          });
+        }
+        const sampledPies = evenlySampleSortedItems(visiblePies, maxVisibleMetadataPies);
+        for (let index = 0; index < sampledPies.length; index += 1) {
+          const pie = sampledPies[index];
+          drawMetadataPie(ctx, pie.pie, pie.x, pie.y, metadataPieSizePx);
+          pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, metadataPieSizePx);
         }
       }
 
@@ -10639,6 +10769,42 @@ export default function TreeCanvas({
         }
       }
 
+      if (metadataPieNodes.length > 0 && metadataPies && camera.scale > 4.5) {
+        const maxVisibleMetadataPies = 1000;
+        const visiblePies: Array<{
+          pie: NonNullable<(typeof metadataPies)[number]>;
+          x: number;
+          y: number;
+        }> = [];
+        const orderedPieNodes = metadataPieNodesByOrder[order];
+        for (let index = 0; index < orderedPieNodes.length; index += 1) {
+          const node = orderedPieNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const pie = metadataPies[node];
+          if (!pie) {
+            continue;
+          }
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const screen = metadataCircularMarkerScreenPosition(tree, node, theta, camera, metadataPieSizePx);
+          if (screen.x < -30 || screen.x > renderSize.width + 30 || screen.y < -30 || screen.y > renderSize.height + 30) {
+            continue;
+          }
+          visiblePies.push({
+            pie,
+            x: screen.x,
+            y: screen.y,
+          });
+        }
+        const sampledPies = evenlySampleSortedItems(visiblePies, maxVisibleMetadataPies);
+        for (let index = 0; index < sampledPies.length; index += 1) {
+          const pie = sampledPies[index];
+          drawMetadataPie(ctx, pie.pie, pie.x, pie.y, metadataPieSizePx);
+          pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, metadataPieSizePx);
+        }
+      }
+
       if (metadataLabelNodes.length > 0 && metadataLabels && camera.scale > 5.5) {
         const fontSize = scaleLabelFontSize("internalNode", Math.max(8, Math.min(11.5, camera.scale * 0.038)));
         const labels: ScreenLabel[] = [];
@@ -11032,6 +11198,11 @@ export default function TreeCanvas({
     metadataMarkerNodesByOrder,
     metadataMarkerSizePx,
     metadataMarkers,
+    metadataPieNodes,
+    metadataPieNodesByOrder,
+    metadataPieSizePx,
+    metadataPies,
+    metadataPieVersion,
     order,
     phylopicEnabled,
     phylopicImageLoadVersion,

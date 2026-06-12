@@ -5,6 +5,7 @@ export type MetadataApplyScope = "branch" | "subtree";
 export type MetadataContinuousPalette = "blueOrange" | "viridis" | "redBlue" | "tealRose";
 export type MetadataContinuousTransform = "linear" | "sqrt" | "log";
 export type MetadataMarkerShape = "circle" | "square" | "diamond" | "triangle";
+export type MetadataPiePalette = "categorical" | "viridis" | "warm";
 
 export interface ParsedMetadataTable {
   columns: string[];
@@ -76,6 +77,37 @@ export interface MetadataMarkerOverlayResult {
   version: string;
 }
 
+export interface MetadataPieSlice {
+  label: string;
+  value: number;
+  fraction: number;
+  color: string;
+}
+
+export interface MetadataPieDatum {
+  slices: MetadataPieSlice[];
+  total: number;
+}
+
+export interface MetadataPieLegendItem {
+  label: string;
+  color: string;
+  total: number;
+  nonZeroCount: number;
+}
+
+export interface MetadataPieOverlayResult {
+  pies: Array<MetadataPieDatum | null>;
+  hasAny: boolean;
+  matchedRowCount: number;
+  pieNodeCount: number;
+  unmappedRowCount: number;
+  invalidValueRowCount: number;
+  legend: MetadataPieLegendItem[];
+  columns: string[];
+  version: string;
+}
+
 export interface MetadataMarkerOverlayOptions {
   categoryStyleOverrides?: Record<string, Partial<Pick<MetadataMarkerStyle, "color" | "shape">>>;
 }
@@ -89,6 +121,12 @@ export interface MetadataColorOverlayOptions {
   continuousMin: number | null;
   continuousMax: number | null;
   categoricalColorOverrides?: Record<string, string>;
+}
+
+export interface MetadataPieOverlayOptions {
+  columns: string[];
+  palette: MetadataPiePalette;
+  colorOverrides?: Record<string, string>;
 }
 
 const CATEGORICAL_PALETTE = [
@@ -107,6 +145,12 @@ const CATEGORICAL_PALETTE = [
 ];
 
 const MARKER_SHAPES: MetadataMarkerShape[] = ["circle", "square", "diamond", "triangle"];
+
+const PIE_PALETTES: Record<MetadataPiePalette, string[]> = {
+  categorical: CATEGORICAL_PALETTE,
+  viridis: ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725", "#73d055", "#22a884", "#2a788e"],
+  warm: ["#b91c1c", "#ea580c", "#d97706", "#facc15", "#be123c", "#c026d3", "#7c2d12", "#fb923c"],
+};
 
 export const METADATA_CONTINUOUS_PALETTES: Record<MetadataContinuousPalette, { label: string; stops: string[] }> = {
   blueOrange: {
@@ -259,6 +303,14 @@ function categoricalColor(index: number): string {
   }
   const hue = (index * 47) % 360;
   return `hsl(${hue} 72% 46%)`;
+}
+
+function metadataPieColor(index: number, palette: MetadataPiePalette): string {
+  const colors = PIE_PALETTES[palette] ?? PIE_PALETTES.categorical;
+  if (index < colors.length) {
+    return colors[index];
+  }
+  return categoricalColor(index);
 }
 
 function categoricalMarkerShape(index: number): MetadataMarkerShape {
@@ -644,5 +696,128 @@ export function buildMetadataMarkerOverlay(
     unmappedRowCount,
     legend,
     version: `markers:${keyColumn}:${markerColumn}:${rows.length}:${legend.map((item) => `${item.label}:${item.color}:${item.shape}`).join("|")}`,
+  };
+}
+
+export function buildMetadataPieOverlay(
+  tree: TreeModel,
+  rows: Array<Record<string, string>>,
+  keyColumn: string,
+  options: MetadataPieOverlayOptions,
+): MetadataPieOverlayResult {
+  const columns = options.columns.filter((column, index, all) => column && all.indexOf(column) === index);
+  const pies = new Array<MetadataPieDatum | null>(tree.nodeCount).fill(null);
+  const byName = buildNodeLookup(tree);
+  const colorOverrides = options.colorOverrides ?? {};
+  const legendTotals = new Map<string, { total: number; nonZeroCount: number }>();
+  for (const column of columns) {
+    legendTotals.set(column, { total: 0, nonZeroCount: 0 });
+  }
+  let matchedRowCount = 0;
+  let pieNodeCount = 0;
+  let unmappedRowCount = 0;
+  let invalidValueRowCount = 0;
+
+  if (!keyColumn || columns.length === 0) {
+    return {
+      pies,
+      hasAny: false,
+      matchedRowCount,
+      pieNodeCount,
+      unmappedRowCount,
+      invalidValueRowCount,
+      legend: [],
+      columns,
+      version: `pies:${keyColumn}:${columns.join("|")}:empty`,
+    };
+  }
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const key = normalizeKey(rows[rowIndex][keyColumn] ?? "");
+    if (!key) {
+      continue;
+    }
+    const nodes = byName.get(key);
+    if (!nodes || nodes.length === 0) {
+      unmappedRowCount += 1;
+      continue;
+    }
+    const rawValues: number[] = [];
+    let total = 0;
+    let rowHadInvalidValue = false;
+    for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
+      const column = columns[columnIndex];
+      const raw = (rows[rowIndex][column] ?? "").trim();
+      if (!raw) {
+        rawValues.push(0);
+        continue;
+      }
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 0) {
+        rowHadInvalidValue = true;
+        rawValues.push(0);
+        continue;
+      }
+      rawValues.push(value);
+      total += value;
+    }
+    if (rowHadInvalidValue) {
+      invalidValueRowCount += 1;
+    }
+    if (total <= 0) {
+      continue;
+    }
+    matchedRowCount += 1;
+    const slices = rawValues
+      .map((value, columnIndex): MetadataPieSlice | null => {
+        if (value <= 0) {
+          return null;
+        }
+        const label = columns[columnIndex];
+        const legendEntry = legendTotals.get(label);
+        if (legendEntry) {
+          legendEntry.total += value;
+          legendEntry.nonZeroCount += 1;
+        }
+        return {
+          label,
+          value,
+          fraction: value / total,
+          color: colorOverrides[label] ?? metadataPieColor(columnIndex, options.palette),
+        };
+      })
+      .filter((slice): slice is MetadataPieSlice => slice !== null);
+    if (slices.length === 0) {
+      continue;
+    }
+    for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+      const node = nodes[nodeIndex];
+      if (pies[node] === null) {
+        pieNodeCount += 1;
+      }
+      pies[node] = { slices, total };
+    }
+  }
+
+  const legend = columns.map((label, index) => {
+    const totals = legendTotals.get(label);
+    return {
+      label,
+      color: colorOverrides[label] ?? metadataPieColor(index, options.palette),
+      total: totals?.total ?? 0,
+      nonZeroCount: totals?.nonZeroCount ?? 0,
+    };
+  });
+
+  return {
+    pies,
+    hasAny: pieNodeCount > 0,
+    matchedRowCount,
+    pieNodeCount,
+    unmappedRowCount,
+    invalidValueRowCount,
+    legend,
+    columns,
+    version: `pies:${keyColumn}:${columns.join("|")}:${options.palette}:${rows.length}:${legend.map((item) => `${item.label}:${item.color}:${item.total}`).join("|")}`,
   };
 }
