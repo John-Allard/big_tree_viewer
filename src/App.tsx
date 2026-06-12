@@ -815,7 +815,7 @@ const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
-const DEFAULT_METADATA_PIE_SIZE_PX = 32;
+const DEFAULT_METADATA_PIE_SIZE_PX = 96;
 const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
 const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
 const TUTORIAL_HASH = "#tutorial";
@@ -6807,13 +6807,13 @@ export default function App() {
                         <option value="warm">Warm</option>
                       </select>
                     </label>
-                    <label title="Set the reference diameter of metadata pie charts at fitted zoom. Pie charts grow as you zoom in and shrink as you zoom out.">
+                    <label title="Set the reference diameter of metadata pie charts at fitted zoom. Pie charts grow as you zoom in and shrink as you zoom out; large values may overlap nearby tips.">
                       Pie size
                       <input
                         type="range"
-                        min={8}
-                        max={160}
-                        step={1}
+                        min={12}
+                        max={800}
+                        step={4}
                         value={metadataPieSizePx}
                         onChange={(event) => setMetadataPieSizePx(Number(event.target.value))}
                       />

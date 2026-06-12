@@ -1172,7 +1172,7 @@ function scaledMetadataPieSizePx(sizePx: number, zoomMetric: number, referenceZo
     ? zoomMetric / referenceZoomMetric
     : 1;
   const renderedSize = baseSize * Math.max(0, scale);
-  return renderedSize < 5 ? 0 : Math.min(384, renderedSize);
+  return renderedSize < 5 ? 0 : Math.min(4096, renderedSize);
 }
 
 function drawMetadataMarker(
