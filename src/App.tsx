@@ -3787,7 +3787,7 @@ export default function App() {
       setMetadataRawText(text);
       setMetadataFirstRowIsHeader(firstRowIsHeader);
       setMetadataFileName(label);
-      setMetadataEnabled(true);
+      setMetadataEnabled(false);
       setMetadataKeyColumn(defaultKeyColumn);
       setMetadataValueColumn(defaultValueColumn);
       setMetadataLabelColumn(table.columns[2] ?? defaultValueColumn);
