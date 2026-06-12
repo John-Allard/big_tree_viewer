@@ -816,8 +816,8 @@ const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
 const DEFAULT_METADATA_PIE_SIZE_PX = 50;
-const MIN_METADATA_PIE_SIZE_PERCENT = 10;
-const MAX_METADATA_PIE_SIZE_PERCENT = 100;
+const MIN_METADATA_GLYPH_SIZE_PERCENT = 10;
+const MAX_METADATA_GLYPH_SIZE_PERCENT = 100;
 const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
 const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
 const TUTORIAL_HASH = "#tutorial";
@@ -830,11 +830,11 @@ function suppressTutorialForCurrentViewport(): boolean {
   return window.matchMedia(MOBILE_TUTORIAL_MEDIA_QUERY).matches;
 }
 
-function clampMetadataPieSizePercent(value: number): number {
+function clampMetadataGlyphSizePercent(value: number): number {
   if (!Number.isFinite(value)) {
     return DEFAULT_METADATA_PIE_SIZE_PX;
   }
-  return Math.max(MIN_METADATA_PIE_SIZE_PERCENT, Math.min(MAX_METADATA_PIE_SIZE_PERCENT, Math.round(value)));
+  return Math.max(MIN_METADATA_GLYPH_SIZE_PERCENT, Math.min(MAX_METADATA_GLYPH_SIZE_PERCENT, Math.round(value)));
 }
 
 type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "branchMenu" | "metadata" | "sessions";
@@ -914,7 +914,7 @@ function tutorialCardPositionForTarget(target: Element, card: HTMLElement | null
     left: Math.max(margin, Math.min(window.innerWidth - margin - cardWidth, left)),
   };
 }
-const DEFAULT_METADATA_MARKER_SIZE_PX = 9;
+const DEFAULT_METADATA_MARKER_SIZE_PX = 50;
 const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
 const DEFAULT_TIME_AXIS_SCALE: TimeAxisScale = "linear";
 const DEFAULT_TAXONOMY_COLOR_ROOT_RANK: TaxonomyRank | "auto" = "auto";
@@ -2273,7 +2273,7 @@ export default function App() {
       setMetadataPieColorOverrides(pieColorOverrides);
     }
     if (typeof visual.metadataPieSizePx === "number" && Number.isFinite(visual.metadataPieSizePx)) {
-      setMetadataPieSizePx(clampMetadataPieSizePercent(visual.metadataPieSizePx));
+      setMetadataPieSizePx(clampMetadataGlyphSizePercent(visual.metadataPieSizePx));
     }
     const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
     if (categoryColorOverrides) {
@@ -2284,7 +2284,7 @@ export default function App() {
       setMetadataMarkerStyleOverrides(markerStyleOverrides);
     }
     if (typeof visual.metadataMarkerSizePx === "number" && Number.isFinite(visual.metadataMarkerSizePx)) {
-      setMetadataMarkerSizePx(visual.metadataMarkerSizePx);
+      setMetadataMarkerSizePx(clampMetadataGlyphSizePercent(visual.metadataMarkerSizePx));
     }
     if (typeof visual.metadataLabelMaxCount === "number" && Number.isFinite(visual.metadataLabelMaxCount)) {
       setMetadataLabelMaxCount(visual.metadataLabelMaxCount);
@@ -3524,10 +3524,10 @@ export default function App() {
     setMetadataPieEndColumn(settings.metadataPieEndColumn ?? "");
     setMetadataPiePalette(settings.metadataPiePalette === "viridis" || settings.metadataPiePalette === "warm" ? settings.metadataPiePalette : "categorical");
     setMetadataPieColorOverrides(settings.metadataPieColorOverrides ?? {});
-    setMetadataPieSizePx(clampMetadataPieSizePercent(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX));
+    setMetadataPieSizePx(clampMetadataGlyphSizePercent(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX));
     setMetadataCategoryColorOverrides(settings.metadataCategoryColorOverrides);
     setMetadataMarkerStyleOverrides(settings.metadataMarkerStyleOverrides);
-    setMetadataMarkerSizePx(settings.metadataMarkerSizePx);
+    setMetadataMarkerSizePx(clampMetadataGlyphSizePercent(settings.metadataMarkerSizePx));
     setMetadataLabelMaxCount(settings.metadataLabelMaxCount);
     setMetadataLabelMinSpacingPx(settings.metadataLabelMinSpacingPx);
     setMetadataLabelOffsetXPx(settings.metadataLabelOffsetXPx);
@@ -4026,7 +4026,7 @@ export default function App() {
       setMetadataMarkerStyleOverrides(markerStyleOverrides);
     }
     if (typeof metadata.markerSizePx === "number" && Number.isFinite(metadata.markerSizePx)) {
-      setMetadataMarkerSizePx(metadata.markerSizePx);
+      setMetadataMarkerSizePx(clampMetadataGlyphSizePercent(metadata.markerSizePx));
     }
     if (typeof metadata.labelMaxCount === "number" && Number.isFinite(metadata.labelMaxCount)) {
       setMetadataLabelMaxCount(metadata.labelMaxCount);
@@ -6716,18 +6716,18 @@ export default function App() {
                         ))}
                       </select>
                     </label>
-                    <label title="Set the size of metadata marker symbols.">
+                    <label title="Set marker diameter as a percentage of adjacent tip spacing. At 100%, markers on neighboring tips just touch; 50% leaves about one marker-width of space.">
                       Marker size
                       <input
                         type="range"
-                        min={4}
-                        max={20}
+                        min={MIN_METADATA_GLYPH_SIZE_PERCENT}
+                        max={MAX_METADATA_GLYPH_SIZE_PERCENT}
                         step={1}
                         value={metadataMarkerSizePx}
-                        onChange={(event) => setMetadataMarkerSizePx(Number(event.target.value))}
+                        onChange={(event) => setMetadataMarkerSizePx(clampMetadataGlyphSizePercent(Number(event.target.value)))}
                       />
                     </label>
-                    <div className="figure-style-value">{metadataMarkerSizePx}px</div>
+                    <div className="figure-style-value">{metadataMarkerSizePx}% tip spacing</div>
                     {metadataMarkerOverlay.legend.length > 0 ? (
                       <div className="metadata-legend" data-testid="metadata-marker-legend">
                         {metadataMarkerOverlay.legend.map((item) => (
@@ -6820,11 +6820,11 @@ export default function App() {
                       Pie size
                       <input
                         type="range"
-                        min={MIN_METADATA_PIE_SIZE_PERCENT}
-                        max={MAX_METADATA_PIE_SIZE_PERCENT}
+                        min={MIN_METADATA_GLYPH_SIZE_PERCENT}
+                        max={MAX_METADATA_GLYPH_SIZE_PERCENT}
                         step={1}
                         value={metadataPieSizePx}
-                        onChange={(event) => setMetadataPieSizePx(clampMetadataPieSizePercent(Number(event.target.value)))}
+                        onChange={(event) => setMetadataPieSizePx(clampMetadataGlyphSizePercent(Number(event.target.value)))}
                       />
                     </label>
                     <div className="figure-style-value">{metadataPieSizePx}% tip spacing</div>

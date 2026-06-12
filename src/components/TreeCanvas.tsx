@@ -1166,7 +1166,7 @@ function pushMetadataPieScenePaths(
   pushScenePath(metadataMarkerPath("circle", x, y, sizePx), "rgba(255,255,255,0.94)", 1.15, "none", 1);
 }
 
-function scaledMetadataPieSizePx(sizePercent: number, adjacentTipSpacingPx: number): number {
+function scaledMetadataGlyphSizePx(sizePercent: number, adjacentTipSpacingPx: number): number {
   const percent = Number.isFinite(sizePercent) ? Math.max(0, Math.min(100, sizePercent)) : 50;
   const renderedSize = Number.isFinite(adjacentTipSpacingPx) && adjacentTipSpacingPx > 0
     ? adjacentTipSpacingPx * (percent / 100)
@@ -6385,10 +6385,11 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, camera.scaleY);
+      const renderedMetadataMarkerSizePx = scaledMetadataGlyphSizePx(metadataMarkerSizePx, camera.scaleY);
+      const renderedMetadataPieSizePx = scaledMetadataGlyphSizePx(metadataPieSizePx, camera.scaleY);
       const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
         ? Math.max(8, (Math.max(
-          metadataMarkerNodes.length > 0 ? metadataMarkerSizePx : 0,
+          metadataMarkerNodes.length > 0 ? renderedMetadataMarkerSizePx : 0,
           metadataPieNodes.length > 0 ? renderedMetadataPieSizePx : 0,
         ) * 0.5) + 6)
         : 8;
@@ -6405,7 +6406,7 @@ export default function TreeCanvas({
         : 0;
       const rectTipLabelOffsetPx = (node: number): number => {
         const tipGlyphSizePx = Math.max(
-          metadataMarkers?.[node] ? metadataMarkerSizePx : 0,
+          metadataMarkers?.[node] ? renderedMetadataMarkerSizePx : 0,
           metadataPies?.[node] ? renderedMetadataPieSizePx : 0,
         );
         return Math.max(8, tipGlyphSizePx > 0 ? (tipGlyphSizePx * 0.5) + 6 : 8);
@@ -7329,48 +7330,6 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
-      if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scaleX > 0.95) {
-        const maxVisibleMetadataMarkers = 1800;
-        const visibleMarkers: Array<{
-          marker: NonNullable<(typeof metadataMarkers)[number]>;
-          x: number;
-          y: number;
-        }> = [];
-        ctx.lineWidth = 1.1;
-        const orderedMarkerNodes = metadataMarkerNodesByOrder[order];
-        for (let index = 0; index < orderedMarkerNodes.length; index += 1) {
-          const node = orderedMarkerNodes[index];
-          if (hiddenNodes[node]) {
-            continue;
-          }
-          const marker = metadataMarkers[node];
-          if (!marker) {
-            continue;
-          }
-          const x = tree.buffers.depth[node];
-          const y = layout.center[node];
-          if (x < minX || x > maxX || y < minY || y > maxY) {
-            continue;
-          }
-          const { x: markerX, y: markerY } = metadataRectMarkerScreenPosition(tree, node, y, camera, metadataMarkerSizePx);
-          visibleMarkers.push({
-            marker,
-            x: markerX,
-            y: markerY,
-          });
-        }
-        const sampledMarkers = evenlySampleSortedItems(visibleMarkers, maxVisibleMetadataMarkers);
-        for (let index = 0; index < sampledMarkers.length; index += 1) {
-          const marker = sampledMarkers[index];
-          ctx.fillStyle = marker.marker.color;
-          ctx.strokeStyle = "rgba(255,255,255,0.92)";
-          drawMetadataMarker(ctx, marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx);
-          ctx.fill();
-          ctx.stroke();
-          pushScenePath(metadataMarkerPath(marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.marker.color, 1);
-        }
-      }
-
       if (metadataPieNodes.length > 0 && metadataPies && camera.scaleX > 0.95 && renderedMetadataPieSizePx > 0) {
         const maxVisibleMetadataPies = 1200;
         const visiblePies: Array<{
@@ -7405,6 +7364,48 @@ export default function TreeCanvas({
           const pie = sampledPies[index];
           drawMetadataPie(ctx, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
           pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
+        }
+      }
+
+      if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scaleX > 0.95 && renderedMetadataMarkerSizePx > 0) {
+        const maxVisibleMetadataMarkers = 1800;
+        const visibleMarkers: Array<{
+          marker: NonNullable<(typeof metadataMarkers)[number]>;
+          x: number;
+          y: number;
+        }> = [];
+        ctx.lineWidth = 1.1;
+        const orderedMarkerNodes = metadataMarkerNodesByOrder[order];
+        for (let index = 0; index < orderedMarkerNodes.length; index += 1) {
+          const node = orderedMarkerNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const marker = metadataMarkers[node];
+          if (!marker) {
+            continue;
+          }
+          const x = tree.buffers.depth[node];
+          const y = layout.center[node];
+          if (x < minX || x > maxX || y < minY || y > maxY) {
+            continue;
+          }
+          const { x: markerX, y: markerY } = metadataRectMarkerScreenPosition(tree, node, y, camera, renderedMetadataMarkerSizePx);
+          visibleMarkers.push({
+            marker,
+            x: markerX,
+            y: markerY,
+          });
+        }
+        const sampledMarkers = evenlySampleSortedItems(visibleMarkers, maxVisibleMetadataMarkers);
+        for (let index = 0; index < sampledMarkers.length; index += 1) {
+          const marker = sampledMarkers[index];
+          ctx.fillStyle = marker.marker.color;
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          drawMetadataMarker(ctx, marker.marker.shape, marker.x, marker.y, renderedMetadataMarkerSizePx);
+          ctx.fill();
+          ctx.stroke();
+          pushScenePath(metadataMarkerPath(marker.marker.shape, marker.x, marker.y, renderedMetadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.marker.color, 1);
         }
       }
 
@@ -9084,10 +9085,11 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, angularSpacingPx);
+      const renderedMetadataMarkerSizePx = scaledMetadataGlyphSizePx(metadataMarkerSizePx, angularSpacingPx);
+      const renderedMetadataPieSizePx = scaledMetadataGlyphSizePx(metadataPieSizePx, angularSpacingPx);
       const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
         ? Math.max(20, (Math.max(
-          metadataMarkerNodes.length > 0 ? metadataMarkerSizePx : 0,
+          metadataMarkerNodes.length > 0 ? renderedMetadataMarkerSizePx : 0,
           metadataPieNodes.length > 0 ? renderedMetadataPieSizePx : 0,
         ) * 0.5) + 6)
         : 20;
@@ -10804,47 +10806,6 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
-      if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scale > 4.5) {
-        const maxVisibleMetadataMarkers = 1600;
-        const visibleMarkers: Array<{
-          marker: NonNullable<(typeof metadataMarkers)[number]>;
-          x: number;
-          y: number;
-        }> = [];
-        ctx.lineWidth = 1.1;
-        const orderedMarkerNodes = metadataMarkerNodesByOrder[order];
-        for (let index = 0; index < orderedMarkerNodes.length; index += 1) {
-          const node = orderedMarkerNodes[index];
-          if (hiddenNodes[node]) {
-            continue;
-          }
-          const marker = metadataMarkers[node];
-          if (!marker) {
-            continue;
-          }
-          const theta = thetaFor(layout.center, node, tree.leafCount);
-          const screen = metadataCircularMarkerScreenPosition(tree, node, theta, camera, metadataMarkerSizePx);
-          if (screen.x < -20 || screen.x > renderSize.width + 20 || screen.y < -20 || screen.y > renderSize.height + 20) {
-            continue;
-          }
-          visibleMarkers.push({
-            marker,
-            x: screen.x,
-            y: screen.y,
-          });
-        }
-        const sampledMarkers = evenlySampleSortedItems(visibleMarkers, maxVisibleMetadataMarkers);
-        for (let index = 0; index < sampledMarkers.length; index += 1) {
-          const marker = sampledMarkers[index];
-          ctx.fillStyle = marker.marker.color;
-          ctx.strokeStyle = "rgba(255,255,255,0.92)";
-          drawMetadataMarker(ctx, marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx);
-          ctx.fill();
-          ctx.stroke();
-          pushScenePath(metadataMarkerPath(marker.marker.shape, marker.x, marker.y, metadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.marker.color, 1);
-        }
-      }
-
       if (metadataPieNodes.length > 0 && metadataPies && camera.scale > 4.5 && renderedMetadataPieSizePx > 0) {
         const maxVisibleMetadataPies = 1000;
         const visiblePies: Array<{
@@ -10878,6 +10839,47 @@ export default function TreeCanvas({
           const pie = sampledPies[index];
           drawMetadataPie(ctx, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
           pushMetadataPieScenePaths(pushScenePath, pie.pie, pie.x, pie.y, renderedMetadataPieSizePx);
+        }
+      }
+
+      if (metadataMarkerNodes.length > 0 && metadataMarkers && camera.scale > 4.5 && renderedMetadataMarkerSizePx > 0) {
+        const maxVisibleMetadataMarkers = 1600;
+        const visibleMarkers: Array<{
+          marker: NonNullable<(typeof metadataMarkers)[number]>;
+          x: number;
+          y: number;
+        }> = [];
+        ctx.lineWidth = 1.1;
+        const orderedMarkerNodes = metadataMarkerNodesByOrder[order];
+        for (let index = 0; index < orderedMarkerNodes.length; index += 1) {
+          const node = orderedMarkerNodes[index];
+          if (hiddenNodes[node]) {
+            continue;
+          }
+          const marker = metadataMarkers[node];
+          if (!marker) {
+            continue;
+          }
+          const theta = thetaFor(layout.center, node, tree.leafCount);
+          const screen = metadataCircularMarkerScreenPosition(tree, node, theta, camera, renderedMetadataMarkerSizePx);
+          if (screen.x < -20 || screen.x > renderSize.width + 20 || screen.y < -20 || screen.y > renderSize.height + 20) {
+            continue;
+          }
+          visibleMarkers.push({
+            marker,
+            x: screen.x,
+            y: screen.y,
+          });
+        }
+        const sampledMarkers = evenlySampleSortedItems(visibleMarkers, maxVisibleMetadataMarkers);
+        for (let index = 0; index < sampledMarkers.length; index += 1) {
+          const marker = sampledMarkers[index];
+          ctx.fillStyle = marker.marker.color;
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          drawMetadataMarker(ctx, marker.marker.shape, marker.x, marker.y, renderedMetadataMarkerSizePx);
+          ctx.fill();
+          ctx.stroke();
+          pushScenePath(metadataMarkerPath(marker.marker.shape, marker.x, marker.y, renderedMetadataMarkerSizePx), "rgba(255,255,255,0.92)", 1.1, marker.marker.color, 1);
         }
       }
 
