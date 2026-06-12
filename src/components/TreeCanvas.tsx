@@ -103,6 +103,7 @@ const MAX_TIME_STRIPE_BANDS_PER_DRAW = 4_096;
 const MIN_ZOOMED_RECT_TREE_SPAN_PX = 96;
 const MIN_ZOOMED_CIRCULAR_TREE_RADIUS_PX = 56;
 const MAX_TAXONOMY_ARC_HITBOXES = 4_096;
+const ROTATION_PREVIEW_SETTLE_DELAY_MS = 120;
 
 type PhyloPicHitbox = {
   silhouette: PhyloPicSilhouette;
@@ -134,6 +135,20 @@ type TaxonomyArcHitbox = CircularTaxonomyArcMetadata & {
   outerRadiusPx: number;
   screenPolygonPoints?: Array<{ x: number; y: number }>;
   screenPolygonBounds?: { left: number; right: number; top: number; bottom: number };
+};
+
+type RotationPreviewCache = {
+  canvas: HTMLCanvasElement;
+  rotation: number;
+  translateX: number;
+  translateY: number;
+  scale: number;
+  dpr: number;
+  backingWidth: number;
+  backingHeight: number;
+  viewMode: ViewMode;
+  tree: TreeModel;
+  order: LayoutOrder;
 };
 
 function phylopicImageElementKey(silhouette: Pick<PhyloPicSilhouette, "key" | "imageUuid">): string {
@@ -3659,6 +3674,8 @@ export default function TreeCanvas({
   const circularTaxonomyBitmapCacheRef = useRef<CircularTaxonomyBitmapCache | null>(null);
   const rectTaxonomyBitmapCacheRef = useRef<RectTaxonomyBitmapCache | null>(null);
   const circularTaxonomyOverlayLayoutCacheRef = useRef<CircularTaxonomyOverlayLayoutCache | null>(null);
+  const rotationPreviewRef = useRef<RotationPreviewCache | null>(null);
+  const rotationPreviewCommitTimerRef = useRef<number | null>(null);
   const canvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const hoverCanvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const detailedRenderDebugEnabledRef = useRef(
@@ -11202,6 +11219,9 @@ export default function TreeCanvas({
       }
     }
     flushPhyloPicImages();
+    if (!isOverrideRender) {
+      rotationPreviewRef.current = null;
+    }
     renderDebugRef.current = renderDebug;
     drawHoverHighlightOverlay();
     timing.totalMs = performance.now() - drawStartTime;
@@ -11484,6 +11504,74 @@ export default function TreeCanvas({
       draw();
     });
   }, [draw]);
+
+  const renderRotationPreview = useCallback((nextRotation: number): boolean => {
+    if (!tree || viewMode === "rectangular" || renderCanvasOverrideRef.current !== null || exportCaptureRef.current !== null) {
+      return false;
+    }
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    const backingStore = canvasBackingStoreRef.current;
+    if (!canvas || !camera || camera.kind !== "circular" || !backingStore) {
+      return false;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx || canvas.width <= 0 || canvas.height <= 0) {
+      return false;
+    }
+    let preview = rotationPreviewRef.current;
+    const previewStale = !preview
+      || preview.tree !== tree
+      || preview.order !== order
+      || preview.viewMode !== viewMode
+      || preview.backingWidth !== canvas.width
+      || preview.backingHeight !== canvas.height
+      || Math.abs(preview.dpr - backingStore.dpr) > 1e-6
+      || Math.abs(preview.scale - camera.scale) > 1e-6
+      || Math.abs(preview.translateX - camera.translateX) > 0.5
+      || Math.abs(preview.translateY - camera.translateY) > 0.5;
+    if (previewStale) {
+      if (typeof document === "undefined") {
+        return false;
+      }
+      const previewCanvas = document.createElement("canvas");
+      previewCanvas.width = canvas.width;
+      previewCanvas.height = canvas.height;
+      const previewCtx = previewCanvas.getContext("2d");
+      if (!previewCtx) {
+        return false;
+      }
+      previewCtx.drawImage(canvas, 0, 0);
+      preview = {
+        canvas: previewCanvas,
+        rotation: camera.rotation,
+        translateX: camera.translateX,
+        translateY: camera.translateY,
+        scale: camera.scale,
+        dpr: backingStore.dpr,
+        backingWidth: canvas.width,
+        backingHeight: canvas.height,
+        viewMode,
+        tree,
+        order,
+      };
+      rotationPreviewRef.current = preview;
+    }
+    const activePreview = preview;
+    if (!activePreview) {
+      return false;
+    }
+    const delta = normalizeRotation(((nextRotation - activePreview.rotation) * 180) / Math.PI) * Math.PI / 180;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(activePreview.translateX * activePreview.dpr, activePreview.translateY * activePreview.dpr);
+    ctx.rotate(delta);
+    ctx.translate(-activePreview.translateX * activePreview.dpr, -activePreview.translateY * activePreview.dpr);
+    ctx.drawImage(activePreview.canvas, 0, 0);
+    ctx.restore();
+    return true;
+  }, [order, tree, viewMode]);
 
   const startPanBenchmark = useCallback((label = "manual") => {
     const previous = panBenchmarkRef.current;
@@ -11835,9 +11923,23 @@ export default function TreeCanvas({
     if (!camera || camera.kind !== "circular") {
       return;
     }
+    if (rotationPreviewCommitTimerRef.current !== null) {
+      window.clearTimeout(rotationPreviewCommitTimerRef.current);
+      rotationPreviewCommitTimerRef.current = null;
+    }
     setCircularCameraRotation(camera, circularRotation);
-    draw();
-  }, [circularRotation, draw]);
+    const previewRendered = renderRotationPreview(circularRotation);
+    if (!previewRendered) {
+      rotationPreviewRef.current = null;
+      draw();
+      return;
+    }
+    rotationPreviewCommitTimerRef.current = window.setTimeout(() => {
+      rotationPreviewCommitTimerRef.current = null;
+      rotationPreviewRef.current = null;
+      draw();
+    }, ROTATION_PREVIEW_SETTLE_DELAY_MS);
+  }, [circularRotation, draw, renderRotationPreview]);
 
   useLayoutEffect(() => {
     if (!tree || focusNodeRequest === 0 || handledFocusRequestRef.current === focusNodeRequest) {
@@ -12009,6 +12111,11 @@ export default function TreeCanvas({
       window.cancelAnimationFrame(frameRequestRef.current);
       frameRequestRef.current = null;
     }
+    if (rotationPreviewCommitTimerRef.current !== null) {
+      window.clearTimeout(rotationPreviewCommitTimerRef.current);
+      rotationPreviewCommitTimerRef.current = null;
+    }
+    rotationPreviewRef.current = null;
   }, []);
 
   useEffect(() => {
