@@ -815,7 +815,9 @@ const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
 const DEFAULT_METADATA_LABEL_OFFSET_X_PX = 0;
 const DEFAULT_METADATA_LABEL_OFFSET_Y_PX = 0;
-const DEFAULT_METADATA_PIE_SIZE_PX = 96;
+const DEFAULT_METADATA_PIE_SIZE_PX = 50;
+const MIN_METADATA_PIE_SIZE_PERCENT = 10;
+const MAX_METADATA_PIE_SIZE_PERCENT = 100;
 const TUTORIAL_COMPLETED_STORAGE_KEY = "big-tree-viewer-tutorial-completed";
 const TUTORIAL_DISMISSED_STORAGE_KEY = "big-tree-viewer-tutorial-dismissed";
 const TUTORIAL_HASH = "#tutorial";
@@ -826,6 +828,13 @@ function suppressTutorialForCurrentViewport(): boolean {
     return false;
   }
   return window.matchMedia(MOBILE_TUTORIAL_MEDIA_QUERY).matches;
+}
+
+function clampMetadataPieSizePercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_METADATA_PIE_SIZE_PX;
+  }
+  return Math.max(MIN_METADATA_PIE_SIZE_PERCENT, Math.min(MAX_METADATA_PIE_SIZE_PERCENT, Math.round(value)));
 }
 
 type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "branchMenu" | "metadata" | "sessions";
@@ -2264,7 +2273,7 @@ export default function App() {
       setMetadataPieColorOverrides(pieColorOverrides);
     }
     if (typeof visual.metadataPieSizePx === "number" && Number.isFinite(visual.metadataPieSizePx)) {
-      setMetadataPieSizePx(visual.metadataPieSizePx);
+      setMetadataPieSizePx(clampMetadataPieSizePercent(visual.metadataPieSizePx));
     }
     const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
     if (categoryColorOverrides) {
@@ -3515,7 +3524,7 @@ export default function App() {
     setMetadataPieEndColumn(settings.metadataPieEndColumn ?? "");
     setMetadataPiePalette(settings.metadataPiePalette === "viridis" || settings.metadataPiePalette === "warm" ? settings.metadataPiePalette : "categorical");
     setMetadataPieColorOverrides(settings.metadataPieColorOverrides ?? {});
-    setMetadataPieSizePx(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX);
+    setMetadataPieSizePx(clampMetadataPieSizePercent(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX));
     setMetadataCategoryColorOverrides(settings.metadataCategoryColorOverrides);
     setMetadataMarkerStyleOverrides(settings.metadataMarkerStyleOverrides);
     setMetadataMarkerSizePx(settings.metadataMarkerSizePx);
@@ -6807,18 +6816,18 @@ export default function App() {
                         <option value="warm">Warm</option>
                       </select>
                     </label>
-                    <label title="Set the reference diameter of metadata pie charts at fitted zoom. Pie charts grow as you zoom in and shrink as you zoom out; large values may overlap nearby tips.">
+                    <label title="Set pie diameter as a percentage of adjacent tip spacing. At 100%, pies on neighboring tips just touch; 50% leaves about one pie-width of space.">
                       Pie size
                       <input
                         type="range"
-                        min={12}
-                        max={800}
-                        step={4}
+                        min={MIN_METADATA_PIE_SIZE_PERCENT}
+                        max={MAX_METADATA_PIE_SIZE_PERCENT}
+                        step={1}
                         value={metadataPieSizePx}
-                        onChange={(event) => setMetadataPieSizePx(Number(event.target.value))}
+                        onChange={(event) => setMetadataPieSizePx(clampMetadataPieSizePercent(Number(event.target.value)))}
                       />
                     </label>
-                    <div className="figure-style-value">{metadataPieSizePx}px</div>
+                    <div className="figure-style-value">{metadataPieSizePx}% tip spacing</div>
                     {metadataPieOverlay.legend.length > 0 ? (
                       <div className="metadata-legend" data-testid="metadata-pie-legend">
                         {metadataPieOverlay.legend.map((item) => (

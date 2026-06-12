@@ -1166,13 +1166,12 @@ function pushMetadataPieScenePaths(
   pushScenePath(metadataMarkerPath("circle", x, y, sizePx), "rgba(255,255,255,0.94)", 1.15, "none", 1);
 }
 
-function scaledMetadataPieSizePx(sizePx: number, zoomMetric: number, referenceZoomMetric: number): number {
-  const baseSize = Math.max(4, sizePx);
-  const scale = Number.isFinite(zoomMetric) && Number.isFinite(referenceZoomMetric) && referenceZoomMetric > 0
-    ? zoomMetric / referenceZoomMetric
-    : 1;
-  const renderedSize = baseSize * Math.max(0, scale);
-  return renderedSize < 5 ? 0 : Math.min(4096, renderedSize);
+function scaledMetadataPieSizePx(sizePercent: number, adjacentTipSpacingPx: number): number {
+  const percent = Number.isFinite(sizePercent) ? Math.max(0, Math.min(100, sizePercent)) : 50;
+  const renderedSize = Number.isFinite(adjacentTipSpacingPx) && adjacentTipSpacingPx > 0
+    ? adjacentTipSpacingPx * (percent / 100)
+    : 0;
+  return renderedSize < 5 ? 0 : renderedSize;
 }
 
 function drawMetadataMarker(
@@ -6386,8 +6385,7 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-      const rectMetadataPieReferenceScaleY = fitLikeRect?.kind === "rect" ? fitLikeRect.scaleY : camera.scaleY;
-      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, camera.scaleY, rectMetadataPieReferenceScaleY);
+      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, camera.scaleY);
       const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
         ? Math.max(8, (Math.max(
           metadataMarkerNodes.length > 0 ? metadataMarkerSizePx : 0,
@@ -9086,8 +9084,7 @@ export default function TreeCanvas({
         : microTipFontSize + ((tipFontSize - microTipFontSize) * readableBandProgress);
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
-      const circularMetadataPieReferenceScale = fitLikeCircular?.kind === "circular" ? fitLikeCircular.scale : camera.scale;
-      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, camera.scale, circularMetadataPieReferenceScale);
+      const renderedMetadataPieSizePx = scaledMetadataPieSizePx(metadataPieSizePx, angularSpacingPx);
       const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
         ? Math.max(20, (Math.max(
           metadataMarkerNodes.length > 0 ? metadataMarkerSizePx : 0,
