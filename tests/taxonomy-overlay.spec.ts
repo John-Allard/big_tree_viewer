@@ -1170,6 +1170,63 @@ test("taxonomy overlays can stay visible while taxonomy branch coloring is disab
   expect(rectState.branchColors.every((color: string) => color === "#0f172a")).toBeTruthy();
 });
 
+test("hidden taxonomy ranks can still drive branch color jitter", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for hidden rank color jitter test.");
+    }
+    const tipRanks = leafNodes.map((node, index) => ({
+      node,
+      ranks: {
+        class: "Aves",
+        order: "Passeriformes",
+        family: index < 30 ? "FamilyA" : "FamilyB",
+      },
+    }));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 11,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["family", "order", "class"],
+      tipRanks,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+  const result = await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for hidden rank color jitter test.");
+    }
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyBranchColoringEnabled(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyColorRootRankForTest("order");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyColorJitterRankForTest("family");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyColorJitterForTest(1);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("family", false);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined;
+    const colors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors?.() ?? [];
+    return {
+      visibleRanks: debug?.taxonomyVisibleRanks ?? [],
+      firstFamilyColor: colors[leafNodes[0]],
+      secondFamilyColor: colors[leafNodes[leafNodes.length - 1]],
+    };
+  });
+
+  expect(result.visibleRanks).not.toContain("family");
+  expect(result.firstFamilyColor).toBeTruthy();
+  expect(result.secondFamilyColor).toBeTruthy();
+  expect(result.firstFamilyColor).not.toBe(result.secondFamilyColor);
+});
+
 test("top-level taxonomy color override cascades through descendants when jitter is zero", async ({ page }) => {
   await waitForViewer(page);
   const taxonomyPoint = await page.evaluate(async () => {

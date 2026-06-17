@@ -26,6 +26,7 @@ declare global {
       setTaxonomyColorPaletteForTest: (palette: TaxonomyColorPaletteKey) => void;
       setTaxonomyColorRootRankForTest: (rank: "auto" | "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setTaxonomyColorJitterRankForTest: (rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
+      setTaxonomyLabelOnlyStrandRankForTest: (rank: "none" | "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setBranchThicknessScaleForTest: (value: number) => void;
       setShowIntermediateScaleTicks: (visible: boolean) => void;
       setShowTimeStripes: (visible: boolean) => void;

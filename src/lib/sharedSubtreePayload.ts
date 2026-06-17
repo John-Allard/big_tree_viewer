@@ -6,7 +6,7 @@ import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
 import type { LayoutOrder, ViewMode, ZoomAxisMode } from "../types/tree";
-import type { TaxonomyOverlayStyle, TimeStripeStyle } from "../components/treeCanvasTypes";
+import type { TaxonomyLabelOnlyStrandRank, TaxonomyOverlayStyle, TimeStripeStyle } from "../components/treeCanvasTypes";
 
 export type SharedSubtreeTaxonomyEntry = {
   name: string;
@@ -72,6 +72,7 @@ export type SharedSubtreeVisualPayload = {
   taxonomyCustomPaletteInput: string;
   taxonomyColorRootRank: TaxonomyRank | "auto";
   taxonomyColorJitterRank: TaxonomyRank;
+  taxonomyLabelOnlyStrandRank: TaxonomyLabelOnlyStrandRank;
   branchThicknessScale: number;
 };
 
@@ -187,6 +188,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     taxonomyCustomPaletteInput: typeof source.taxonomyCustomPaletteInput === "string" ? source.taxonomyCustomPaletteInput : "",
     taxonomyColorRootRank: coerceEnum(source.taxonomyColorRootRank, ["auto", ...TAXONOMY_RANKS] as const, "auto"),
     taxonomyColorJitterRank: coerceEnum(source.taxonomyColorJitterRank, TAXONOMY_RANKS, "genus"),
+    taxonomyLabelOnlyStrandRank: coerceEnum(source.taxonomyLabelOnlyStrandRank, ["none", ...TAXONOMY_RANKS] as const, "none"),
     branchThicknessScale: coerceFiniteNumber(source.branchThicknessScale, 1),
   };
 }

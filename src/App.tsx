@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
-import type { TaxonomyOverlayStyle, TimeStripeStyle } from "./components/treeCanvasTypes";
+import type { TaxonomyLabelOnlyStrandRank, TaxonomyOverlayStyle, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import {
   cloneDefaultFigureStyles,
@@ -228,6 +228,7 @@ type BigTreeViewerSessionSettings = {
   taxonomyCustomPaletteInput: string;
   taxonomyColorRootRank: TaxonomyRank | "auto";
   taxonomyColorJitterRank: TaxonomyRank;
+  taxonomyLabelOnlyStrandRank: TaxonomyLabelOnlyStrandRank;
   phylopicEnabled?: boolean;
   phylopicRankSelection?: Partial<Record<TaxonomyRank, boolean>>;
   phylopicPlacement?: "after-label" | "outside-ribbon";
@@ -919,6 +920,7 @@ const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
 const DEFAULT_TIME_AXIS_SCALE: TimeAxisScale = "linear";
 const DEFAULT_TAXONOMY_COLOR_ROOT_RANK: TaxonomyRank | "auto" = "auto";
 const DEFAULT_TAXONOMY_COLOR_JITTER_RANK: TaxonomyRank = "genus";
+const DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK: TaxonomyLabelOnlyStrandRank = "none";
 const TAXONOMY_ARCHIVE_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
 type VisualPopoverId =
   | LabelStyleClass
@@ -1500,6 +1502,7 @@ export default function App() {
   const [taxonomyCustomPaletteInput, setTaxonomyCustomPaletteInput] = useState("");
   const [taxonomyColorRootRank, setTaxonomyColorRootRank] = useState<TaxonomyRank | "auto">(DEFAULT_TAXONOMY_COLOR_ROOT_RANK);
   const [taxonomyColorJitterRank, setTaxonomyColorJitterRank] = useState<TaxonomyRank>(DEFAULT_TAXONOMY_COLOR_JITTER_RANK);
+  const [taxonomyLabelOnlyStrandRank, setTaxonomyLabelOnlyStrandRank] = useState<TaxonomyLabelOnlyStrandRank>(DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
   const [taxonomyBranchColoringEnabled, setTaxonomyBranchColoringEnabled] = useState(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
   const [branchThicknessScale, setBranchThicknessScale] = useState(DEFAULT_BRANCH_THICKNESS_SCALE);
   const [searchQuery, setSearchQuery] = useState("");
@@ -2046,6 +2049,7 @@ export default function App() {
     setTaxonomyCustomPaletteInput(visual.taxonomyCustomPaletteInput);
     setTaxonomyColorRootRank(visual.taxonomyColorRootRank);
     setTaxonomyColorJitterRank(visual.taxonomyColorJitterRank);
+    setTaxonomyLabelOnlyStrandRank(visual.taxonomyLabelOnlyStrandRank ?? DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
     setBranchThicknessScale(visual.branchThicknessScale);
   }, []);
 
@@ -2182,6 +2186,9 @@ export default function App() {
     }
     if (typeof visual.taxonomyColorJitterRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyColorJitterRank)) {
       setTaxonomyColorJitterRank(visual.taxonomyColorJitterRank as TaxonomyRank);
+    }
+    if (visual.taxonomyLabelOnlyStrandRank === "none" || (typeof visual.taxonomyLabelOnlyStrandRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyLabelOnlyStrandRank))) {
+      setTaxonomyLabelOnlyStrandRank(visual.taxonomyLabelOnlyStrandRank as TaxonomyLabelOnlyStrandRank);
     }
     if (typeof visual.phylopicEnabled === "boolean") {
       setPhyloPicEnabled(visual.phylopicEnabled);
@@ -2728,7 +2735,10 @@ export default function App() {
         ? DEFAULT_TAXONOMY_COLOR_JITTER_RANK
         : availableTaxonomyRanks[availableTaxonomyRanks.length - 1]);
     }
-  }, [availableTaxonomyRanks, taxonomyColorJitterRank, taxonomyColorRootRank]);
+    if (taxonomyLabelOnlyStrandRank !== "none" && !availableTaxonomyRanks.includes(taxonomyLabelOnlyStrandRank)) {
+      setTaxonomyLabelOnlyStrandRank(DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
+    }
+  }, [availableTaxonomyRanks, taxonomyColorJitterRank, taxonomyColorRootRank, taxonomyLabelOnlyStrandRank]);
   const handleAutomaticTaxonomyRankVisibilityChange = useCallback((enabled: boolean) => {
     if (!enabled) {
       const renderDebug = (window as typeof window & {
@@ -3314,6 +3324,7 @@ export default function App() {
     taxonomyCustomPaletteInput,
     taxonomyColorRootRank,
     taxonomyColorJitterRank,
+    taxonomyLabelOnlyStrandRank,
     phylopicEnabled,
     phylopicRankSelection,
     phylopicPlacement,
@@ -3410,6 +3421,7 @@ export default function App() {
     taxonomyCollapseRank,
     taxonomyColorJitter,
     taxonomyColorJitterRank,
+    taxonomyLabelOnlyStrandRank,
     taxonomyColorPalette,
     taxonomyColorRootRank,
     taxonomyCustomPaletteInput,
@@ -3485,6 +3497,7 @@ export default function App() {
     setTaxonomyCustomPaletteInput(settings.taxonomyCustomPaletteInput);
     setTaxonomyColorRootRank(settings.taxonomyColorRootRank);
     setTaxonomyColorJitterRank(settings.taxonomyColorJitterRank);
+    setTaxonomyLabelOnlyStrandRank(settings.taxonomyLabelOnlyStrandRank ?? DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
     if (typeof settings.phylopicEnabled === "boolean") {
       setPhyloPicEnabled(settings.phylopicEnabled);
     }
@@ -4823,6 +4836,7 @@ export default function App() {
     setTaxonomyCustomPaletteInput("");
     setTaxonomyColorRootRank(DEFAULT_TAXONOMY_COLOR_ROOT_RANK);
     setTaxonomyColorJitterRank(DEFAULT_TAXONOMY_COLOR_JITTER_RANK);
+    setTaxonomyLabelOnlyStrandRank(DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
     setTaxonomyOverlayStyle(DEFAULT_TAXONOMY_OVERLAY_STYLE);
     setUseAutomaticTaxonomyRankVisibility(true);
@@ -4970,6 +4984,7 @@ export default function App() {
       setTaxonomyColorPaletteForTest: setTaxonomyColorPalette,
       setTaxonomyColorRootRankForTest: setTaxonomyColorRootRank,
       setTaxonomyColorJitterRankForTest: setTaxonomyColorJitterRank,
+      setTaxonomyLabelOnlyStrandRankForTest: setTaxonomyLabelOnlyStrandRank,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
       setShowIntermediateScaleTicks,
       setShowTimeStripes,
@@ -5778,6 +5793,18 @@ export default function App() {
                               value={taxonomyColorJitterRank}
                               onChange={(event) => setTaxonomyColorJitterRank(event.target.value as TaxonomyRank)}
                             >
+                              {availableTaxonomyRanks.map((rank) => (
+                                <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label title="Draw one selected taxonomy rank as black labels with a thin center strand. This does not change taxonomy branch colors or the palette anchor.">
+                            Label-only strand rank
+                            <select
+                              value={taxonomyLabelOnlyStrandRank}
+                              onChange={(event) => setTaxonomyLabelOnlyStrandRank(event.target.value as TaxonomyLabelOnlyStrandRank)}
+                            >
+                              <option value="none">None</option>
                               {availableTaxonomyRanks.map((rank) => (
                                 <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>
                               ))}
@@ -7050,6 +7077,7 @@ export default function App() {
           taxonomyCustomPaletteColors={customTaxonomyPaletteColors}
           taxonomyColorRootRank={taxonomyColorRootRank}
           taxonomyColorJitterRank={taxonomyColorJitterRank}
+          taxonomyLabelOnlyStrandRank={taxonomyLabelOnlyStrandRank}
           useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
           taxonomyRankVisibility={taxonomyRankVisibility}
           taxonomyCollapseRank={taxonomyCollapseRank}
