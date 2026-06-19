@@ -7835,6 +7835,19 @@ export default function TreeCanvas({
         const taxonomyRibbonPaths = taxonomyOverlayStyle === "ribbons"
           ? getSpiralTaxonomyRibbonPaths(order, layout, visibleTaxonomyRanks, taxonomyMetrics, taxonomyGapWorld, labelOnlySpiralRanks)
           : null;
+        if (taxonomyRibbonPaths) {
+          ctx.save();
+          ctx.translate(camera.translateX, camera.translateY);
+          ctx.scale(camera.scale, camera.scale);
+          ctx.rotate(camera.rotation);
+          taxonomyRibbonPaths.forEach((path, color) => {
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.82;
+            ctx.fill(path);
+          });
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
         if (taxonomyOverlayStyle === "strands" || labelOnlySpiralRanks.length > 0) {
           const strandWidthWorld = Math.max(1.25, Math.min(3.2, taxonomyMetrics.taxonomyRibbonWidth * camera.scale * 0.14)) / Math.max(camera.scale, 1e-6);
           ctx.save();
@@ -7881,18 +7894,6 @@ export default function TreeCanvas({
               }
             }
           }
-          ctx.restore();
-        } else if (taxonomyRibbonPaths) {
-          ctx.save();
-          ctx.translate(camera.translateX, camera.translateY);
-          ctx.scale(camera.scale, camera.scale);
-          ctx.rotate(camera.rotation);
-          taxonomyRibbonPaths.forEach((path, color) => {
-            ctx.fillStyle = color;
-            ctx.globalAlpha = 0.82;
-            ctx.fill(path);
-          });
-          ctx.globalAlpha = 1;
           ctx.restore();
         }
         if (exportCaptureRef.current && taxonomyRibbonPaths) {
