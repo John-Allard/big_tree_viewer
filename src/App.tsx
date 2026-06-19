@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import TreeCanvas from "./components/TreeCanvas";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
-import type { TaxonomyLabelOnlyStrandRank, TaxonomyOverlayStyle, TimeStripeStyle } from "./components/treeCanvasTypes";
+import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import {
   cloneDefaultFigureStyles,
@@ -220,6 +220,7 @@ type BigTreeViewerSessionSettings = {
   taxonomyEnabled: boolean;
   taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
+  taxonomyRankDisplayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>>;
   taxonomyCollapseRank: TaxonomyCollapseRank;
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyBranchColoringEnabled: boolean;
@@ -228,7 +229,7 @@ type BigTreeViewerSessionSettings = {
   taxonomyCustomPaletteInput: string;
   taxonomyColorRootRank: TaxonomyRank | "auto";
   taxonomyColorJitterRank: TaxonomyRank;
-  taxonomyLabelOnlyStrandRank: TaxonomyLabelOnlyStrandRank;
+  taxonomyLabelOnlyStrandRank?: TaxonomyRank | "none";
   phylopicEnabled?: boolean;
   phylopicRankSelection?: Partial<Record<TaxonomyRank, boolean>>;
   phylopicPlacement?: "after-label" | "outside-ribbon";
@@ -668,6 +669,53 @@ function cleanTaxonomyRankVisibility(value: unknown): Partial<Record<TaxonomyRan
   return result;
 }
 
+function cleanTaxonomyRankDisplayModes(value: unknown): Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const result: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> = {};
+  for (const rank of TAXONOMY_RANKS) {
+    const rankValue = (value as Partial<Record<TaxonomyRank, unknown>>)[rank];
+    if (rankValue === "hidden" || rankValue === "label-only" || rankValue === "ribbon") {
+      result[rank] = rankValue;
+    }
+  }
+  return result;
+}
+
+function deriveTaxonomyRankDisplayModes(
+  displayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> | null | undefined,
+  visibility: Partial<Record<TaxonomyRank, boolean>> | null | undefined,
+  legacyLabelOnlyRank: TaxonomyRank | "none" | null | undefined,
+): Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> {
+  const result: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> = {};
+  for (const rank of TAXONOMY_RANKS) {
+    const mode = displayModes?.[rank];
+    if (mode) {
+      result[rank] = mode;
+    } else if (typeof visibility?.[rank] === "boolean") {
+      result[rank] = visibility[rank] === false ? "hidden" : "ribbon";
+    }
+  }
+  if (legacyLabelOnlyRank && legacyLabelOnlyRank !== "none") {
+    result[legacyLabelOnlyRank] = "label-only";
+  }
+  return result;
+}
+
+function taxonomyRankVisibilityFromDisplayModes(
+  displayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>>,
+): Partial<Record<TaxonomyRank, boolean>> {
+  const result: Partial<Record<TaxonomyRank, boolean>> = {};
+  for (const rank of TAXONOMY_RANKS) {
+    const mode = displayModes[rank];
+    if (mode) {
+      result[rank] = mode !== "hidden";
+    }
+  }
+  return result;
+}
+
 function cleanColorRecord(value: unknown): Record<string, string> | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -920,7 +968,6 @@ const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
 const DEFAULT_TIME_AXIS_SCALE: TimeAxisScale = "linear";
 const DEFAULT_TAXONOMY_COLOR_ROOT_RANK: TaxonomyRank | "auto" = "auto";
 const DEFAULT_TAXONOMY_COLOR_JITTER_RANK: TaxonomyRank = "genus";
-const DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK: TaxonomyLabelOnlyStrandRank = "none";
 const TAXONOMY_ARCHIVE_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
 type VisualPopoverId =
   | LabelStyleClass
@@ -1502,7 +1549,7 @@ export default function App() {
   const [taxonomyCustomPaletteInput, setTaxonomyCustomPaletteInput] = useState("");
   const [taxonomyColorRootRank, setTaxonomyColorRootRank] = useState<TaxonomyRank | "auto">(DEFAULT_TAXONOMY_COLOR_ROOT_RANK);
   const [taxonomyColorJitterRank, setTaxonomyColorJitterRank] = useState<TaxonomyRank>(DEFAULT_TAXONOMY_COLOR_JITTER_RANK);
-  const [taxonomyLabelOnlyStrandRank, setTaxonomyLabelOnlyStrandRank] = useState<TaxonomyLabelOnlyStrandRank>(DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
+  const [taxonomyRankDisplayModes, setTaxonomyRankDisplayModes] = useState<Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>>>({});
   const [taxonomyBranchColoringEnabled, setTaxonomyBranchColoringEnabled] = useState(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
   const [branchThicknessScale, setBranchThicknessScale] = useState(DEFAULT_BRANCH_THICKNESS_SCALE);
   const [searchQuery, setSearchQuery] = useState("");
@@ -2042,14 +2089,21 @@ export default function App() {
     setTaxonomyOverlayStyle(visual.taxonomyOverlayStyle === "strands" ? "strands" : "ribbons");
     setTaxonomyBranchColoringEnabled(visual.taxonomyBranchColoringEnabled);
     setUseAutomaticTaxonomyRankVisibility(visual.useAutomaticTaxonomyRankVisibility);
-    setTaxonomyRankVisibility(visual.taxonomyRankVisibility);
+    {
+      const displayModes = deriveTaxonomyRankDisplayModes(
+        visual.taxonomyRankDisplayModes,
+        visual.taxonomyRankVisibility,
+        visual.taxonomyLabelOnlyStrandRank ?? "none",
+      );
+      setTaxonomyRankDisplayModes(displayModes);
+      setTaxonomyRankVisibility(taxonomyRankVisibilityFromDisplayModes(displayModes));
+    }
     setTaxonomyCollapseRank(visual.taxonomyCollapseRank);
     setTaxonomyColorJitter(visual.taxonomyColorJitter);
     setTaxonomyColorPalette(visual.taxonomyColorPalette);
     setTaxonomyCustomPaletteInput(visual.taxonomyCustomPaletteInput);
     setTaxonomyColorRootRank(visual.taxonomyColorRootRank);
     setTaxonomyColorJitterRank(visual.taxonomyColorJitterRank);
-    setTaxonomyLabelOnlyStrandRank(visual.taxonomyLabelOnlyStrandRank ?? DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
     setBranchThicknessScale(visual.branchThicknessScale);
   }, []);
 
@@ -2169,6 +2223,17 @@ export default function App() {
     if (rankVisibility) {
       setTaxonomyRankVisibility(rankVisibility);
     }
+    const rankDisplayModes = deriveTaxonomyRankDisplayModes(
+      cleanTaxonomyRankDisplayModes(visual.taxonomyRankDisplayModes),
+      rankVisibility,
+      visual.taxonomyLabelOnlyStrandRank === "none" || (typeof visual.taxonomyLabelOnlyStrandRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyLabelOnlyStrandRank))
+        ? visual.taxonomyLabelOnlyStrandRank as TaxonomyRank | "none"
+        : "none",
+    );
+    if (Object.keys(rankDisplayModes).length > 0) {
+      setTaxonomyRankDisplayModes(rankDisplayModes);
+      setTaxonomyRankVisibility(taxonomyRankVisibilityFromDisplayModes(rankDisplayModes));
+    }
     if (visual.taxonomyCollapseRank === "species" || (typeof visual.taxonomyCollapseRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyCollapseRank))) {
       setTaxonomyCollapseRank(visual.taxonomyCollapseRank as TaxonomyCollapseRank);
     }
@@ -2186,9 +2251,6 @@ export default function App() {
     }
     if (typeof visual.taxonomyColorJitterRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyColorJitterRank)) {
       setTaxonomyColorJitterRank(visual.taxonomyColorJitterRank as TaxonomyRank);
-    }
-    if (visual.taxonomyLabelOnlyStrandRank === "none" || (typeof visual.taxonomyLabelOnlyStrandRank === "string" && (TAXONOMY_RANKS as readonly string[]).includes(visual.taxonomyLabelOnlyStrandRank))) {
-      setTaxonomyLabelOnlyStrandRank(visual.taxonomyLabelOnlyStrandRank as TaxonomyLabelOnlyStrandRank);
     }
     if (typeof visual.phylopicEnabled === "boolean") {
       setPhyloPicEnabled(visual.phylopicEnabled);
@@ -2683,9 +2745,9 @@ export default function App() {
       if (useAutomaticTaxonomyRankVisibility) {
         return true;
       }
-      return taxonomyRankVisibility[rank] !== false;
+      return (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) !== "hidden";
     }),
-    [availableTaxonomyRanks, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility],
+    [availableTaxonomyRanks, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility],
   );
   const phylopicViewportRankSet = useMemo(() => new Set(phylopicViewportRanks), [phylopicViewportRanks]);
   const phylopicHasViewportRankInfo = phylopicViewportRanks.length > 0;
@@ -2735,10 +2797,22 @@ export default function App() {
         ? DEFAULT_TAXONOMY_COLOR_JITTER_RANK
         : availableTaxonomyRanks[availableTaxonomyRanks.length - 1]);
     }
-    if (taxonomyLabelOnlyStrandRank !== "none" && !availableTaxonomyRanks.includes(taxonomyLabelOnlyStrandRank)) {
-      setTaxonomyLabelOnlyStrandRank(DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
-    }
-  }, [availableTaxonomyRanks, taxonomyColorJitterRank, taxonomyColorRootRank, taxonomyLabelOnlyStrandRank]);
+    setTaxonomyRankDisplayModes((current) => {
+      let changed = false;
+      const next: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> = {};
+      for (const rank of availableTaxonomyRanks) {
+        if (current[rank]) {
+          next[rank] = current[rank];
+        }
+      }
+      for (const rank of TAXONOMY_RANKS) {
+        if (current[rank] && !availableTaxonomyRanks.includes(rank)) {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [availableTaxonomyRanks, taxonomyColorJitterRank, taxonomyColorRootRank]);
   const handleAutomaticTaxonomyRankVisibilityChange = useCallback((enabled: boolean) => {
     if (!enabled) {
       const renderDebug = (window as typeof window & {
@@ -2756,11 +2830,15 @@ export default function App() {
           : renderDebug?.rect?.taxonomyVisibleRanks
       ) ?? [];
       const nextVisibility: Partial<Record<TaxonomyRank, boolean>> = {};
+      const nextDisplayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> = {};
       for (let index = 0; index < availableTaxonomyRanks.length; index += 1) {
         const rank = availableTaxonomyRanks[index];
-        nextVisibility[rank] = visibleRanks.includes(rank);
+        const visible = visibleRanks.includes(rank);
+        nextVisibility[rank] = visible;
+        nextDisplayModes[rank] = visible ? "ribbon" : "hidden";
       }
       setTaxonomyRankVisibility(nextVisibility);
+      setTaxonomyRankDisplayModes(nextDisplayModes);
     }
     setUseAutomaticTaxonomyRankVisibility(enabled);
   }, [availableTaxonomyRanks, viewMode]);
@@ -3316,6 +3394,7 @@ export default function App() {
     taxonomyEnabled,
     taxonomyOverlayStyle,
     taxonomyRankVisibility,
+    taxonomyRankDisplayModes,
     taxonomyCollapseRank,
     useAutomaticTaxonomyRankVisibility,
     taxonomyBranchColoringEnabled,
@@ -3324,7 +3403,6 @@ export default function App() {
     taxonomyCustomPaletteInput,
     taxonomyColorRootRank,
     taxonomyColorJitterRank,
-    taxonomyLabelOnlyStrandRank,
     phylopicEnabled,
     phylopicRankSelection,
     phylopicPlacement,
@@ -3421,7 +3499,7 @@ export default function App() {
     taxonomyCollapseRank,
     taxonomyColorJitter,
     taxonomyColorJitterRank,
-    taxonomyLabelOnlyStrandRank,
+    taxonomyRankDisplayModes,
     taxonomyColorPalette,
     taxonomyColorRootRank,
     taxonomyCustomPaletteInput,
@@ -3488,7 +3566,15 @@ export default function App() {
     });
     setTaxonomyEnabled(settings.taxonomyEnabled);
     setTaxonomyOverlayStyle(settings.taxonomyOverlayStyle === "strands" ? "strands" : "ribbons");
-    setTaxonomyRankVisibility(settings.taxonomyRankVisibility);
+    {
+      const displayModes = deriveTaxonomyRankDisplayModes(
+        settings.taxonomyRankDisplayModes,
+        settings.taxonomyRankVisibility,
+        settings.taxonomyLabelOnlyStrandRank ?? "none",
+      );
+      setTaxonomyRankDisplayModes(displayModes);
+      setTaxonomyRankVisibility(taxonomyRankVisibilityFromDisplayModes(displayModes));
+    }
     setTaxonomyCollapseRank(settings.taxonomyCollapseRank);
     setUseAutomaticTaxonomyRankVisibility(settings.useAutomaticTaxonomyRankVisibility);
     setTaxonomyBranchColoringEnabled(settings.taxonomyBranchColoringEnabled);
@@ -3497,7 +3583,6 @@ export default function App() {
     setTaxonomyCustomPaletteInput(settings.taxonomyCustomPaletteInput);
     setTaxonomyColorRootRank(settings.taxonomyColorRootRank);
     setTaxonomyColorJitterRank(settings.taxonomyColorJitterRank);
-    setTaxonomyLabelOnlyStrandRank(settings.taxonomyLabelOnlyStrandRank ?? DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
     if (typeof settings.phylopicEnabled === "boolean") {
       setPhyloPicEnabled(settings.phylopicEnabled);
     }
@@ -4836,11 +4921,11 @@ export default function App() {
     setTaxonomyCustomPaletteInput("");
     setTaxonomyColorRootRank(DEFAULT_TAXONOMY_COLOR_ROOT_RANK);
     setTaxonomyColorJitterRank(DEFAULT_TAXONOMY_COLOR_JITTER_RANK);
-    setTaxonomyLabelOnlyStrandRank(DEFAULT_TAXONOMY_LABEL_ONLY_STRAND_RANK);
     setTaxonomyBranchColoringEnabled(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
     setTaxonomyOverlayStyle(DEFAULT_TAXONOMY_OVERLAY_STYLE);
     setUseAutomaticTaxonomyRankVisibility(true);
     setTaxonomyRankVisibility({});
+    setTaxonomyRankDisplayModes({});
     setTaxonomyCollapseRank(DEFAULT_TAXONOMY_COLLAPSE_RANK);
     setBranchThicknessScale(DEFAULT_BRANCH_THICKNESS_SCALE);
     setShowIntermediateScaleTicks(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
@@ -4933,6 +5018,7 @@ export default function App() {
         showCircularCenterRadialScaleBar,
         spiralTurns,
         taxonomyRankVisibilityAuto: useAutomaticTaxonomyRankVisibility,
+        taxonomyRankDisplayModes,
         timeStripeStyle,
         timeStripeLineWeight,
         showNodeErrorBars,
@@ -4971,9 +5057,24 @@ export default function App() {
       setTaxonomyBranchColoringEnabled,
       setTaxonomyRankVisibilityForTest: (rank: TaxonomyRank, visible: boolean) => {
         setUseAutomaticTaxonomyRankVisibility(false);
+        setTaxonomyRankDisplayModes((current) => ({
+          ...current,
+          [rank]: visible ? "ribbon" : "hidden",
+        }));
         setTaxonomyRankVisibility((current) => ({
           ...current,
           [rank]: visible,
+        }));
+      },
+      setTaxonomyRankDisplayModeForTest: (rank: TaxonomyRank, mode: TaxonomyRankDisplayMode) => {
+        setUseAutomaticTaxonomyRankVisibility(false);
+        setTaxonomyRankDisplayModes((current) => ({
+          ...current,
+          [rank]: mode,
+        }));
+        setTaxonomyRankVisibility((current) => ({
+          ...current,
+          [rank]: mode !== "hidden",
         }));
       },
       setTaxonomyRankVisibilityAutoForTest: (enabled: boolean) => {
@@ -4984,7 +5085,6 @@ export default function App() {
       setTaxonomyColorPaletteForTest: setTaxonomyColorPalette,
       setTaxonomyColorRootRankForTest: setTaxonomyColorRootRank,
       setTaxonomyColorJitterRankForTest: setTaxonomyColorJitterRank,
-      setTaxonomyLabelOnlyStrandRankForTest: setTaxonomyLabelOnlyStrandRank,
       setBranchThicknessScaleForTest: setBranchThicknessScale,
       setShowIntermediateScaleTicks,
       setShowTimeStripes,
@@ -5798,18 +5898,6 @@ export default function App() {
                               ))}
                             </select>
                           </label>
-                          <label title="Draw one selected taxonomy rank as black labels with a thin center strand. This does not change taxonomy branch colors or the palette anchor.">
-                            Label-only strand rank
-                            <select
-                              value={taxonomyLabelOnlyStrandRank}
-                              onChange={(event) => setTaxonomyLabelOnlyStrandRank(event.target.value as TaxonomyLabelOnlyStrandRank)}
-                            >
-                              <option value="none">None</option>
-                              {availableTaxonomyRanks.map((rank) => (
-                                <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>
-                              ))}
-                            </select>
-                          </label>
                         </>
                       ) : null}
                       <label className="label-style-inline-toggle" title="Color branches by their mapped taxonomy group instead of only drawing taxonomy ribbons.">
@@ -5831,31 +5919,49 @@ export default function App() {
                             Automatic visible ranks
                           </label>
                           <div className="taxonomy-rank-controls">
-                            <div className="taxonomy-rank-controls-title" title="Manual rank visibility controls which mapped taxonomy levels are drawn when automatic visible ranks is off.">Visible taxonomy ranks</div>
-                            <div className="taxonomy-rank-checkboxes">
+                            <div className="taxonomy-rank-controls-title" title="Manual rank display controls which mapped taxonomy levels are drawn when automatic visible ranks is off. Label only draws black labels and a thin center strand without affecting branch colors.">Visible taxonomy ranks</div>
+                            <div className="taxonomy-rank-mode-grid">
+                              <div className="taxonomy-rank-mode-heading">Rank</div>
+                              <div className="taxonomy-rank-mode-heading">Hidden</div>
+                              <div className="taxonomy-rank-mode-heading">Label only</div>
+                              <div className="taxonomy-rank-mode-heading">Ribbon</div>
                               {availableTaxonomyRanks.map((rank) => (
-                                <label
-                                  key={rank}
-                                  className="taxonomy-rank-checkbox"
-                                  title={disabledControlTitle(
-                                    useAutomaticTaxonomyRankVisibility
-                                      ? "Turn off automatic visible ranks to choose ranks manually."
-                                      : undefined,
-                                  )}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={taxonomyRankVisibility[rank] !== false}
-                                    disabled={useAutomaticTaxonomyRankVisibility}
-                                    onChange={(event) => {
-                                      setTaxonomyRankVisibility((current) => ({
-                                        ...current,
-                                        [rank]: event.target.checked,
-                                      }));
-                                    }}
-                                  />
-                                  {taxonomyRankLabel(rank)}
-                                </label>
+                                <Fragment key={rank}>
+                                  <div className="taxonomy-rank-mode-rank">{taxonomyRankLabel(rank)}</div>
+                                  {(["hidden", "label-only", "ribbon"] as const).map((mode) => {
+                                    const selectedMode = taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon");
+                                    const radioLabel = `${taxonomyRankLabel(rank)} ${mode === "label-only" ? "label only" : mode}`;
+                                    return (
+                                      <label
+                                        key={mode}
+                                        className="taxonomy-rank-mode-option"
+                                        title={disabledControlTitle(
+                                          useAutomaticTaxonomyRankVisibility
+                                            ? "Turn off automatic visible ranks to choose ranks manually."
+                                            : undefined,
+                                        )}
+                                      >
+                                        <input
+                                          type="radio"
+                                          name={`taxonomy-rank-mode-${rank}`}
+                                          aria-label={radioLabel}
+                                          checked={selectedMode === mode}
+                                          disabled={useAutomaticTaxonomyRankVisibility}
+                                          onChange={() => {
+                                            setTaxonomyRankDisplayModes((current) => ({
+                                              ...current,
+                                              [rank]: mode,
+                                            }));
+                                            setTaxonomyRankVisibility((current) => ({
+                                              ...current,
+                                              [rank]: mode !== "hidden",
+                                            }));
+                                          }}
+                                        />
+                                      </label>
+                                    );
+                                  })}
+                                </Fragment>
                               ))}
                             </div>
                           </div>
@@ -7077,7 +7183,7 @@ export default function App() {
           taxonomyCustomPaletteColors={customTaxonomyPaletteColors}
           taxonomyColorRootRank={taxonomyColorRootRank}
           taxonomyColorJitterRank={taxonomyColorJitterRank}
-          taxonomyLabelOnlyStrandRank={taxonomyLabelOnlyStrandRank}
+          taxonomyRankDisplayModes={taxonomyRankDisplayModes}
           useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
           taxonomyRankVisibility={taxonomyRankVisibility}
           taxonomyCollapseRank={taxonomyCollapseRank}

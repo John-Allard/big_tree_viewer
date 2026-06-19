@@ -6,7 +6,7 @@ import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
 import type { LayoutOrder, ViewMode, ZoomAxisMode } from "../types/tree";
-import type { TaxonomyLabelOnlyStrandRank, TaxonomyOverlayStyle, TimeStripeStyle } from "../components/treeCanvasTypes";
+import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "../components/treeCanvasTypes";
 
 export type SharedSubtreeTaxonomyEntry = {
   name: string;
@@ -66,13 +66,14 @@ export type SharedSubtreeVisualPayload = {
   taxonomyBranchColoringEnabled: boolean;
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
+  taxonomyRankDisplayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>>;
   taxonomyCollapseRank: TaxonomyCollapseRank;
   taxonomyColorJitter: number;
   taxonomyColorPalette: TaxonomyColorPaletteKey;
   taxonomyCustomPaletteInput: string;
   taxonomyColorRootRank: TaxonomyRank | "auto";
   taxonomyColorJitterRank: TaxonomyRank;
-  taxonomyLabelOnlyStrandRank: TaxonomyLabelOnlyStrandRank;
+  taxonomyLabelOnlyStrandRank?: TaxonomyRank | "none";
   branchThicknessScale: number;
 };
 
@@ -138,6 +139,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
   }
   const source = raw as Partial<SharedSubtreeVisualPayload>;
   const parsedTaxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>> = {};
+  const parsedTaxonomyRankDisplayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>> = {};
   if (source.taxonomyRankVisibility && typeof source.taxonomyRankVisibility === "object") {
     for (let index = 0; index < TAXONOMY_RANKS.length; index += 1) {
       const rank = TAXONOMY_RANKS[index];
@@ -146,6 +148,19 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
         parsedTaxonomyRankVisibility[rank] = value;
       }
     }
+  }
+  if (source.taxonomyRankDisplayModes && typeof source.taxonomyRankDisplayModes === "object") {
+    for (let index = 0; index < TAXONOMY_RANKS.length; index += 1) {
+      const rank = TAXONOMY_RANKS[index];
+      const value = source.taxonomyRankDisplayModes[rank];
+      if (value === "hidden" || value === "label-only" || value === "ribbon") {
+        parsedTaxonomyRankDisplayModes[rank] = value;
+      }
+    }
+  }
+  const legacyLabelOnlyRank = coerceEnum(source.taxonomyLabelOnlyStrandRank, ["none", ...TAXONOMY_RANKS] as const, "none");
+  if (legacyLabelOnlyRank !== "none" && !parsedTaxonomyRankDisplayModes[legacyLabelOnlyRank]) {
+    parsedTaxonomyRankDisplayModes[legacyLabelOnlyRank] = "label-only";
   }
   return {
     viewMode: coerceEnum(source.viewMode, ["rectangular", "circular", "spiral"] as const, "rectangular"),
@@ -180,6 +195,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     taxonomyBranchColoringEnabled: coerceBoolean(source.taxonomyBranchColoringEnabled, true),
     useAutomaticTaxonomyRankVisibility: coerceBoolean(source.useAutomaticTaxonomyRankVisibility, true),
     taxonomyRankVisibility: parsedTaxonomyRankVisibility,
+    taxonomyRankDisplayModes: parsedTaxonomyRankDisplayModes,
     taxonomyCollapseRank: coerceEnum(source.taxonomyCollapseRank, ["species", ...TAXONOMY_RANKS] as const, "species"),
     taxonomyColorJitter: coerceFiniteNumber(source.taxonomyColorJitter, 1),
     taxonomyColorPalette: isTaxonomyColorPaletteKey(source.taxonomyColorPalette)
@@ -188,7 +204,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     taxonomyCustomPaletteInput: typeof source.taxonomyCustomPaletteInput === "string" ? source.taxonomyCustomPaletteInput : "",
     taxonomyColorRootRank: coerceEnum(source.taxonomyColorRootRank, ["auto", ...TAXONOMY_RANKS] as const, "auto"),
     taxonomyColorJitterRank: coerceEnum(source.taxonomyColorJitterRank, TAXONOMY_RANKS, "genus"),
-    taxonomyLabelOnlyStrandRank: coerceEnum(source.taxonomyLabelOnlyStrandRank, ["none", ...TAXONOMY_RANKS] as const, "none"),
+    taxonomyLabelOnlyStrandRank: legacyLabelOnlyRank,
     branchThicknessScale: coerceFiniteNumber(source.branchThicknessScale, 1),
   };
 }

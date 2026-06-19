@@ -38,6 +38,7 @@ import type {
   RectCamera,
   RenderCache,
   ScreenLabel,
+  TaxonomyRankDisplayMode,
   TreeCanvasProps,
   TreeCanvasSessionState,
 } from "./treeCanvasTypes";
@@ -924,7 +925,7 @@ function buildSpiralTaxonomyRibbonPathCache(
   visibleRanks: TaxonomyRank[],
   metrics: SpiralMetrics,
   taxonomyGapWorld: number,
-  excludedFillRank: TaxonomyRank | null = null,
+  excludedFillRanks: TaxonomyRank[] = [],
 ): SpiralTaxonomyRibbonPathCache {
   const paths: SpiralTaxonomyRibbonPathCache = new Map();
   const getPath = (color: string): Path2D => {
@@ -938,7 +939,7 @@ function buildSpiralTaxonomyRibbonPathCache(
   };
   for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
     const rank = visibleRanks[rankIndex];
-    if (rank === excludedFillRank) {
+    if (excludedFillRanks.includes(rank)) {
       continue;
     }
     const blocks = taxonomyBlocks[rank] ?? [];
@@ -1593,17 +1594,6 @@ function sortTaxonomyRanksForDisplay(activeRanks: TaxonomyRank[]): TaxonomyRank[
   return [...activeRanks].sort(
     (left, right) => TAXONOMY_DISPLAY_ORDER.indexOf(left) - TAXONOMY_DISPLAY_ORDER.indexOf(right),
   );
-}
-
-function mergeTaxonomyLabelOnlyStrandRank(
-  visibleRanks: TaxonomyRank[],
-  labelOnlyRank: TaxonomyRank | "none",
-  availableRanks: TaxonomyRank[],
-): TaxonomyRank[] {
-  if (labelOnlyRank === "none" || !availableRanks.includes(labelOnlyRank) || visibleRanks.includes(labelOnlyRank)) {
-    return visibleRanks;
-  }
-  return sortTaxonomyRanksForDisplay([...visibleRanks, labelOnlyRank]);
 }
 
 function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]): TaxonomyRank[] {
@@ -3607,7 +3597,7 @@ export default function TreeCanvas({
   taxonomyCustomPaletteColors,
   taxonomyColorRootRank,
   taxonomyColorJitterRank,
-  taxonomyLabelOnlyStrandRank,
+  taxonomyRankDisplayModes,
   useAutomaticTaxonomyRankVisibility,
   taxonomyRankVisibility,
   taxonomyCollapseRank,
@@ -3992,13 +3982,19 @@ export default function TreeCanvas({
   const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(() => {
     return sortTaxonomyRanksForDisplay(
       (taxonomyMap ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS]).filter(
-        (rank) => taxonomyRankVisibility[rank] !== false,
+        (rank) => useAutomaticTaxonomyRankVisibility
+          || (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) !== "hidden",
       ),
     );
-  }, [taxonomyMap, taxonomyRankVisibility]);
+  }, [taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
   const taxonomyAvailableRanks = useMemo<TaxonomyRank[]>(() => (
     sortTaxonomyRanksForDisplay(taxonomyMap ? [...taxonomyMap.activeRanks] : [...TAXONOMY_RANKS])
   ), [taxonomyMap]);
+  const taxonomyRankDisplayModeForRank = useCallback((rank: TaxonomyRank): TaxonomyRankDisplayMode => (
+    useAutomaticTaxonomyRankVisibility
+      ? "ribbon"
+      : taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")
+  ), [taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
   const taxonomyColorRanks = useMemo<TaxonomyRank[]>(() => {
     const sourceRanks = taxonomyAvailableRanks;
     if (sourceRanks.length === 0) {
@@ -4063,9 +4059,12 @@ export default function TreeCanvas({
     () => getTaxonomyBlocks(order),
     [getTaxonomyBlocks, order],
   );
+  const taxonomyConsensusRanks = useMemo<TaxonomyRank[]>(() => (
+    sortTaxonomyRanksForDisplay([...new Set([...taxonomyActiveRanks, ...taxonomyColorRanks])])
+  ), [taxonomyActiveRanks, taxonomyColorRanks]);
   const taxonomyConsensus = useMemo(
-    () => (tree && taxonomyMap ? buildTaxonomyConsensusByRank(tree, taxonomyMap, taxonomyActiveRanks) : null),
-    [taxonomyActiveRanks, taxonomyMap, tree],
+    () => (tree && taxonomyMap ? buildTaxonomyConsensusByRank(tree, taxonomyMap, taxonomyConsensusRanks) : null),
+    [taxonomyConsensusRanks, taxonomyMap, tree],
   );
   const taxonomyTipRanksByNode = useMemo(() => {
     const byNode = new Map<number, Partial<Record<TaxonomyRank, string>>>();
@@ -4676,9 +4675,9 @@ export default function TreeCanvas({
       : 0;
     if (taxonomyEnabled) {
       if (taxonomyBlocks) {
-        const visibleRanks = mergeTaxonomyLabelOnlyStrandRank(useAutomaticTaxonomyRankVisibility
+        const visibleRanks = useAutomaticTaxonomyRankVisibility
           ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
-          : taxonomyActiveRanks, taxonomyLabelOnlyStrandRank, taxonomyAvailableRanks);
+          : taxonomyActiveRanks;
         const taxonomyMetricBaseSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale, circularOverlayViewportScale);
         const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
@@ -5121,7 +5120,7 @@ export default function TreeCanvas({
     visibleRanks: TaxonomyRank[],
     metrics: SpiralMetrics,
     taxonomyGapWorld: number,
-    excludedFillRank: TaxonomyRank | null = null,
+    excludedFillRanks: TaxonomyRank[] = [],
   ): SpiralTaxonomyRibbonPathCache | null => {
     if (!tree || !taxonomyBlocks || visibleRanks.length === 0) {
       return null;
@@ -5132,7 +5131,7 @@ export default function TreeCanvas({
     const key = [
       orderKey,
       visibleRanks.join("|"),
-      excludedFillRank ?? "",
+      excludedFillRanks.join("|"),
       visibleRankBlockCountsSignature,
       taxonomyGapWorld.toFixed(5),
       spiralMetricCacheKey(metrics),
@@ -5144,7 +5143,7 @@ export default function TreeCanvas({
     if (tree.leafCount >= 100000) {
       spiralTaxonomyRibbonPathCacheRef.current.clear();
     }
-    const built = buildSpiralTaxonomyRibbonPathCache(tree, layout, taxonomyBlocks, visibleRanks, metrics, taxonomyGapWorld, excludedFillRank);
+    const built = buildSpiralTaxonomyRibbonPathCache(tree, layout, taxonomyBlocks, visibleRanks, metrics, taxonomyGapWorld, excludedFillRanks);
     spiralTaxonomyRibbonPathCacheRef.current.set(key, built);
     const maxSpiralTaxonomyCaches = tree.leafCount >= 100000 ? 1 : 6;
     while (spiralTaxonomyRibbonPathCacheRef.current.size > maxSpiralTaxonomyCaches) {
@@ -6008,7 +6007,7 @@ export default function TreeCanvas({
       const microTipLabelsVisible = showTipLabels && camera.scaleY > 2.7;
       const tipLabelsVisible = showTipLabels && camera.scaleY > 4.2;
       const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
-        ? mergeTaxonomyLabelOnlyStrandRank(rectVisibleTaxonomyRanksForScaleY(camera.scaleY), taxonomyLabelOnlyStrandRank, taxonomyAvailableRanks)
+        ? rectVisibleTaxonomyRanksForScaleY(camera.scaleY)
         : [];
       const branchColorRanks = taxonomyColorRanks.length > 0 ? taxonomyColorRanks : visibleTaxonomyRanks;
       const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null;
@@ -6565,7 +6564,8 @@ export default function TreeCanvas({
         ctx.textAlign = "center";
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
-          const rankIsLabelOnlyStrand = taxonomyLabelOnlyStrandRank === rank;
+          const rankDisplayMode = taxonomyRankDisplayModeForRank(rank);
+          const rankIsLabelOnlyStrand = rankDisplayMode === "label-only";
           const rankKeyPrefix = `${rank}:`;
           const blocksForRank = taxonomyBlocks[rank];
           const blockByKey = new Map<string, TaxonomyBlock>();
@@ -6816,6 +6816,7 @@ export default function TreeCanvas({
               rotation,
               align: "center",
               color: rankIsLabelOnlyStrand ? "#111827" : taxonomyOverlayTextColor(block.color, taxonomyOverlayStyle),
+              taxonomyDisplayMode: rankDisplayMode,
               searchHighlightColor,
               searchMatchRange,
               taxId: taxonomyTaxId,
@@ -7655,11 +7656,7 @@ export default function TreeCanvas({
 
     if (viewMode === "spiral" && camera.kind === "circular") {
       const layout = collapsedView?.layout ?? tree.layouts[order];
-      const visibleTaxonomyRanks = mergeTaxonomyLabelOnlyStrandRank(
-        spiralVisibleTaxonomyRanksForScale(camera.scale),
-        taxonomyLabelOnlyStrandRank,
-        taxonomyAvailableRanks,
-      );
+      const visibleTaxonomyRanks = spiralVisibleTaxonomyRanksForScale(camera.scale);
       const metrics = buildSpiralMetrics(tree, spiralTurns, visibleTaxonomyRanks.length, taxonomyBandThicknessScale, effectiveTimeAxisLogBase);
       const timeBoundaryValues = buildSpiralTimeBoundaries(metrics.timeExtent);
       const spiralToScreen = (point: { x: number; y: number }) => worldToScreenCircular(camera, point.x, point.y);
@@ -7834,13 +7831,11 @@ export default function TreeCanvas({
             + Math.max(0, figureStyles.tip.offsetPx)
           ) / Math.max(camera.scale, 1e-6)
           : 0;
-        const labelOnlySpiralRank = taxonomyLabelOnlyStrandRank !== "none" && visibleTaxonomyRanks.includes(taxonomyLabelOnlyStrandRank)
-          ? taxonomyLabelOnlyStrandRank
-          : null;
+        const labelOnlySpiralRanks = visibleTaxonomyRanks.filter((rank) => taxonomyRankDisplayModeForRank(rank) === "label-only");
         const taxonomyRibbonPaths = taxonomyOverlayStyle === "ribbons"
-          ? getSpiralTaxonomyRibbonPaths(order, layout, visibleTaxonomyRanks, taxonomyMetrics, taxonomyGapWorld, labelOnlySpiralRank)
+          ? getSpiralTaxonomyRibbonPaths(order, layout, visibleTaxonomyRanks, taxonomyMetrics, taxonomyGapWorld, labelOnlySpiralRanks)
           : null;
-        if (taxonomyOverlayStyle === "strands" || labelOnlySpiralRank) {
+        if (taxonomyOverlayStyle === "strands" || labelOnlySpiralRanks.length > 0) {
           const strandWidthWorld = Math.max(1.25, Math.min(3.2, taxonomyMetrics.taxonomyRibbonWidth * camera.scale * 0.14)) / Math.max(camera.scale, 1e-6);
           ctx.save();
           ctx.translate(camera.translateX, camera.translateY);
@@ -7849,7 +7844,7 @@ export default function TreeCanvas({
           ctx.lineWidth = strandWidthWorld;
           for (let rankIndex = 0; rankIndex < visibleTaxonomyRanks.length; rankIndex += 1) {
             const rank = visibleTaxonomyRanks[rankIndex];
-            const rankIsLabelOnlyStrand = labelOnlySpiralRank === rank;
+            const rankIsLabelOnlyStrand = taxonomyRankDisplayModeForRank(rank) === "label-only";
             if (taxonomyOverlayStyle !== "strands" && !rankIsLabelOnlyStrand) {
               continue;
             }
@@ -7903,7 +7898,7 @@ export default function TreeCanvas({
         if (exportCaptureRef.current && taxonomyRibbonPaths) {
           for (let rankIndex = 0; rankIndex < visibleTaxonomyRanks.length; rankIndex += 1) {
             const rank = visibleTaxonomyRanks[rankIndex];
-            if (rank === labelOnlySpiralRank) {
+            if (taxonomyRankDisplayModeForRank(rank) === "label-only") {
               continue;
             }
             const blocks = taxonomyBlocks[rank] ?? [];
@@ -7952,7 +7947,8 @@ export default function TreeCanvas({
         const viewportCenterTheta = closestSpiralThetaForPoint(viewportCenterWorld.x, viewportCenterWorld.y, metrics);
         for (let rankIndex = 0; rankIndex < visibleTaxonomyRanks.length; rankIndex += 1) {
           const rank = visibleTaxonomyRanks[rankIndex];
-          const rankIsLabelOnlyStrand = labelOnlySpiralRank === rank;
+          const rankDisplayMode = taxonomyRankDisplayModeForRank(rank);
+          const rankIsLabelOnlyStrand = rankDisplayMode === "label-only";
           const blocks = taxonomyBlocks[rank] ?? [];
           const innerOffset = taxonomyMetrics.bandWidth
             + taxonomyMetrics.taxonomyLabelGap
@@ -8058,7 +8054,7 @@ export default function TreeCanvas({
               } else {
                 ctx.translate(labelScreen.x, labelScreen.y);
                 ctx.rotate(rotation);
-                if (taxonomyOverlayStyle === "strands") {
+                if (taxonomyOverlayStyle === "strands" || rankIsLabelOnlyStrand) {
                   const padX = Math.max(4, fittedLabelFontSize * 0.35);
                   const padY = Math.max(2.5, fittedLabelFontSize * 0.28);
                   ctx.fillStyle = "#fbfcfe";
@@ -8097,6 +8093,7 @@ export default function TreeCanvas({
                 phylopicNormalY: normalScreenY,
                 align: "center",
                 color: taxonomyLabelColor,
+                taxonomyDisplayMode: rankDisplayMode,
                 taxId: block.taxId ?? null,
                 firstNode: block.firstNode,
                 lastNode: block.lastNode,
@@ -8501,7 +8498,6 @@ export default function TreeCanvas({
       if (useAutomaticTaxonomyRankVisibility && visibleCircleFraction >= 0.88 && visibleTaxonomyRanks.length > 3) {
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
-      visibleTaxonomyRanks = mergeTaxonomyLabelOnlyStrandRank(visibleTaxonomyRanks, taxonomyLabelOnlyStrandRank, taxonomyAvailableRanks);
       const branchColorRanks = taxonomyColorRanks.length > 0 ? taxonomyColorRanks : visibleTaxonomyRanks;
       const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null;
       const circularTaxonomyCacheStartTime = performance.now();
@@ -9338,7 +9334,7 @@ export default function TreeCanvas({
             taxonomyColorJitterRank,
             taxonomyColorJitter.toFixed(3),
             taxonomyOverlayStyle,
-            taxonomyLabelOnlyStrandRank,
+            visibleRanks.map((rank) => `${rank}:${taxonomyRankDisplayModeForRank(rank)}`).join("|"),
             renderSize.width,
             renderSize.height,
             camera.scale.toFixed(6),
@@ -9463,7 +9459,8 @@ export default function TreeCanvas({
         const connectorArcs: CircularOverlayArc[] = [];
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
           const rank = visibleRanks[rankIndex];
-          const rankIsLabelOnlyStrand = taxonomyLabelOnlyStrandRank === rank;
+          const rankDisplayMode = taxonomyRankDisplayModeForRank(rank);
+          const rankIsLabelOnlyStrand = rankDisplayMode === "label-only";
           const rankKeyPrefix = `${rank}:`;
           const blocksForRank: TaxonomyBlock[] = taxonomyBlocks[rank];
           const blockByKey = new Map<string, TaxonomyBlock>();
@@ -10033,6 +10030,7 @@ export default function TreeCanvas({
               phylopicNormalY: Math.sin(renderedTheta),
               align: "center",
               color: rankIsLabelOnlyStrand ? "#111827" : taxonomyOverlayTextColor(block.color, taxonomyOverlayStyle),
+              taxonomyDisplayMode: rankDisplayMode,
               searchHighlightColor,
               searchMatchRange,
               taxId: taxonomyTaxId,
@@ -10784,7 +10782,7 @@ export default function TreeCanvas({
             curvedRadiusPx,
           ),
         );
-        const shouldMaskTaxonomyStrand = Boolean(taxonomyOverlayStyle === "strands" && label.rank);
+        const shouldMaskTaxonomyStrand = Boolean(label.rank && (taxonomyOverlayStyle === "strands" || label.taxonomyDisplayMode === "label-only"));
         if (useCurvedText) {
           if (shouldMaskTaxonomyStrand) {
             const labelFontSize = label.fontSize ?? circularGenusBaseFontSize;
@@ -13261,13 +13259,13 @@ export default function TreeCanvas({
       taxonomyBranchColoringEnabled,
       useAutomaticTaxonomyRankVisibility,
       taxonomyRankVisibility,
+      taxonomyRankDisplayModes,
       taxonomyCollapseRank,
       taxonomyColorJitter,
       taxonomyColorPalette,
       taxonomyCustomPaletteInput: taxonomyCustomPaletteColors.join("\n"),
       taxonomyColorRootRank,
       taxonomyColorJitterRank,
-      taxonomyLabelOnlyStrandRank,
       branchThicknessScale,
     }, { hideDownloadNewick });
     try {
@@ -13312,7 +13310,7 @@ export default function TreeCanvas({
     taxonomyColorPalette,
     taxonomyColorRootRank,
     taxonomyColorJitterRank,
-    taxonomyLabelOnlyStrandRank,
+    taxonomyRankDisplayModes,
     taxonomyCustomPaletteColors,
     timeAxisScale,
     timeAxisLogBase,
@@ -13764,13 +13762,13 @@ export default function TreeCanvas({
           taxonomyBranchColoringEnabled,
           useAutomaticTaxonomyRankVisibility,
           taxonomyRankVisibility,
+          taxonomyRankDisplayModes,
           taxonomyCollapseRank,
           taxonomyColorJitter,
           taxonomyColorPalette,
           taxonomyCustomPaletteInput: taxonomyCustomPaletteColors.join("\n"),
           taxonomyColorRootRank,
           taxonomyColorJitterRank,
-          taxonomyLabelOnlyStrandRank,
           branchThicknessScale,
         }, { hideDownloadNewick });
       },
@@ -13820,7 +13818,7 @@ export default function TreeCanvas({
     taxonomyColorPalette,
     taxonomyColorRootRank,
     taxonomyColorJitterRank,
-    taxonomyLabelOnlyStrandRank,
+    taxonomyRankDisplayModes,
     taxonomyCustomPaletteColors,
     timeAxisScale,
     timeAxisLogBase,

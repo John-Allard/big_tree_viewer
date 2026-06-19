@@ -9,7 +9,7 @@ import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "
 
 export type TimeStripeStyle = "bands" | "age-gradient" | "dashed";
 export type TaxonomyOverlayStyle = "ribbons" | "strands";
-export type TaxonomyLabelOnlyStrandRank = TaxonomyRank | "none";
+export type TaxonomyRankDisplayMode = "hidden" | "label-only" | "ribbon";
 export type AutomationExportFormat = "svg" | "png";
 export type AutomationExportDelivery = "download" | "postMessage";
 
@@ -66,7 +66,7 @@ export interface TreeCanvasProps {
   taxonomyCustomPaletteColors: string[];
   taxonomyColorRootRank: TaxonomyRank | "auto";
   taxonomyColorJitterRank: TaxonomyRank;
-  taxonomyLabelOnlyStrandRank: TaxonomyLabelOnlyStrandRank;
+  taxonomyRankDisplayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>>;
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyCollapseRank: TaxonomyCollapseRank;
@@ -190,6 +190,7 @@ export interface ScreenLabel {
   alpha: number;
   key?: string;
   rank?: string;
+  taxonomyDisplayMode?: TaxonomyRankDisplayMode;
   theta?: number;
   fontSize?: number;
   bandSizePx?: number;

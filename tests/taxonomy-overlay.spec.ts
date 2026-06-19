@@ -1142,9 +1142,9 @@ test("taxonomy rank controls in taxonomy visual settings filter visible ranks", 
   await page.getByRole("button", { name: "Taxonomy labels settings" }).click();
   await expect(page.getByText("Visible taxonomy ranks")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Automatic visible ranks" })).not.toBeChecked();
-  await expect(page.getByRole("checkbox", { name: "Class" })).not.toBeChecked();
-  await expect(page.getByRole("checkbox", { name: "Order" })).toBeChecked();
-  await expect(page.getByRole("checkbox", { name: "Family" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Class hidden" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Order ribbon" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Family ribbon" })).toBeChecked();
 });
 
 test("taxonomy overlays can stay visible while taxonomy branch coloring is disabled", async ({ page }) => {
