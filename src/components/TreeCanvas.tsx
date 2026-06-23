@@ -6010,7 +6010,7 @@ export default function TreeCanvas({
         ? rectVisibleTaxonomyRanksForScaleY(camera.scaleY)
         : [];
       const branchColorRanks = taxonomyColorRanks.length > 0 ? taxonomyColorRanks : visibleTaxonomyRanks;
-      const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null;
+      const taxonomyBranchRenderingVisible = taxonomyEnabled && taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null;
       const coloredBranchKey = taxonomyBranchRenderingVisible
         ? `taxonomy:${branchColorRanks.join("|")}:${taxonomyColorPalette}:${taxonomyCustomPaletteSignature}:${taxonomyColorJitter.toFixed(3)}:${taxonomyColorRootRank}:${taxonomyColorJitterRank}:${metadataBranchColorVersion}:${manualBranchColorVersion}`
         : metadataBranchColorOverlay.hasAny || manualBranchColorOverlay.hasAny
@@ -7699,10 +7699,11 @@ export default function TreeCanvas({
           );
         }
       } else if (showTimeStripes) {
+        const safeScale = Math.max(camera.scale, 1e-6);
         ctx.save();
         ctx.strokeStyle = "rgba(148,163,184,0.58)";
-        ctx.lineWidth = timeStripeLineWeight;
-        ctx.setLineDash([6, 6]);
+        ctx.lineWidth = timeStripeLineWeight / safeScale;
+        ctx.setLineDash([6 / safeScale, 6 / safeScale]);
         ctx.translate(camera.translateX, camera.translateY);
         ctx.scale(camera.scale, camera.scale);
         ctx.rotate(camera.rotation);
@@ -7723,7 +7724,7 @@ export default function TreeCanvas({
       }
 
       const branchColorRanks = taxonomyColorRanks.length > 0 ? taxonomyColorRanks : visibleTaxonomyRanks;
-      const coloredBranchKey = taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null
+      const coloredBranchKey = taxonomyEnabled && taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null
         ? `taxonomy:${branchColorRanks.join("|")}:${taxonomyColorPalette}:${taxonomyCustomPaletteSignature}:${taxonomyColorJitter.toFixed(3)}:${taxonomyColorRootRank}:${taxonomyColorJitterRank}:${metadataBranchColorVersion}:${manualBranchColorVersion}`
         : metadataBranchColorOverlay.hasAny || manualBranchColorOverlay.hasAny
           ? `manual:${metadataBranchColorVersion}:${manualBranchColorVersion}`
@@ -7891,6 +7892,30 @@ export default function TreeCanvas({
                   undefined,
                   1,
                 );
+                if (rankIsLabelOnlyStrand) {
+                  const dividerHalfWidthPx = Math.max(3, Math.min(8, taxonomyMetrics.taxonomyRibbonWidth * camera.scale * 0.34));
+                  const dividerHalfWidthWorld = dividerHalfWidthPx / Math.max(camera.scale, 1e-6);
+                  const dividerLineWidthPx = Math.max(1, Math.min(2.2, strandWidthWorld * camera.scale));
+                  ctx.strokeStyle = "#111827";
+                  ctx.lineWidth = dividerLineWidthPx / Math.max(camera.scale, 1e-6);
+                  const drawDivider = (theta: number): void => {
+                    const frame = spiralFrameAt(theta, centerOffset, taxonomyMetrics);
+                    const x1 = frame.x - (frame.normalX * dividerHalfWidthWorld);
+                    const y1 = frame.y - (frame.normalY * dividerHalfWidthWorld);
+                    const x2 = frame.x + (frame.normalX * dividerHalfWidthWorld);
+                    const y2 = frame.y + (frame.normalY * dividerHalfWidthWorld);
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.stroke();
+                    const screenStart = spiralToScreen({ x: x1, y: y1 });
+                    const screenEnd = spiralToScreen({ x: x2, y: y2 });
+                    pushSceneLine(screenStart.x, screenStart.y, screenEnd.x, screenEnd.y, "#111827", dividerLineWidthPx, 1);
+                  };
+                  drawDivider(Math.min(startTheta, endTheta));
+                  drawDivider(Math.max(startTheta, endTheta));
+                  ctx.lineWidth = strandWidthWorld;
+                }
               }
             }
           }
@@ -8014,7 +8039,12 @@ export default function TreeCanvas({
               const measuredLabelWidth = ctx.measureText(block.label).width;
               const localRadiusPx = Math.max(1, labelWorld.radius * camera.scale);
               if (taxonomyOverlayStyle === "strands" || rankIsLabelOnlyStrand) {
-                const maskHalfWidthPx = (measuredLabelWidth * 0.5) + Math.max(4, fittedLabelFontSize * 0.45);
+                const strandWidthPx = Math.max(1.25, Math.min(3.2, taxonomyMetrics.taxonomyRibbonWidth * camera.scale * 0.14));
+                const maskLineWidthPx = Math.max(
+                  strandWidthPx + 1.2,
+                  Math.min(fittedLabelFontSize * 0.55, ribbonThicknessPx * 0.45),
+                );
+                const maskHalfWidthPx = (measuredLabelWidth * 0.5) + Math.max(1.5, strandWidthPx);
                 const maskStartTheta = spiralThetaForArcOffset(labelTheta, -maskHalfWidthPx / Math.max(camera.scale, 1e-6), centerOffset, taxonomyMetrics);
                 const maskEndTheta = spiralThetaForArcOffset(labelTheta, maskHalfWidthPx / Math.max(camera.scale, 1e-6), centerOffset, taxonomyMetrics);
                 ctx.save();
@@ -8022,7 +8052,7 @@ export default function TreeCanvas({
                 ctx.scale(camera.scale, camera.scale);
                 ctx.rotate(camera.rotation);
                 ctx.strokeStyle = "#fbfcfe";
-                ctx.lineWidth = Math.max(1, fittedLabelFontSize * 1.85) / Math.max(camera.scale, 1e-6);
+                ctx.lineWidth = maskLineWidthPx / Math.max(camera.scale, 1e-6);
                 ctx.lineCap = "round";
                 const maskPath = new Path2D();
                 appendSpiralOffsetCurve(
@@ -8045,7 +8075,7 @@ export default function TreeCanvas({
                     camera.scale,
                   ),
                   "#fbfcfe",
-                  Math.max(1, fittedLabelFontSize * 1.85),
+                  maskLineWidthPx,
                   undefined,
                   1,
                 );
@@ -8055,18 +8085,6 @@ export default function TreeCanvas({
               } else {
                 ctx.translate(labelScreen.x, labelScreen.y);
                 ctx.rotate(rotation);
-                if (taxonomyOverlayStyle === "strands" || rankIsLabelOnlyStrand) {
-                  const padX = Math.max(4, fittedLabelFontSize * 0.35);
-                  const padY = Math.max(2.5, fittedLabelFontSize * 0.28);
-                  ctx.fillStyle = "#fbfcfe";
-                  ctx.fillRect(
-                    (-measuredLabelWidth * 0.5) - padX,
-                    (-fittedLabelFontSize * 0.62) - padY,
-                    measuredLabelWidth + (padX * 2),
-                    (fittedLabelFontSize * 1.24) + (padY * 2),
-                  );
-                  ctx.fillStyle = taxonomyLabelColor;
-                }
                 ctx.fillText(block.label, 0, 0);
               }
               ctx.restore();
@@ -8500,7 +8518,7 @@ export default function TreeCanvas({
         visibleTaxonomyRanks = visibleTaxonomyRanks.slice(-2);
       }
       const branchColorRanks = taxonomyColorRanks.length > 0 ? taxonomyColorRanks : visibleTaxonomyRanks;
-      const taxonomyBranchRenderingVisible = taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null;
+      const taxonomyBranchRenderingVisible = taxonomyEnabled && taxonomyBranchColoringEnabled && branchColorRanks.length > 0 && taxonomyColors !== null;
       const circularTaxonomyCacheStartTime = performance.now();
       const coloredBranchKey = taxonomyBranchRenderingVisible
         ? `taxonomy:${branchColorRanks.join("|")}:${taxonomyColorPalette}:${taxonomyCustomPaletteSignature}:${taxonomyColorJitter.toFixed(3)}:${taxonomyColorRootRank}:${taxonomyColorJitterRank}:${metadataBranchColorVersion}:${manualBranchColorVersion}`
@@ -9698,40 +9716,31 @@ export default function TreeCanvas({
                     const dividerInnerRadiusPx = Math.max(0, lineRadiusPx - dividerHalfWidthPx);
                     const dividerOuterRadiusPx = lineRadiusPx + dividerHalfWidthPx;
                     const dividerLineWidthPx = Math.max(1, Math.min(2.2, lineWidthPx));
-                    connectorArcs.push({
-                      mode: "divider",
-                      theta: insetRenderedStart - rotationAngle,
-                      innerRadiusPx: dividerInnerRadiusPx,
-                      outerRadiusPx: dividerOuterRadiusPx,
-                      lineWidthPx: dividerLineWidthPx,
-                      color: "#111827",
-                    });
-                    connectorArcs.push({
-                      mode: "divider",
-                      theta: insetRenderedEnd - rotationAngle,
-                      innerRadiusPx: dividerInnerRadiusPx,
-                      outerRadiusPx: dividerOuterRadiusPx,
-                      lineWidthPx: dividerLineWidthPx,
-                      color: "#111827",
-                    });
-                    pushSceneLine(
-                      centerPoint.x + (Math.cos(insetRenderedStart) * dividerInnerRadiusPx),
-                      centerPoint.y + (Math.sin(insetRenderedStart) * dividerInnerRadiusPx),
-                      centerPoint.x + (Math.cos(insetRenderedStart) * dividerOuterRadiusPx),
-                      centerPoint.y + (Math.sin(insetRenderedStart) * dividerOuterRadiusPx),
-                      "#111827",
-                      dividerLineWidthPx,
-                      1,
-                    );
-                    pushSceneLine(
-                      centerPoint.x + (Math.cos(insetRenderedEnd) * dividerInnerRadiusPx),
-                      centerPoint.y + (Math.sin(insetRenderedEnd) * dividerInnerRadiusPx),
-                      centerPoint.x + (Math.cos(insetRenderedEnd) * dividerOuterRadiusPx),
-                      centerPoint.y + (Math.sin(insetRenderedEnd) * dividerOuterRadiusPx),
-                      "#111827",
-                      dividerLineWidthPx,
-                      1,
-                    );
+                    const pushDivider = (theta: number): void => {
+                      connectorArcs.push({
+                        mode: "divider",
+                        theta: theta - rotationAngle,
+                        innerRadiusPx: dividerInnerRadiusPx,
+                        outerRadiusPx: dividerOuterRadiusPx,
+                        lineWidthPx: dividerLineWidthPx,
+                        color: "#111827",
+                      });
+                      pushSceneLine(
+                        centerPoint.x + (Math.cos(theta) * dividerInnerRadiusPx),
+                        centerPoint.y + (Math.sin(theta) * dividerInnerRadiusPx),
+                        centerPoint.x + (Math.cos(theta) * dividerOuterRadiusPx),
+                        centerPoint.y + (Math.sin(theta) * dividerOuterRadiusPx),
+                        "#111827",
+                        dividerLineWidthPx,
+                        1,
+                      );
+                    };
+                    if (spanStartsAtSegmentBoundary) {
+                      pushDivider(insetRenderedStart);
+                    }
+                    if (spanEndsAtSegmentBoundary) {
+                      pushDivider(insetRenderedEnd);
+                    }
                   }
                 } else {
                   connectorArcs.push({
@@ -13311,6 +13320,8 @@ export default function TreeCanvas({
     taxonomyColorPalette,
     taxonomyColorRootRank,
     taxonomyColorJitterRank,
+    taxonomyColorRanks,
+    taxonomyColors,
     taxonomyRankDisplayModes,
     taxonomyCustomPaletteColors,
     timeAxisScale,
@@ -13640,7 +13651,9 @@ export default function TreeCanvas({
         if (!tree) {
           return null;
         }
-        const colorRanks = taxonomyColorRanks.length > 0 ? taxonomyColorRanks : [];
+        const colorRanks = taxonomyEnabled && taxonomyBranchColoringEnabled && taxonomyColors !== null && taxonomyColorRanks.length > 0
+          ? taxonomyColorRanks
+          : [];
         return getEffectiveBranchColors(order, colorRanks) ?? new Array<string>(tree.nodeCount).fill(BRANCH_COLOR);
       },
       setManualBranchColor: (node: number, color: string) => {

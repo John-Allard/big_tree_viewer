@@ -27,6 +27,49 @@ async function enableMockTaxonomy(page: Page): Promise<void> {
   });
 }
 
+test("taxonomy branch coloring follows taxonomy and branch-color toggles, not visible-rank choices", async ({ page }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+
+  const defaultBranchColor = "#0f172a";
+  const views = ["rectangular", "circular", "spiral"] as const;
+  for (const view of views) {
+    await page.evaluate(async (nextView) => {
+      const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+      const taxonomyMap = app?.getTaxonomyMapForTest?.();
+      app?.setViewMode(nextView);
+      app?.setTaxonomyEnabled(true);
+      app?.setTaxonomyBranchColoringEnabled(true);
+      app?.setTaxonomyRankVisibilityAutoForTest(false);
+      for (const rank of taxonomyMap?.activeRanks ?? []) {
+        app?.setTaxonomyRankDisplayModeForTest(rank, "hidden");
+      }
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, view);
+
+    const hiddenRankColors = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? []);
+    expect(hiddenRankColors.some((color) => color !== defaultBranchColor)).toBe(true);
+
+    await page.evaluate(async () => {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyEnabled(false);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    const taxonomyOffColors = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? []);
+    expect(taxonomyOffColors.length).toBeGreaterThan(0);
+    expect(taxonomyOffColors.every((color) => color === defaultBranchColor)).toBe(true);
+
+    await page.evaluate(async () => {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyEnabled(true);
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyBranchColoringEnabled(false);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    const branchColoringOffColors = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? []);
+    expect(branchColoringOffColors.length).toBeGreaterThan(0);
+    expect(branchColoringOffColors.every((color) => color === defaultBranchColor)).toBe(true);
+  }
+});
+
 test("rectangular taxonomy columns render when taxonomy is enabled", async ({ page }) => {
   await waitForViewer(page);
   await enableMockTaxonomy(page);
