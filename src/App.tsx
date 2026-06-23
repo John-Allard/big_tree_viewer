@@ -1317,6 +1317,60 @@ interface SearchResult {
   key?: string;
 }
 
+interface MetadataUnmappedRowPreview {
+  rowNumber: number;
+  key: string;
+  values: Array<{ column: string; value: string }>;
+}
+
+const METADATA_UNMAPPED_ROW_DISPLAY_LIMIT = 200;
+
+function normalizeMetadataMatchKey(value: string): string {
+  return value.trim().replace(/^['"]+|['"]+$/g, "").replaceAll("_", " ").replace(/\s+/g, " ").toLowerCase();
+}
+
+function metadataCsvCell(value: string | number): string {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll("\"", "\"\"")}"` : text;
+}
+
+function collectMetadataUnmappedRows(
+  tree: TreeModel,
+  metadataTable: ParsedMetadataTable,
+  metadataKeyColumn: string,
+  limit = Number.POSITIVE_INFINITY,
+): { total: number; rows: MetadataUnmappedRowPreview[] } {
+  const matchedKeys = new Set<string>();
+  for (let node = 0; node < tree.nodeCount; node += 1) {
+    const normalized = normalizeMetadataMatchKey(tree.names[node] ?? "");
+    if (normalized) {
+      matchedKeys.add(normalized);
+    }
+  }
+  const rows: MetadataUnmappedRowPreview[] = [];
+  let total = 0;
+  for (let rowIndex = 0; rowIndex < metadataTable.rows.length; rowIndex += 1) {
+    const row = metadataTable.rows[rowIndex];
+    const rawKey = row[metadataKeyColumn] ?? "";
+    const normalizedKey = normalizeMetadataMatchKey(rawKey);
+    if (normalizedKey && matchedKeys.has(normalizedKey)) {
+      continue;
+    }
+    total += 1;
+    if (rows.length < limit) {
+      rows.push({
+        rowNumber: rowIndex + (metadataTable.firstRowIsHeader ? 2 : 1),
+        key: rawKey,
+        values: metadataTable.columns.map((column) => ({
+          column,
+          value: row[column] ?? "",
+        })),
+      });
+    }
+  }
+  return { total, rows };
+}
+
 const EMPTY_METADATA_OVERLAY: MetadataColorOverlayResult = {
   colors: [],
   hasAny: false,
@@ -2692,6 +2746,45 @@ export default function App() {
     metadataValueColumn,
     tree,
   ]);
+  const metadataUnmappedRows = useMemo<{
+    total: number;
+    rows: MetadataUnmappedRowPreview[];
+  }>(() => {
+    if (!tree || !metadataTable || !metadataKeyColumn) {
+      return { total: 0, rows: [] };
+    }
+    return collectMetadataUnmappedRows(tree, metadataTable, metadataKeyColumn, METADATA_UNMAPPED_ROW_DISPLAY_LIMIT);
+  }, [metadataKeyColumn, metadataTable, tree]);
+  const exportUnmappedMetadataRows = useCallback((): void => {
+    if (!tree || !metadataTable || !metadataKeyColumn || typeof window === "undefined") {
+      return;
+    }
+    const { total, rows } = collectMetadataUnmappedRows(tree, metadataTable, metadataKeyColumn);
+    if (total === 0) {
+      return;
+    }
+    const header = ["row_number", ...metadataTable.columns];
+    const lines = [
+      header.map(metadataCsvCell).join(","),
+      ...rows.map((row) => {
+        const valuesByColumn = new Map(row.values.map(({ column, value }) => [column, value]));
+        return [
+          row.rowNumber,
+          ...metadataTable.columns.map((column) => valuesByColumn.get(column) ?? ""),
+        ].map(metadataCsvCell).join(",");
+      }),
+    ];
+    const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = window.document.createElement("a");
+    const baseLabel = sanitizeExportBaseLabel(metadataFileName || loadedTreeLabel || "metadata");
+    link.href = url;
+    link.download = `${baseLabel}-unmapped-rows.csv`;
+    window.document.body.appendChild(link);
+    link.click();
+    window.document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  }, [loadedTreeLabel, metadataFileName, metadataKeyColumn, metadataTable, tree]);
   const metadataLabelOverlay = useMemo<MetadataLabelOverlayResult>(() => {
     if (!tree || !metadataTable || !metadataKeyColumn || !metadataLabelColumn) {
       return EMPTY_METADATA_LABEL_OVERLAY;
@@ -7005,10 +7098,47 @@ export default function App() {
                     <span>Pie charts: {metadataPieOverlay.pieNodeCount.toLocaleString()}</span>
                   ) : null}
                 </div>
-                {metadataOverlay.unmappedRowCount > 0 ? (
-                  <p className="status-line">
-                    Unmapped rows: {metadataOverlay.unmappedRowCount.toLocaleString()}
-                  </p>
+                {metadataUnmappedRows.total > 0 ? (
+                  <details className="metadata-unmapped-rows" data-testid="metadata-unmapped-rows">
+                    <summary>
+                      Unmapped rows: {metadataUnmappedRows.total.toLocaleString()}
+                    </summary>
+                    <div className="metadata-unmapped-body">
+                      <div className="button-row">
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={exportUnmappedMetadataRows}
+                          title="Download a CSV containing every metadata row whose selected key column does not match a tree label."
+                        >
+                          Export Full List
+                        </button>
+                      </div>
+                      {metadataUnmappedRows.total > metadataUnmappedRows.rows.length ? (
+                        <p className="status-line">
+                          Showing first {metadataUnmappedRows.rows.length.toLocaleString()} unmapped rows.
+                        </p>
+                      ) : null}
+                      <div className="metadata-unmapped-list">
+                        {metadataUnmappedRows.rows.map((row) => (
+                          <div key={`${row.rowNumber}:${row.key}`} className="metadata-unmapped-row">
+                            <div className="metadata-unmapped-row-heading">
+                              <span>Row {row.rowNumber.toLocaleString()}</span>
+                              <code>{row.key.trim() || "(blank key)"}</code>
+                            </div>
+                            <dl>
+                              {row.values.map(({ column, value }) => (
+                                <Fragment key={column}>
+                                  <dt>{column}</dt>
+                                  <dd>{value || "(blank)"}</dd>
+                                </Fragment>
+                              ))}
+                            </dl>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </details>
                 ) : null}
                 {metadataOverlay.invalidValueRowCount > 0 ? (
                   <p className="status-line">

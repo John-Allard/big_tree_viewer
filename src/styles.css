@@ -1429,6 +1429,76 @@ button.secondary {
   font-size: 0.88rem;
 }
 
+.metadata-unmapped-rows {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.74);
+  color: #334155;
+  font-size: 0.84rem;
+}
+
+.metadata-unmapped-rows > summary {
+  cursor: pointer;
+  padding: 0.65rem 0.8rem;
+  font-weight: 600;
+}
+
+.metadata-unmapped-body {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0 0.8rem 0.8rem;
+}
+
+.metadata-unmapped-list {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.metadata-unmapped-row {
+  display: grid;
+  gap: 0.42rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid rgba(203, 213, 225, 0.7);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.metadata-unmapped-row-heading {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.metadata-unmapped-row-heading code {
+  min-width: 0;
+  color: #0f172a;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.metadata-unmapped-row dl {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, 0.42fr) minmax(0, 1fr);
+  gap: 0.24rem 0.55rem;
+  margin: 0;
+}
+
+.metadata-unmapped-row dt {
+  min-width: 0;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.metadata-unmapped-row dd {
+  min-width: 0;
+  margin: 0;
+  color: #334155;
+  overflow-wrap: anywhere;
+}
+
 .metadata-legend {
   display: grid;
   gap: 0.42rem;

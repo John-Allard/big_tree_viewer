@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 async function waitForViewer(page: Page): Promise<void> {
@@ -64,6 +65,41 @@ test("categorical metadata colors matched tip branches", async ({ page }) => {
   expect(result.colors[sample[0].node]).toBe(result.colors[sample[1].node]);
   expect(result.colors[sample[0].node]).not.toBe("#0f172a");
   expect(result.colors[sample[2].node]).not.toBe(result.colors[sample[0].node]);
+});
+
+test("metadata panel lists unmapped rows for the selected key column", async ({ page }) => {
+  await waitForViewer(page);
+  const sample = await page.evaluate(() => {
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const leafNodes = internal?.leafNodes ?? [];
+    const names = internal?.names ?? [];
+    if (leafNodes.length < 1) {
+      throw new Error("Not enough leaf nodes for metadata unmapped-row test.");
+    }
+    return { name: names[leafNodes[0]] ?? "" };
+  });
+  await page.evaluate((chosen) => {
+    const csv = `name,group,note\n"${chosen.name}",Alpha,matched\nMissing species,Beta,unmapped\n,Blank,empty key\n`;
+    window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(csv, "unmapped-rows.csv");
+  }, sample);
+
+  await ensureMetadataPanelOpen(page);
+  const unmappedRows = page.getByTestId("metadata-unmapped-rows");
+  await expect(unmappedRows).toContainText("Unmapped rows: 2");
+  await unmappedRows.locator("summary").click();
+  await expect(unmappedRows).toContainText("Missing species");
+  await expect(unmappedRows).toContainText("(blank key)");
+  await expect(unmappedRows).toContainText("empty key");
+  const downloadPromise = page.waitForEvent("download");
+  await unmappedRows.getByRole("button", { name: "Export Full List" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toContain("unmapped-rows");
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const csv = await fs.readFile(downloadPath ?? "", "utf8");
+  expect(csv).toContain("row_number,name,group,note");
+  expect(csv).toContain("3,Missing species,Beta,unmapped");
+  expect(csv).toContain("4,,Blank,empty key");
 });
 
 test("metadata can color subtree matches keyed by internal node labels", async ({ page }) => {
