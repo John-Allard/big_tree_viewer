@@ -1526,6 +1526,29 @@ button.secondary {
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 999px;
   background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.metadata-legend-swatch-input::-webkit-color-swatch-wrapper,
+.tree-context-menu-custom-color input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+}
+
+.metadata-legend-swatch-input::-webkit-color-swatch,
+.tree-context-menu-custom-color input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 999px;
+}
+
+.metadata-legend-swatch-input::-moz-color-swatch,
+.tree-context-menu-custom-color input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 999px;
 }
 
 .metadata-shape-select {
@@ -2032,6 +2055,10 @@ button.secondary {
   border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 999px;
   background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  overflow: hidden;
 }
 
 .tree-context-menu-custom-color input[type="text"] {
