@@ -29,6 +29,21 @@ async function loadTreeFile(page: Page, treePath: string): Promise<void> {
   }, { timeout: 180000 });
 }
 
+async function loadPastedTree(page: Page, newick: string): Promise<void> {
+  await page.getByRole("button", { name: "Paste Newick" }).click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(newick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => {
+    return Boolean(
+      window.__BIG_TREE_VIEWER_APP_TEST__
+      && window.__BIG_TREE_VIEWER_CANVAS_TEST__
+      && window.__BIG_TREE_VIEWER_RENDER_DEBUG__
+      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded
+      && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
+    );
+  });
+}
+
 async function configureCircularDeepZoom(page: Page): Promise<void> {
   await page.evaluate(() => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
@@ -626,4 +641,51 @@ test("large circular fit-view falls back to the cached base path", async ({ page
   } | null);
 
   expect(debug?.branchRenderMode).toBe("cached-path");
+});
+
+test("circular log-scale live branch arcs use transformed radii", async ({ page }) => {
+  await waitForViewer(page);
+  await loadPastedTree(page, "((A:90,B:90)X:10,C:100)Root;");
+
+  const result = await page.evaluate(async () => {
+    const logBase = 4.2;
+    const extent = 100;
+    const rawInternalDepth = 10;
+    const logUnit = extent / logBase;
+    const denominator = Math.log1p(extent / logUnit);
+    const age = extent - rawInternalDepth;
+    const axisDepth = extent * (1 - (Math.log1p(age / logUnit) / denominator));
+    const scale = 8;
+
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTimeAxisScale("log");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale,
+      translateX: 500,
+      translateY: 400,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const svg = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+    const branchArcRadii: number[] = [];
+    const pathPattern = /<path d="([^"]*?A ([0-9.]+) ([0-9.]+)[^"]*?)" stroke="#0f172a"/g;
+    let match: RegExpExecArray | null;
+    while ((match = pathPattern.exec(svg)) !== null) {
+      const radiusX = Number(match[2]);
+      const radiusY = Number(match[3]);
+      if (Number.isFinite(radiusX) && Math.abs(radiusX - radiusY) < 0.001) {
+        branchArcRadii.push(radiusX);
+      }
+    }
+
+    return {
+      branchArcRadii,
+      expectedRadius: axisDepth * scale,
+      rawRadius: rawInternalDepth * scale,
+    };
+  });
+
+  expect(result.branchArcRadii.some((radius) => Math.abs(radius - result.expectedRadius) < 0.75)).toBeTruthy();
+  expect(result.branchArcRadii.some((radius) => Math.abs(radius - result.rawRadius) < 0.75)).toBeFalsy();
 });

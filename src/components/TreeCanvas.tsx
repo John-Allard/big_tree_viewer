@@ -8790,8 +8790,8 @@ export default function TreeCanvas({
                 if (parent >= 0 && !drawnStems.has(node)) {
                   drawnStems.add(node);
                   const theta = thetaFor(layout.center, node, tree.leafCount);
-                  const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
-                  const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+                  const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), theta);
+                  const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[node]), theta);
                   const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
                   const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
                   if (lineIntersectsRect(start.x, start.y, end.x, end.y, -80, -80, renderSize.width + 160, renderSize.height + 160)) {
@@ -8803,7 +8803,7 @@ export default function TreeCanvas({
                 if (parent >= 0 && !drawnConnectors.has(parent) && children[parent]?.length >= 2) {
                   drawnConnectors.add(parent);
                   const siblings = children[parent];
-                  const radiusPx = tree.buffers.depth[parent] * camera.scale;
+                  const radiusPx = axisDepth(tree.buffers.depth[parent]) * camera.scale;
                   if (radiusPx >= 0.25) {
                     const startTheta = thetaFor(layout.center, siblings[0], tree.leafCount);
                     const endTheta = thetaFor(layout.center, siblings[siblings.length - 1], tree.leafCount);
@@ -8876,7 +8876,7 @@ export default function TreeCanvas({
               if (ordered.length < 2) {
                 continue;
               }
-              const radiusPx = tree.buffers.depth[node] * camera.scale;
+              const radiusPx = axisDepth(tree.buffers.depth[node]) * camera.scale;
               if (radiusPx < 0.25) {
                 continue;
               }
@@ -8907,7 +8907,7 @@ export default function TreeCanvas({
             if (ordered.length < 2) {
               continue;
             }
-            const radius = tree.buffers.depth[node];
+            const radius = axisDepth(tree.buffers.depth[node]);
             const startTheta = thetaFor(layout.center, ordered[0], tree.leafCount);
             const endTheta = thetaFor(layout.center, ordered[ordered.length - 1], tree.leafCount);
             const arcStart = thetaFor(layout.min, node, tree.leafCount);
@@ -8953,8 +8953,8 @@ export default function TreeCanvas({
               continue;
             }
             const theta = thetaFor(layout.center, node, tree.leafCount);
-            const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
-            const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+            const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), theta);
+            const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[node]), theta);
             const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
             const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
             if (!lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, renderSize.width, renderSize.height)) {
@@ -9007,7 +9007,7 @@ export default function TreeCanvas({
               if (ordered.length < 2) {
                 continue;
               }
-              const radiusPx = tree.buffers.depth[node] * camera.scale;
+              const radiusPx = axisDepth(tree.buffers.depth[node]) * camera.scale;
               if (radiusPx < 0.25) {
                 continue;
               }
@@ -9053,15 +9053,15 @@ export default function TreeCanvas({
                 const arcEnd = thetaFor(layout.max, node, tree.leafCount);
                 const arcLength = Math.max(0, arcEnd - arcStart);
                 const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-                const radiusPx = tree.buffers.depth[node] * camera.scale;
+                const radiusPx = axisDepth(tree.buffers.depth[node]) * camera.scale;
                 pushArc(BRANCH_COLOR, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle);
               }
               continue;
             }
             const color = effectiveBranchColors?.[node] ?? BRANCH_COLOR;
             const theta = thetaFor(layout.center, node, tree.leafCount);
-            const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
-            const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+            const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), theta);
+            const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[node]), theta);
             const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
             const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
             if (lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, renderSize.width, renderSize.height)) {
@@ -9120,9 +9120,9 @@ export default function TreeCanvas({
             }
             const parent = tree.buffers.parent[node];
             const theta = thetaFor(layout.center, node, tree.leafCount);
-            const x = tree.buffers.depth[node];
+            const x = axisDepth(tree.buffers.depth[node]);
             if (parent >= 0) {
-              const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
+              const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), theta);
               const endWorld = polarToCartesian(x, theta);
               const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
               const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
