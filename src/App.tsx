@@ -3790,13 +3790,12 @@ export default function App() {
     setMetadataLabelOffsetYPx(settings.metadataLabelOffsetYPx);
   }, []);
 
-  const writeSessionFile = useCallback(async (session: BigTreeViewerSessionFile): Promise<boolean> => {
+  const createSessionFileWriter = useCallback(async (): Promise<((blob: Blob) => Promise<boolean>) | null> => {
     if (typeof window === "undefined") {
-      return false;
+      return null;
     }
-    const baseLabel = sanitizeExportBaseLabel(session.tree?.label ?? loadedTreeLabel ?? "big-tree-viewer");
+    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel ?? "big-tree-viewer");
     const suggestedName = `${baseLabel}.btvsession`;
-    const blob = await buildSessionBlob(session);
     const pickerWindow = window as Window & {
       showSaveFilePicker?: (options: unknown) => Promise<{
         createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
@@ -3812,27 +3811,38 @@ export default function App() {
             accept: { "application/octet-stream": [".btvsession"] },
           }],
         });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        return true;
+        return async (blob: Blob) => {
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          return true;
+        };
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
-          return false;
+          return null;
         }
-        throw error;
+        if (!(error instanceof DOMException) || error.name !== "NotAllowedError") {
+          throw error;
+        }
       }
     }
-    const url = window.URL.createObjectURL(blob);
-    const link = window.document.createElement("a");
-    link.href = url;
-    link.download = suggestedName;
-    window.document.body.appendChild(link);
-    link.click();
-    window.document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-    return true;
+    return async (blob: Blob) => {
+      const url = window.URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = url;
+      link.download = suggestedName;
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      return true;
+    };
   }, [loadedTreeLabel]);
+
+  const writeSessionFile = useCallback(async (session: BigTreeViewerSessionFile, writer: (blob: Blob) => Promise<boolean>): Promise<boolean> => {
+    const blob = await buildSessionBlob(session);
+    return await writer(blob);
+  }, []);
 
   const readSessionFile = useCallback(async (): Promise<File | null> => {
     if (typeof window === "undefined") {
@@ -3873,6 +3883,11 @@ export default function App() {
   const saveSession = useCallback(async (): Promise<void> => {
     try {
       setSessionError(null);
+      const writer = await createSessionFileWriter();
+      if (!writer) {
+        setSessionStatus("");
+        return;
+      }
       setSessionStatus("Preparing session file...");
       const canvas = await requestCanvasSessionState();
       const session: BigTreeViewerSessionFile = {
@@ -3898,7 +3913,7 @@ export default function App() {
         } : undefined,
         canvas,
       };
-      const saved = await writeSessionFile(session);
+      const saved = await writeSessionFile(session, writer);
       setSessionStatus(saved ? "Session saved." : "");
     } catch (error) {
       setSessionStatus("");
@@ -3906,6 +3921,7 @@ export default function App() {
     }
   }, [
     captureSessionSettings,
+    createSessionFileWriter,
     loadedTreeLabel,
     hideDownloadNewick,
     metadataFileName,

@@ -116,3 +116,44 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(restored.camera?.kind).toBe("circular");
   expect(restored.branchColors).toContain("#ff0000");
 });
+
+test("session save opens native picker before async session preparation", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __saveSessionEvents?: Array<{ type: string; status?: string; size?: number }>;
+    };
+    testWindow.__saveSessionEvents = [];
+    Object.defineProperty(window, "showSaveFilePicker", {
+      configurable: true,
+      value: async () => {
+        testWindow.__saveSessionEvents?.push({
+          type: "picker",
+          status: document.querySelector(".status-line")?.textContent ?? "",
+        });
+        return {
+          createWritable: async () => ({
+            write: async (blob: Blob) => {
+              testWindow.__saveSessionEvents?.push({ type: "write", size: blob.size });
+            },
+            close: async () => {
+              testWindow.__saveSessionEvents?.push({ type: "close" });
+            },
+          }),
+        };
+      },
+    });
+  });
+
+  await page.getByRole("button", { name: "Save Session" }).click();
+  await expect(page.getByText("Session saved.")).toBeVisible();
+  const events = await page.evaluate(() => (
+    (window as typeof window & {
+      __saveSessionEvents?: Array<{ type: string; status?: string; size?: number }>;
+    }).__saveSessionEvents ?? []
+  ));
+
+  expect(events[0]).toMatchObject({ type: "picker", status: "" });
+  expect(events.some((event) => event.type === "write" && Number(event.size) > 0)).toBe(true);
+  expect(events.at(-1)?.type).toBe("close");
+});
