@@ -1201,7 +1201,7 @@ function scaledMetadataGlyphSizePx(sizePercent: number, adjacentTipSpacingPx: nu
 function scaledMetadataMarkerSizePx(sizePercent: number, adjacentTipSpacingPx: number): number {
   const percent = Number.isFinite(sizePercent) ? Math.max(10, Math.min(100, sizePercent)) : 50;
   const control = (percent - 10) / 90;
-  const dotSizePx = 4 + (8 * control);
+  const dotSizePx = 4 + (20 * control);
   if (!Number.isFinite(adjacentTipSpacingPx) || adjacentTipSpacingPx <= 0) {
     return dotSizePx;
   }
