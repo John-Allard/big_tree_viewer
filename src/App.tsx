@@ -154,6 +154,7 @@ type BigTreeViewerLaunchPayload = {
   canvas?: TreeCanvasSessionState | null;
   metadata?: {
     text?: string;
+    url?: string;
     label?: string;
     firstRowIsHeader?: boolean;
     enabled?: boolean;
@@ -393,6 +394,23 @@ function fileLooksLikeSession(file: File): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function nextAnimationFrame(): Promise<void> {
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    return sleep(0);
+  }
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+async function yieldToBrowserPaint(): Promise<void> {
+  await nextAnimationFrame();
+  await nextAnimationFrame();
+}
+
+function readTextFileWithProgress(file: File, onProgress: (progress: number | null) => void): Promise<string> {
+  onProgress(null);
+  return file.text();
 }
 
 function launchLabelFromUrl(url: string, fallback: string): string {
@@ -1187,7 +1205,7 @@ function LabelStyleSection({
                 <input
                   type="range"
                   min={viewMode === "spiral" ? 0.15 : 0.65}
-                  max={viewMode === "spiral" ? 5 : 1.8}
+                  max={viewMode === "spiral" ? 5 : 2}
                   step={0.05}
                   value={settings.bandThicknessScale ?? 1}
                   onChange={(event) => onUpdate(labelClass, "bandThicknessScale", Number(event.target.value))}
@@ -1324,6 +1342,8 @@ interface MetadataUnmappedRowPreview {
 }
 
 const METADATA_UNMAPPED_ROW_DISPLAY_LIMIT = 200;
+const DEFER_METADATA_OVERLAY_ROW_THRESHOLD = 20_000;
+const DEFER_METADATA_OVERLAY_NODE_THRESHOLD = 100_000;
 
 function normalizeMetadataMatchKey(value: string): string {
   return value.trim().replace(/^['"]+|['"]+$/g, "").replaceAll("_", " ").replace(/\s+/g, " ").toLowerCase();
@@ -1679,6 +1699,9 @@ export default function App() {
   const [metadataLabelOffsetYPx, setMetadataLabelOffsetYPx] = useState(DEFAULT_METADATA_LABEL_OFFSET_Y_PX);
   const [metadataStatus, setMetadataStatus] = useState("");
   const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [metadataOverlay, setMetadataOverlay] = useState<MetadataColorOverlayResult>(EMPTY_METADATA_OVERLAY);
+  const [metadataOverlayProcessing, setMetadataOverlayProcessing] = useState(false);
+  const [metadataReadProgress, setMetadataReadProgress] = useState<number | null>(null);
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
   const [taxonomyLoading, setTaxonomyLoading] = useState(false);
   const [taxonomyStatus, setTaxonomyStatus] = useState("");
@@ -2712,26 +2735,67 @@ export default function App() {
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
   }, [metadataContinuousMaxInput]);
-  const metadataOverlay = useMemo<MetadataColorOverlayResult>(() => {
-    if (!tree || !metadataTable || !metadataKeyColumn || !metadataValueColumn) {
-      return EMPTY_METADATA_OVERLAY;
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    if (!metadataEnabled || !tree || !metadataTable || !metadataKeyColumn || !metadataValueColumn) {
+      setMetadataOverlay(EMPTY_METADATA_OVERLAY);
+      setMetadataOverlayProcessing(false);
+      return () => {
+        cancelled = true;
+      };
     }
-    return buildMetadataColorOverlay(
-      tree,
-      metadataTable.rows,
-      metadataKeyColumn,
-      metadataValueColumn,
-      {
-        mode: metadataColorMode,
-        scope: metadataApplyScope,
-        reverseScale: metadataReverseScale,
-        continuousPalette: metadataContinuousPalette,
-        continuousTransform: metadataContinuousTransform,
-        continuousMin: metadataContinuousMin,
-        continuousMax: metadataContinuousMax,
-        categoricalColorOverrides: metadataCategoryColorOverrides,
-      },
-    );
+    const buildOverlay = (): void => {
+      if (cancelled) {
+        return;
+      }
+      try {
+        const nextOverlay = buildMetadataColorOverlay(
+          tree,
+          metadataTable.rows,
+          metadataKeyColumn,
+          metadataValueColumn,
+          {
+            mode: metadataColorMode,
+            scope: metadataApplyScope,
+            reverseScale: metadataReverseScale,
+            continuousPalette: metadataContinuousPalette,
+            continuousTransform: metadataContinuousTransform,
+            continuousMin: metadataContinuousMin,
+            continuousMax: metadataContinuousMax,
+            categoricalColorOverrides: metadataCategoryColorOverrides,
+          },
+        );
+        if (!cancelled) {
+          setMetadataOverlay(nextOverlay);
+          setMetadataError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setMetadataOverlay(EMPTY_METADATA_OVERLAY);
+          setMetadataError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setMetadataOverlayProcessing(false);
+        }
+      }
+    };
+    const shouldDefer = metadataTable.rows.length >= DEFER_METADATA_OVERLAY_ROW_THRESHOLD
+      || tree.nodeCount >= DEFER_METADATA_OVERLAY_NODE_THRESHOLD;
+    if (shouldDefer) {
+      setMetadataOverlay(EMPTY_METADATA_OVERLAY);
+      setMetadataOverlayProcessing(true);
+      timeoutId = window.setTimeout(buildOverlay, 0);
+    } else {
+      buildOverlay();
+    }
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
   }, [
     metadataApplyScope,
     metadataColorMode,
@@ -2740,6 +2804,7 @@ export default function App() {
     metadataContinuousPalette,
     metadataContinuousTransform,
     metadataCategoryColorOverrides,
+    metadataEnabled,
     metadataKeyColumn,
     metadataReverseScale,
     metadataTable,
@@ -2750,11 +2815,11 @@ export default function App() {
     total: number;
     rows: MetadataUnmappedRowPreview[];
   }>(() => {
-    if (!tree || !metadataTable || !metadataKeyColumn) {
+    if (metadataOverlayProcessing || !tree || !metadataTable || !metadataKeyColumn) {
       return { total: 0, rows: [] };
     }
     return collectMetadataUnmappedRows(tree, metadataTable, metadataKeyColumn, METADATA_UNMAPPED_ROW_DISPLAY_LIMIT);
-  }, [metadataKeyColumn, metadataTable, tree]);
+  }, [metadataKeyColumn, metadataOverlayProcessing, metadataTable, tree]);
   const exportUnmappedMetadataRows = useCallback((): void => {
     if (!tree || !metadataTable || !metadataKeyColumn || typeof window === "undefined") {
       return;
@@ -2786,7 +2851,7 @@ export default function App() {
     window.URL.revokeObjectURL(url);
   }, [loadedTreeLabel, metadataFileName, metadataKeyColumn, metadataTable, tree]);
   const metadataLabelOverlay = useMemo<MetadataLabelOverlayResult>(() => {
-    if (!tree || !metadataTable || !metadataKeyColumn || !metadataLabelColumn) {
+    if (!metadataLabelsEnabled || !tree || !metadataTable || !metadataKeyColumn || !metadataLabelColumn) {
       return EMPTY_METADATA_LABEL_OVERLAY;
     }
     return buildMetadataLabelOverlay(
@@ -2796,9 +2861,9 @@ export default function App() {
       metadataLabelColumn,
       metadataApplyScope,
     );
-  }, [metadataApplyScope, metadataKeyColumn, metadataLabelColumn, metadataTable, tree]);
+  }, [metadataApplyScope, metadataKeyColumn, metadataLabelColumn, metadataLabelsEnabled, metadataTable, tree]);
   const metadataMarkerOverlay = useMemo<MetadataMarkerOverlayResult>(() => {
-    if (!tree || !metadataTable || !metadataKeyColumn || !metadataMarkerColumn) {
+    if (!metadataMarkersEnabled || !tree || !metadataTable || !metadataKeyColumn || !metadataMarkerColumn) {
       return EMPTY_METADATA_MARKER_OVERLAY;
     }
     return buildMetadataMarkerOverlay(
@@ -2810,9 +2875,9 @@ export default function App() {
         categoryStyleOverrides: metadataMarkerStyleOverrides,
       },
     );
-  }, [metadataKeyColumn, metadataMarkerColumn, metadataMarkerStyleOverrides, metadataTable, tree]);
+  }, [metadataKeyColumn, metadataMarkerColumn, metadataMarkerStyleOverrides, metadataMarkersEnabled, metadataTable, tree]);
   const metadataPieOverlay = useMemo<MetadataPieOverlayResult>(() => {
-    if (!tree || !metadataTable || !metadataKeyColumn || metadataPieColumns.length === 0) {
+    if (!metadataPiesEnabled || !tree || !metadataTable || !metadataKeyColumn || metadataPieColumns.length === 0) {
       return EMPTY_METADATA_PIE_OVERLAY;
     }
     return buildMetadataPieOverlay(
@@ -2825,7 +2890,7 @@ export default function App() {
         colorOverrides: metadataPieColorOverrides,
       },
     );
-  }, [metadataKeyColumn, metadataPieColorOverrides, metadataPieColumns, metadataPiePalette, metadataTable, tree]);
+  }, [metadataKeyColumn, metadataPieColorOverrides, metadataPieColumns, metadataPiePalette, metadataPiesEnabled, metadataTable, tree]);
   const metadataOverlaysSuppressed = taxonomyCollapseIsSynthetic;
   const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(viewTaxonomyMap?.activeRanks ?? [])].sort(
@@ -3973,9 +4038,14 @@ export default function App() {
     setMetadataLabelOffsetYPx(DEFAULT_METADATA_LABEL_OFFSET_Y_PX);
     setMetadataStatus("");
     setMetadataError(null);
+    setMetadataOverlay(EMPTY_METADATA_OVERLAY);
+    setMetadataOverlayProcessing(false);
+    setMetadataReadProgress(null);
   }, []);
 
   const applyMetadataText = useCallback((text: string, label: string, firstRowIsHeader: boolean): void => {
+    setMetadataOverlayProcessing(true);
+    setMetadataReadProgress(null);
     try {
       const table = parseMetadataTable(text, firstRowIsHeader);
       if (table.columns.length < 2) {
@@ -4016,10 +4086,12 @@ export default function App() {
       setMetadataLabelOffsetYPx(DEFAULT_METADATA_LABEL_OFFSET_Y_PX);
       setMetadataStatus(`Loaded ${table.rows.length.toLocaleString()} metadata rows from ${label}.`);
       setMetadataError(null);
+      setMetadataOverlayProcessing(false);
     } catch (error) {
       clearMetadata();
       setMetadataError(error instanceof Error ? error.message : String(error));
       setMetadataStatus("");
+      setMetadataOverlayProcessing(false);
     }
   }, [clearMetadata]);
 
@@ -4152,11 +4224,14 @@ export default function App() {
     event.target.value = "";
   };
 
-  const applyLaunchMetadata = useCallback((metadata: BigTreeViewerLaunchPayload["metadata"] | undefined): void => {
-    if (!metadata?.text) {
+  const applyLaunchMetadata = useCallback(async (metadata: BigTreeViewerLaunchPayload["metadata"] | undefined): Promise<void> => {
+    const metadataUrl = typeof metadata?.url === "string" && metadata.url.trim() ? metadata.url.trim() : "";
+    if (!metadata || (!metadata.text && !metadataUrl)) {
       return;
     }
-    applyMetadataText(metadata.text, metadata.label ?? "launch-metadata.csv", metadata.firstRowIsHeader ?? true);
+    const metadataText = metadata.text ?? await fetchRemoteLaunchText(metadataUrl, "metadata");
+    const metadataLabel = metadata.label ?? (metadataUrl ? launchLabelFromUrl(metadataUrl, "remote metadata") : "launch-metadata.csv");
+    applyMetadataText(metadataText, metadataLabel, metadata.firstRowIsHeader ?? true);
     if (typeof metadata.enabled === "boolean") {
       setMetadataEnabled(metadata.enabled);
     }
@@ -4247,7 +4322,7 @@ export default function App() {
       if (!await loadFullSessionFromObject(session, label)) {
         return false;
       }
-      applyLaunchMetadata(payload.metadata);
+      await applyLaunchMetadata(payload.metadata);
       applyLaunchVisualSettings(payload.visual);
       const canvas = normalizeLaunchCanvasState(payload.canvas);
       if (canvas !== undefined) {
@@ -4259,7 +4334,7 @@ export default function App() {
       }
       return true;
     }
-    applyLaunchMetadata(payload.metadata);
+    await applyLaunchMetadata(payload.metadata);
     applyLaunchVisualSettings(payload.visual);
     const treeText = payload.newick?.trim()
       ? payload.newick
@@ -4308,6 +4383,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const newickUrl = params.get("btv_newick_url") ?? undefined;
     const sessionUrl = params.get("btv_session_url") ?? undefined;
+    const metadataUrl = params.get("btv_metadata_url") ?? undefined;
     const hideDownloadNewick = readLaunchBoolParam(params, "btv_hide_download_newick") ?? false;
     const payload: BigTreeViewerLaunchPayload = {
       ...(parseLaunchJsonParam(params.get("btv_payload")) ?? {}),
@@ -4405,6 +4481,7 @@ export default function App() {
     const metadataScopeParam = params.get("btv_metadata_scope");
     const metadataParamsPresent = Boolean(
       metadataText
+      || metadataUrl
       || params.has("btv_metadata_label")
       || params.has("btv_metadata_header")
       || params.has("btv_metadata_enabled")
@@ -4421,6 +4498,7 @@ export default function App() {
       payload.metadata = {
         ...payload.metadata,
         text: metadataText ?? payload.metadata?.text,
+        url: metadataUrl ?? payload.metadata?.url,
         label: params.get("btv_metadata_label") ?? payload.metadata?.label,
         firstRowIsHeader: readLaunchBoolParam(params, "btv_metadata_header") ?? payload.metadata?.firstRowIsHeader,
         enabled: readLaunchBoolParam(params, "btv_metadata_enabled") ?? payload.metadata?.enabled,
@@ -4439,7 +4517,7 @@ export default function App() {
       };
     }
     const effectiveHideDownloadNewick = hideDownloadNewick || payload.controls?.hideDownloadNewick === true;
-    const hasPayload = Boolean(payload.newick || payload.newickUrl || payload.session || payload.sessionUrl || payload.metadata?.text || payload.visual || payload.controls || payload.export);
+    const hasPayload = Boolean(payload.newick || payload.newickUrl || payload.session || payload.sessionUrl || payload.metadata?.text || payload.metadata?.url || payload.visual || payload.controls || payload.export);
     return {
       payload: hasPayload ? payload : null,
       waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",
@@ -4573,9 +4651,24 @@ export default function App() {
     if (!file) {
       return;
     }
-    const text = await file.text();
-    importMetadataText(text, file.name);
-    event.target.value = "";
+    setMetadataOverlayProcessing(true);
+    setMetadataReadProgress(null);
+    setMetadataError(null);
+    setMetadataStatus(`Reading metadata from ${file.name}...`);
+    await yieldToBrowserPaint();
+    try {
+      const text = await readTextFileWithProgress(file, setMetadataReadProgress);
+      setMetadataStatus(`Parsing metadata from ${file.name}...`);
+      await yieldToBrowserPaint();
+      importMetadataText(text, file.name);
+    } catch (error) {
+      setMetadataOverlayProcessing(false);
+      setMetadataReadProgress(null);
+      setMetadataStatus("");
+      setMetadataError(error instanceof Error ? error.message : String(error));
+    } finally {
+      event.target.value = "";
+    }
   }, [importMetadataText]);
 
   const loadPastedTree = useCallback(async (): Promise<void> => {
@@ -4604,8 +4697,22 @@ export default function App() {
     const file = dataTransfer.files?.[0];
     if (file) {
       if (/\.(csv|tsv)$/i.test(file.name)) {
-        const text = await file.text();
-        importMetadataText(text, file.name);
+        setMetadataOverlayProcessing(true);
+        setMetadataReadProgress(null);
+        setMetadataError(null);
+        setMetadataStatus(`Reading metadata from ${file.name}...`);
+        await yieldToBrowserPaint();
+        try {
+          const text = await readTextFileWithProgress(file, setMetadataReadProgress);
+          setMetadataStatus(`Parsing metadata from ${file.name}...`);
+          await yieldToBrowserPaint();
+          importMetadataText(text, file.name);
+        } catch (error) {
+          setMetadataOverlayProcessing(false);
+          setMetadataReadProgress(null);
+          setMetadataStatus("");
+          setMetadataError(error instanceof Error ? error.message : String(error));
+        }
         return;
       }
       await loadFileAsTreeOrSession(file);
@@ -5084,6 +5191,7 @@ export default function App() {
         metadataContinuousTransform,
         metadataContinuousMin,
         metadataContinuousMax,
+        metadataOverlayProcessing,
         metadataLabelsEnabled,
         metadataLabelColumn,
         metadataMarkersEnabled,
@@ -5212,6 +5320,7 @@ export default function App() {
       },
       importMetadataTextForTest: (text: string, label = "test-metadata.csv") => {
         importMetadataText(text, label);
+        setMetadataEnabled(true);
       },
       clearMetadataForTest: () => {
         clearMetadata();
@@ -6942,7 +7051,7 @@ export default function App() {
                         ))}
                       </select>
                     </label>
-                    <label title="Set marker diameter as a percentage of adjacent tip spacing. At 100%, markers on neighboring tips just touch; 50% leaves about one marker-width of space.">
+                    <label title="Set adaptive marker diameter. Dense views use a visible dot size; zoomed-in views can scale markers up toward the adjacent tip spacing.">
                       Marker size
                       <input
                         type="range"
@@ -6953,7 +7062,7 @@ export default function App() {
                         onChange={(event) => setMetadataMarkerSizePx(clampMetadataGlyphSizePercent(Number(event.target.value)))}
                       />
                     </label>
-                    <div className="figure-style-value">{metadataMarkerSizePx}% tip spacing</div>
+                    <div className="figure-style-value">{metadataMarkerSizePx}% adaptive size</div>
                     {metadataMarkerOverlay.legend.length > 0 ? (
                       <div className="metadata-legend" data-testid="metadata-marker-legend">
                         {metadataMarkerOverlay.legend.map((item) => (
@@ -7150,6 +7259,20 @@ export default function App() {
                     Invalid pie rows: {metadataPieOverlay.invalidValueRowCount.toLocaleString()}
                   </p>
                 ) : null}
+              </>
+            ) : null}
+            {metadataOverlayProcessing ? (
+              <>
+                <div className="loading-progress" aria-hidden="true"><span /></div>
+                {metadataReadProgress !== null ? (
+                  <progress
+                    className="metadata-load-progress"
+                    value={metadataReadProgress}
+                    max={1}
+                    aria-label="Metadata file read progress"
+                  />
+                ) : null}
+                <p className="status-line">Loading metadata overlays...</p>
               </>
             ) : null}
             {metadataStatus ? <p className="status-line">{metadataStatus}</p> : null}
@@ -7380,6 +7503,24 @@ export default function App() {
           onPhyloPicTryAnotherSilhouette={tryAnotherPhyloPicSilhouette}
           hideDownloadNewick={hideDownloadNewick}
         />
+        {metadataOverlayProcessing ? (
+          <div className="viewer-loading-overlay" role="status" aria-live="polite">
+            <div className="loading-progress" aria-hidden="true"><span /></div>
+            {metadataReadProgress !== null ? (
+              <progress
+                className="metadata-load-progress"
+                value={metadataReadProgress}
+                max={1}
+                aria-label="Metadata file read progress"
+              />
+            ) : null}
+            <span>
+              {metadataReadProgress !== null
+                ? `Reading metadata ${Math.round(metadataReadProgress * 100)}%`
+                : "Loading metadata overlays..."}
+            </span>
+          </div>
+        ) : null}
         {phylopicEnabled && phylopicSilhouettes.length > 0 && !phylopicReminderDismissed ? (
           <div className="phylopic-attribution-reminder">
             <button

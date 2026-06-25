@@ -295,6 +295,7 @@ test("URL launch parameters load a tree, metadata, and selected visual options",
     btv_metadata_key: "name",
     btv_metadata_value: "group",
     btv_metadata_color_mode: "categorical",
+    btv_metadata_enabled: "true",
     btv_metadata_labels: "true",
     btv_metadata_label_column: "label",
     btv_metadata_markers: "true",
@@ -324,6 +325,37 @@ test("URL launch parameters load a tree, metadata, and selected visual options",
   expect(state?.metadataLabelColumn).toBe("label");
   expect(state?.metadataMarkersEnabled).toBe(true);
   expect(state?.metadataMarkerColumn).toBe("marker");
+  expect(state?.metadataMatchedRowCount).toBe(2);
+});
+
+test("URL launch parameters can fetch metadata from a URL", async ({ page }) => {
+  const newick = "((Alpha_one:1,Beta_two:1)CladeOne:1,Gamma_three:2)Root;";
+  const metadata = "name,score\nAlpha_one,10.5\nBeta_two,20.75\n";
+  await page.route("**/metadata.tsv", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/tab-separated-values",
+      body: metadata,
+    });
+  });
+  const params = new URLSearchParams({
+    btv_newick_b64: toBase64Url(newick),
+    btv_metadata_url: "/metadata.tsv",
+    btv_metadata_key: "name",
+    btv_metadata_value: "score",
+    btv_metadata_color_mode: "continuous",
+    btv_metadata_enabled: "true",
+    btv_view: "circular",
+  });
+
+  await page.goto(`/?${params.toString()}`);
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataMatchedRowCount === 2);
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
+  expect(state?.metadataFileName).toBe("metadata.tsv");
+  expect(state?.metadataColorMode).toBe("continuous");
+  expect(state?.metadataEnabled).toBe(true);
   expect(state?.metadataMatchedRowCount).toBe(2);
 });
 

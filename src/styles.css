@@ -1276,6 +1276,48 @@ button.secondary {
   animation: loading-progress-slide 1.15s ease-in-out infinite;
 }
 
+.viewer-loading-overlay {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  z-index: 8;
+  display: grid;
+  width: min(24rem, calc(100% - 2rem));
+  gap: 0.55rem;
+  padding: 0.72rem 0.85rem;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.94);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+  color: #334155;
+  font-size: 0.86rem;
+  transform: translateX(-50%);
+}
+
+.metadata-load-progress {
+  width: 100%;
+  height: 0.42rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.metadata-load-progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.metadata-load-progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #14b8a6);
+}
+
+.metadata-load-progress::-moz-progress-bar {
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #14b8a6);
+}
+
 @keyframes loading-progress-slide {
   0% {
     transform: translateX(0);

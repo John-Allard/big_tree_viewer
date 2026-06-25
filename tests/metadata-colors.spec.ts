@@ -111,6 +111,17 @@ test("metadata can color subtree matches keyed by internal node labels", async (
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await new Promise<void>((resolve) => {
+      const wait = () => {
+        const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+        if (state?.metadataOverlayProcessing === false && state?.metadataMatchedRowCount === 2) {
+          requestAnimationFrame(() => resolve());
+          return;
+        }
+        requestAnimationFrame(wait);
+      };
+      wait();
+    });
     const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
     const names = internal?.names ?? [];
     const firstChild = internal?.firstChild ?? [];
@@ -208,8 +219,17 @@ test("continuous metadata controls support palette, transform, and clamp setting
   }, sample);
   await page.waitForFunction(() => {
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
-    return state?.metadataContinuousPalette === "viridis" && state?.metadataContinuousTransform === "sqrt";
+    return state?.metadataContinuousPalette === "viridis"
+      && state?.metadataContinuousTransform === "sqrt"
+      && state?.metadataOverlayProcessing === false
+      && state?.metadataMatchedRowCount === 3;
   });
+  await page.waitForFunction((nodes) => {
+    const colors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? [];
+    return colors[nodes[0].node] !== "#0f172a"
+      && colors[nodes[1].node] !== "#0f172a"
+      && colors[nodes[2].node] !== "#0f172a";
+  }, sample);
   const result = await page.evaluate(() => ({
     state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState(),
     colors: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? [],

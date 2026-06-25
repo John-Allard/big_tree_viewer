@@ -152,6 +152,8 @@ const PIE_PALETTES: Record<MetadataPiePalette, string[]> = {
   warm: ["#b91c1c", "#ea580c", "#d97706", "#facc15", "#be123c", "#c026d3", "#7c2d12", "#fb923c"],
 };
 
+const CONTINUOUS_COLOR_BIN_COUNT = 192;
+
 export const METADATA_CONTINUOUS_PALETTES: Record<MetadataContinuousPalette, { label: string; stops: string[] }> = {
   blueOrange: {
     label: "Blue to orange",
@@ -285,6 +287,17 @@ function interpolatePalette(stops: string[], t: number): string {
   const rightIndex = Math.min(stops.length - 1, leftIndex + 1);
   const localT = scaled - leftIndex;
   return interpolateColor(stops[leftIndex], stops[rightIndex], localT);
+}
+
+function continuousColorForT(stops: string[], t: number, cache: Map<number, string>): string {
+  const bin = Math.max(0, Math.min(CONTINUOUS_COLOR_BIN_COUNT - 1, Math.round(t * (CONTINUOUS_COLOR_BIN_COUNT - 1))));
+  const cached = cache.get(bin);
+  if (cached) {
+    return cached;
+  }
+  const color = interpolatePalette(stops, CONTINUOUS_COLOR_BIN_COUNT <= 1 ? 0.5 : bin / (CONTINUOUS_COLOR_BIN_COUNT - 1));
+  cache.set(bin, color);
+  return color;
 }
 
 function buildGradientCss(stops: string[]): string {
@@ -545,12 +558,13 @@ export function buildMetadataColorOverlay(
   const transformedMin = transformContinuousValue(legendMin, continuousTransform);
   const transformedMax = transformContinuousValue(legendMax, continuousTransform);
   const span = Math.max(1e-9, transformedMax - transformedMin);
+  const colorCache = new Map<number, string>();
   for (let entryIndex = 0; entryIndex < numericEntries.length; entryIndex += 1) {
     const entry = numericEntries[entryIndex];
     const clampedValue = Math.max(legendMin, Math.min(legendMax, entry.value));
     const transformedValue = transformContinuousValue(clampedValue, continuousTransform);
     const t = legendMax > legendMin ? (transformedValue - transformedMin) / span : 0.5;
-    const color = interpolatePalette(paletteStops, t);
+    const color = continuousColorForT(paletteStops, t, colorCache);
     for (let nodeIndex = 0; nodeIndex < entry.nodes.length; nodeIndex += 1) {
       const node = entry.nodes[nodeIndex];
       if (scope === "subtree") {
