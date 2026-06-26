@@ -15,6 +15,7 @@ Use this skill when a user asks to open, inspect, style, or render a phylogeneti
 - To trigger a browser SVG/PNG download without extra dependencies, run `scripts/btv_open.py --download-export svg` or `--download-export png`.
 - For slide figures, prefer setting PNG `--width`/`--height` to the final on-slide pixel box, or use `--export-viewport-width`/`--export-viewport-height` to preserve slide-scale styling while exporting at higher pixel density.
 - For large local trees, prefer the scripts' postMessage launch path instead of putting Newick directly into a URL.
+- Use Big Tree Viewer's defaults unless the user asks for a different setting or the figure goal clearly requires it. Do not send every possible visual/API setting just because it exists.
 
 ## Open an Interactive Viewer
 
@@ -54,6 +55,7 @@ python scripts/btv_open.py tree.nwk --download-export svg --export-filename figu
 ```
 
 The JSON file may include Big Tree Viewer launch API fields such as `newickUrl`, `sessionUrl`, `session`, `visual`, `metadata`, `taxonomy`, `canvas`, and `export`. Command-line options are applied after the JSON payload.
+Keep launch payloads minimal. Omit `visual`, `metadata`, `taxonomy`, `canvas`, or individual setting keys when the default viewer behavior is acceptable. Only specify settings needed to satisfy the user's request, reproduce a saved view, apply metadata/taxonomy, choose an export format/size, or fix a concrete figure-composition problem.
 For session-style programmatic styling, put saved setting names in `visual`; Big Tree Viewer accepts the same setting names saved in `.btvsession` files for view mode, time stripes, label classes, taxonomy ribbons, metadata display settings, branch thickness, and PhyloPic placement.
 Use `metadata` for CSV/TSV overlays. Set `enabled`, `keyColumn`, `valueColumn`, `colorMode`, and `applyScope` for metadata branch/subtree coloring; set `labelsEnabled`/`labelColumn`, `markersEnabled`/`markerColumn`, or `piesEnabled` with `pieStartColumn` and `pieEndColumn` for labels, markers, or pie-chart glyphs.
 Use `canvas` when the user needs session-style viewport state, collapsed clades, or manual branch/subtree colors. `canvas` accepts the same shape saved in `.btvsession` files: `camera`, `viewportWidth`, `viewportHeight`, `collapsedNodes`, `manualBranchColors`, and `manualSubtreeColors`.
