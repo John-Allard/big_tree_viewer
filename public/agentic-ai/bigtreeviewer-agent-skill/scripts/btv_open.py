@@ -9,6 +9,9 @@ import webbrowser
 
 from btv_common import add_common_arguments, load_payload, normalize_btv_url, write_launcher_html
 
+DEFAULT_RECTANGULAR_EXPORT_SIZE = (1600, 1000)
+DEFAULT_SQUARE_EXPORT_SIZE = (1200, 1200)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Open a tree or session in Big Tree Viewer.")
@@ -16,8 +19,8 @@ def main() -> None:
     parser.add_argument("--session-url", help="Public URL for a .btvsession file.")
     parser.add_argument("--download-export", choices=["svg", "png"], help="Ask Big Tree Viewer to download an SVG or PNG from the opened browser.")
     parser.add_argument("--export-filename", help="Suggested filename for --download-export.")
-    parser.add_argument("--width", type=int, default=2400, help="PNG download width when using --download-export png.")
-    parser.add_argument("--height", type=int, default=2400, help="PNG download height when using --download-export png.")
+    parser.add_argument("--width", type=int, help="PNG download width when using --download-export png. Defaults to a browser-window-scale size.")
+    parser.add_argument("--height", type=int, help="PNG download height when using --download-export png. Defaults to a browser-window-scale size.")
     parser.add_argument("--export-viewport-width", type=int, help="CSS-pixel viewport width to use while rendering a PNG export.")
     parser.add_argument("--export-viewport-height", type=int, help="CSS-pixel viewport height to use while rendering a PNG export.")
     parser.add_argument("--print-url", action="store_true", help="Print the opened URL or launcher path.")
@@ -33,12 +36,14 @@ def main() -> None:
 
     payload = load_payload(args)
     if args.download_export:
+        visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
+        default_width, default_height = DEFAULT_RECTANGULAR_EXPORT_SIZE if visual.get("viewMode") == "rectangular" else DEFAULT_SQUARE_EXPORT_SIZE
         payload["export"] = {
             "format": args.download_export,
             "delivery": "download",
             "filename": args.export_filename,
-            "width": args.width,
-            "height": args.height,
+            "width": args.width if args.width is not None else (default_width if args.download_export == "png" else None),
+            "height": args.height if args.height is not None else (default_height if args.download_export == "png" else None),
             "viewportWidth": args.export_viewport_width,
             "viewportHeight": args.export_viewport_height,
         }

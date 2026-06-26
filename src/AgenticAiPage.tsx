@@ -116,10 +116,10 @@ directory for this agent.`}</code></pre>
           <h2>What you can ask an agent to do</h2>
           <ul>
             <li>Open this Newick file in Big Tree Viewer as a circular tree.</li>
-            <li>Render this tree as an SVG with tip labels hidden and thicker branches.</li>
-            <li>Make a 3000 by 3000 PNG spiral view of this tree for a slide.</li>
+            <li>Render this modest tree as an SVG with tip labels hidden and thicker branches.</li>
+            <li>Make a PNG spiral view of this tree for a slide.</li>
             <li>Load this metadata table, color branches by group, and export the current view.</li>
-            <li>Render this saved BTV session as an SVG without opening the UI.</li>
+            <li>Render this saved BTV session as a PNG without opening the UI.</li>
             <li>Create several alternate tree figures with different palettes and save them to a figures folder.</li>
           </ul>
         </section>
@@ -139,9 +139,9 @@ directory for this agent.`}</code></pre>
         <section className="api-doc-section">
           <h2>Example commands</h2>
           <pre><code>{`python scripts/btv_open.py tree.nwk --view circular --tip-labels true
-python scripts/btv_open.py tree.nwk --download-export svg --export-filename tree.svg
-python scripts/btv_open.py tree.nwk --download-export png --export-filename tree.png --view spiral --width 3000 --height 3000
-python scripts/btv_open.py saved-view.btvsession --download-export svg --export-filename saved-view.svg`}</code></pre>
+python scripts/btv_open.py tree.nwk --download-export png --export-filename tree.png
+python scripts/btv_open.py tree.nwk --download-export png --export-filename tree.png --view spiral
+python scripts/btv_open.py saved-view.btvsession --download-export png --export-filename saved-view.png`}</code></pre>
         </section>
       </div>
     </main>

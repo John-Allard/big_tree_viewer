@@ -181,6 +181,38 @@ test("remote Newick URL launch fetches a public tree and applies URL settings", 
   expect(state?.loadError).toBeNull();
 });
 
+test("export dialog defaults to browser-scale PNG dimensions", async ({ page }) => {
+  const newick = "((Alpha:1,Beta:1)CladeOne:1,Gamma:2)Root;";
+  const params = new URLSearchParams({
+    btv_newick_b64: toBase64Url(newick),
+    btv_view: "rectangular",
+  });
+  await page.goto(`/?${params.toString()}`);
+  await waitForLoadedTree(page);
+  const tutorialClose = page.getByRole("button", { name: "Close tutorial prompt" });
+  if (await tutorialClose.count()) {
+    await tutorialClose.click();
+  }
+
+  await page.getByRole("button", { name: "Export View" }).click();
+  let dialog = page.getByRole("dialog", { name: "Export view settings" });
+  await expect(dialog.getByLabel("Width px")).toHaveValue("1600");
+  await expect(dialog.getByLabel("Height px")).toHaveValue("1000");
+  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("8");
+  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("5");
+  await expect(dialog.getByLabel("DPI")).toHaveValue("200");
+
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Circular" }).click();
+  await page.getByRole("button", { name: "Export View" }).click();
+  dialog = page.getByRole("dialog", { name: "Export view settings" });
+  await expect(dialog.getByLabel("Width px")).toHaveValue("1200");
+  await expect(dialog.getByLabel("Height px")).toHaveValue("1200");
+  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("6");
+  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("6");
+  await expect(dialog.getByLabel("DPI")).toHaveValue("200");
+});
+
 test("remote session URL launch fetches and restores a saved session", async ({ page }) => {
   const session = {
     format: "big-tree-viewer-session",
@@ -274,6 +306,7 @@ test("remote session URL launch can run standard taxonomy mapping", async ({ pag
   const params = new URLSearchParams({
     btv_session_url: "/remote-taxonomy-session.btvsession",
     btv_map_taxonomy: "true",
+    btv_taxonomy_allow_download: "true",
   });
   await page.goto(`/?${params.toString()}`);
   await waitForLoadedTree(page);
@@ -544,6 +577,7 @@ test("postMessage launch API can run the standard taxonomy mapper", async ({ pag
         label: "standard-taxonomy-launch-tree",
         taxonomy: {
           runMapping: true,
+          allowDownload: true,
         },
         visual: {
           viewMode: "circular",
@@ -591,7 +625,7 @@ test("postMessage API can map taxonomy for the current loaded tree", async ({ pa
   await waitForLoadedTree(page);
 
   await page.evaluate(() => {
-    window.postMessage({ type: "big-tree-viewer:map-taxonomy", payload: {} }, "*");
+    window.postMessage({ type: "big-tree-viewer:map-taxonomy", payload: { allowDownload: true } }, "*");
   });
 
   await page.waitForFunction(() => (
@@ -608,6 +642,55 @@ test("postMessage API can map taxonomy for the current loaded tree", async ({ pa
   expect(message.type).toBe("big-tree-viewer:taxonomy-mapped");
   expect((message.taxonomy as { map?: { mappedCount?: number } })?.map?.mappedCount).toBe(2);
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+});
+
+test("postMessage taxonomy mapping does not download taxdump without explicit permission", async ({ page }) => {
+  let taxdumpRequested = false;
+  await page.route("https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip", async (route) => {
+    taxdumpRequested = true;
+    await route.abort();
+  });
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvTaxonomyMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvTaxonomyMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:taxonomy-mapped" || event.data?.type === "big-tree-viewer:taxonomy-error") {
+        testWindow.__btvTaxonomyMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "standard-taxonomy-cache-only-tree",
+      },
+    }, "*");
+  });
+  await waitForLoadedTree(page);
+
+  await page.evaluate(() => {
+    window.postMessage({ type: "big-tree-viewer:map-taxonomy", payload: {} }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvTaxonomyMessages?: Array<Record<string, unknown>>;
+    }).__btvTaxonomyMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvTaxonomyMessages?: Array<Record<string, unknown>>;
+    }).__btvTaxonomyMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:taxonomy-error");
+  expect(String(message.message)).toContain("No cached NCBI taxonomy archive");
+  expect(taxdumpRequested).toBe(false);
 });
 
 test("postMessage API can export the current view after load", async ({ page }) => {

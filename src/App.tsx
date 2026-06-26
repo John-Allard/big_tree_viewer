@@ -133,6 +133,18 @@ function normalizePngExportFilename(value: string, fallbackBaseLabel: string): s
 
 type ExportViewFormat = "png" | "svg";
 
+const DEFAULT_EXPORT_RECT_WIDTH_PX = 1600;
+const DEFAULT_EXPORT_RECT_HEIGHT_PX = 1000;
+const DEFAULT_EXPORT_SQUARE_SIZE_PX = 1200;
+const DEFAULT_EXPORT_DPI = 200;
+const SVG_LARGE_TREE_TIP_WARNING_THRESHOLD = 100000;
+
+function defaultExportPixelSizeForMode(mode: ViewMode): { width: number; height: number } {
+  return mode === "rectangular"
+    ? { width: DEFAULT_EXPORT_RECT_WIDTH_PX, height: DEFAULT_EXPORT_RECT_HEIGHT_PX }
+    : { width: DEFAULT_EXPORT_SQUARE_SIZE_PX, height: DEFAULT_EXPORT_SQUARE_SIZE_PX };
+}
+
 type BigTreeViewerLaunchPayload = {
   version?: 1;
   newick?: string;
@@ -144,6 +156,7 @@ type BigTreeViewerLaunchPayload = {
     map?: TaxonomyMapPayload | null;
     runMapping?: boolean;
     lowMemoryMode?: boolean;
+    allowDownload?: boolean;
   };
   export?: {
     format?: AutomationExportFormat;
@@ -1596,6 +1609,7 @@ export default function App() {
   const pendingPasteHideRef = useRef(false);
   const pendingTreeSignatureRef = useRef<string | null>(null);
   const pendingTreeLabelRef = useRef("");
+  const taxonomyMappingFailureMessageRef = useRef("");
   const pendingSharedSubtreeTaxonomyRef = useRef<SharedSubtreeTaxonomyPayload | null>(null);
   const pendingSharedSubtreeVisualRef = useRef<SharedSubtreeVisualPayload | null>(null);
   const pendingTreeReplacementTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
@@ -1604,6 +1618,7 @@ export default function App() {
   const pendingSessionTaxonomyEnabledRef = useRef<boolean | null>(null);
   const pendingLaunchTaxonomyMappingRef = useRef<{
     lowMemoryMode: boolean;
+    allowDownload: boolean;
     resolve: (payload: TaxonomyMapPayload | null) => void;
   } | null>(null);
   const pendingSessionPhyloPicRef = useRef<BigTreeViewerSessionFile["phylopic"] | undefined>(undefined);
@@ -1684,17 +1699,17 @@ export default function App() {
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
   const [exportPngRequest, setExportPngRequest] = useState(0);
   const [exportPngFilename, setExportPngFilename] = useState("big-tree-view.png");
-  const [exportPngWidth, setExportPngWidth] = useState(6000);
-  const [exportPngHeight, setExportPngHeight] = useState(6000);
+  const [exportPngWidth, setExportPngWidth] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
+  const [exportPngHeight, setExportPngHeight] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
   const [automationExportRequest, setAutomationExportRequest] = useState<AutomationExportRequest | null>(null);
   const [showExportOptions, setShowExportOptions] = useState(false);
   const [exportViewFormat, setExportViewFormat] = useState<ExportViewFormat>("png");
   const [exportViewFilenameInput, setExportViewFilenameInput] = useState("big-tree-view.png");
-  const [exportViewWidthInput, setExportViewWidthInput] = useState(6000);
-  const [exportViewHeightInput, setExportViewHeightInput] = useState(6000);
-  const [exportViewPrintWidthInchesInput, setExportViewPrintWidthInchesInput] = useState(20);
-  const [exportViewPrintHeightInchesInput, setExportViewPrintHeightInchesInput] = useState(20);
-  const [exportViewDpiInput, setExportViewDpiInput] = useState(300);
+  const [exportViewWidthInput, setExportViewWidthInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
+  const [exportViewHeightInput, setExportViewHeightInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
+  const [exportViewPrintWidthInchesInput, setExportViewPrintWidthInchesInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX / DEFAULT_EXPORT_DPI);
+  const [exportViewPrintHeightInchesInput, setExportViewPrintHeightInchesInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX / DEFAULT_EXPORT_DPI);
+  const [exportViewDpiInput, setExportViewDpiInput] = useState(DEFAULT_EXPORT_DPI);
   const [sessionStateRequest, setSessionStateRequest] = useState(0);
   const [sessionRestoreRequest, setSessionRestoreRequest] = useState(0);
   const [sessionRestoreState, setSessionRestoreState] = useState<TreeCanvasSessionState | null>(null);
@@ -3362,7 +3377,7 @@ export default function App() {
     };
   }, []);
 
-  const ensureTaxonomyArchive = useCallback(async (): Promise<Blob | ArrayBuffer> => {
+  const ensureTaxonomyArchive = useCallback(async (allowDownload = true): Promise<Blob | ArrayBuffer> => {
     setTaxonomyLoading(true);
     setTaxonomyError(null);
     setTaxonomyStatus("Checking local taxonomy cache...");
@@ -3375,6 +3390,9 @@ export default function App() {
       setTaxonomyStatus("Taxonomy cache found.");
       appendDiagnostic("taxonomy-download-skipped-cache-found", {});
       return cached;
+    }
+    if (!allowDownload) {
+      throw new Error("No cached NCBI taxonomy archive is available. Download or load the taxdump archive in this browser before running automated taxonomy mapping.");
     }
     setTaxonomyStatus("Preparing taxonomy download...");
     setTaxonomyStatus("Downloading NCBI taxonomy...");
@@ -3401,9 +3419,11 @@ export default function App() {
     targetTree: TreeModel,
     targetTreeSignature: string | null,
     lowMemoryMode: boolean,
+    allowDownload = true,
   ): Promise<TaxonomyMapPayload | null> => {
     setTaxonomyLoading(true);
     setTaxonomyError(null);
+    taxonomyMappingFailureMessageRef.current = "";
     setTaxonomyStatus("Loading taxonomy cache...");
     appendDiagnostic("taxonomy-mapping-started", {
       tipCount: targetTree.leafCount,
@@ -3411,7 +3431,7 @@ export default function App() {
       lowMemoryMode,
     });
     try {
-      const archive = await ensureTaxonomyArchive();
+      const archive = await ensureTaxonomyArchive(allowDownload);
       setTaxonomyStatus("Mapping tree tips to NCBI taxonomy...");
       const tips = Array.from(targetTree.leafNodes)
         .sort((left, right) => targetTree.layouts.input.center[left] - targetTree.layouts.input.center[right])
@@ -3448,6 +3468,7 @@ export default function App() {
       return response.payload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      taxonomyMappingFailureMessageRef.current = message;
       setTaxonomyError(message);
       setTaxonomyMappingWarning("");
       appendDiagnostic("taxonomy-mapping-failed", {
@@ -3535,28 +3556,24 @@ export default function App() {
     }
     const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
     const extension = exportViewFormat === "svg" ? "svg" : "png";
+    const defaultSize = defaultExportPixelSizeForMode(viewMode);
     setExportViewFilenameInput(`${baseLabel}-${viewMode}-view.${extension}`);
-    if (viewMode === "rectangular") {
-      setExportViewWidthInput(6000);
-      setExportViewHeightInput(4000);
-      setExportViewPrintWidthInchesInput(20);
-      setExportViewPrintHeightInchesInput(13.33);
-    } else {
-      setExportViewWidthInput(6000);
-      setExportViewHeightInput(6000);
-      setExportViewPrintWidthInchesInput(20);
-      setExportViewPrintHeightInchesInput(20);
-    }
+    setExportViewWidthInput(defaultSize.width);
+    setExportViewHeightInput(defaultSize.height);
+    setExportViewPrintWidthInchesInput(Number((defaultSize.width / DEFAULT_EXPORT_DPI).toFixed(2)));
+    setExportViewPrintHeightInchesInput(Number((defaultSize.height / DEFAULT_EXPORT_DPI).toFixed(2)));
+    setExportViewDpiInput(DEFAULT_EXPORT_DPI);
     setShowExportOptions((value) => !value);
   }, [exportViewFormat, loadedTreeLabel, tree, viewMode]);
 
   const applyPrintSizeToPngExport = useCallback((): void => {
-    const widthInches = Math.max(0.5, Math.min(100, Number(exportViewPrintWidthInchesInput) || 20));
+    const defaultSize = defaultExportPixelSizeForMode(viewMode);
+    const widthInches = Math.max(0.5, Math.min(100, Number(exportViewPrintWidthInchesInput) || (defaultSize.width / DEFAULT_EXPORT_DPI)));
     const heightInches = Math.max(0.5, Math.min(100, Number(exportViewPrintHeightInchesInput) || widthInches));
-    const dpi = Math.max(72, Math.min(1200, Number(exportViewDpiInput) || 300));
+    const dpi = Math.max(72, Math.min(1200, Number(exportViewDpiInput) || DEFAULT_EXPORT_DPI));
     setExportViewWidthInput(Math.max(320, Math.min(10000, Math.round(widthInches * dpi))));
     setExportViewHeightInput(Math.max(320, Math.min(10000, Math.round(heightInches * dpi))));
-  }, [exportViewDpiInput, exportViewPrintHeightInchesInput, exportViewPrintWidthInchesInput]);
+  }, [exportViewDpiInput, exportViewPrintHeightInchesInput, exportViewPrintWidthInchesInput, viewMode]);
 
   const exportCurrentView = useCallback((): void => {
     if (!tree || typeof window === "undefined") {
@@ -3569,8 +3586,9 @@ export default function App() {
       setShowExportOptions(false);
       return;
     }
-    const width = Math.max(320, Math.min(10000, Math.round(Number(exportViewWidthInput) || 6000)));
-    const height = Math.max(320, Math.min(10000, Math.round(Number(exportViewHeightInput) || 6000)));
+    const defaultSize = defaultExportPixelSizeForMode(viewMode);
+    const width = Math.max(320, Math.min(10000, Math.round(Number(exportViewWidthInput) || defaultSize.width)));
+    const height = Math.max(320, Math.min(10000, Math.round(Number(exportViewHeightInput) || defaultSize.height)));
     setExportViewWidthInput(width);
     setExportViewHeightInput(height);
     setExportPngWidth(width);
@@ -4096,7 +4114,7 @@ export default function App() {
         return false;
       }
       pendingLaunchTaxonomyMappingRef.current = null;
-      void runStandardTaxonomyMappingForTree(tree, treeSignature, pending.lowMemoryMode)
+      void runStandardTaxonomyMappingForTree(tree, treeSignature, pending.lowMemoryMode, pending.allowDownload)
         .then((payload) => pending.resolve(payload));
       return true;
     };
@@ -4519,6 +4537,7 @@ export default function App() {
     const launchTaxonomyProvided = launchTaxonomyMap !== undefined;
     const launchTaxonomyRunMapping = payload.taxonomy?.runMapping === true;
     const launchTaxonomyLowMemoryMode = payload.taxonomy?.lowMemoryMode ?? useLowMemoryTaxonomyMapping;
+    const launchTaxonomyAllowDownload = payload.taxonomy?.allowDownload === true;
     const waitForLaunchTaxonomyMapping = (): Promise<TaxonomyMapPayload | null> | null => {
       if (!launchTaxonomyRunMapping) {
         return null;
@@ -4526,6 +4545,7 @@ export default function App() {
       return new Promise<TaxonomyMapPayload | null>((resolve) => {
         pendingLaunchTaxonomyMappingRef.current = {
           lowMemoryMode: launchTaxonomyLowMemoryMode,
+          allowDownload: launchTaxonomyAllowDownload,
           resolve,
         };
       });
@@ -4560,7 +4580,10 @@ export default function App() {
       if (launchTaxonomyRunMapping) {
         const restoredTree = currentTreeRef.current;
         if (restoredTree) {
-          await runStandardTaxonomyMappingForTree(restoredTree, currentTreeSignatureRef.current, launchTaxonomyLowMemoryMode);
+          const taxonomyPayload = await runStandardTaxonomyMappingForTree(restoredTree, currentTreeSignatureRef.current, launchTaxonomyLowMemoryMode, launchTaxonomyAllowDownload);
+          if (!taxonomyPayload) {
+            throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping did not complete.");
+          }
         }
       }
       return true;
@@ -4597,7 +4620,10 @@ export default function App() {
         await restoreApplied;
       }
       if (taxonomyMappingDone) {
-        await taxonomyMappingDone;
+        const taxonomyPayload = await taxonomyMappingDone;
+        if (!taxonomyPayload) {
+          throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping did not complete.");
+        }
       }
     } catch (error) {
       if (restoreApplied) {
@@ -4674,11 +4700,13 @@ export default function App() {
       };
     }
     const mapTaxonomy = readLaunchBoolParam(params, "btv_map_taxonomy");
-    if (mapTaxonomy !== undefined || params.has("btv_taxonomy_low_memory")) {
+    const allowTaxonomyDownload = readLaunchBoolParam(params, "btv_taxonomy_allow_download");
+    if (mapTaxonomy !== undefined || params.has("btv_taxonomy_low_memory") || allowTaxonomyDownload !== undefined) {
       payload.taxonomy = {
         ...payload.taxonomy,
         runMapping: mapTaxonomy ?? payload.taxonomy?.runMapping,
         lowMemoryMode: readLaunchBoolParam(params, "btv_taxonomy_low_memory") ?? payload.taxonomy?.lowMemoryMode,
+        allowDownload: allowTaxonomyDownload ?? payload.taxonomy?.allowDownload,
       };
     }
     const newick = readLaunchTextParam(params, "btv_newick", "btv_newick_b64");
@@ -4862,14 +4890,14 @@ export default function App() {
     window.opener?.postMessage(readyMessage, "*");
     window.parent !== window && window.parent.postMessage(readyMessage, "*");
     const handleMessage = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload | BigTreeViewerLaunchPayload["export"] | { lowMemoryMode?: boolean } } | null;
+      const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload | BigTreeViewerLaunchPayload["export"] | { lowMemoryMode?: boolean; allowDownload?: boolean } } | null;
       if (!data || typeof data !== "object") {
         return;
       }
       if (data.type === "big-tree-viewer:map-taxonomy") {
         const replyOrigin = event.origin || "*";
         const request = data.payload && typeof data.payload === "object"
-          ? data.payload as { lowMemoryMode?: boolean }
+          ? data.payload as { lowMemoryMode?: boolean; allowDownload?: boolean }
           : {};
         if (!tree) {
           (event.source as Window | null)?.postMessage(
@@ -4878,12 +4906,12 @@ export default function App() {
           );
           return;
         }
-        void runStandardTaxonomyMappingForTree(tree, treeSignature, request.lowMemoryMode ?? useLowMemoryTaxonomyMapping)
+        void runStandardTaxonomyMappingForTree(tree, treeSignature, request.lowMemoryMode ?? useLowMemoryTaxonomyMapping, request.allowDownload === true)
           .then((taxonomyMap) => {
             (event.source as Window | null)?.postMessage(
               taxonomyMap
                 ? { type: "big-tree-viewer:taxonomy-mapped", version: 1, taxonomy: { map: taxonomyMap } }
-                : { type: "big-tree-viewer:taxonomy-error", version: 1, message: "Taxonomy mapping did not complete." },
+                : { type: "big-tree-viewer:taxonomy-error", version: 1, message: taxonomyMappingFailureMessageRef.current || "Taxonomy mapping did not complete." },
               replyOrigin,
             );
           });
@@ -5989,9 +6017,16 @@ export default function App() {
                   </p>
                 </>
               ) : (
-                <p className="export-options-help">
-                  SVG is best for smaller or moderately detailed views. For hundreds of thousands of visible branches, PNG is usually the safer print format.
-                </p>
+                <>
+                  {tree.leafCount >= SVG_LARGE_TREE_TIP_WARNING_THRESHOLD ? (
+                    <p className="export-options-help export-options-warning">
+                      This tree has {tree.leafCount.toLocaleString()} tips. SVG can be extremely slow or unusable for huge trees because every visible branch becomes vector geometry. PNG is usually the safer format.
+                    </p>
+                  ) : null}
+                  <p className="export-options-help">
+                    SVG is best for smaller or moderately detailed views. For hundreds of thousands of visible branches, PNG is usually the safer print format.
+                  </p>
+                </>
               )}
               <div className="button-row">
                 <button type="button" onClick={exportCurrentView}>

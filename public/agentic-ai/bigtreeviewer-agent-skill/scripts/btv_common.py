@@ -66,7 +66,8 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--genus-labels", type=parse_bool, help="Show genus labels: true or false.")
     parser.add_argument("--taxonomy", type=parse_bool, help="Show taxonomy overlays when the payload contains taxonomy.")
     parser.add_argument("--taxonomy-branch-colors", type=parse_bool, help="Color branches using taxonomy mapping.")
-    parser.add_argument("--map-taxonomy", action="store_true", help="Run Big Tree Viewer's standard NCBI taxonomy mapper after loading the tree.")
+    parser.add_argument("--map-taxonomy", action="store_true", help="Run Big Tree Viewer's standard NCBI taxonomy mapper after loading the tree using an already cached taxonomy archive.")
+    parser.add_argument("--allow-taxonomy-download", action="store_true", help="Allow Big Tree Viewer to download the NCBI taxdump archive if --map-taxonomy is enabled and no cached archive is available.")
     parser.add_argument("--taxonomy-low-memory", action="store_true", help="Use low-memory mode when --map-taxonomy is enabled.")
     parser.add_argument("--time-stripes", type=parse_bool, help="Show time stripes: true or false.")
     parser.add_argument("--scale-bars", type=parse_bool, help="Show scale bars: true or false.")
@@ -123,6 +124,8 @@ def load_payload(args: argparse.Namespace) -> dict[str, Any]:
     if args.map_taxonomy:
         taxonomy = dict(payload.get("taxonomy") or {})
         taxonomy["runMapping"] = True
+        if args.allow_taxonomy_download:
+            taxonomy["allowDownload"] = True
         if args.taxonomy_low_memory:
             taxonomy["lowMemoryMode"] = True
         payload["taxonomy"] = taxonomy

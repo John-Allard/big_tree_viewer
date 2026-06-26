@@ -102,6 +102,13 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             `btv_export_delivery=postMessage` to receive the rendered SVG text
             or PNG data URL programmatically.
           </p>
+          <p>
+            PNG defaults are browser-window-scale: 1600 x 1000 pixels for
+            rectangular views and 1200 x 1200 pixels for circular or spiral
+            views. SVG is useful for smaller or moderately detailed vector
+            figures, but for huge trees PNG is usually safer because SVG output
+            can contain an enormous number of vector elements.
+          </p>
           <pre><code>{exportSvg}</code></pre>
           <pre><code>{`viewer.postMessage({
   type: "big-tree-viewer:load",
@@ -126,6 +133,8 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_genus_labels</dt><dd>`true` or `false`.</dd></div>
             <div><dt>btv_taxonomy</dt><dd>Show taxonomy overlays if taxonomy is loaded in the payload.</dd></div>
             <div><dt>btv_taxonomy_branch_colors</dt><dd>Color branches from taxonomy mapping.</dd></div>
+            <div><dt>btv_map_taxonomy</dt><dd>Run standard taxonomy mapping after launch using a cached NCBI taxdump archive.</dd></div>
+            <div><dt>btv_taxonomy_allow_download</dt><dd>`true` explicitly allows launch/API taxonomy mapping to download the NCBI taxdump archive if no cached archive is available.</dd></div>
             <div><dt>btv_palette</dt><dd>Taxonomy color palette key.</dd></div>
             <div><dt>btv_branch_thickness</dt><dd>Branch thickness scale, for example `1.5`.</dd></div>
             <div><dt>btv_time_axis</dt><dd>`linear` or `log`.</dd></div>
