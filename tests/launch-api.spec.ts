@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { strToU8, zipSync } from "fflate";
 
 function toBase64Url(value: string): string {
   return Buffer.from(value, "utf8")
@@ -12,6 +13,44 @@ async function waitForLoadedTree(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
     return Boolean(state?.treeLoaded) && !Boolean(state?.loading);
+  });
+}
+
+async function routeTinyTaxdump(page: Page): Promise<void> {
+  const nodes = [
+    "1\t|\t1\t|\tno rank\t|",
+    "2\t|\t1\t|\tsuperkingdom\t|",
+    "3\t|\t2\t|\tphylum\t|",
+    "4\t|\t3\t|\tclass\t|",
+    "5\t|\t4\t|\torder\t|",
+    "6\t|\t5\t|\tfamily\t|",
+    "7\t|\t6\t|\tgenus\t|",
+    "8\t|\t7\t|\tspecies\t|",
+    "9\t|\t6\t|\tgenus\t|",
+    "10\t|\t9\t|\tspecies\t|",
+  ].join("\n");
+  const names = [
+    "1\t|\troot\t|\t\t|\tscientific name\t|",
+    "2\t|\tTestkingdom\t|\t\t|\tscientific name\t|",
+    "3\t|\tTestphylum\t|\t\t|\tscientific name\t|",
+    "4\t|\tTestclass\t|\t\t|\tscientific name\t|",
+    "5\t|\tTestorder\t|\t\t|\tscientific name\t|",
+    "6\t|\tTestaceae\t|\t\t|\tscientific name\t|",
+    "7\t|\tA\t|\t\t|\tscientific name\t|",
+    "8\t|\tA species\t|\t\t|\tscientific name\t|",
+    "9\t|\tB\t|\t\t|\tscientific name\t|",
+    "10\t|\tB species\t|\t\t|\tscientific name\t|",
+  ].join("\n");
+  const archive = Buffer.from(zipSync({
+    "nodes.dmp": strToU8(`${nodes}\n`),
+    "names.dmp": strToU8(`${names}\n`),
+  }));
+  await page.route("https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/zip",
+      body: archive,
+    });
   });
 }
 
@@ -206,6 +245,49 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
   expect(state?.loadError).toBeNull();
 });
 
+test("remote session URL launch can run standard taxonomy mapping", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  const session = {
+    format: "big-tree-viewer-session",
+    version: 1,
+    savedAt: "2026-06-25T00:00:00.000Z",
+    settings: sessionSettings({
+      viewMode: "circular",
+      taxonomyEnabled: true,
+    }),
+    tree: {
+      label: "remote-session-taxonomy-tree",
+      newick: "(A_species:1,B_species:1)Root;",
+      signature: null,
+    },
+    taxonomy: null,
+    canvas: null,
+  };
+  await page.route("**/remote-taxonomy-session.btvsession", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(session),
+    });
+  });
+
+  const params = new URLSearchParams({
+    btv_session_url: "/remote-taxonomy-session.btvsession",
+    btv_map_taxonomy: "true",
+  });
+  await page.goto(`/?${params.toString()}`);
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+
+  const result = await page.evaluate(() => ({
+    state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+    taxonomy: window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null,
+  }));
+  expect(result.state?.taxonomyEnabled).toBe(true);
+  expect(result.state?.taxonomyMappedCount).toBe(2);
+  expect(result.taxonomy?.tipRanks[0]?.ranks.family).toBe("Testaceae");
+});
+
 test("desktop-saved remote session viewport is reframed on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const session = {
@@ -287,7 +369,7 @@ test("desktop-saved remote session viewport is reframed on mobile", async ({ pag
 
 test("URL launch parameters load a tree, metadata, and selected visual options", async ({ page }) => {
   const newick = "((Alpha_one:1,Beta_two:1)CladeOne:1,Gamma_three:2)Root;";
-  const metadata = "name,group,label,marker\nAlpha_one,A,Alpha label,circle\nBeta_two,B,Beta label,square\n";
+  const metadata = "name,group,label,marker,c3,c4\nAlpha_one,A,Alpha label,circle,0.8,0.2\nBeta_two,B,Beta label,square,0.1,0.9\n";
   const params = new URLSearchParams({
     btv_newick_b64: toBase64Url(newick),
     btv_label: "url-launch-tree",
@@ -300,6 +382,11 @@ test("URL launch parameters load a tree, metadata, and selected visual options",
     btv_metadata_label_column: "label",
     btv_metadata_markers: "true",
     btv_metadata_marker_column: "marker",
+    btv_metadata_pies: "true",
+    btv_metadata_pie_start: "c3",
+    btv_metadata_pie_end: "c4",
+    btv_metadata_pie_palette: "warm",
+    btv_metadata_pie_size: "17",
     btv_view: "circular",
     btv_tip_labels: "false",
     btv_genus_labels: "true",
@@ -325,6 +412,11 @@ test("URL launch parameters load a tree, metadata, and selected visual options",
   expect(state?.metadataLabelColumn).toBe("label");
   expect(state?.metadataMarkersEnabled).toBe(true);
   expect(state?.metadataMarkerColumn).toBe("marker");
+  expect(state?.metadataPiesEnabled).toBe(true);
+  expect(state?.metadataPieStartColumn).toBe("c3");
+  expect(state?.metadataPieEndColumn).toBe("c4");
+  expect(state?.metadataPiePalette).toBe("warm");
+  expect(state?.metadataPieSizePx).toBe(17);
   expect(state?.metadataMatchedRowCount).toBe(2);
 });
 
@@ -397,4 +489,241 @@ test("postMessage launch API can load a payload after opening an empty viewer", 
   expect(state?.timeAxisScale).toBe("log");
   expect(state?.metadataColorMode).toBe("continuous");
   expect(state?.metadataMatchedRowCount).toBe(2);
+});
+
+test("postMessage launch API accepts a taxonomy map payload", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "taxonomy-launch-tree",
+        taxonomy: {
+          map: {
+            version: 1,
+            mappedCount: 2,
+            totalTips: 2,
+            activeRanks: ["genus", "family"],
+            tipRanks: [
+              { node: 1, ranks: { genus: "A", family: "Alphaaceae" } },
+              { node: 2, ranks: { genus: "B", family: "Betaaceae" } },
+            ],
+          },
+        },
+        visual: {
+          viewMode: "circular",
+          taxonomyEnabled: true,
+          taxonomyRankVisibility: { family: true, genus: true },
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
+  expect(state?.viewMode).toBe("circular");
+  expect(state?.taxonomyEnabled).toBe(true);
+  expect(state?.taxonomyMappedCount).toBe(2);
+});
+
+test("postMessage launch API can run the standard taxonomy mapper", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "standard-taxonomy-launch-tree",
+        taxonomy: {
+          runMapping: true,
+        },
+        visual: {
+          viewMode: "circular",
+          taxonomyEnabled: true,
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+
+  const result = await page.evaluate(() => ({
+    state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+    taxonomy: window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null,
+  }));
+  expect(result.state?.taxonomyEnabled).toBe(true);
+  expect(result.state?.taxonomyMappedCount).toBe(2);
+  expect(result.taxonomy?.tipRanks[0]?.ranks.family).toBe("Testaceae");
+});
+
+test("postMessage API can map taxonomy for the current loaded tree", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvTaxonomyMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvTaxonomyMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:taxonomy-mapped" || event.data?.type === "big-tree-viewer:taxonomy-error") {
+        testWindow.__btvTaxonomyMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "standard-taxonomy-message-tree",
+      },
+    }, "*");
+  });
+  await waitForLoadedTree(page);
+
+  await page.evaluate(() => {
+    window.postMessage({ type: "big-tree-viewer:map-taxonomy", payload: {} }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvTaxonomyMessages?: Array<Record<string, unknown>>;
+    }).__btvTaxonomyMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvTaxonomyMessages?: Array<Record<string, unknown>>;
+    }).__btvTaxonomyMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:taxonomy-mapped");
+  expect((message.taxonomy as { map?: { mappedCount?: number } })?.map?.mappedCount).toBe(2);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+});
+
+test("postMessage API can export the current view after load", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvExportMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:exported" || event.data?.type === "big-tree-viewer:export-error") {
+        testWindow.__btvExportMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "export-current-view-tree",
+        visual: {
+          viewMode: "rectangular",
+          showTipLabels: false,
+        },
+      },
+    }, "*");
+  });
+  await waitForLoadedTree(page);
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:export",
+      payload: {
+        format: "svg",
+        delivery: "postMessage",
+        filename: "current-view.svg",
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:exported");
+  expect(message.ok).toBe(true);
+  expect(message.format).toBe("svg");
+  expect(String(message.text)).toContain("<svg");
+});
+
+test("postMessage PNG export can preserve viewport styling at higher pixel density", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvExportMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:exported" || event.data?.type === "big-tree-viewer:export-error") {
+        testWindow.__btvExportMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "export-viewport-density-tree",
+        visual: {
+          viewMode: "circular",
+          showTipLabels: false,
+        },
+      },
+    }, "*");
+  });
+  await waitForLoadedTree(page);
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:export",
+      payload: {
+        format: "png",
+        delivery: "postMessage",
+        filename: "current-view.png",
+        width: 640,
+        height: 640,
+        viewportWidth: 320,
+        viewportHeight: 320,
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:exported");
+  expect(message.ok).toBe(true);
+  expect(message.format).toBe("png");
+  expect(message.width).toBe(640);
+  expect(message.height).toBe(640);
+  expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
 });

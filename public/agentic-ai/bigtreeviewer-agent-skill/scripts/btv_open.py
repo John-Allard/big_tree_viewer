@@ -18,6 +18,8 @@ def main() -> None:
     parser.add_argument("--export-filename", help="Suggested filename for --download-export.")
     parser.add_argument("--width", type=int, default=2400, help="PNG download width when using --download-export png.")
     parser.add_argument("--height", type=int, default=2400, help="PNG download height when using --download-export png.")
+    parser.add_argument("--export-viewport-width", type=int, help="CSS-pixel viewport width to use while rendering a PNG export.")
+    parser.add_argument("--export-viewport-height", type=int, help="CSS-pixel viewport height to use while rendering a PNG export.")
     parser.add_argument("--print-url", action="store_true", help="Print the opened URL or launcher path.")
     args = parser.parse_args()
 
@@ -37,6 +39,8 @@ def main() -> None:
             "filename": args.export_filename,
             "width": args.width,
             "height": args.height,
+            "viewportWidth": args.export_viewport_width,
+            "viewportHeight": args.export_viewport_height,
         }
     launcher = write_launcher_html(payload, args.btv_url)
     url = launcher.as_uri()

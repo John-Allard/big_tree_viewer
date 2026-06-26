@@ -140,12 +140,19 @@ type BigTreeViewerLaunchPayload = {
   session?: BigTreeViewerSessionFile;
   sessionUrl?: string;
   label?: string;
+  taxonomy?: {
+    map?: TaxonomyMapPayload | null;
+    runMapping?: boolean;
+    lowMemoryMode?: boolean;
+  };
   export?: {
     format?: AutomationExportFormat;
     delivery?: AutomationExportDelivery;
     filename?: string;
     width?: number;
     height?: number;
+    viewportWidth?: number;
+    viewportHeight?: number;
   };
   controls?: {
     hideDownloadNewick?: boolean;
@@ -166,6 +173,12 @@ type BigTreeViewerLaunchPayload = {
     labelColumn?: string;
     markersEnabled?: boolean;
     markerColumn?: string;
+    piesEnabled?: boolean;
+    pieStartColumn?: string;
+    pieEndColumn?: string;
+    piePalette?: MetadataPiePalette;
+    pieColorOverrides?: Record<string, string>;
+    pieSizePx?: number;
     reverseScale?: boolean;
     continuousPalette?: MetadataContinuousPalette;
     continuousTransform?: MetadataContinuousTransform;
@@ -187,6 +200,8 @@ type NormalizedLaunchExport = {
   filename?: string;
   width?: number;
   height?: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
 };
 
 type BigTreeViewerSessionSettings = {
@@ -570,6 +585,8 @@ function normalizeLaunchExport(raw: BigTreeViewerLaunchPayload["export"] | undef
     filename: typeof raw.filename === "string" && raw.filename.trim() ? raw.filename.trim() : undefined,
     width: typeof raw.width === "number" && Number.isFinite(raw.width) ? raw.width : undefined,
     height: typeof raw.height === "number" && Number.isFinite(raw.height) ? raw.height : undefined,
+    viewportWidth: typeof raw.viewportWidth === "number" && Number.isFinite(raw.viewportWidth) ? raw.viewportWidth : undefined,
+    viewportHeight: typeof raw.viewportHeight === "number" && Number.isFinite(raw.viewportHeight) ? raw.viewportHeight : undefined,
   };
 }
 
@@ -656,6 +673,20 @@ function normalizeLaunchSession(raw: unknown): BigTreeViewerSessionFile | null {
   return session as BigTreeViewerSessionFile;
 }
 
+function normalizeLaunchTaxonomyMap(raw: unknown): TaxonomyMapPayload | null | undefined {
+  if (raw === null) {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const value = raw as Partial<TaxonomyMapPayload>;
+  if (!Array.isArray(value.tipRanks) || !Array.isArray(value.activeRanks)) {
+    return undefined;
+  }
+  return value as TaxonomyMapPayload;
+}
+
 function readLaunchExportParam(params: URLSearchParams): NormalizedLaunchExport | undefined {
   const rawFormat = params.get("btv_export");
   const format = rawFormat === "png" ? "png" : rawFormat === "svg" ? "svg" : undefined;
@@ -670,6 +701,8 @@ function readLaunchExportParam(params: URLSearchParams): NormalizedLaunchExport 
     filename: params.get("btv_export_filename") ?? undefined,
     width: readLaunchNumberParam(params, "btv_export_width"),
     height: readLaunchNumberParam(params, "btv_export_height"),
+    viewportWidth: readLaunchNumberParam(params, "btv_export_viewport_width"),
+    viewportHeight: readLaunchNumberParam(params, "btv_export_viewport_height"),
   });
 }
 
@@ -1569,6 +1602,10 @@ export default function App() {
   const pendingTreeReplacementTaxonomyEnabledRef = useRef<boolean | null>(null);
   const pendingSessionTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
   const pendingSessionTaxonomyEnabledRef = useRef<boolean | null>(null);
+  const pendingLaunchTaxonomyMappingRef = useRef<{
+    lowMemoryMode: boolean;
+    resolve: (payload: TaxonomyMapPayload | null) => void;
+  } | null>(null);
   const pendingSessionPhyloPicRef = useRef<BigTreeViewerSessionFile["phylopic"] | undefined>(undefined);
   const pendingSessionCanvasStateRef = useRef<TreeCanvasSessionState | null | undefined>(undefined);
   const pendingSessionRestoreResolverRef = useRef<(() => void) | null>(null);
@@ -1582,6 +1619,8 @@ export default function App() {
   const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
+  const currentTreeRef = useRef<TreeModel | null>(null);
+  const currentTreeSignatureRef = useRef<string | null>(null);
   const [loadedTreeLabel, setLoadedTreeLabel] = useState("tree");
   const [loadState, setLoadState] = useState<LoadState>({
     loading: false,
@@ -2471,15 +2510,18 @@ export default function App() {
       : null;
     pendingTreeReplacementTaxonomyRef.current = nextTaxonomyMap;
     pendingTreeReplacementTaxonomyEnabledRef.current = taxonomyEnabled && Boolean(nextTaxonomyMap);
+    const nextSignature = `${treeSignature ?? "tree"}:reroot:${mode}:${node}:${Date.now()}`;
+    currentTreeRef.current = nextTree;
+    currentTreeSignatureRef.current = nextSignature;
     setTree(nextTree);
-    setTreeSignature((current) => `${current ?? "tree"}:reroot:${mode}:${node}:${Date.now()}`);
+    setTreeSignature(nextSignature);
     setLoadedTreeLabel((current) => (current.includes("(rerooted)") ? current : `${current} (rerooted)`));
     setLoadState({
       loading: false,
       message: `Tree rerooted on the ${mode}.`,
       error: null,
     });
-  }, [taxonomyEnabled, taxonomyMap, tree]);
+  }, [taxonomyEnabled, taxonomyMap, tree, treeSignature]);
 
   useEffect(() => {
     if (taxonomyEnabled && showGenusLabels) {
@@ -3150,8 +3192,11 @@ export default function App() {
       return;
     }
     const nextTree = buildTreeModel(data.payload);
+    const nextSignature = pendingTreeSignatureRef.current;
+    currentTreeRef.current = nextTree;
+    currentTreeSignatureRef.current = nextSignature;
     setTree(nextTree);
-    setTreeSignature(pendingTreeSignatureRef.current);
+    setTreeSignature(nextSignature);
     setLoadedTreeLabel(pendingTreeLabelRef.current || "tree");
     pendingTreeSignatureRef.current = null;
     pendingTreeLabelRef.current = "";
@@ -3317,6 +3362,103 @@ export default function App() {
     };
   }, []);
 
+  const ensureTaxonomyArchive = useCallback(async (): Promise<Blob | ArrayBuffer> => {
+    setTaxonomyLoading(true);
+    setTaxonomyError(null);
+    setTaxonomyStatus("Checking local taxonomy cache...");
+    appendDiagnostic("taxonomy-download-started", {
+      treeLoaded: tree !== null,
+    });
+    const cached = await getCachedTaxonomyArchive();
+    if (cached) {
+      setTaxonomyCached(true);
+      setTaxonomyStatus("Taxonomy cache found.");
+      appendDiagnostic("taxonomy-download-skipped-cache-found", {});
+      return cached;
+    }
+    setTaxonomyStatus("Preparing taxonomy download...");
+    setTaxonomyStatus("Downloading NCBI taxonomy...");
+    const response = await fetch(TAXONOMY_ARCHIVE_URL);
+    if (!response.ok) {
+      throw new Error(`Taxonomy download failed with HTTP ${response.status}.`);
+    }
+    const archive = await response.blob();
+    const cacheMode = await putCachedTaxonomyArchive(archive);
+    setTaxonomyCached(true);
+    setTaxonomyStatus(
+      cacheMode === "persistent"
+        ? "Taxonomy download cached locally."
+        : "Taxonomy download available for this session. Safari could not persist the archive locally.",
+    );
+    appendDiagnostic("taxonomy-download-completed", {
+      cacheMode,
+      sizeBytes: archive.size,
+    });
+    return archive;
+  }, [appendDiagnostic, tree]);
+
+  const runStandardTaxonomyMappingForTree = useCallback(async (
+    targetTree: TreeModel,
+    targetTreeSignature: string | null,
+    lowMemoryMode: boolean,
+  ): Promise<TaxonomyMapPayload | null> => {
+    setTaxonomyLoading(true);
+    setTaxonomyError(null);
+    setTaxonomyStatus("Loading taxonomy cache...");
+    appendDiagnostic("taxonomy-mapping-started", {
+      tipCount: targetTree.leafCount,
+      treeSignature: targetTreeSignature,
+      lowMemoryMode,
+    });
+    try {
+      const archive = await ensureTaxonomyArchive();
+      setTaxonomyStatus("Mapping tree tips to NCBI taxonomy...");
+      const tips = Array.from(targetTree.leafNodes)
+        .sort((left, right) => targetTree.layouts.input.center[left] - targetTree.layouts.input.center[right])
+        .map((node) => ({
+          node,
+          name: targetTree.names[node] || "",
+        }));
+      const response = await runTaxonomyWorker({
+        type: "map-taxonomy",
+        archive,
+        tips,
+        lowMemoryMode,
+      });
+      if (response.type !== "taxonomy-mapped" || !response.payload) {
+        throw new Error(response.message || "Taxonomy mapping did not complete.");
+      }
+      if (targetTreeSignature && !lowMemoryMode) {
+        await putCachedTaxonomyMapping(targetTreeSignature, response.payload);
+      }
+      setTaxonomyMap(response.payload);
+      setTaxonomyEnabled(true);
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(targetTree, response.payload));
+      setTaxonomyStatus(
+        lowMemoryMode
+          ? `Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips in low-memory mobile mode.`
+          : `Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips.`,
+      );
+      appendDiagnostic("taxonomy-mapping-completed", {
+        mappedCount: response.payload.mappedCount,
+        totalTips: response.payload.totalTips,
+        activeRanks: response.payload.activeRanks,
+        lowMemoryMode,
+      });
+      return response.payload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTaxonomyError(message);
+      setTaxonomyMappingWarning("");
+      appendDiagnostic("taxonomy-mapping-failed", {
+        message,
+      });
+      return null;
+    } finally {
+      setTaxonomyLoading(false);
+    }
+  }, [appendDiagnostic, ensureTaxonomyArchive, runTaxonomyWorker]);
+
   const loadSubtreeFromUrl = useCallback(async (): Promise<boolean> => {
     if (typeof window === "undefined") {
       return false;
@@ -3468,6 +3610,8 @@ export default function App() {
       filename: normalized.filename || defaultFilename,
       width: normalized.width,
       height: normalized.height,
+      viewportWidth: normalized.viewportWidth,
+      viewportHeight: normalized.viewportHeight,
     });
   }, [loadedTreeLabel, viewMode]);
 
@@ -3941,9 +4085,21 @@ export default function App() {
       setTaxonomyMap(null);
       setTaxonomyEnabled(false);
       setTaxonomyMappingWarning("");
+      pendingLaunchTaxonomyMappingRef.current?.resolve(null);
+      pendingLaunchTaxonomyMappingRef.current = null;
       return;
     }
     setFitRequest((value) => value + 1);
+    const runPendingLaunchTaxonomyMapping = (): boolean => {
+      const pending = pendingLaunchTaxonomyMappingRef.current;
+      if (!pending) {
+        return false;
+      }
+      pendingLaunchTaxonomyMappingRef.current = null;
+      void runStandardTaxonomyMappingForTree(tree, treeSignature, pending.lowMemoryMode)
+        .then((payload) => pending.resolve(payload));
+      return true;
+    };
     if (pendingTreeReplacementTaxonomyRef.current !== undefined) {
       const replacementTaxonomy = pendingTreeReplacementTaxonomyRef.current;
       const replacementEnabled = pendingTreeReplacementTaxonomyEnabledRef.current;
@@ -3980,6 +4136,10 @@ export default function App() {
         pendingSessionRestoreResolverRef.current = null;
         resolveSessionRestore();
       }
+      runPendingLaunchTaxonomyMapping();
+      return;
+    }
+    if (runPendingLaunchTaxonomyMapping()) {
       return;
     }
     const inheritedSubtreeTaxonomy = pendingSharedSubtreeTaxonomyRef.current;
@@ -4018,7 +4178,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [tree, treeSignature]);
+  }, [runStandardTaxonomyMappingForTree, tree, treeSignature]);
 
   const clearMetadata = useCallback((): void => {
     setMetadataTable(null);
@@ -4133,6 +4293,8 @@ export default function App() {
       const restoreApplied = new Promise<void>((resolve) => {
         pendingSessionRestoreResolverRef.current = resolve;
       });
+      currentTreeRef.current = null;
+      currentTreeSignatureRef.current = null;
       setTree(null);
       setTreeSignature(null);
       try {
@@ -4275,6 +4437,29 @@ export default function App() {
     if (metadata.markerColumn) {
       setMetadataMarkerColumn(metadata.markerColumn);
     }
+    if (typeof metadata.piesEnabled === "boolean") {
+      setMetadataPiesEnabled(metadata.piesEnabled);
+    }
+    if (metadata.pieStartColumn) {
+      setMetadataPieStartColumn(metadata.pieStartColumn);
+    }
+    if (metadata.pieEndColumn) {
+      setMetadataPieEndColumn(metadata.pieEndColumn);
+    }
+    if (
+      metadata.piePalette === "categorical"
+      || metadata.piePalette === "viridis"
+      || metadata.piePalette === "warm"
+    ) {
+      setMetadataPiePalette(metadata.piePalette);
+    }
+    const pieColorOverrides = cleanColorRecord(metadata.pieColorOverrides);
+    if (pieColorOverrides) {
+      setMetadataPieColorOverrides(pieColorOverrides);
+    }
+    if (typeof metadata.pieSizePx === "number" && Number.isFinite(metadata.pieSizePx)) {
+      setMetadataPieSizePx(clampMetadataGlyphSizePercent(metadata.pieSizePx));
+    }
     if (typeof metadata.reverseScale === "boolean") {
       setMetadataReverseScale(metadata.reverseScale);
     }
@@ -4330,6 +4515,21 @@ export default function App() {
     } else {
       setHideDownloadNewick(false);
     }
+    const launchTaxonomyMap = normalizeLaunchTaxonomyMap(payload.taxonomy?.map);
+    const launchTaxonomyProvided = launchTaxonomyMap !== undefined;
+    const launchTaxonomyRunMapping = payload.taxonomy?.runMapping === true;
+    const launchTaxonomyLowMemoryMode = payload.taxonomy?.lowMemoryMode ?? useLowMemoryTaxonomyMapping;
+    const waitForLaunchTaxonomyMapping = (): Promise<TaxonomyMapPayload | null> | null => {
+      if (!launchTaxonomyRunMapping) {
+        return null;
+      }
+      return new Promise<TaxonomyMapPayload | null>((resolve) => {
+        pendingLaunchTaxonomyMappingRef.current = {
+          lowMemoryMode: launchTaxonomyLowMemoryMode,
+          resolve,
+        };
+      });
+    };
     const launchSession = normalizeLaunchSession(payload.session);
     const sessionUrl = typeof payload.sessionUrl === "string" && payload.sessionUrl.trim() ? payload.sessionUrl.trim() : "";
     if (launchSession || sessionUrl) {
@@ -4340,6 +4540,15 @@ export default function App() {
       }
       await applyLaunchMetadata(payload.metadata);
       applyLaunchVisualSettings(payload.visual);
+      if (launchTaxonomyProvided) {
+        setTaxonomyMap(launchTaxonomyMap ?? null);
+        setTaxonomyEnabled(launchTaxonomyMap ? payload.visual?.taxonomyEnabled ?? true : false);
+        setTaxonomyStatus(launchTaxonomyMap
+          ? `Loaded taxonomy mapping from launch payload (${launchTaxonomyMap.mappedCount.toLocaleString()} mapped tips).`
+          : "");
+        setTaxonomyError(null);
+        setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, launchTaxonomyMap ?? null));
+      }
       const canvas = normalizeLaunchCanvasState(payload.canvas);
       if (canvas !== undefined) {
         await new Promise<void>((resolve) => {
@@ -4347,6 +4556,12 @@ export default function App() {
           setSessionRestoreState(canvas);
           setSessionRestoreRequest((value) => value + 1);
         });
+      }
+      if (launchTaxonomyRunMapping) {
+        const restoredTree = currentTreeRef.current;
+        if (restoredTree) {
+          await runStandardTaxonomyMappingForTree(restoredTree, currentTreeSignatureRef.current, launchTaxonomyLowMemoryMode);
+        }
       }
       return true;
     }
@@ -4365,8 +4580,13 @@ export default function App() {
         ? launchLabelFromUrl(payload.newickUrl.trim(), "remote Newick")
         : sourceLabel);
     const canvas = normalizeLaunchCanvasState(payload.canvas);
-    const restoreApplied = canvas !== undefined
+    const taxonomyMappingDone = waitForLaunchTaxonomyMapping();
+    const restoreApplied = canvas !== undefined || (launchTaxonomyProvided && !launchTaxonomyRunMapping)
       ? new Promise<void>((resolve) => {
+          if (launchTaxonomyProvided && !launchTaxonomyRunMapping) {
+            pendingSessionTaxonomyRef.current = launchTaxonomyMap ?? null;
+            pendingSessionTaxonomyEnabledRef.current = launchTaxonomyMap ? payload.visual?.taxonomyEnabled ?? true : false;
+          }
           pendingSessionCanvasStateRef.current = canvas;
           pendingSessionRestoreResolverRef.current = resolve;
         })
@@ -4376,15 +4596,22 @@ export default function App() {
       if (restoreApplied) {
         await restoreApplied;
       }
+      if (taxonomyMappingDone) {
+        await taxonomyMappingDone;
+      }
     } catch (error) {
       if (restoreApplied) {
         pendingSessionCanvasStateRef.current = undefined;
         pendingSessionRestoreResolverRef.current = null;
       }
+      if (taxonomyMappingDone) {
+        pendingLaunchTaxonomyMappingRef.current?.resolve(null);
+        pendingLaunchTaxonomyMappingRef.current = null;
+      }
       throw error;
     }
     return true;
-  }, [applyLaunchMetadata, applyLaunchVisualSettings, loadFullSessionFromObject, parseText]);
+  }, [applyLaunchMetadata, applyLaunchVisualSettings, loadFullSessionFromObject, parseText, runStandardTaxonomyMappingForTree, useLowMemoryTaxonomyMapping]);
 
   const readLaunchPayloadFromUrl = useCallback((): {
     payload: BigTreeViewerLaunchPayload | null;
@@ -4421,6 +4648,22 @@ export default function App() {
     } else {
       delete payload.session;
     }
+    if (payload.taxonomy && typeof payload.taxonomy === "object") {
+      const taxonomyPayload = { ...payload.taxonomy };
+      if ("map" in taxonomyPayload) {
+        const taxonomyMap = normalizeLaunchTaxonomyMap(taxonomyPayload.map);
+        if (taxonomyMap !== undefined) {
+          taxonomyPayload.map = taxonomyMap;
+        } else {
+          delete taxonomyPayload.map;
+        }
+      }
+      if (taxonomyPayload.runMapping === true || taxonomyPayload.map !== undefined) {
+        payload.taxonomy = taxonomyPayload;
+      } else {
+        delete payload.taxonomy;
+      }
+    }
     if (sessionUrl) {
       payload.sessionUrl = sessionUrl;
     }
@@ -4428,6 +4671,14 @@ export default function App() {
       payload.controls = {
         ...payload.controls,
         hideDownloadNewick: true,
+      };
+    }
+    const mapTaxonomy = readLaunchBoolParam(params, "btv_map_taxonomy");
+    if (mapTaxonomy !== undefined || params.has("btv_taxonomy_low_memory")) {
+      payload.taxonomy = {
+        ...payload.taxonomy,
+        runMapping: mapTaxonomy ?? payload.taxonomy?.runMapping,
+        lowMemoryMode: readLaunchBoolParam(params, "btv_taxonomy_low_memory") ?? payload.taxonomy?.lowMemoryMode,
       };
     }
     const newick = readLaunchTextParam(params, "btv_newick", "btv_newick_b64");
@@ -4508,9 +4759,15 @@ export default function App() {
       || params.has("btv_metadata_labels")
       || params.has("btv_metadata_label_column")
       || params.has("btv_metadata_markers")
-      || params.has("btv_metadata_marker_column"),
+      || params.has("btv_metadata_marker_column")
+      || params.has("btv_metadata_pies")
+      || params.has("btv_metadata_pie_start")
+      || params.has("btv_metadata_pie_end")
+      || params.has("btv_metadata_pie_palette")
+      || params.has("btv_metadata_pie_size"),
     );
     if (metadataParamsPresent) {
+      const metadataPiePaletteParam = params.get("btv_metadata_pie_palette");
       payload.metadata = {
         ...payload.metadata,
         text: metadataText ?? payload.metadata?.text,
@@ -4530,10 +4787,17 @@ export default function App() {
         labelColumn: params.get("btv_metadata_label_column") ?? payload.metadata?.labelColumn,
         markersEnabled: readLaunchBoolParam(params, "btv_metadata_markers") ?? payload.metadata?.markersEnabled,
         markerColumn: params.get("btv_metadata_marker_column") ?? payload.metadata?.markerColumn,
+        piesEnabled: readLaunchBoolParam(params, "btv_metadata_pies") ?? payload.metadata?.piesEnabled,
+        pieStartColumn: params.get("btv_metadata_pie_start") ?? payload.metadata?.pieStartColumn,
+        pieEndColumn: params.get("btv_metadata_pie_end") ?? payload.metadata?.pieEndColumn,
+        piePalette: metadataPiePaletteParam === "categorical" || metadataPiePaletteParam === "viridis" || metadataPiePaletteParam === "warm"
+          ? metadataPiePaletteParam
+          : payload.metadata?.piePalette,
+        pieSizePx: readLaunchNumberParam(params, "btv_metadata_pie_size") ?? payload.metadata?.pieSizePx,
       };
     }
     const effectiveHideDownloadNewick = hideDownloadNewick || payload.controls?.hideDownloadNewick === true;
-    const hasPayload = Boolean(payload.newick || payload.newickUrl || payload.session || payload.sessionUrl || payload.metadata?.text || payload.metadata?.url || payload.visual || payload.controls || payload.export);
+    const hasPayload = Boolean(payload.newick || payload.newickUrl || payload.session || payload.sessionUrl || payload.metadata?.text || payload.metadata?.url || payload.taxonomy || payload.visual || payload.controls || payload.export);
     return {
       payload: hasPayload ? payload : null,
       waitForMessage: params.get("btv_api") === "1" || params.get("btv_launch") === "1",
@@ -4551,36 +4815,6 @@ export default function App() {
     void (async () => {
       const launch = readLaunchPayloadFromUrl();
       setHideDownloadNewick(launch.hideDownloadNewick);
-      if (launch.sessionUrl) {
-        try {
-          setLoadState({
-            loading: true,
-            message: "Fetching Big Tree Viewer session...",
-            error: null,
-          });
-          const bytes = await fetchRemoteLaunchBytes(launch.sessionUrl, "session");
-          const session = await parseSessionBytes(bytes);
-          const label = launchLabelFromUrl(launch.sessionUrl, "remote session");
-          if (!await loadFullSessionFromObject(session, label)) {
-            throw new Error("The remote session did not include a tree.");
-          }
-          if (launch.payload?.visual) {
-            applyLaunchVisualSettings(launch.payload.visual);
-          }
-          if (launch.payload?.export) {
-            queueAutomationExport(launch.payload.export);
-          }
-          setSessionStatus(`Loaded session from ${label}.`);
-          return;
-        } catch (error) {
-          setLoadState({
-            loading: false,
-            message: "",
-            error: error instanceof Error ? error.message : String(error),
-          });
-          return;
-        }
-      }
       if (launch.payload) {
         try {
           if (await loadLaunchPayload(launch.payload, "URL launch")) {
@@ -4612,9 +4846,7 @@ export default function App() {
       }
     })();
   }, [
-    applyLaunchVisualSettings,
     loadExample,
-    loadFullSessionFromObject,
     loadLaunchPayload,
     loadSubtreeFromUrl,
     queueAutomationExport,
@@ -4630,8 +4862,44 @@ export default function App() {
     window.opener?.postMessage(readyMessage, "*");
     window.parent !== window && window.parent.postMessage(readyMessage, "*");
     const handleMessage = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload } | null;
-      if (!data || typeof data !== "object" || data.type !== "big-tree-viewer:load") {
+      const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload | BigTreeViewerLaunchPayload["export"] | { lowMemoryMode?: boolean } } | null;
+      if (!data || typeof data !== "object") {
+        return;
+      }
+      if (data.type === "big-tree-viewer:map-taxonomy") {
+        const replyOrigin = event.origin || "*";
+        const request = data.payload && typeof data.payload === "object"
+          ? data.payload as { lowMemoryMode?: boolean }
+          : {};
+        if (!tree) {
+          (event.source as Window | null)?.postMessage(
+            { type: "big-tree-viewer:taxonomy-error", version: 1, message: "No tree is loaded." },
+            replyOrigin,
+          );
+          return;
+        }
+        void runStandardTaxonomyMappingForTree(tree, treeSignature, request.lowMemoryMode ?? useLowMemoryTaxonomyMapping)
+          .then((taxonomyMap) => {
+            (event.source as Window | null)?.postMessage(
+              taxonomyMap
+                ? { type: "big-tree-viewer:taxonomy-mapped", version: 1, taxonomy: { map: taxonomyMap } }
+                : { type: "big-tree-viewer:taxonomy-error", version: 1, message: "Taxonomy mapping did not complete." },
+              replyOrigin,
+            );
+          });
+        return;
+      }
+      if (data.type === "big-tree-viewer:export") {
+        const request = data.payload && typeof data.payload === "object"
+          ? data.payload as BigTreeViewerLaunchPayload["export"]
+          : data as BigTreeViewerLaunchPayload["export"];
+        queueAutomationExport(request, {
+          target: event.source as Window | null,
+          origin: event.origin || "*",
+        });
+        return;
+      }
+      if (data.type !== "big-tree-viewer:load") {
         return;
       }
       const payload = data.payload && typeof data.payload === "object"
@@ -4660,7 +4928,7 @@ export default function App() {
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [loadLaunchPayload, queueAutomationExport]);
+  }, [loadLaunchPayload, queueAutomationExport, runStandardTaxonomyMappingForTree, tree, treeSignature, useLowMemoryTaxonomyMapping]);
 
   const onMetadataFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -4747,38 +5015,8 @@ export default function App() {
   }, [importMetadataText, loadFileAsTreeOrSession, parseText]);
 
   const downloadTaxonomy = useCallback(async (): Promise<void> => {
-    setTaxonomyLoading(true);
-    setTaxonomyError(null);
-    setTaxonomyStatus("Checking local taxonomy cache...");
-    appendDiagnostic("taxonomy-download-started", {
-      treeLoaded: tree !== null,
-    });
     try {
-      const cached = await getCachedTaxonomyArchive();
-      if (cached) {
-        setTaxonomyCached(true);
-        setTaxonomyStatus("Taxonomy cache found.");
-        appendDiagnostic("taxonomy-download-skipped-cache-found", {});
-        return;
-      }
-      setTaxonomyStatus("Preparing taxonomy download...");
-      setTaxonomyStatus("Downloading NCBI taxonomy...");
-      const response = await fetch(TAXONOMY_ARCHIVE_URL);
-      if (!response.ok) {
-        throw new Error(`Taxonomy download failed with HTTP ${response.status}.`);
-      }
-      const archive = await response.blob();
-      const cacheMode = await putCachedTaxonomyArchive(archive);
-      setTaxonomyCached(true);
-      setTaxonomyStatus(
-        cacheMode === "persistent"
-          ? "Taxonomy download cached locally."
-          : "Taxonomy download available for this session. Safari could not persist the archive locally.",
-      );
-      appendDiagnostic("taxonomy-download-completed", {
-        cacheMode,
-        sizeBytes: archive.size,
-      });
+      await ensureTaxonomyArchive();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setTaxonomyError(message);
@@ -4788,68 +5026,14 @@ export default function App() {
     } finally {
       setTaxonomyLoading(false);
     }
-  }, [appendDiagnostic, tree]);
+  }, [appendDiagnostic, ensureTaxonomyArchive]);
 
-  const runTaxonomyMapping = useCallback(async (): Promise<void> => {
+  const runTaxonomyMapping = useCallback(async (): Promise<TaxonomyMapPayload | null> => {
     if (!tree) {
-      return;
+      return null;
     }
-    setTaxonomyLoading(true);
-    setTaxonomyError(null);
-    setTaxonomyStatus("Loading taxonomy cache...");
-    appendDiagnostic("taxonomy-mapping-started", {
-      tipCount: tree.leafCount,
-      treeSignature,
-      lowMemoryMode: useLowMemoryTaxonomyMapping,
-    });
-    try {
-      const archive = await getCachedTaxonomyArchive();
-      if (!archive) {
-        throw new Error("Taxonomy cache not found. Download the taxonomy first.");
-      }
-      const tips = Array.from(tree.leafNodes)
-        .sort((left, right) => tree.layouts.input.center[left] - tree.layouts.input.center[right])
-        .map((node) => ({
-          node,
-          name: tree.names[node] || "",
-        }));
-      const response = await runTaxonomyWorker({
-        type: "map-taxonomy",
-        archive,
-        tips,
-        lowMemoryMode: useLowMemoryTaxonomyMapping,
-      });
-      if (response.type !== "taxonomy-mapped" || !response.payload) {
-        throw new Error(response.message || "Taxonomy mapping did not complete.");
-      }
-      if (treeSignature && !useLowMemoryTaxonomyMapping) {
-        await putCachedTaxonomyMapping(treeSignature, response.payload);
-      }
-      setTaxonomyMap(response.payload);
-      setTaxonomyEnabled(true);
-      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, response.payload));
-      setTaxonomyStatus(
-        useLowMemoryTaxonomyMapping
-          ? `Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips in low-memory mobile mode.`
-          : `Mapped taxonomy for ${response.payload.mappedCount.toLocaleString()} of ${response.payload.totalTips.toLocaleString()} tips.`,
-      );
-      appendDiagnostic("taxonomy-mapping-completed", {
-        mappedCount: response.payload.mappedCount,
-        totalTips: response.payload.totalTips,
-        activeRanks: response.payload.activeRanks,
-        lowMemoryMode: useLowMemoryTaxonomyMapping,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setTaxonomyError(message);
-      setTaxonomyMappingWarning("");
-      appendDiagnostic("taxonomy-mapping-failed", {
-        message,
-      });
-    } finally {
-      setTaxonomyLoading(false);
-    }
-  }, [appendDiagnostic, runTaxonomyWorker, tree, treeSignature, useLowMemoryTaxonomyMapping]);
+    return await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping);
+  }, [runStandardTaxonomyMappingForTree, tree, treeSignature, useLowMemoryTaxonomyMapping]);
 
   const retrievePhyloPicForVisibleTaxa = useCallback(async (): Promise<void> => {
     if (!taxonomyEnabled || !viewTaxonomyMap) {
@@ -5213,6 +5397,11 @@ export default function App() {
         metadataMarkersEnabled,
         metadataMarkerColumn,
         metadataMarkerSizePx,
+        metadataPiesEnabled,
+        metadataPieStartColumn,
+        metadataPieEndColumn,
+        metadataPiePalette,
+        metadataPieSizePx,
         metadataLabelMaxCount,
         metadataLabelMinSpacingPx,
         metadataLabelOffsetXPx,
@@ -5458,6 +5647,11 @@ export default function App() {
     metadataOverlay.coloredNodeCount,
     metadataOverlay.matchedNodeCount,
     metadataOverlay.matchedRowCount,
+    metadataPieEndColumn,
+    metadataPiePalette,
+    metadataPieSizePx,
+    metadataPieStartColumn,
+    metadataPiesEnabled,
     extendRectScaleToTick,
     errorBarCapSizePx,
     errorBarThicknessPx,

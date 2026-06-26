@@ -6108,8 +6108,8 @@ export default function TreeCanvas({
         if (timeStripeStyle === "dashed") {
           ctx.save();
           ctx.setLineDash([6, 6]);
-          for (let index = 0; index < stripeBoundaries.length; index += 1) {
-            const boundary = stripeBoundaries[index];
+          for (let index = 0; index < displayedRectScaleBoundaries.length; index += 1) {
+            const boundary = displayedRectScaleBoundaries[index];
             const x = worldToScreenRect(camera, rectAxisDepthForBoundary(boundary.value), 0).x;
             ctx.strokeStyle = `rgba(148,163,184,${0.22 + (0.5 * boundary.alpha)})`;
             ctx.lineWidth = timeStripeLineWeight;
@@ -8713,8 +8713,8 @@ export default function TreeCanvas({
         if (timeStripeStyle === "dashed") {
           ctx.save();
           ctx.setLineDash([6, 6]);
-          for (let index = 0; index < stripeBoundaries.length; index += 1) {
-            const boundary = stripeBoundaries[index];
+          for (let index = 0; index < displayedCircularScaleBoundaries.length; index += 1) {
+            const boundary = displayedCircularScaleBoundaries[index];
             const radiusPx = circularRadiusForBoundary(boundary.value) * camera.scale;
             ctx.beginPath();
             ctx.strokeStyle = `rgba(148,163,184,${0.22 + (0.5 * boundary.alpha)})`;
@@ -11896,6 +11896,7 @@ export default function TreeCanvas({
 
   const buildCurrentPngBlob = useCallback(async (
     targetPixelSize: { width: number; height: number },
+    viewportCssSize?: { width?: number; height?: number },
   ): Promise<{ blob: Blob; width: number; height: number } | null> => {
     const sourceCamera = cameraRef.current;
     if (!sourceCamera || typeof window === "undefined") {
@@ -11905,14 +11906,32 @@ export default function TreeCanvas({
       width: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.width) ? targetPixelSize.width : size.width))),
       height: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.height) ? targetPixelSize.height : size.height))),
     };
-    const exportScale = Math.max(
-      1,
-      Math.min(
-        safeTargetPixelSize.width / Math.max(1, size.width),
-        safeTargetPixelSize.height / Math.max(1, size.height),
-      ),
-    );
-    const renderSize = {
+    const hasViewportOverride = typeof viewportCssSize?.width === "number"
+      && Number.isFinite(viewportCssSize.width)
+      && typeof viewportCssSize.height === "number"
+      && Number.isFinite(viewportCssSize.height);
+    const safeViewportCssSize = hasViewportOverride
+      ? {
+          width: Math.max(320, Math.min(10000, Math.floor(viewportCssSize.width as number))),
+          height: Math.max(320, Math.min(10000, Math.floor(viewportCssSize.height as number))),
+        }
+      : null;
+    const exportScale = safeViewportCssSize
+      ? Math.max(
+          1,
+          Math.min(
+            safeTargetPixelSize.width / Math.max(1, safeViewportCssSize.width),
+            safeTargetPixelSize.height / Math.max(1, safeViewportCssSize.height),
+          ),
+        )
+      : Math.max(
+          1,
+          Math.min(
+            safeTargetPixelSize.width / Math.max(1, size.width),
+            safeTargetPixelSize.height / Math.max(1, size.height),
+          ),
+        );
+    const renderSize = safeViewportCssSize ?? {
       width: safeTargetPixelSize.width / exportScale,
       height: safeTargetPixelSize.height / exportScale,
     };
@@ -11933,7 +11952,7 @@ export default function TreeCanvas({
     const blob = await new Promise<Blob | null>((resolve) => {
       exportCanvas.toBlob(resolve, "image/png");
     });
-    return blob ? { blob, width: safeTargetPixelSize.width, height: safeTargetPixelSize.height } : null;
+    return blob ? { blob, width: exportCanvas.width, height: exportCanvas.height } : null;
   }, [cameraForRenderSize, draw, size.height, size.width]);
 
   const scheduleDraw = useCallback(() => {
@@ -12511,6 +12530,9 @@ export default function TreeCanvas({
         const result = await buildCurrentPngBlob({
           width: request.width ?? exportPngWidth,
           height: request.height ?? exportPngHeight,
+        }, {
+          width: request.viewportWidth,
+          height: request.viewportHeight,
         });
         if (!result) {
           throw new Error("Unable to build PNG export.");

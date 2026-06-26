@@ -20,6 +20,8 @@ export interface AutomationExportRequest {
   filename: string;
   width?: number;
   height?: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 export interface AutomationExportResult {

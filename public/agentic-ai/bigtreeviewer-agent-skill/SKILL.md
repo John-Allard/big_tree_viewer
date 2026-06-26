@@ -13,6 +13,7 @@ Use this skill when a user asks to open, inspect, style, or render a phylogeneti
 
 - To show an interactive tree or saved session to the user, run `scripts/btv_open.py`.
 - To trigger a browser SVG/PNG download without extra dependencies, run `scripts/btv_open.py --download-export svg` or `--download-export png`.
+- For slide figures, prefer setting PNG `--width`/`--height` to the final on-slide pixel box, or use `--export-viewport-width`/`--export-viewport-height` to preserve slide-scale styling while exporting at higher pixel density.
 - For large local trees, prefer the scripts' postMessage launch path instead of putting Newick directly into a URL.
 
 ## Open an Interactive Viewer
@@ -31,6 +32,7 @@ Useful options:
 ```bash
 python scripts/btv_open.py tree.nwk --view spiral --spiral-turns 6 --time-stripes true
 python scripts/btv_open.py tree.nwk --view rectangular --order input --branch-thickness 1.4
+python scripts/btv_open.py tree.nwk --view circular --taxonomy true --taxonomy-branch-colors true --map-taxonomy
 python scripts/btv_open.py --session-url https://example.org/tree.btvsession
 ```
 
@@ -51,9 +53,15 @@ For advanced settings, pass a JSON launch payload:
 python scripts/btv_open.py tree.nwk --download-export svg --export-filename figure.svg --payload-json settings.json
 ```
 
-The JSON file may include Big Tree Viewer launch API fields such as `newickUrl`, `sessionUrl`, `session`, `visual`, and `metadata`. Command-line options are applied after the JSON payload.
+The JSON file may include Big Tree Viewer launch API fields such as `newickUrl`, `sessionUrl`, `session`, `visual`, `metadata`, `taxonomy`, `canvas`, and `export`. Command-line options are applied after the JSON payload.
 For session-style programmatic styling, put saved setting names in `visual`; Big Tree Viewer accepts the same setting names saved in `.btvsession` files for view mode, time stripes, label classes, taxonomy ribbons, metadata display settings, branch thickness, and PhyloPic placement.
+Use `metadata` for CSV/TSV overlays. Set `enabled`, `keyColumn`, `valueColumn`, `colorMode`, and `applyScope` for metadata branch/subtree coloring; set `labelsEnabled`/`labelColumn`, `markersEnabled`/`markerColumn`, or `piesEnabled` with `pieStartColumn` and `pieEndColumn` for labels, markers, or pie-chart glyphs.
 Use `canvas` when the user needs session-style viewport state, collapsed clades, or manual branch/subtree colors. `canvas` accepts the same shape saved in `.btvsession` files: `camera`, `viewportWidth`, `viewportHeight`, `collapsedNodes`, `manualBranchColors`, and `manualSubtreeColors`.
+For rectangular camera control, use `canvas.camera` with `kind: "rect"`, `scaleX`, `scaleY`, `translateX`, and `translateY`.
+Use `taxonomy.runMapping: true` when an agent needs taxonomy ribbons or taxonomy branch colors. This runs the same NCBI taxonomy mapping code used by the Big Tree Viewer site after the tree has loaded, downloading/caching the NCBI taxdump archive if needed. Agents should prefer this over building their own taxonomy map, because custom external maps can assign BTV node ids or taxonomic lineages incorrectly.
+Use `taxonomy.map` only to provide a precomputed Big Tree Viewer taxonomy map that was produced by Big Tree Viewer or otherwise already matches the loaded tree's BTV node ids.
+Use `export.delivery: "postMessage"` when an agent needs bytes back instead of a browser download. Big Tree Viewer replies with `big-tree-viewer:exported` or `big-tree-viewer:export-error`.
+The helper script exposes common API fields as flags: `--map-taxonomy`, `--taxonomy-low-memory`, `--rect-scale-x`, `--rect-scale-y`, `--rect-translate-x`, and `--rect-translate-y`.
 
 Example `settings.json`:
 
@@ -67,8 +75,78 @@ Example `settings.json`:
     "branchThicknessScale": 1.4
   },
   "canvas": {
+    "camera": {
+      "kind": "rect",
+      "scaleX": 4.2,
+      "scaleY": 1.8,
+      "translateX": 60,
+      "translateY": 120
+    },
     "collapsedNodes": [12],
     "manualSubtreeColors": [[12, "#1f77b4"]]
+  },
+  "taxonomy": {
+    "runMapping": true
+  },
+  "export": {
+    "format": "png",
+    "delivery": "postMessage",
+    "filename": "tree.png",
+    "width": 2400,
+    "height": 1600,
+    "viewportWidth": 1200,
+    "viewportHeight": 800
+  }
+}
+```
+
+## Taxonomy Mapping
+
+To map taxonomy for the current loaded tree without reloading it, send:
+
+```js
+viewer.postMessage({
+  type: "big-tree-viewer:map-taxonomy",
+  payload: {}
+}, "https://bigtreeviewer.net");
+```
+
+Big Tree Viewer replies with `big-tree-viewer:taxonomy-mapped` and includes `taxonomy.map`, or `big-tree-viewer:taxonomy-error` if mapping failed. Use the returned map only with the same loaded tree/node ids.
+For URL launches, `btv_map_taxonomy=true` is equivalent to `taxonomy.runMapping: true` in a payload.
+
+## Current View Export
+
+After a tree has loaded, an agent can request an export of the current view without reloading the tree:
+
+```js
+viewer.postMessage({
+  type: "big-tree-viewer:export",
+  payload: {
+    format: "svg",
+    delivery: "postMessage",
+    filename: "current-view.svg"
+  }
+}, "https://bigtreeviewer.net");
+```
+
+For PNG, include `width` and `height`. The exported message includes SVG text for SVG exports or a PNG data URL for PNG exports.
+For high-density PNGs that should keep the same apparent label, marker, ribbon, and scale styling as a smaller slide view, also include `viewportWidth` and `viewportHeight`. Example: `width: 4200`, `height: 4200`, `viewportWidth: 1200`, `viewportHeight: 1200` renders a 1200 x 1200 CSS-pixel view at 3.5x pixel density instead of making the renderer behave as though the viewport itself were 4200 x 4200.
+
+Useful Poales/C4-style circular settings:
+
+```json
+{
+  "visual": {
+    "order": "asc",
+    "circularRotationDegrees": 0,
+    "useAutoCircularCenterScaleAngle": true,
+    "showCircularCenterRadialScaleBar": false,
+    "metadataMarkerSizePx": 100,
+    "taxonomyRankDisplayModes": { "family": "ribbon", "genus": "ribbon" },
+    "taxonomyRankVisibility": { "family": true, "genus": true },
+    "figureStyles": {
+      "taxonomy": { "sizeScale": 1, "bold": true, "bandThicknessScale": 1.6 }
+    }
   }
 }
 ```

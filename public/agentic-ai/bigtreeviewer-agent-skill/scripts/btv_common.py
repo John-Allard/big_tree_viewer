@@ -66,11 +66,17 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--genus-labels", type=parse_bool, help="Show genus labels: true or false.")
     parser.add_argument("--taxonomy", type=parse_bool, help="Show taxonomy overlays when the payload contains taxonomy.")
     parser.add_argument("--taxonomy-branch-colors", type=parse_bool, help="Color branches using taxonomy mapping.")
+    parser.add_argument("--map-taxonomy", action="store_true", help="Run Big Tree Viewer's standard NCBI taxonomy mapper after loading the tree.")
+    parser.add_argument("--taxonomy-low-memory", action="store_true", help="Use low-memory mode when --map-taxonomy is enabled.")
     parser.add_argument("--time-stripes", type=parse_bool, help="Show time stripes: true or false.")
     parser.add_argument("--scale-bars", type=parse_bool, help="Show scale bars: true or false.")
     parser.add_argument("--branch-thickness", type=float, help="Branch thickness scale.")
     parser.add_argument("--rotation", type=float, help="Circular rotation in degrees.")
     parser.add_argument("--spiral-turns", type=float, help="Number of spiral turns.")
+    parser.add_argument("--rect-scale-x", type=float, help="Rectangular camera x scale. Use with the other --rect-* camera options.")
+    parser.add_argument("--rect-scale-y", type=float, help="Rectangular camera y scale. Use with the other --rect-* camera options.")
+    parser.add_argument("--rect-translate-x", type=float, help="Rectangular camera x translation in screen pixels. Use with the other --rect-* camera options.")
+    parser.add_argument("--rect-translate-y", type=float, help="Rectangular camera y translation in screen pixels. Use with the other --rect-* camera options.")
 
 
 def load_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -114,6 +120,25 @@ def load_payload(args: argparse.Namespace) -> dict[str, Any]:
             visual[payload_name] = value
     if visual:
         payload["visual"] = visual
+    if args.map_taxonomy:
+        taxonomy = dict(payload.get("taxonomy") or {})
+        taxonomy["runMapping"] = True
+        if args.taxonomy_low_memory:
+            taxonomy["lowMemoryMode"] = True
+        payload["taxonomy"] = taxonomy
+    rect_camera_values = {
+        "scaleX": args.rect_scale_x,
+        "scaleY": args.rect_scale_y,
+        "translateX": args.rect_translate_x,
+        "translateY": args.rect_translate_y,
+    }
+    provided_rect_camera_values = {key: value for key, value in rect_camera_values.items() if value is not None}
+    if provided_rect_camera_values:
+        if len(provided_rect_camera_values) != len(rect_camera_values):
+            raise SystemExit("Use all rectangular camera options together: --rect-scale-x, --rect-scale-y, --rect-translate-x, and --rect-translate-y.")
+        canvas = dict(payload.get("canvas") or {})
+        canvas["camera"] = {"kind": "rect", **provided_rect_camera_values}
+        payload["canvas"] = canvas
     if not any(key in payload for key in ("newick", "newickUrl", "session", "sessionUrl")):
         raise SystemExit("Provide a local tree/session file or --payload-json with newick/newickUrl/session/sessionUrl.")
     return payload
