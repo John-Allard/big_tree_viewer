@@ -810,3 +810,153 @@ test("postMessage PNG export can preserve viewport styling at higher pixel densi
   expect(message.height).toBe(640);
   expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
 });
+
+test("postMessage circular PNG export coerces non-square dimensions to square", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvExportMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:exported" || event.data?.type === "big-tree-viewer:export-error") {
+        testWindow.__btvExportMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "export-square-circular-tree",
+        taxonomy: {
+          map: {
+            version: 1,
+            mappedCount: 2,
+            totalTips: 2,
+            activeRanks: ["genus", "family"],
+            tipRanks: [
+              { node: 1, ranks: { genus: "A", family: "Alphaaceae" } },
+              { node: 2, ranks: { genus: "B", family: "Betaaceae" } },
+            ],
+          },
+        },
+        visual: {
+          viewMode: "circular",
+          showTipLabels: false,
+          taxonomyEnabled: true,
+          taxonomyRankVisibility: { family: true, genus: true },
+          taxonomyRankDisplayModes: { family: "label-only", genus: "label-only" },
+        },
+      },
+    }, "*");
+  });
+  await waitForLoadedTree(page);
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:export",
+      payload: {
+        format: "png",
+        delivery: "postMessage",
+        filename: "current-view.png",
+        width: 900,
+        height: 500,
+        viewportWidth: 450,
+        viewportHeight: 250,
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:exported");
+  expect(message.ok).toBe(true);
+  expect(message.format).toBe("png");
+  expect(message.width).toBe(900);
+  expect(message.height).toBe(900);
+  expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
+});
+
+test("family label-only circular fit reserves the two-rank taxonomy envelope", async ({ page }) => {
+  const tipCount = 96;
+  const newick = `(${Array.from({ length: tipCount }, (_, index) => `Tip_${index}:1`).join(",")})Root;`;
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate((treeText) => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: treeText,
+        label: "family-label-only-fit-tree",
+        visual: {
+          viewMode: "circular",
+          showTipLabels: false,
+          showGenusLabels: false,
+        },
+      },
+    }, "*");
+  }, newick);
+  await waitForLoadedTree(page);
+
+  const scales = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    if (!app || !canvas || leafNodes.length < 2) {
+      throw new Error("Circular taxonomy fit test setup unavailable.");
+    }
+
+    app.setTaxonomyMapForTest({
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["genus", "family"],
+      tipRanks: leafNodes.map((node, index) => ({
+        node,
+        ranks: {
+          genus: `Genus${index}`,
+          family: `Family${Math.floor(index / 8)}`,
+        },
+      })),
+    });
+    app.setTaxonomyEnabled(true);
+    app.setTaxonomyBranchColoringEnabled(false);
+    app.setViewMode("circular");
+    app.setShowTipLabels(false);
+    app.setShowGenusLabels(false);
+
+    const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const fitWithModes = async (familyMode: "label-only" | "ribbon", genusMode: "hidden" | "ribbon"): Promise<number> => {
+      app.setTaxonomyRankDisplayModeForTest("family", familyMode);
+      app.setTaxonomyRankDisplayModeForTest("genus", genusMode);
+      await nextFrame();
+      await nextFrame();
+      canvas.fitView();
+      await nextFrame();
+      await nextFrame();
+      const camera = canvas.getCamera();
+      if (!camera || camera.kind !== "circular" || typeof camera.scale !== "number") {
+        throw new Error("Circular camera unavailable after fit.");
+      }
+      return camera.scale;
+    };
+
+    return {
+      labelOnly: await fitWithModes("label-only", "hidden"),
+      twoRibbon: await fitWithModes("ribbon", "ribbon"),
+    };
+  });
+
+  expect(scales.labelOnly).toBeLessThanOrEqual(scales.twoRibbon * 1.02);
+});

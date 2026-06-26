@@ -145,6 +145,31 @@ function defaultExportPixelSizeForMode(mode: ViewMode): { width: number; height:
     : { width: DEFAULT_EXPORT_SQUARE_SIZE_PX, height: DEFAULT_EXPORT_SQUARE_SIZE_PX };
 }
 
+function clampExportPixelDimension(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value)
+      : Number.NaN;
+  return Math.max(320, Math.min(10000, Math.round(Number.isFinite(parsed) ? parsed : fallback)));
+}
+
+function squarePngExportSizeForMode(
+  mode: ViewMode,
+  width: number | undefined,
+  height: number | undefined,
+): { width: number | undefined; height: number | undefined } {
+  if (mode === "rectangular") {
+    return { width, height };
+  }
+  if (width === undefined && height === undefined) {
+    return { width, height };
+  }
+  const providedSizes = [width, height].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const size = Math.max(...providedSizes.map((value) => clampExportPixelDimension(value, value)));
+  return { width: size, height: size };
+}
+
 type BigTreeViewerLaunchPayload = {
   version?: 1;
   newick?: string;
@@ -3571,8 +3596,11 @@ export default function App() {
     const widthInches = Math.max(0.5, Math.min(100, Number(exportViewPrintWidthInchesInput) || (defaultSize.width / DEFAULT_EXPORT_DPI)));
     const heightInches = Math.max(0.5, Math.min(100, Number(exportViewPrintHeightInchesInput) || widthInches));
     const dpi = Math.max(72, Math.min(1200, Number(exportViewDpiInput) || DEFAULT_EXPORT_DPI));
-    setExportViewWidthInput(Math.max(320, Math.min(10000, Math.round(widthInches * dpi))));
-    setExportViewHeightInput(Math.max(320, Math.min(10000, Math.round(heightInches * dpi))));
+    const width = clampExportPixelDimension(widthInches * dpi, defaultSize.width);
+    const height = clampExportPixelDimension(heightInches * dpi, defaultSize.height);
+    const normalized = squarePngExportSizeForMode(viewMode, width, height);
+    setExportViewWidthInput(normalized.width ?? width);
+    setExportViewHeightInput(normalized.height ?? height);
   }, [exportViewDpiInput, exportViewPrintHeightInchesInput, exportViewPrintWidthInchesInput, viewMode]);
 
   const exportCurrentView = useCallback((): void => {
@@ -3587,8 +3615,11 @@ export default function App() {
       return;
     }
     const defaultSize = defaultExportPixelSizeForMode(viewMode);
-    const width = Math.max(320, Math.min(10000, Math.round(Number(exportViewWidthInput) || defaultSize.width)));
-    const height = Math.max(320, Math.min(10000, Math.round(Number(exportViewHeightInput) || defaultSize.height)));
+    const rawWidth = clampExportPixelDimension(exportViewWidthInput, defaultSize.width);
+    const rawHeight = clampExportPixelDimension(exportViewHeightInput, defaultSize.height);
+    const normalizedSize = squarePngExportSizeForMode(viewMode, rawWidth, rawHeight);
+    const width = normalizedSize.width ?? rawWidth;
+    const height = normalizedSize.height ?? rawHeight;
     setExportViewWidthInput(width);
     setExportViewHeightInput(height);
     setExportPngWidth(width);
@@ -3621,15 +3652,21 @@ export default function App() {
     if (replyTarget && normalized.delivery === "postMessage") {
       automationExportReplyTargetsRef.current.set(id, replyTarget);
     }
+    const normalizedTargetSize = normalized.format === "png"
+      ? squarePngExportSizeForMode(viewMode, normalized.width, normalized.height)
+      : { width: normalized.width, height: normalized.height };
+    const normalizedViewportSize = normalized.format === "png"
+      ? squarePngExportSizeForMode(viewMode, normalized.viewportWidth, normalized.viewportHeight)
+      : { width: normalized.viewportWidth, height: normalized.viewportHeight };
     setAutomationExportRequest({
       id,
       format: normalized.format,
       delivery: normalized.delivery ?? "download",
       filename: normalized.filename || defaultFilename,
-      width: normalized.width,
-      height: normalized.height,
-      viewportWidth: normalized.viewportWidth,
-      viewportHeight: normalized.viewportHeight,
+      width: normalizedTargetSize.width,
+      height: normalizedTargetSize.height,
+      viewportWidth: normalizedViewportSize.width,
+      viewportHeight: normalizedViewportSize.height,
     });
   }, [loadedTreeLabel, viewMode]);
 
@@ -6013,7 +6050,7 @@ export default function App() {
                     Set pixels from print size
                   </button>
                   <p className="export-options-help">
-                    PNG exports the current viewport at the pixel dimensions above. Match the pixel aspect ratio to the figure shape you want; square dimensions usually work best for circular views. Very large exports can take a few seconds.
+                    PNG exports the current viewport at the pixel dimensions above. Circular and spiral PNG exports are kept square; use independent width and height for rectangular views. Very large exports can take a few seconds.
                   </p>
                 </>
               ) : (

@@ -4731,10 +4731,14 @@ export default function TreeCanvas({
         const visibleRanks = useAutomaticTaxonomyRankVisibility
           ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
           : taxonomyActiveRanks;
+        const hasLabelOnlyRank = visibleRanks.some((rank) => taxonomyRankDisplayModeForRank(rank) === "label-only");
+        const reservedRankCount = hasLabelOnlyRank
+          ? visibleRanks.length + 1
+          : visibleRanks.length;
         const taxonomyMetricBaseSize = Math.max(9, Math.min(14, Math.max(angularSpacingPx * 0.48, 9)));
-        const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale, circularOverlayViewportScale);
+        const metrics = taxonomyRingMetricsPx(reservedRankCount, taxonomyMetricBaseSize, taxonomyBandThicknessScale, circularOverlayViewportScale);
         const taxonomyWidthPx = metrics.ringWidthsPx.reduce((total, width) => total + width, 0)
-          + (Math.max(0, visibleRanks.length - 1) * metrics.ringGapPx)
+          + (Math.max(0, reservedRankCount - 1) * metrics.ringGapPx)
           + metrics.ringGapPx
           + metrics.labelGapPx
           + taxonomyBaselineGapPx
@@ -4750,7 +4754,7 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [circularOverlayViewportScale, effectiveTimeAxisScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapPx, timeAxisExtent, tree, useAutomaticTaxonomyRankVisibility]);
+  }, [circularOverlayViewportScale, effectiveTimeAxisScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapPx, taxonomyRankDisplayModeForRank, timeAxisExtent, tree, useAutomaticTaxonomyRankVisibility]);
 
   const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {

@@ -144,7 +144,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
             <div><dt>btv_export</dt><dd>`svg` or `png`; exports after launch.</dd></div>
             <div><dt>btv_export_delivery</dt><dd>`download` or `postMessage`.</dd></div>
-            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels.</dd></div>
+            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Circular and spiral exports are always square; non-square requests are coerced to the larger dimension.</dd></div>
             <div><dt>btv_export_filename</dt><dd>Suggested filename for downloads and automation results.</dd></div>
           </dl>
         </section>
