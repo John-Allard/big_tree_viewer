@@ -43,11 +43,10 @@ export default function FaqPage() {
                 50,000 species).
               </p>
               <p>
-                It has many known issues and should not be interpreted as a gold
-                standard vertebrate phylogeny. The taxonomy-mapped view shown
-                here is intended to make the example tree easier to explore and
-                to demonstrate how family-level and broader taxonomic structure
-                can be displayed in the viewer.
+                It has many known issues and will be replaced with an updated
+                version in the near future. For now, it should not be used for
+                research purposes. Also please note that this tree is not
+                directly connected to the Timetree of Life project.
               </p>
             </div>
           </article>

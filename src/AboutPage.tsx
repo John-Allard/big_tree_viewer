@@ -49,12 +49,12 @@ const figureSections = [
     text: "Display is highly optimized for performance, so trees with several hundred thousand tips remain responsive on a typical computer. Pan and zoom recover local detail when needed.",
   },
   {
-    title: "Styling and SVG export",
+    title: "Styling and image export",
     videoWebm: `${import.meta.env.BASE_URL}about/example-50k-style-panel.webm`,
     videoMp4: `${import.meta.env.BASE_URL}about/example-50k-style-panel.mp4`,
     poster: `${import.meta.env.BASE_URL}about/example-50k-style-panel-poster.webp`,
     alt: "Animated Big Tree Viewer view showing styling controls changing taxonomy palettes, visible ribbons, branch thickness, and time stripe settings.",
-    text: "Typography, branch thickness, ribbon spacing, metadata overlays and many other settings are adjusted in the same view used for exploration. The current view can be exported as SVG for use in figures.",
+    text: "Typography, branch thickness, ribbon spacing, metadata overlays and many other settings are adjusted in the same view used for exploration. The current view can be exported as PNG or SVG for use in figures.",
   },
 ] as const;
 
@@ -148,7 +148,7 @@ const capabilities = [
   },
   {
     label: "Export",
-    text: "Save the current view as SVG for downstream figure preparation.",
+    text: "Save the current view as PNG or SVG for downstream figure preparation.",
   },
   {
     label: "Privacy",
