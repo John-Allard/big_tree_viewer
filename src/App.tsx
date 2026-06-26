@@ -4930,9 +4930,9 @@ export default function App() {
       if (data.type !== "big-tree-viewer:load") {
         return;
       }
-      const payload = data.payload && typeof data.payload === "object"
+      const payload = (data.payload && typeof data.payload === "object"
         ? data.payload
-        : data as BigTreeViewerLaunchPayload;
+        : data) as BigTreeViewerLaunchPayload;
       const replyOrigin = event.origin || "*";
       void loadLaunchPayload(payload, "message launch")
         .then((loaded) => {
@@ -6018,7 +6018,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  {tree.leafCount >= SVG_LARGE_TREE_TIP_WARNING_THRESHOLD ? (
+                  {tree && tree.leafCount >= SVG_LARGE_TREE_TIP_WARNING_THRESHOLD ? (
                     <p className="export-options-help export-options-warning">
                       This tree has {tree.leafCount.toLocaleString()} tips. SVG can be extremely slow or unusable for huge trees because every visible branch becomes vector geometry. PNG is usually the safer format.
                     </p>
