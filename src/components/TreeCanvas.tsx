@@ -5568,8 +5568,9 @@ export default function TreeCanvas({
     ctx.clearRect(0, 0, renderSize.width, renderSize.height);
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
-    const exportCapture = exportCaptureRef.current !== null;
-    if (exportCapture) {
+    const svgExportCapture = exportCaptureRef.current !== null;
+    const exportCapture = svgExportCapture || renderCanvasOverrideRef.current !== null;
+    if (svgExportCapture) {
       exportCaptureRef.current = {
         width: renderSize.width,
         height: renderSize.height,
