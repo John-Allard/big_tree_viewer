@@ -242,6 +242,12 @@ type NormalizedLaunchExport = {
   viewportHeight?: number;
 };
 
+type LaunchLoadResult = {
+  loaded: boolean;
+  viewMode: ViewMode;
+  label: string;
+};
+
 type BigTreeViewerSessionSettings = {
   viewMode: ViewMode;
   showSpiralViewOption: boolean;
@@ -626,6 +632,10 @@ function normalizeLaunchExport(raw: BigTreeViewerLaunchPayload["export"] | undef
     viewportWidth: typeof raw.viewportWidth === "number" && Number.isFinite(raw.viewportWidth) ? raw.viewportWidth : undefined,
     viewportHeight: typeof raw.viewportHeight === "number" && Number.isFinite(raw.viewportHeight) ? raw.viewportHeight : undefined,
   };
+}
+
+function filePickerUnavailableInContext(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "SecurityError");
 }
 
 function normalizeLaunchCamera(raw: unknown): CameraState | null {
@@ -1650,12 +1660,19 @@ export default function App() {
   const pendingSessionCanvasStateRef = useRef<TreeCanvasSessionState | null | undefined>(undefined);
   const pendingSessionRestoreResolverRef = useRef<(() => void) | null>(null);
   const pendingSessionSnapshotResolverRef = useRef<((state: TreeCanvasSessionState | null) => void) | null>(null);
+  const pendingMetadataOverlayCompletionRef = useRef<{
+    id: number;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+  const metadataOverlayCompletionCounterRef = useRef(0);
   const pendingTreeParseResolverRef = useRef<(() => void) | null>(null);
   const pendingTreeParseRejecterRef = useRef<((error: Error) => void) | null>(null);
   const phylopicCancelRequestedRef = useRef(false);
   const phylopicTriedImageUuidsByKeyRef = useRef<Map<string, Set<string>>>(new Map());
   const automationExportRequestCounterRef = useRef(0);
   const automationExportReplyTargetsRef = useRef<Map<number, { target: Window | null; origin: string }>>(new Map());
+  const apiReadyAnnouncedRef = useRef(false);
   const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
@@ -1780,6 +1797,7 @@ export default function App() {
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [metadataOverlay, setMetadataOverlay] = useState<MetadataColorOverlayResult>(EMPTY_METADATA_OVERLAY);
   const [metadataOverlayProcessing, setMetadataOverlayProcessing] = useState(false);
+  const [metadataOverlayCompletionRequest, setMetadataOverlayCompletionRequest] = useState(0);
   const [metadataReadProgress, setMetadataReadProgress] = useState<number | null>(null);
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
   const [taxonomyLoading, setTaxonomyLoading] = useState(false);
@@ -2820,9 +2838,22 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     let timeoutId: number | null = null;
+    const pendingCompletion = pendingMetadataOverlayCompletionRef.current;
+    const settlePendingCompletion = (error?: Error): void => {
+      if (!pendingCompletion || pendingMetadataOverlayCompletionRef.current !== pendingCompletion) {
+        return;
+      }
+      pendingMetadataOverlayCompletionRef.current = null;
+      if (error) {
+        pendingCompletion.reject(error);
+      } else {
+        pendingCompletion.resolve();
+      }
+    };
     if (!metadataEnabled || !tree || !metadataTable || !metadataKeyColumn || !metadataValueColumn) {
       setMetadataOverlay(EMPTY_METADATA_OVERLAY);
       setMetadataOverlayProcessing(false);
+      settlePendingCompletion();
       return () => {
         cancelled = true;
       };
@@ -2851,11 +2882,14 @@ export default function App() {
         if (!cancelled) {
           setMetadataOverlay(nextOverlay);
           setMetadataError(null);
+          settlePendingCompletion();
         }
       } catch (error) {
         if (!cancelled) {
+          const metadataBuildError = error instanceof Error ? error : new Error(String(error));
           setMetadataOverlay(EMPTY_METADATA_OVERLAY);
-          setMetadataError(error instanceof Error ? error.message : String(error));
+          setMetadataError(metadataBuildError.message);
+          settlePendingCompletion(metadataBuildError);
         }
       } finally {
         if (!cancelled) {
@@ -2888,11 +2922,24 @@ export default function App() {
     metadataCategoryColorOverrides,
     metadataEnabled,
     metadataKeyColumn,
+    metadataOverlayCompletionRequest,
     metadataReverseScale,
     metadataTable,
     metadataValueColumn,
     tree,
   ]);
+  const waitForMetadataOverlayCompletion = useCallback(async (): Promise<void> => {
+    const previous = pendingMetadataOverlayCompletionRef.current;
+    if (previous) {
+      previous.reject(new Error("Metadata overlay preparation was superseded by another launch request."));
+    }
+    const id = metadataOverlayCompletionCounterRef.current + 1;
+    metadataOverlayCompletionCounterRef.current = id;
+    await new Promise<void>((resolve, reject) => {
+      pendingMetadataOverlayCompletionRef.current = { id, resolve, reject };
+      setMetadataOverlayCompletionRequest(id);
+    });
+  }, []);
   const metadataUnmappedRows = useMemo<{
     total: number;
     rows: MetadataUnmappedRowPreview[];
@@ -3640,6 +3687,8 @@ export default function App() {
   const queueAutomationExport = useCallback((
     request: BigTreeViewerLaunchPayload["export"],
     replyTarget?: { target: Window | null; origin: string },
+    viewModeOverride?: ViewMode,
+    labelOverride?: string,
   ): void => {
     const normalized = normalizeLaunchExport(request);
     if (!normalized) {
@@ -3647,16 +3696,17 @@ export default function App() {
     }
     const id = automationExportRequestCounterRef.current + 1;
     automationExportRequestCounterRef.current = id;
-    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel || "big-tree-viewer");
-    const defaultFilename = `${baseLabel}-${viewMode}-view.${normalized.format}`;
+    const exportViewMode = viewModeOverride ?? viewMode;
+    const baseLabel = sanitizeExportBaseLabel(labelOverride || loadedTreeLabel || "big-tree-viewer");
+    const defaultFilename = `${baseLabel}-${exportViewMode}-view.${normalized.format}`;
     if (replyTarget && normalized.delivery === "postMessage") {
       automationExportReplyTargetsRef.current.set(id, replyTarget);
     }
     const normalizedTargetSize = normalized.format === "png"
-      ? squarePngExportSizeForMode(viewMode, normalized.width, normalized.height)
+      ? squarePngExportSizeForMode(exportViewMode, normalized.width, normalized.height)
       : { width: normalized.width, height: normalized.height };
     const normalizedViewportSize = normalized.format === "png"
-      ? squarePngExportSizeForMode(viewMode, normalized.viewportWidth, normalized.viewportHeight)
+      ? squarePngExportSizeForMode(exportViewMode, normalized.viewportWidth, normalized.viewportHeight)
       : { width: normalized.viewportWidth, height: normalized.viewportHeight };
     setAutomationExportRequest({
       id,
@@ -4020,7 +4070,7 @@ export default function App() {
         if (error instanceof DOMException && error.name === "AbortError") {
           return null;
         }
-        if (!(error instanceof DOMException) || error.name !== "NotAllowedError") {
+        if (!filePickerUnavailableInContext(error)) {
           throw error;
         }
       }
@@ -4065,7 +4115,9 @@ export default function App() {
         if (error instanceof DOMException && error.name === "AbortError") {
           return null;
         }
-        throw error;
+        if (!filePickerUnavailableInContext(error)) {
+          throw error;
+        }
       }
     }
     return await new Promise<File | null>((resolve) => {
@@ -4274,7 +4326,7 @@ export default function App() {
     setMetadataReadProgress(null);
   }, []);
 
-  const applyMetadataText = useCallback((text: string, label: string, firstRowIsHeader: boolean): void => {
+  const applyMetadataText = useCallback((text: string, label: string, firstRowIsHeader: boolean): Error | null => {
     setMetadataOverlayProcessing(true);
     setMetadataReadProgress(null);
     try {
@@ -4318,11 +4370,14 @@ export default function App() {
       setMetadataStatus(`Loaded ${table.rows.length.toLocaleString()} metadata rows from ${label}.`);
       setMetadataError(null);
       setMetadataOverlayProcessing(false);
+      return null;
     } catch (error) {
+      const metadataParseError = error instanceof Error ? error : new Error(String(error));
       clearMetadata();
-      setMetadataError(error instanceof Error ? error.message : String(error));
+      setMetadataError(metadataParseError.message);
       setMetadataStatus("");
       setMetadataOverlayProcessing(false);
+      return metadataParseError;
     }
   }, [clearMetadata]);
 
@@ -4333,7 +4388,10 @@ export default function App() {
   const loadFullSessionFromObject = useCallback(async (session: BigTreeViewerSessionFile, label: string): Promise<boolean> => {
     setSessionStatus(`Restoring session from ${label}...`);
     if (session.metadata?.text) {
-      applyMetadataText(session.metadata.text, session.metadata.label, session.metadata.firstRowIsHeader);
+      const metadataParseError = applyMetadataText(session.metadata.text, session.metadata.label, session.metadata.firstRowIsHeader);
+      if (metadataParseError) {
+        throw metadataParseError;
+      }
     } else {
       clearMetadata();
     }
@@ -4464,7 +4522,10 @@ export default function App() {
     }
     const metadataText = metadata.text ?? await fetchRemoteLaunchText(metadataUrl, "metadata");
     const metadataLabel = metadata.label ?? (metadataUrl ? launchLabelFromUrl(metadataUrl, "remote metadata") : "launch-metadata.csv");
-    applyMetadataText(metadataText, metadataLabel, metadata.firstRowIsHeader ?? true);
+    const metadataParseError = applyMetadataText(metadataText, metadataLabel, metadata.firstRowIsHeader ?? true);
+    if (metadataParseError) {
+      throw metadataParseError;
+    }
     if (typeof metadata.enabled === "boolean") {
       setMetadataEnabled(metadata.enabled);
     }
@@ -4564,7 +4625,7 @@ export default function App() {
     }
   }, [applyMetadataText]);
 
-  const loadLaunchPayload = useCallback(async (payload: BigTreeViewerLaunchPayload, sourceLabel = "launch API"): Promise<boolean> => {
+  const loadLaunchPayload = useCallback(async (payload: BigTreeViewerLaunchPayload, sourceLabel = "launch API"): Promise<LaunchLoadResult> => {
     if (typeof payload.controls?.hideDownloadNewick === "boolean") {
       setHideDownloadNewick(payload.controls.hideDownloadNewick);
     } else {
@@ -4592,8 +4653,13 @@ export default function App() {
     if (launchSession || sessionUrl) {
       const session = launchSession ?? await parseSessionBytes(await fetchRemoteLaunchBytes(sessionUrl, "session"));
       const label = payload.label?.trim() || (sessionUrl ? launchLabelFromUrl(sessionUrl, "remote session") : "launch session");
+      const effectiveViewMode = payload.visual?.viewMode === "rectangular"
+        || payload.visual?.viewMode === "circular"
+        || payload.visual?.viewMode === "spiral"
+        ? payload.visual.viewMode
+        : session.settings.viewMode;
       if (!await loadFullSessionFromObject(session, label)) {
-        return false;
+        return { loaded: false, viewMode: effectiveViewMode, label };
       }
       await applyLaunchMetadata(payload.metadata);
       applyLaunchVisualSettings(payload.visual);
@@ -4623,7 +4689,8 @@ export default function App() {
           }
         }
       }
-      return true;
+      await waitForMetadataOverlayCompletion();
+      return { loaded: true, viewMode: effectiveViewMode, label };
     }
     await applyLaunchMetadata(payload.metadata);
     applyLaunchVisualSettings(payload.visual);
@@ -4633,12 +4700,17 @@ export default function App() {
         ? await fetchRemoteLaunchText(payload.newickUrl.trim(), "Newick")
         : "";
     if (!treeText.trim()) {
-      return false;
+      return { loaded: false, viewMode, label: sourceLabel };
     }
     const label = payload.label?.trim()
       || (typeof payload.newickUrl === "string" && payload.newickUrl.trim()
         ? launchLabelFromUrl(payload.newickUrl.trim(), "remote Newick")
         : sourceLabel);
+    const effectiveViewMode = payload.visual?.viewMode === "rectangular"
+      || payload.visual?.viewMode === "circular"
+      || payload.visual?.viewMode === "spiral"
+      ? payload.visual.viewMode
+      : viewMode;
     const canvas = normalizeLaunchCanvasState(payload.canvas);
     const taxonomyMappingDone = waitForLaunchTaxonomyMapping();
     const restoreApplied = canvas !== undefined || (launchTaxonomyProvided && !launchTaxonomyRunMapping)
@@ -4662,6 +4734,7 @@ export default function App() {
           throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping did not complete.");
         }
       }
+      await waitForMetadataOverlayCompletion();
     } catch (error) {
       if (restoreApplied) {
         pendingSessionCanvasStateRef.current = undefined;
@@ -4673,8 +4746,8 @@ export default function App() {
       }
       throw error;
     }
-    return true;
-  }, [applyLaunchMetadata, applyLaunchVisualSettings, loadFullSessionFromObject, parseText, runStandardTaxonomyMappingForTree, useLowMemoryTaxonomyMapping]);
+    return { loaded: true, viewMode: effectiveViewMode, label };
+  }, [applyLaunchMetadata, applyLaunchVisualSettings, loadFullSessionFromObject, parseText, runStandardTaxonomyMappingForTree, useLowMemoryTaxonomyMapping, viewMode, waitForMetadataOverlayCompletion]);
 
   const readLaunchPayloadFromUrl = useCallback((): {
     payload: BigTreeViewerLaunchPayload | null;
@@ -4882,9 +4955,10 @@ export default function App() {
       setHideDownloadNewick(launch.hideDownloadNewick);
       if (launch.payload) {
         try {
-          if (await loadLaunchPayload(launch.payload, "URL launch")) {
+          const result = await loadLaunchPayload(launch.payload, "URL launch");
+          if (result.loaded) {
             if (launch.payload.export) {
-              queueAutomationExport(launch.payload.export);
+              queueAutomationExport(launch.payload.export, undefined, result.viewMode, result.label);
             }
             return;
           }
@@ -4919,20 +4993,28 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || apiReadyAnnouncedRef.current) {
       return undefined;
     }
+    apiReadyAnnouncedRef.current = true;
     window.__BIG_TREE_VIEWER_API_READY__ = true;
     const readyMessage = { type: "big-tree-viewer:ready", version: 1 };
     window.opener?.postMessage(readyMessage, "*");
     window.parent !== window && window.parent.postMessage(readyMessage, "*");
+    return undefined;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
     const handleMessage = (event: MessageEvent): void => {
       const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload | BigTreeViewerLaunchPayload["export"] | { lowMemoryMode?: boolean; allowDownload?: boolean } } | null;
       if (!data || typeof data !== "object") {
         return;
       }
       if (data.type === "big-tree-viewer:map-taxonomy") {
-        const replyOrigin = event.origin || "*";
+        const replyOrigin = event.origin && event.origin !== "null" ? event.origin : "*";
         const request = data.payload && typeof data.payload === "object"
           ? data.payload as { lowMemoryMode?: boolean; allowDownload?: boolean }
           : {};
@@ -4970,18 +5052,18 @@ export default function App() {
       const payload = (data.payload && typeof data.payload === "object"
         ? data.payload
         : data) as BigTreeViewerLaunchPayload;
-      const replyOrigin = event.origin || "*";
+      const replyOrigin = event.origin && event.origin !== "null" ? event.origin : "*";
       void loadLaunchPayload(payload, "message launch")
-        .then((loaded) => {
+        .then((result) => {
           (event.source as Window | null)?.postMessage(
-            { type: loaded ? "big-tree-viewer:loaded" : "big-tree-viewer:error", version: 1, message: loaded ? undefined : "No Newick string was provided." },
+            { type: result.loaded ? "big-tree-viewer:loaded" : "big-tree-viewer:error", version: 1, message: result.loaded ? undefined : "No Newick string was provided." },
             replyOrigin,
           );
-          if (loaded && payload.export) {
+          if (result.loaded && payload.export) {
             queueAutomationExport(payload.export, {
               target: event.source as Window | null,
               origin: replyOrigin,
-            });
+            }, result.viewMode, result.label);
           }
         })
         .catch((error) => {

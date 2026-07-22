@@ -1,6 +1,6 @@
 export default function AgenticAiPage() {
   const skillZipUrl = "https://bigtreeviewer.net/agentic-ai/bigtreeviewer-agent-skill.zip";
-  const skillZipSha256 = "e4ebd0c37773c4bf1509a241e74a8ad49cf172bf414d63f13d92a60b81c6525e";
+  const skillZipSha256 = "09a328a92a4279827777d5772911c1ad53e95424029ddbc2624e8816b8d6c017";
 
   return (
     <main className="about-page api-page">
@@ -105,10 +105,11 @@ directory for this agent.`}</code></pre>
           <p>
             Before installing any agent skill, inspect the file list and read
             `SKILL.md` plus any scripts it contains. The BTV helper scripts use
-            Python&apos;s standard library, open Big Tree Viewer in the user&apos;s
-            browser, and pass tree/session data to the BTV launch API. Use the
-            SHA-256 hash above to check that the downloaded ZIP matches the
-            version described on this page.
+            Python&apos;s standard library and pass tree/session data to the BTV
+            launch API. Automated exports run in an isolated headless
+            Chrome/Chromium/Edge profile rather than opening tabs in the
+            user&apos;s active browser. Use the SHA-256 hash above to check that the
+            downloaded ZIP matches the version described on this page.
           </p>
         </section>
 
@@ -127,21 +128,23 @@ directory for this agent.`}</code></pre>
         <section className="api-doc-section">
           <h2>How it works</h2>
           <p>
-            `btv_open.py` uses only Python&apos;s standard library. It creates a
-            temporary launcher page, opens Big Tree Viewer, and sends the local
-            tree text or session through the launch API so the browser can
-            display it interactively. It can also ask Big Tree Viewer to trigger
-            an SVG or PNG download in the browser without installing extra
-            Python packages.
+            `btv_render.py` uses only Python&apos;s standard library plus an
+            installed Chromium-family browser. It starts an isolated headless
+            browser profile, sends the local tree or session through the launch
+            API, receives the rendered PNG or SVG directly, validates it, and
+            saves it to the requested path. `btv_open.py` remains available
+            when the user explicitly wants an interactive browser window; it
+            opens the viewer in one full-window tab without requesting a
+            pop-up or leaving a blank launcher tab.
           </p>
         </section>
 
         <section className="api-doc-section">
           <h2>Example commands</h2>
           <pre><code>{`python scripts/btv_open.py tree.nwk --view circular --tip-labels true
-python scripts/btv_open.py tree.nwk --download-export png --export-filename tree.png
-python scripts/btv_open.py tree.nwk --download-export png --export-filename tree.png --view spiral
-python scripts/btv_open.py saved-view.btvsession --download-export png --export-filename saved-view.png`}</code></pre>
+python scripts/btv_render.py tree.nwk --output tree.png --view circular
+python scripts/btv_render.py tree.nwk --output spiral.png --view spiral
+python scripts/btv_render.py saved-view.btvsession --output saved-view.png`}</code></pre>
         </section>
       </div>
     </main>

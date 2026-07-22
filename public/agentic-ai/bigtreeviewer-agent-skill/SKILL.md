@@ -11,8 +11,9 @@ Use this skill when a user asks to open, inspect, style, or render a phylogeneti
 
 ## Quick Choice
 
-- To show an interactive tree or saved session to the user, run `scripts/btv_open.py`.
-- To trigger a browser SVG/PNG download without extra dependencies, run `scripts/btv_open.py --download-export svg` or `--download-export png`.
+- For agent rendering, run `scripts/btv_render.py`. It uses an isolated headless Chrome/Chromium/Edge profile and never opens a tab in the user's active browser.
+- To show an interactive tree or saved session to the user, run `scripts/btv_open.py` only when the user explicitly wants a browser window.
+- `btv_open.py --download-export png|svg` remains compatible with older commands, but now renders headlessly and saves the named file instead of using the active browser's download UI.
 - For huge trees, avoid SVG unless the user explicitly needs vector output for a limited visible region. SVG can become slow or unusable because every visible branch is vector geometry; PNG is usually safer.
 - For slide figures, prefer setting PNG `--width`/`--height` to the final on-slide pixel box, or use `--export-viewport-width`/`--export-viewport-height` to preserve slide-scale styling while exporting at higher pixel density.
 - Circular and spiral PNG exports must be square. Use landscape or portrait dimensions only for rectangular trees.
@@ -28,7 +29,6 @@ the scripts.
 ```bash
 python scripts/btv_open.py tree.nwk --view circular --tip-labels true
 python scripts/btv_open.py saved-view.btvsession
-python scripts/btv_open.py tree.nwk --view circular --download-export png --export-filename tree.png
 ```
 
 Useful options:
@@ -40,21 +40,35 @@ python scripts/btv_open.py tree.nwk --view circular --taxonomy true --taxonomy-b
 python scripts/btv_open.py --session-url https://example.org/tree.btvsession
 ```
 
-`btv_open.py` uses only Python's standard library. It creates a temporary launcher page, opens Big Tree Viewer, and sends the local tree text or session object through the Big Tree Viewer launch API. With `--download-export`, it asks the user's browser to download an SVG or PNG after the tree loads. This is the recommended export route for ordinary desktop use.
-It needs a desktop browser.
+`btv_open.py` uses only Python's standard library. For a local interactive launch, it opens one temporary full-window page in the user's default browser, embeds Big Tree Viewer in that page, and sends the local tree text or session object through the launch API. It does not request a pop-up or leave a blank launcher tab. Opening the user's browser is intentional only for this explicitly interactive command; do not use it for unattended rendering.
+
+## Render Without Opening the User's Browser
+
+```bash
+python scripts/btv_render.py tree.nwk --output tree.png --view circular --tip-labels false
+python scripts/btv_render.py tree.nwk --metadata traits.csv --metadata-key name --metadata-value group --output traits.png
+python scripts/btv_render.py saved-view.btvsession --output saved-view.png
+python scripts/btv_render.py tree.nwk --output tree.svg --view rectangular
+```
+
+`btv_render.py` requires Python 3.10 or newer and an installed Chrome, Chromium, or Edge executable. It uses no third-party Python package and never downloads a browser. Use `--browser /path/to/browser` only when auto-detection cannot find it.
+
+The renderer starts a loopback-only transfer server and a headless browser process with a dedicated profile in the operating system's user cache directory (`~/.cache` on Linux, `~/Library/Caches` on macOS, or `%LOCALAPPDATA%` on Windows). It receives PNG/SVG bytes directly from BTV, writes the requested output atomically, validates the file type and dimensions, and rejects blank PNG output. The dedicated profile is separate from the user's normal browser and preserves BTV's cached taxonomy archive between agent runs. Concurrent renders are serialized around that profile on Linux, macOS, and Windows. Set `BTV_AGENT_CACHE_HOME` to override the cache root.
+
+Use `--profile-dir` to choose a different dedicated automation profile and `--timeout` for unusually large trees. Rendering can target a local development server with `--btv-url http://127.0.0.1:5173/`.
 
 ## Styling
 
 Use command-line options for common settings:
 
 ```bash
-python scripts/btv_open.py tree.nwk --download-export png --export-filename figure.png --view circular --tip-labels false --genus-labels true --branch-thickness 1.2
+python scripts/btv_render.py tree.nwk --output figure.png --view circular --tip-labels false --genus-labels true --branch-thickness 1.2
 ```
 
 For advanced settings, pass a JSON launch payload:
 
 ```bash
-python scripts/btv_open.py tree.nwk --download-export png --export-filename figure.png --payload-json settings.json
+python scripts/btv_render.py tree.nwk --output figure.png --payload-json settings.json
 ```
 
 The JSON file may include Big Tree Viewer launch API fields such as `newickUrl`, `sessionUrl`, `session`, `visual`, `metadata`, `taxonomy`, `canvas`, and `export`. Command-line options are applied after the JSON payload.
@@ -63,10 +77,11 @@ For session-style programmatic styling, put saved setting names in `visual`; Big
 Use `metadata` for CSV/TSV overlays. Set `enabled`, `keyColumn`, `valueColumn`, `colorMode`, and `applyScope` for metadata branch/subtree coloring; set `labelsEnabled`/`labelColumn`, `markersEnabled`/`markerColumn`, or `piesEnabled` with `pieStartColumn` and `pieEndColumn` for labels, markers, or pie-chart glyphs.
 Use `canvas` when the user needs session-style viewport state, collapsed clades, or manual branch/subtree colors. `canvas` accepts the same shape saved in `.btvsession` files: `camera`, `viewportWidth`, `viewportHeight`, `collapsedNodes`, `manualBranchColors`, and `manualSubtreeColors`.
 For rectangular camera control, use `canvas.camera` with `kind: "rect"`, `scaleX`, `scaleY`, `translateX`, and `translateY`.
-Use `taxonomy.runMapping: true` when an agent needs taxonomy ribbons or taxonomy branch colors. This runs the same NCBI taxonomy mapping code used by the Big Tree Viewer site after the tree has loaded. Automated mapping is cache-only by default: it uses an already cached NCBI taxdump archive and fails with `big-tree-viewer:taxonomy-error` if the archive is missing. Do not let an agent trigger a fresh NCBI taxdump download unless the user explicitly asks; only then set `taxonomy.allowDownload: true` or use `--allow-taxonomy-download`.
+Use `taxonomy.runMapping: true` when an agent needs taxonomy ribbons or taxonomy branch colors. This runs the same NCBI taxonomy mapping code used by the Big Tree Viewer site after the tree has loaded. Automated mapping is cache-only by default: it uses the dedicated automation profile's cached NCBI taxdump archive and fails with `big-tree-viewer:taxonomy-error` if the archive is missing. Do not let an agent trigger a fresh NCBI taxdump download unless the user explicitly asks; only then set `taxonomy.allowDownload: true` or use `--allow-taxonomy-download`. An explicitly allowed download is retained in the dedicated profile for later runs.
 Agents should prefer standard BTV taxonomy mapping over building their own taxonomy map, because custom external maps can assign BTV node ids or taxonomic lineages incorrectly.
 Use `taxonomy.map` only to provide a precomputed Big Tree Viewer taxonomy map that was produced by Big Tree Viewer or otherwise already matches the loaded tree's BTV node ids.
 Use `export.delivery: "postMessage"` when an agent needs bytes back instead of a browser download. Big Tree Viewer replies with `big-tree-viewer:exported` or `big-tree-viewer:export-error`.
+For postMessage clients, BTV emits `big-tree-viewer:ready` once per viewer document. After a `big-tree-viewer:load` request, `big-tree-viewer:loaded` means the tree, requested canvas restoration, taxonomy mapping, and metadata overlays are ready; it is safe to request a current-view export immediately.
 The helper script exposes common API fields as flags: `--map-taxonomy`, `--allow-taxonomy-download`, `--taxonomy-low-memory`, `--rect-scale-x`, `--rect-scale-y`, `--rect-translate-x`, and `--rect-translate-y`.
 
 Example `settings.json`:

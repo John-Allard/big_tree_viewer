@@ -16,6 +16,34 @@ async function waitForLoadedTree(page: Page): Promise<void> {
   });
 }
 
+async function countStrongRedAndBluePixels(page: Page, dataUrl: string): Promise<{ red: number; blue: number }> {
+  return await page.evaluate(async (source) => {
+    const image = new Image();
+    image.src = source;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Unable to inspect exported PNG pixels.");
+    }
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let red = 0;
+    let blue = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (pixels[index] >= 180 && pixels[index + 1] <= 100 && pixels[index + 2] <= 100 && pixels[index + 3] >= 128) {
+        red += 1;
+      }
+      if (pixels[index] <= 100 && pixels[index + 1] <= 100 && pixels[index + 2] >= 180 && pixels[index + 3] >= 128) {
+        blue += 1;
+      }
+    }
+    return { red, blue };
+  }, dataUrl);
+}
+
 async function routeTinyTaxdump(page: Page): Promise<void> {
   const nodes = [
     "1\t|\t1\t|\tno rank\t|",
@@ -524,6 +552,55 @@ test("postMessage launch API can load a payload after opening an empty viewer", 
   expect(state?.metadataMatchedRowCount).toBe(2);
 });
 
+test("launch API announces readiness once per viewer document", async ({ page }) => {
+  await page.goto("/");
+  const popupPromise = page.waitForEvent("popup");
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvReadyCount?: number;
+      __btvLoadedCount?: number;
+      __btvViewer?: Window | null;
+    };
+    testWindow.__btvReadyCount = 0;
+    testWindow.__btvLoadedCount = 0;
+    window.addEventListener("message", (event) => {
+      if (event.source !== testWindow.__btvViewer) {
+        return;
+      }
+      if (event.data?.type === "big-tree-viewer:ready") {
+        testWindow.__btvReadyCount = (testWindow.__btvReadyCount ?? 0) + 1;
+        if (testWindow.__btvReadyCount === 1) {
+          testWindow.__btvViewer?.postMessage({
+            type: "big-tree-viewer:load",
+            payload: {
+              newick: "(A_species:1,B_species:1)Root;",
+              visual: { viewMode: "circular" },
+            },
+          }, window.location.origin);
+        }
+      }
+      if (event.data?.type === "big-tree-viewer:loaded") {
+        testWindow.__btvLoadedCount = (testWindow.__btvLoadedCount ?? 0) + 1;
+      }
+    });
+    testWindow.__btvViewer = window.open(`${window.location.origin}/?btv_api=1`, "_blank");
+  });
+  const popup = await popupPromise;
+
+  await page.waitForFunction(() => (
+    (window as typeof window & { __btvLoadedCount?: number }).__btvLoadedCount === 1
+  ));
+  await page.waitForTimeout(250);
+  const counts = await page.evaluate(() => ({
+    ready: (window as typeof window & { __btvReadyCount?: number }).__btvReadyCount ?? 0,
+    loaded: (window as typeof window & { __btvLoadedCount?: number }).__btvLoadedCount ?? 0,
+  }));
+  await popup.close();
+
+  expect(counts.ready).toBe(1);
+  expect(counts.loaded).toBe(1);
+});
+
 test("postMessage launch API accepts a taxonomy map payload", async ({ page }) => {
   await page.goto("/?btv_api=1");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
@@ -886,6 +963,251 @@ test("postMessage circular PNG export coerces non-square dimensions to square", 
   expect(message.width).toBe(900);
   expect(message.height).toBe(900);
   expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
+});
+
+test("one-shot circular load and PNG export normalizes dimensions using the payload view mode", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvExportMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:exported" || event.data?.type === "big-tree-viewer:export-error") {
+        testWindow.__btvExportMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        label: "one-shot-circular-tree",
+        visual: {
+          viewMode: "circular",
+          showTipLabels: false,
+        },
+        export: {
+          format: "png",
+          delivery: "postMessage",
+          filename: "one-shot-circular.png",
+          width: 900,
+          height: 500,
+          viewportWidth: 450,
+          viewportHeight: 250,
+        },
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:exported");
+  expect(message.ok).toBe(true);
+  expect(message.format).toBe("png");
+  expect(message.width).toBe(900);
+  expect(message.height).toBe(900);
+  expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
+});
+
+test("one-shot PNG export waits for requested metadata branch colors", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvExportMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:exported" || event.data?.type === "big-tree-viewer:export-error") {
+        testWindow.__btvExportMessages?.push(event.data);
+      }
+    });
+    const metadataText = [
+      "name,group",
+      "A,red",
+      "B,red",
+      "C,blue",
+      "D,blue",
+      ...Array.from({ length: 19_996 }, (_, index) => `Unmapped_${index},unused`),
+    ].join("\n");
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "((A:1,B:1)AB:1,(C:1,D:1)CD:1)Root;",
+        label: "one-shot-metadata-tree",
+        visual: {
+          viewMode: "rectangular",
+          showTipLabels: false,
+          showTimeStripes: false,
+          showScaleBars: false,
+        },
+        metadata: {
+          text: metadataText,
+          keyColumn: "name",
+          valueColumn: "group",
+          enabled: true,
+          categoryColorOverrides: {
+            red: "#ff0000",
+            blue: "#0000ff",
+          },
+        },
+        export: {
+          format: "png",
+          delivery: "postMessage",
+          filename: "one-shot-metadata.png",
+          width: 640,
+          height: 400,
+        },
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:exported");
+  const colors = await countStrongRedAndBluePixels(page, String(message.dataUrl));
+  expect(colors.red).toBeGreaterThan(10);
+  expect(colors.blue).toBeGreaterThan(10);
+});
+
+test("loaded notification waits for metadata colors before an immediate export", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvExportMessages = [];
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "big-tree-viewer:loaded") {
+        window.postMessage({
+          type: "big-tree-viewer:export",
+          payload: {
+            format: "png",
+            delivery: "postMessage",
+            filename: "after-loaded-metadata.png",
+            width: 640,
+            height: 400,
+          },
+        }, "*");
+      }
+      if (event.data?.type === "big-tree-viewer:exported" || event.data?.type === "big-tree-viewer:export-error") {
+        testWindow.__btvExportMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "((A:1,B:1)AB:1,(C:1,D:1)CD:1)Root;",
+        visual: {
+          viewMode: "rectangular",
+          showTipLabels: false,
+          showTimeStripes: false,
+          showScaleBars: false,
+        },
+        metadata: {
+          text: "name,group\nA,red\nB,red\nC,blue\nD,blue\n",
+          keyColumn: "name",
+          valueColumn: "group",
+          enabled: true,
+          categoryColorOverrides: {
+            red: "#ff0000",
+            blue: "#0000ff",
+          },
+        },
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []).length > 0
+  ));
+  const [message] = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvExportMessages?: Array<Record<string, unknown>>;
+    }).__btvExportMessages ?? []
+  ));
+
+  expect(message.type).toBe("big-tree-viewer:exported");
+  const colors = await countStrongRedAndBluePixels(page, String(message.dataUrl));
+  expect(colors.red).toBeGreaterThan(10);
+  expect(colors.blue).toBeGreaterThan(10);
+});
+
+test("launch API reports malformed metadata instead of exporting an unstyled tree", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __btvLaunchMessages?: Array<Record<string, unknown>>;
+    };
+    testWindow.__btvLaunchMessages = [];
+    window.addEventListener("message", (event) => {
+      if (
+        event.data?.type === "big-tree-viewer:loaded"
+        || event.data?.type === "big-tree-viewer:error"
+        || event.data?.type === "big-tree-viewer:exported"
+      ) {
+        testWindow.__btvLaunchMessages?.push(event.data);
+      }
+    });
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A:1,B:1)Root;",
+        metadata: {
+          text: "name\nA\nB\n",
+          enabled: true,
+        },
+        export: {
+          format: "png",
+          delivery: "postMessage",
+          filename: "should-not-exist.png",
+        },
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    ((window as typeof window & {
+      __btvLaunchMessages?: Array<Record<string, unknown>>;
+    }).__btvLaunchMessages ?? []).some((message) => message.type === "big-tree-viewer:error")
+  ));
+  const messages = await page.evaluate(() => (
+    (window as typeof window & {
+      __btvLaunchMessages?: Array<Record<string, unknown>>;
+    }).__btvLaunchMessages ?? []
+  ));
+
+  const error = messages.find((message) => message.type === "big-tree-viewer:error");
+  expect(String(error?.message)).toContain("at least two columns");
+  expect(messages.some((message) => message.type === "big-tree-viewer:loaded")).toBe(false);
+  expect(messages.some((message) => message.type === "big-tree-viewer:exported")).toBe(false);
 });
 
 test("family label-only circular fit reserves the two-rank taxonomy envelope", async ({ page }) => {

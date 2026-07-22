@@ -6,14 +6,16 @@ from __future__ import annotations
 import argparse
 import base64
 import gzip
-import html
 import json
 import pathlib
 import tempfile
+import urllib.parse
 from typing import Any
 
 
 DEFAULT_BTV_URL = "https://bigtreeviewer.net/"
+DEFAULT_RECTANGULAR_EXPORT_SIZE = (1600, 1000)
+DEFAULT_SQUARE_EXPORT_SIZE = (1200, 1200)
 
 
 def read_text(path: str) -> str:
@@ -80,7 +82,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rect-translate-y", type=float, help="Rectangular camera y translation in screen pixels. Use with the other --rect-* camera options.")
 
 
-def load_payload(args: argparse.Namespace) -> dict[str, Any]:
+def load_payload(args: argparse.Namespace, *, require_source: bool = True) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if args.payload_json:
         payload = json.loads(read_text(args.payload_json))
@@ -142,37 +144,150 @@ def load_payload(args: argparse.Namespace) -> dict[str, Any]:
         canvas = dict(payload.get("canvas") or {})
         canvas["camera"] = {"kind": "rect", **provided_rect_camera_values}
         payload["canvas"] = canvas
-    if not any(key in payload for key in ("newick", "newickUrl", "session", "sessionUrl")):
+    if require_source and not any(key in payload for key in ("newick", "newickUrl", "session", "sessionUrl")):
         raise SystemExit("Provide a local tree/session file or --payload-json with newick/newickUrl/session/sessionUrl.")
     return payload
 
 
+def payload_view_mode(payload: dict[str, Any], fallback: str = "rectangular") -> str:
+    visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
+    if visual.get("viewMode") in {"rectangular", "circular", "spiral"}:
+        return str(visual["viewMode"])
+    session = payload.get("session") if isinstance(payload.get("session"), dict) else {}
+    settings = session.get("settings") if isinstance(session.get("settings"), dict) else {}
+    if settings.get("viewMode") in {"rectangular", "circular", "spiral"}:
+        return str(settings["viewMode"])
+    return fallback if fallback in {"rectangular", "circular", "spiral"} else "rectangular"
+
+
+def export_dimensions_for_view(
+    export_format: str,
+    view_mode: str,
+    width: int | None,
+    height: int | None,
+    viewport_width: int | None,
+    viewport_height: int | None,
+) -> tuple[int | None, int | None, int | None, int | None]:
+    if export_format != "png":
+        return None, None, viewport_width, viewport_height
+    if view_mode == "rectangular":
+        return (
+            width if width is not None else DEFAULT_RECTANGULAR_EXPORT_SIZE[0],
+            height if height is not None else DEFAULT_RECTANGULAR_EXPORT_SIZE[1],
+            viewport_width,
+            viewport_height,
+        )
+    if width is not None and height is not None and width != height:
+        raise SystemExit("Circular and spiral PNG exports must be square. Use equal --width and --height, or provide only one dimension.")
+    if viewport_width is not None and viewport_height is not None and viewport_width != viewport_height:
+        raise SystemExit("Circular and spiral PNG export viewports must be square. Use equal viewport dimensions, or provide only one.")
+    size = width if width is not None else height
+    if size is None:
+        size = DEFAULT_SQUARE_EXPORT_SIZE[0]
+    viewport_size = viewport_width if viewport_width is not None else viewport_height
+    return size, size, viewport_size, viewport_size
+
+
 def normalize_btv_url(value: str) -> str:
-    return value if value.endswith("/") else f"{value}/"
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise SystemExit(f"Invalid Big Tree Viewer URL: {value!r}")
+    path = parsed.path or "/"
+    if not path.endswith("/"):
+        path = f"{path}/"
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
+def _inline_json(value: Any) -> str:
+    return (
+        json.dumps(value)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
 
 
 def write_launcher_html(payload: dict[str, Any], btv_url: str) -> pathlib.Path:
-    payload_json = json.dumps(payload)
+    payload_json = _inline_json(payload)
     target = normalize_btv_url(btv_url)
+    parsed_target = urllib.parse.urlsplit(target)
+    target_origin = urllib.parse.urlunsplit((parsed_target.scheme, parsed_target.netloc, "", "", ""))
+    target_query = urllib.parse.parse_qsl(parsed_target.query, keep_blank_values=True)
+    target_query = [(key, value) for key, value in target_query if key != "btv_api"]
+    target_query.append(("btv_api", "1"))
+    target_with_api = urllib.parse.urlunsplit((
+        parsed_target.scheme,
+        parsed_target.netloc,
+        parsed_target.path or "/",
+        urllib.parse.urlencode(target_query),
+        parsed_target.fragment,
+    ))
     html_text = f"""<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
-<title>Big Tree Viewer launcher</title>
-<p>Opening Big Tree Viewer...</p>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Big Tree Viewer</title>
+<style>
+html, body {{ width: 100%; height: 100%; margin: 0; overflow: hidden; background: #fff; }}
+#viewer {{ display: block; width: 100%; height: 100%; border: 0; }}
+#status {{
+  position: fixed;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 14px;
+  color: #1f2933;
+  background: #fff;
+  font: 14px/1.4 system-ui, sans-serif;
+}}
+body.btv-loaded #status {{ display: none; }}
+body.btv-error #status {{ color: #8b1e1e; }}
+</style>
+</head>
+<body>
+<p id="status" role="status" aria-live="polite">Opening Big Tree Viewer...</p>
+<iframe id="viewer" title="Big Tree Viewer" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
 <script>
 const payload = {payload_json};
-const viewer = window.open({json.dumps(target + "?btv_api=1")}, "_blank", "noopener=false");
+const targetOrigin = {_inline_json(target_origin)};
+const statusNode = document.getElementById("status");
+const viewer = document.getElementById("viewer");
+let loadSent = false;
+let completed = false;
 window.addEventListener("message", (event) => {{
-  if (event.data && event.data.type === "big-tree-viewer:ready") {{
-    viewer.postMessage({{ type: "big-tree-viewer:load", payload }}, {json.dumps(target.rstrip("/"))});
+  if (event.source !== viewer.contentWindow || event.origin !== targetOrigin || !event.data) return;
+  if (event.data.type === "big-tree-viewer:ready" && !loadSent) {{
+    loadSent = true;
+    viewer.contentWindow.postMessage({{ type: "big-tree-viewer:load", payload }}, targetOrigin);
   }}
-  if (event.data && event.data.type === "big-tree-viewer:loaded") {{
-    document.body.innerHTML = {json.dumps("<p>Loaded in Big Tree Viewer.</p>")};
+  if (event.data.type === "big-tree-viewer:loaded") {{
+    completed = true;
+    document.body.classList.add("btv-loaded");
+    statusNode.textContent = "Loaded in Big Tree Viewer.";
+    viewer.focus();
   }}
-  if (event.data && event.data.type === "big-tree-viewer:error") {{
-    document.body.innerHTML = "<pre>" + {json.dumps(html.escape("Big Tree Viewer error: "))} + event.data.message + "</pre>";
+  if (event.data.type === "big-tree-viewer:error") {{
+    completed = true;
+    document.body.classList.add("btv-error");
+    statusNode.textContent = "Big Tree Viewer error: " + String(event.data.message || "Unknown error");
   }}
 }});
+window.setTimeout(() => {{
+  if (!completed) {{
+    document.body.classList.add("btv-error");
+    statusNode.textContent = "Big Tree Viewer did not finish opening. Check the browser console or network connection.";
+  }}
+}}, 30000);
+viewer.src = {_inline_json(target_with_api)};
 </script>
+</body>
+</html>
 """
     handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".html", delete=False)
     with handle:

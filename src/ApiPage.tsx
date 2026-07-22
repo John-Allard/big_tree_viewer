@@ -109,6 +109,13 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             figures, but for huge trees PNG is usually safer because SVG output
             can contain an enormous number of vector elements.
           </p>
+          <p>
+            The viewer sends `big-tree-viewer:ready` once per document. A
+            `big-tree-viewer:loaded` reply means the requested tree, canvas
+            state, taxonomy mapping, and metadata overlays are ready, so a
+            current-view export can be requested immediately without polling
+            internal UI state.
+          </p>
           <pre><code>{exportSvg}</code></pre>
           <pre><code>{`viewer.postMessage({
   type: "big-tree-viewer:load",

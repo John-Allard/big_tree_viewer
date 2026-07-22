@@ -1,0 +1,17 @@
+name,group,label,marker
+A,alpha,Alpha A,circle
+B,alpha,Alpha B,circle
+C,alpha,Alpha C,circle
+D,alpha,Alpha D,circle
+E,beta,Beta E,square
+F,beta,Beta F,square
+G,beta,Beta G,square
+H,beta,Beta H,square
+I,gamma,Gamma I,diamond
+J,gamma,Gamma J,diamond
+K,gamma,Gamma K,diamond
+L,gamma,Gamma L,diamond
+M,delta,Delta M,triangle
+N,delta,Delta N,triangle
+O,delta,Delta O,triangle
+P,delta,Delta P,triangle
