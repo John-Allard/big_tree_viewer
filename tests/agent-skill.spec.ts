@@ -113,7 +113,7 @@ async function createInteractiveLauncher(): Promise<string> {
   return result.stdout.trim();
 }
 
-test("interactive helper loads a local tree in one tab without requesting a popup", async ({ page }) => {
+test("interactive helper promotes a local tree into one top-level BTV tab", async ({ page }) => {
   const launcherUrl = await createInteractiveLauncher();
   const launcherHtml = await fs.readFile(fileURLToPath(launcherUrl), "utf8");
   expect(launcherHtml).toContain('<iframe id="viewer"');
@@ -124,33 +124,50 @@ test("interactive helper loads a local tree in one tab without requesting a popu
     popupCount += 1;
   });
   await page.goto(launcherUrl);
-  await page.waitForFunction(() => document.body.classList.contains("btv-loaded"));
-
-  const viewerFrame = page.frames().find((frame) => frame.url().includes("btv_api=1"));
-  expect(viewerFrame).toBeDefined();
-  await viewerFrame?.waitForFunction(() => {
+  await page.waitForURL(`${localBtvUrl}**`);
+  await page.waitForFunction(() => {
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
     return Boolean(state?.treeLoaded) && !Boolean(state?.loading);
   });
+  expect(page.url()).toBe(localBtvUrl);
+  expect(page.frames()).toHaveLength(1);
   expect(popupCount).toBe(0);
+  const stagedPayloadCount = await page.evaluate(async () => await new Promise<number>((resolve, reject) => {
+    const request = indexedDB.open("big-tree-viewer-launches", 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const transaction = db.transaction("payloads", "readonly");
+      const countRequest = transaction.objectStore("payloads").count();
+      countRequest.onerror = () => reject(countRequest.error);
+      countRequest.onsuccess = () => resolve(countRequest.result);
+      transaction.oncomplete = () => db.close();
+    };
+  }));
+  expect(stagedPayloadCount).toBe(0);
 
-  const viewer = page.frameLocator("#viewer");
-  const tutorialClose = viewer.getByRole("button", { name: "Close tutorial prompt" });
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState());
+  expect(state?.viewMode).toBe("circular");
+  const tutorialClose = page.getByRole("button", { name: "Close tutorial prompt" });
   if (await tutorialClose.isVisible()) {
     await tutorialClose.click();
   }
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showSaveFilePicker", { configurable: true, value: undefined });
+    Object.defineProperty(window, "showOpenFilePicker", { configurable: true, value: undefined });
+  });
   const downloadPromise = page.waitForEvent("download");
-  await viewer.getByRole("button", { name: "Save Session" }).click();
+  await page.getByRole("button", { name: "Save Session" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("agent-skill-tree.btvsession");
   const sessionPath = await download.path();
   expect(sessionPath).toBeTruthy();
 
   const chooserPromise = page.waitForEvent("filechooser");
-  await viewer.getByRole("button", { name: "Load Session" }).click();
+  await page.getByRole("button", { name: "Load Session" }).click();
   const chooser = await chooserPromise;
   await chooser.setFiles(sessionPath as string);
-  await expect(viewer.getByText(/Loaded session from/)).toBeVisible();
+  await expect(page.getByText(/Loaded session from/)).toBeVisible();
 });
 
 test("agent skill renders all view modes without using the active browser", async ({ page }, testInfo) => {

@@ -6,9 +6,24 @@ const ARCHIVE_STORE_NAME = "archives";
 const MAPPING_STORE_NAME = "mappings";
 const SUBTREE_STORE_NAME = "shared-subtrees";
 const ARCHIVE_KEY = "ncbi-taxdmp-zip";
+const ARCHIVE_FILE_HANDLE_KEY = "ncbi-taxdmp-file-handle";
 const LATEST_MAPPING_KEY = "latest-tree-mapping";
 const TAXONOMY_MAPPING_CACHE_VERSION = 6;
 let cachedArchiveInMemory: Blob | ArrayBuffer | null = null;
+let linkedArchiveHandleInMemory: TaxonomyArchiveFileHandle | null | undefined;
+
+export interface TaxonomyArchiveFileHandle {
+  kind: "file";
+  name: string;
+  getFile: () => Promise<File>;
+  queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
+  requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
+}
+
+export interface LinkedTaxonomyArchiveStatus {
+  name: string;
+  permission: PermissionState;
+}
 
 interface CachedTaxonomyMappingRecord {
   version: number;
@@ -40,16 +55,108 @@ function cloneArchiveBuffer(buffer: ArrayBuffer): ArrayBuffer {
   return buffer.slice(0);
 }
 
-async function persistTaxonomyArchive(archive: Blob | ArrayBuffer): Promise<void> {
+function isTaxonomyArchiveFileHandle(value: unknown): value is TaxonomyArchiveFileHandle {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && (value as { kind?: unknown }).kind === "file"
+    && typeof (value as { name?: unknown }).name === "string"
+    && typeof (value as { getFile?: unknown }).getFile === "function",
+  );
+}
+
+async function readArchiveStoreValue(key: string): Promise<unknown> {
+  const db = await openTaxonomyDb();
+  return await new Promise((resolve, reject) => {
+    const transaction = db.transaction(ARCHIVE_STORE_NAME, "readonly");
+    const request = transaction.objectStore(ARCHIVE_STORE_NAME).get(key);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Unable to read taxonomy cache."));
+    transaction.oncomplete = () => db.close();
+  });
+}
+
+async function persistArchiveStoreValue(key: string, value: unknown): Promise<void> {
   const db = await openTaxonomyDb();
   return new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(ARCHIVE_STORE_NAME, "readwrite");
     const store = transaction.objectStore(ARCHIVE_STORE_NAME);
-    const request = store.put(archive, ARCHIVE_KEY);
+    const request = store.put(value, key);
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error ?? new Error("Unable to update taxonomy cache."));
     transaction.oncomplete = () => db.close();
   });
+}
+
+async function persistTaxonomyArchive(archive: Blob | ArrayBuffer): Promise<void> {
+  await persistArchiveStoreValue(ARCHIVE_KEY, archive);
+}
+
+async function getLinkedTaxonomyArchiveHandle(): Promise<TaxonomyArchiveFileHandle | null> {
+  if (linkedArchiveHandleInMemory !== undefined) {
+    return linkedArchiveHandleInMemory;
+  }
+  const stored = await readArchiveStoreValue(ARCHIVE_FILE_HANDLE_KEY);
+  linkedArchiveHandleInMemory = isTaxonomyArchiveFileHandle(stored) ? stored : null;
+  return linkedArchiveHandleInMemory;
+}
+
+async function queryTaxonomyFilePermission(handle: TaxonomyArchiveFileHandle): Promise<PermissionState> {
+  if (typeof handle.queryPermission === "function") {
+    try {
+      return await handle.queryPermission({ mode: "read" });
+    } catch {
+      return "prompt";
+    }
+  }
+  try {
+    await handle.getFile();
+    return "granted";
+  } catch {
+    return "denied";
+  }
+}
+
+export async function getLinkedTaxonomyArchiveStatus(): Promise<LinkedTaxonomyArchiveStatus | null> {
+  const handle = await getLinkedTaxonomyArchiveHandle();
+  if (!handle) {
+    return null;
+  }
+  return {
+    name: handle.name,
+    permission: await queryTaxonomyFilePermission(handle),
+  };
+}
+
+export async function readLinkedTaxonomyArchive(requestPermission = false): Promise<File | null> {
+  const handle = await getLinkedTaxonomyArchiveHandle();
+  if (!handle) {
+    return null;
+  }
+  let permission = await queryTaxonomyFilePermission(handle);
+  if (permission !== "granted" && requestPermission && typeof handle.requestPermission === "function") {
+    permission = await handle.requestPermission({ mode: "read" });
+  }
+  if (permission !== "granted") {
+    return null;
+  }
+  const file = await handle.getFile();
+  cachedArchiveInMemory = file;
+  return file;
+}
+
+export async function linkTaxonomyArchiveFile(handle: TaxonomyArchiveFileHandle): Promise<"persistent" | "memory"> {
+  linkedArchiveHandleInMemory = handle;
+  try {
+    await persistArchiveStoreValue(ARCHIVE_FILE_HANDLE_KEY, handle);
+    return "persistent";
+  } catch {
+    return "memory";
+  }
+}
+
+export function useTaxonomyArchiveForSession(archive: Blob | ArrayBuffer): void {
+  cachedArchiveInMemory = archive instanceof ArrayBuffer ? cloneArchiveBuffer(archive) : archive;
 }
 
 export async function getCachedTaxonomyArchive(): Promise<Blob | ArrayBuffer | null> {
@@ -59,28 +166,20 @@ export async function getCachedTaxonomyArchive(): Promise<Blob | ArrayBuffer | n
   if (cachedArchiveInMemory instanceof ArrayBuffer) {
     return cloneArchiveBuffer(cachedArchiveInMemory);
   }
-  const db = await openTaxonomyDb();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(ARCHIVE_STORE_NAME, "readonly");
-    const store = transaction.objectStore(ARCHIVE_STORE_NAME);
-    const request = store.get(ARCHIVE_KEY);
-    request.onsuccess = () => {
-      const archive = (request.result as Blob | ArrayBuffer | undefined) ?? null;
-      if (archive instanceof Blob) {
-        cachedArchiveInMemory = archive;
-        resolve(archive);
-        return;
-      }
-      if (archive instanceof ArrayBuffer) {
-        cachedArchiveInMemory = cloneArchiveBuffer(archive);
-        resolve(cloneArchiveBuffer(archive));
-        return;
-      }
-      resolve(null);
-    };
-    request.onerror = () => reject(request.error ?? new Error("Unable to read taxonomy cache."));
-    transaction.oncomplete = () => db.close();
-  });
+  const linkedArchive = await readLinkedTaxonomyArchive(false);
+  if (linkedArchive) {
+    return linkedArchive;
+  }
+  const archive = await readArchiveStoreValue(ARCHIVE_KEY);
+  if (archive instanceof Blob) {
+    cachedArchiveInMemory = archive;
+    return archive;
+  }
+  if (archive instanceof ArrayBuffer) {
+    cachedArchiveInMemory = cloneArchiveBuffer(archive);
+    return cloneArchiveBuffer(archive);
+  }
+  return null;
 }
 
 export async function putCachedTaxonomyArchive(archive: Blob | ArrayBuffer): Promise<"persistent" | "memory"> {

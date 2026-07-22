@@ -256,15 +256,44 @@ body.btv-error #status {{ color: #8b1e1e; }}
 <script>
 const payload = {payload_json};
 const targetOrigin = {_inline_json(target_origin)};
+const targetUrl = {_inline_json(target)};
 const statusNode = document.getElementById("status");
 const viewer = document.getElementById("viewer");
-let loadSent = false;
+let embeddedLoadSent = false;
+let stagePending = false;
+let stageFallbackTimer = 0;
 let completed = false;
+function sendEmbeddedLoad() {{
+  if (embeddedLoadSent || completed) return;
+  embeddedLoadSent = true;
+  stagePending = false;
+  window.clearTimeout(stageFallbackTimer);
+  viewer.contentWindow.postMessage({{ type: "big-tree-viewer:load", payload }}, targetOrigin);
+}}
 window.addEventListener("message", (event) => {{
   if (event.source !== viewer.contentWindow || event.origin !== targetOrigin || !event.data) return;
-  if (event.data.type === "big-tree-viewer:ready" && !loadSent) {{
-    loadSent = true;
-    viewer.contentWindow.postMessage({{ type: "big-tree-viewer:load", payload }}, targetOrigin);
+  if (event.data.type === "big-tree-viewer:ready" && !embeddedLoadSent && !stagePending) {{
+    const capabilities = Array.isArray(event.data.capabilities) ? event.data.capabilities : [];
+    if (capabilities.includes("staged-launch")) {{
+      stagePending = true;
+      statusNode.textContent = "Transferring the local tree to Big Tree Viewer...";
+      viewer.contentWindow.postMessage({{ type: "big-tree-viewer:stage-launch", payload }}, targetOrigin);
+      stageFallbackTimer = window.setTimeout(sendEmbeddedLoad, 5000);
+    }} else {{
+      sendEmbeddedLoad();
+    }}
+  }}
+  if (event.data.type === "big-tree-viewer:launch-staged" && stagePending && event.data.key) {{
+    completed = true;
+    stagePending = false;
+    window.clearTimeout(stageFallbackTimer);
+    const stagedUrl = new URL(targetUrl);
+    stagedUrl.searchParams.delete("btv_api");
+    stagedUrl.searchParams.set("btv_staged_launch", String(event.data.key));
+    window.location.replace(stagedUrl.toString());
+  }}
+  if (event.data.type === "big-tree-viewer:launch-stage-error" && stagePending) {{
+    sendEmbeddedLoad();
   }}
   if (event.data.type === "big-tree-viewer:loaded") {{
     completed = true;

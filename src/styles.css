@@ -316,32 +316,6 @@ button.secondary {
   transition: outline-color 160ms ease, box-shadow 160ms ease;
 }
 
-.taxonomy-storage-link {
-  margin-top: -0.35rem;
-}
-
-.taxonomy-storage-note {
-  display: grid;
-  gap: 0.45rem;
-  margin-top: 0.35rem;
-  padding: 0.75rem 0.85rem;
-  border: 1px solid rgba(148, 163, 184, 0.34);
-  border-radius: 12px;
-  background: rgba(248, 250, 252, 0.9);
-  color: #475569;
-  font-size: 0.78rem;
-  line-height: 1.42;
-}
-
-.taxonomy-storage-note p {
-  margin: 0;
-}
-
-.taxonomy-storage-note code {
-  color: #0f172a;
-  font-size: 0.74rem;
-}
-
 .taxonomy-silhouette-controls {
   display: grid;
   gap: 0.65rem;

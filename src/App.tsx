@@ -55,6 +55,11 @@ import {
   type SharedSubtreeVisualPayload,
 } from "./lib/sharedSubtreePayload";
 import {
+  consumeStagedLaunchPayload,
+  deleteExpiredStagedLaunchPayloads,
+  stageLaunchPayload,
+} from "./lib/stagedLaunchPayload";
+import {
   DEFAULT_TAXONOMY_COLOR_PALETTE,
   parseCustomTaxonomyPalette,
   SPIRAL_TTOL_TAXONOMY_COLOR_PALETTE,
@@ -69,9 +74,14 @@ import { buildTaxonomyBlocksForOrderedLeaves, taxonomyEntityKey } from "./lib/ta
 import {
   getCachedTaxonomyArchive,
   getCachedTaxonomyMapping,
+  getLinkedTaxonomyArchiveStatus,
   getSharedSubtreePayload,
+  linkTaxonomyArchiveFile,
   putCachedTaxonomyArchive,
   putCachedTaxonomyMapping,
+  readLinkedTaxonomyArchive,
+  useTaxonomyArchiveForSession,
+  type TaxonomyArchiveFileHandle,
 } from "./lib/taxonomyCache";
 import { rerootTreePayload, type RerootMode } from "./lib/rerootTree";
 import { looksLikeTreeText, normalizeImportedTreeText } from "./lib/treeImport";
@@ -1015,7 +1025,7 @@ const TUTORIAL_STEPS: Array<{
     id: "taxonomy",
     target: "taxonomy",
     title: "Map taxonomy",
-    body: "You can automatically map binomial species tip names to taxonomic groups and display colored taxonomy ribbons on your tree. Download Taxonomy fetches the NCBI taxdump archive, roughly a few hundred MB compressed, and caches it in browser site storage for later mappings.",
+    body: "You can automatically map binomial species tip names to taxonomic groups and display colored taxonomy ribbons on your tree. Download the NCBI taxonomy data once, or choose a taxdmp.zip file you already have.",
   },
   {
     id: "branchMenu",
@@ -1800,11 +1810,12 @@ export default function App() {
   const [metadataOverlayCompletionRequest, setMetadataOverlayCompletionRequest] = useState(0);
   const [metadataReadProgress, setMetadataReadProgress] = useState<number | null>(null);
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
+  const [taxonomyArchiveFileName, setTaxonomyArchiveFileName] = useState("");
+  const [taxonomyLinkedFilePermission, setTaxonomyLinkedFilePermission] = useState<PermissionState | null>(null);
   const [taxonomyLoading, setTaxonomyLoading] = useState(false);
   const [taxonomyStatus, setTaxonomyStatus] = useState("");
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
   const [taxonomyMappingWarning, setTaxonomyMappingWarning] = useState("");
-  const [taxonomyStorageInfoVisible, setTaxonomyStorageInfoVisible] = useState(false);
   const [taxonomyEnabled, setTaxonomyEnabled] = useState(false);
   const [taxonomyOverlayStyle, setTaxonomyOverlayStyle] = useState<TaxonomyOverlayStyle>(DEFAULT_TAXONOMY_OVERLAY_STYLE);
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
@@ -3433,6 +3444,12 @@ export default function App() {
     setTaxonomyCached(null);
     void (async () => {
       try {
+        const linkedStatus = await getLinkedTaxonomyArchiveStatus();
+        if (cancelled) {
+          return;
+        }
+        setTaxonomyArchiveFileName(linkedStatus?.name ?? "");
+        setTaxonomyLinkedFilePermission(linkedStatus?.permission ?? null);
         const cached = await getCachedTaxonomyArchive();
         if (cancelled) {
           return;
@@ -3449,7 +3466,7 @@ export default function App() {
     };
   }, []);
 
-  const ensureTaxonomyArchive = useCallback(async (allowDownload = true): Promise<Blob | ArrayBuffer> => {
+  const ensureTaxonomyArchive = useCallback(async (allowDownload = false): Promise<Blob | ArrayBuffer> => {
     setTaxonomyLoading(true);
     setTaxonomyError(null);
     setTaxonomyStatus("Checking local taxonomy cache...");
@@ -3458,8 +3475,15 @@ export default function App() {
     });
     const cached = await getCachedTaxonomyArchive();
     if (cached) {
+      const linkedStatus = await getLinkedTaxonomyArchiveStatus();
       setTaxonomyCached(true);
-      setTaxonomyStatus("Taxonomy cache found.");
+      setTaxonomyArchiveFileName(linkedStatus?.name ?? "");
+      setTaxonomyLinkedFilePermission(linkedStatus?.permission ?? null);
+      setTaxonomyStatus(
+        linkedStatus?.permission === "granted"
+          ? `Using taxonomy file ${linkedStatus.name}.`
+          : "Taxonomy data is ready.",
+      );
       appendDiagnostic("taxonomy-download-skipped-cache-found", {});
       return cached;
     }
@@ -3475,6 +3499,8 @@ export default function App() {
     const archive = await response.blob();
     const cacheMode = await putCachedTaxonomyArchive(archive);
     setTaxonomyCached(true);
+    setTaxonomyArchiveFileName("");
+    setTaxonomyLinkedFilePermission(null);
     setTaxonomyStatus(
       cacheMode === "persistent"
         ? "Taxonomy download cached locally."
@@ -4951,6 +4977,40 @@ export default function App() {
     }
     didAutoloadRef.current = true;
     void (async () => {
+      void deleteExpiredStagedLaunchPayloads().catch(() => undefined);
+      const stagedLaunchParams = new URLSearchParams(window.location.search);
+      const stagedLaunchKey = stagedLaunchParams.get("btv_staged_launch");
+      if (stagedLaunchKey) {
+        stagedLaunchParams.delete("btv_staged_launch");
+        const remainingSearch = stagedLaunchParams.toString();
+        window.history.replaceState(
+          window.history.state,
+          "",
+          `${window.location.pathname}${remainingSearch ? `?${remainingSearch}` : ""}${window.location.hash}`,
+        );
+        try {
+          const rawPayload = await consumeStagedLaunchPayload(stagedLaunchKey);
+          if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+            throw new Error("The one-use Big Tree Viewer launch payload was unavailable or had expired.");
+          }
+          const payload = rawPayload as BigTreeViewerLaunchPayload;
+          const result = await loadLaunchPayload(payload, "local file launch");
+          if (!result.loaded) {
+            throw new Error("The staged launch did not include a tree or session.");
+          }
+          if (payload.export) {
+            queueAutomationExport(payload.export, undefined, result.viewMode, result.label);
+          }
+          return;
+        } catch (error) {
+          setLoadState({
+            loading: false,
+            message: "",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+      }
       const launch = readLaunchPayloadFromUrl();
       setHideDownloadNewick(launch.hideDownloadNewick);
       if (launch.payload) {
@@ -4998,7 +5058,7 @@ export default function App() {
     }
     apiReadyAnnouncedRef.current = true;
     window.__BIG_TREE_VIEWER_API_READY__ = true;
-    const readyMessage = { type: "big-tree-viewer:ready", version: 1 };
+    const readyMessage = { type: "big-tree-viewer:ready", version: 1, capabilities: ["staged-launch"] };
     window.opener?.postMessage(readyMessage, "*");
     window.parent !== window && window.parent.postMessage(readyMessage, "*");
     return undefined;
@@ -5011,6 +5071,33 @@ export default function App() {
     const handleMessage = (event: MessageEvent): void => {
       const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload | BigTreeViewerLaunchPayload["export"] | { lowMemoryMode?: boolean; allowDownload?: boolean } } | null;
       if (!data || typeof data !== "object") {
+        return;
+      }
+      if (data.type === "big-tree-viewer:stage-launch") {
+        const replyOrigin = event.origin && event.origin !== "null" ? event.origin : "*";
+        const payload = data.payload && typeof data.payload === "object"
+          ? data.payload as BigTreeViewerLaunchPayload
+          : null;
+        if (!payload) {
+          (event.source as Window | null)?.postMessage(
+            { type: "big-tree-viewer:launch-stage-error", version: 1, message: "No launch payload was provided." },
+            replyOrigin,
+          );
+          return;
+        }
+        void stageLaunchPayload(payload)
+          .then((key) => {
+            (event.source as Window | null)?.postMessage(
+              { type: "big-tree-viewer:launch-staged", version: 1, key },
+              replyOrigin,
+            );
+          })
+          .catch((error) => {
+            (event.source as Window | null)?.postMessage(
+              { type: "big-tree-viewer:launch-stage-error", version: 1, message: error instanceof Error ? error.message : String(error) },
+              replyOrigin,
+            );
+          });
         return;
       }
       if (data.type === "big-tree-viewer:map-taxonomy") {
@@ -5161,9 +5248,166 @@ export default function App() {
     }
   }, [importMetadataText, loadFileAsTreeOrSession, parseText]);
 
-  const downloadTaxonomy = useCallback(async (): Promise<void> => {
+  const activateTaxonomyArchiveFile = useCallback(async (
+    file: File,
+    handle?: TaxonomyArchiveFileHandle,
+  ): Promise<void> => {
+    if (file.size <= 0) {
+      throw new Error("The selected taxonomy archive is empty.");
+    }
+    useTaxonomyArchiveForSession(file);
+    const handleStorage = handle ? await linkTaxonomyArchiveFile(handle) : null;
+    setTaxonomyCached(true);
+    setTaxonomyArchiveFileName(file.name || "taxdmp.zip");
+    setTaxonomyLinkedFilePermission(handleStorage === "persistent" ? "granted" : null);
+    setTaxonomyStatus(
+      handleStorage === "persistent"
+        ? `Using taxonomy file ${file.name}. This browser will reuse the file without storing another archive copy.`
+        : handle
+          ? `Using taxonomy file ${file.name} for this session. This browser could not retain access, so select the same file again next time.`
+          : `Using taxonomy file ${file.name} for this session. Select the same file again after reloading.`,
+    );
+    appendDiagnostic("taxonomy-file-loaded", {
+      fileName: file.name,
+      sizeBytes: file.size,
+      handleStorage,
+    });
+  }, [appendDiagnostic]);
+
+  const chooseTaxonomyArchiveFile = useCallback(async (): Promise<void> => {
+    setTaxonomyError(null);
+    setTaxonomyLoading(true);
     try {
-      await ensureTaxonomyArchive();
+      const pickerWindow = window as Window & {
+        showOpenFilePicker?: (options: unknown) => Promise<TaxonomyArchiveFileHandle[]>;
+      };
+      let handle: TaxonomyArchiveFileHandle | undefined;
+      let file: File | null = null;
+      if (typeof pickerWindow.showOpenFilePicker === "function") {
+        try {
+          [handle] = await pickerWindow.showOpenFilePicker({
+            id: "big-tree-viewer-taxonomy",
+            multiple: false,
+            types: [{
+              description: "NCBI taxonomy archive",
+              accept: { "application/zip": [".zip"], "application/octet-stream": [".zip"] },
+            }],
+          });
+          file = handle ? await handle.getFile() : null;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+          if (!filePickerUnavailableInContext(error)) {
+            throw error;
+          }
+        }
+      }
+      if (!file) {
+        file = await new Promise<File | null>((resolve) => {
+          const input = window.document.createElement("input");
+          input.type = "file";
+          input.accept = ".zip,application/zip,application/octet-stream";
+          input.onchange = () => resolve(input.files?.[0] ?? null);
+          input.click();
+        });
+        handle = undefined;
+      }
+      if (file) {
+        await activateTaxonomyArchiveFile(file, handle);
+      }
+    } catch (error) {
+      setTaxonomyError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaxonomyLoading(false);
+    }
+  }, [activateTaxonomyArchiveFile]);
+
+  const reconnectTaxonomyArchiveFile = useCallback(async (): Promise<void> => {
+    setTaxonomyError(null);
+    setTaxonomyLoading(true);
+    try {
+      const file = await readLinkedTaxonomyArchive(true);
+      if (!file) {
+        setTaxonomyArchiveFileName("");
+        setTaxonomyLinkedFilePermission(null);
+        throw new Error("Permission to read the linked taxonomy file was not granted. You can select the same file again instead.");
+      }
+      useTaxonomyArchiveForSession(file);
+      setTaxonomyCached(true);
+      setTaxonomyArchiveFileName(file.name);
+      setTaxonomyLinkedFilePermission("granted");
+      setTaxonomyStatus(`Using taxonomy file ${file.name}.`);
+    } catch (error) {
+      setTaxonomyError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaxonomyLoading(false);
+    }
+  }, []);
+
+  const downloadTaxonomy = useCallback(async (): Promise<void> => {
+    type WritableTaxonomyFileHandle = TaxonomyArchiveFileHandle & {
+      createWritable: () => Promise<{
+        write: (data: Blob) => Promise<void>;
+        close: () => Promise<void>;
+      }>;
+    };
+    const pickerWindow = window as Window & {
+      showSaveFilePicker?: (options: unknown) => Promise<WritableTaxonomyFileHandle>;
+    };
+    let saveHandle: WritableTaxonomyFileHandle | undefined;
+    setTaxonomyError(null);
+    try {
+      if (typeof pickerWindow.showSaveFilePicker === "function") {
+        try {
+          saveHandle = await pickerWindow.showSaveFilePicker({
+            id: "big-tree-viewer-taxonomy",
+            suggestedName: "taxdmp.zip",
+            types: [{
+              description: "NCBI taxonomy archive",
+              accept: { "application/zip": [".zip"], "application/octet-stream": [".zip"] },
+            }],
+          });
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+          if (!filePickerUnavailableInContext(error)) {
+            throw error;
+          }
+        }
+      }
+      setTaxonomyLoading(true);
+      setTaxonomyStatus("Downloading a new NCBI taxonomy archive...");
+      const response = await fetch(TAXONOMY_ARCHIVE_URL);
+      if (!response.ok) {
+        throw new Error(`Taxonomy download failed with HTTP ${response.status}.`);
+      }
+      const archive = await response.blob();
+      if (saveHandle) {
+        const writable = await saveHandle.createWritable();
+        await writable.write(archive);
+        await writable.close();
+        await activateTaxonomyArchiveFile(await saveHandle.getFile(), saveHandle);
+      } else {
+        const file = new File([archive], "taxdmp.zip", { type: archive.type || "application/zip" });
+        await activateTaxonomyArchiveFile(file);
+        const url = window.URL.createObjectURL(file);
+        const link = window.document.createElement("a");
+        link.href = url;
+        link.download = file.name;
+        window.document.body.appendChild(link);
+        link.click();
+        window.document.body.removeChild(link);
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+        setTaxonomyStatus(
+          "Downloaded taxdmp.zip and loaded it for this session. Select that saved file next time so another copy is not downloaded.",
+        );
+      }
+      appendDiagnostic("taxonomy-download-completed", {
+        cacheMode: saveHandle ? "linked-file" : "session-and-download",
+        sizeBytes: archive.size,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setTaxonomyError(message);
@@ -5173,7 +5417,7 @@ export default function App() {
     } finally {
       setTaxonomyLoading(false);
     }
-  }, [appendDiagnostic, ensureTaxonomyArchive]);
+  }, [activateTaxonomyArchiveFile, appendDiagnostic]);
 
   const runTaxonomyMapping = useCallback(async (): Promise<TaxonomyMapPayload | null> => {
     if (!tree) {
@@ -6847,49 +7091,49 @@ export default function App() {
         <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)} tourId="taxonomy">
           <div className="search-controls">
             {taxonomyCached === null ? (
-              <p className="status-line">Checking local taxonomy cache...</p>
+              <p className="status-line">Checking taxonomy data...</p>
             ) : taxonomyCached ? (
-              <>
-                <p className="status-line">Taxonomy cache found.</p>
-                <button
-                  type="button"
-                  className="text-link-button taxonomy-storage-link"
-                  onClick={() => setTaxonomyStorageInfoVisible((visible) => !visible)}
-                >
-                  Where is this file on my computer?
-                </button>
-                {taxonomyStorageInfoVisible ? (
-                  <div className="taxonomy-storage-note">
-                    <p>
-                      Big Tree Viewer stores the NCBI taxdump archive in browser-managed
-                      IndexedDB site storage, not as a normal visible download.
-                    </p>
-                    <p>
-                      Database: <code>big-tree-viewer-taxonomy</code>, object store:
-                      <code> archives</code>, key: <code>ncbi-taxdmp-zip</code>.
-                    </p>
-                    <p>
-                      Typical browser profile locations are under
-                      <code> ~/Library/Application Support/[browser]/.../IndexedDB</code> on macOS,
-                      <code> ~/.config/[browser]/.../IndexedDB</code> on Linux, and
-                      <code> %LOCALAPPDATA%\[browser]\User Data\...\IndexedDB</code> on Windows.
-                      The exact profile folder is chosen by your browser.
-                    </p>
-                  </div>
-                ) : null}
-              </>
+              <p className="status-line">Taxonomy data is ready.</p>
             ) : (
-              <div className="button-row">
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={taxonomyLoading}
-                  title={disabledControlTitle(taxonomyLoading ? "Taxonomy download already in progress." : undefined) ?? "Download and cache the NCBI taxonomy archive used for taxonomic mapping."}
-                  onClick={() => void downloadTaxonomy()}
-                >
-                  Download Taxonomy
-                </button>
-              </div>
+              <>
+                {taxonomyArchiveFileName && taxonomyLinkedFilePermission !== "granted" ? (
+                  <>
+                    <p className="status-line">Reconnect {taxonomyArchiveFileName} to use taxonomy mapping.</p>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={taxonomyLoading}
+                        onClick={() => void reconnectTaxonomyArchiveFile()}
+                      >
+                        Reconnect File
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={taxonomyLoading}
+                        title="Download the NCBI taxonomy archive and choose where to save it."
+                        onClick={() => void downloadTaxonomy()}
+                      >
+                        Download Taxonomy
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-link-button"
+                      disabled={taxonomyLoading}
+                      onClick={() => void chooseTaxonomyArchiveFile()}
+                    >
+                      Already have taxdmp.zip? Choose it
+                    </button>
+                  </>
+                )}
+              </>
             )}
             {taxonomyCached ? (
               <div className="button-row">
