@@ -648,6 +648,33 @@ function filePickerUnavailableInContext(error: unknown): boolean {
   return error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "SecurityError");
 }
 
+function chooseTaxonomyArchiveWithFileInput(): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = window.document.createElement("input");
+    input.type = "file";
+    input.accept = ".zip,application/zip,application/octet-stream";
+    input.style.display = "none";
+    window.document.body.appendChild(input);
+    let settled = false;
+    const finish = (file: File | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.removeEventListener("focus", onWindowFocus);
+      input.remove();
+      resolve(file);
+    };
+    const onWindowFocus = (): void => {
+      window.setTimeout(() => finish(input.files?.[0] ?? null), 0);
+    };
+    input.addEventListener("change", () => finish(input.files?.[0] ?? null), { once: true });
+    input.addEventListener("cancel", () => finish(null), { once: true });
+    window.addEventListener("focus", onWindowFocus, { once: true });
+    input.click();
+  });
+}
+
 function normalizeLaunchCamera(raw: unknown): CameraState | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -5304,13 +5331,7 @@ export default function App() {
         }
       }
       if (!file) {
-        file = await new Promise<File | null>((resolve) => {
-          const input = window.document.createElement("input");
-          input.type = "file";
-          input.accept = ".zip,application/zip,application/octet-stream";
-          input.onchange = () => resolve(input.files?.[0] ?? null);
-          input.click();
-        });
+        file = await chooseTaxonomyArchiveWithFileInput();
         handle = undefined;
       }
       if (file) {

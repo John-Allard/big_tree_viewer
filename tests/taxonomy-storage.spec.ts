@@ -40,6 +40,63 @@ test("taxonomy setup offers one download action and a quiet existing-file altern
   expect(downloadRequested).toBe(false);
 });
 
+test("canceling the fallback picker does not block a subsequent taxonomy download", async ({ page }) => {
+  await page.route(taxonomyUrl, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/zip",
+      body: "PK\u0003\u0004test-taxonomy",
+    });
+  });
+  await waitForTaxonomyCheck(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showOpenFilePicker", { configurable: true, value: undefined });
+    Object.defineProperty(window, "showSaveFilePicker", { configurable: true, value: undefined });
+    const nativeInputClick = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function click(): void {
+      if (this.type === "file") {
+        window.setTimeout(() => this.dispatchEvent(new Event("cancel")), 0);
+        return;
+      }
+      nativeInputClick.call(this);
+    };
+  });
+
+  await page.getByRole("button", { name: "Already have taxdmp.zip? Choose it" }).click();
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyLoading === false);
+
+  await expect(page.getByRole("button", { name: "Download Taxonomy" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Already have taxdmp.zip? Choose it" })).toBeEnabled();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download Taxonomy" }).click();
+  await downloadPromise;
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.taxonomyCached === true && state?.taxonomyLoading === false;
+  });
+  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeEnabled();
+});
+
+test("canceling the native existing-file picker restores taxonomy controls", async ({ page }) => {
+  await waitForTaxonomyCheck(page);
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showOpenFilePicker", {
+      configurable: true,
+      value: async () => {
+        throw new DOMException("The user aborted a request.", "AbortError");
+      },
+    });
+  });
+
+  await page.getByRole("button", { name: "Already have taxdmp.zip? Choose it" }).click();
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyLoading === false);
+
+  await expect(page.getByRole("button", { name: "Download Taxonomy" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Already have taxdmp.zip? Choose it" })).toBeEnabled();
+});
+
 test("selecting an existing taxonomy file does not request another archive", async ({ page }) => {
   let downloadRequested = false;
   await page.route(taxonomyUrl, async (route) => {
@@ -118,6 +175,7 @@ test("explicit fallback download saves a file without creating a hidden archive 
     });
   });
   await waitForTaxonomyCheck(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
   await page.evaluate(() => {
     Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true });
   });
@@ -125,12 +183,45 @@ test("explicit fallback download saves a file without creating a hidden archive 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download Taxonomy" }).click();
   const download = await downloadPromise;
-  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyCached === true);
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.taxonomyCached === true && state?.taxonomyLoading === false;
+  });
 
   expect(download.suggestedFilename()).toBe("taxdmp.zip");
   expect(downloadRequests).toBe(1);
   expect(await browserCacheContainsArchive(page)).toBe(false);
+  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeEnabled();
   await expect(page.getByText("Select that saved file next time", { exact: false })).toBeVisible();
+});
+
+test("native taxonomy download enables mapping and retains the saved file", async ({ page }) => {
+  await page.route(taxonomyUrl, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/zip",
+      body: "PK\u0003\u0004test-taxonomy",
+    });
+  });
+  await waitForTaxonomyCheck(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const handle = await root.getFileHandle("taxdmp.zip", { create: true });
+    Object.defineProperty(window, "showSaveFilePicker", {
+      configurable: true,
+      value: async () => handle,
+    });
+  });
+
+  await page.getByRole("button", { name: "Download Taxonomy" }).click();
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.taxonomyCached === true && state?.taxonomyLoading === false;
+  });
+
+  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeEnabled();
+  expect(await browserCacheContainsArchive(page)).toBe(false);
 });
 
 test("an existing legacy browser archive is detected without a download prompt", async ({ page }) => {
