@@ -257,43 +257,32 @@ body.btv-error #status {{ color: #8b1e1e; }}
 const payload = {payload_json};
 const targetOrigin = {_inline_json(target_origin)};
 const targetUrl = {_inline_json(target)};
+const windowLaunchPrefix = "big-tree-viewer-window-launch-v1:";
+const windowNameProbePrefix = "big-tree-viewer-window-name-probe-v1:";
 const statusNode = document.getElementById("status");
 const viewer = document.getElementById("viewer");
 let embeddedLoadSent = false;
-let stagePending = false;
-let stageFallbackTimer = 0;
 let completed = false;
 function sendEmbeddedLoad() {{
   if (embeddedLoadSent || completed) return;
   embeddedLoadSent = true;
-  stagePending = false;
-  window.clearTimeout(stageFallbackTimer);
   viewer.contentWindow.postMessage({{ type: "big-tree-viewer:load", payload }}, targetOrigin);
 }}
 window.addEventListener("message", (event) => {{
   if (event.source !== viewer.contentWindow || event.origin !== targetOrigin || !event.data) return;
-  if (event.data.type === "big-tree-viewer:ready" && !embeddedLoadSent && !stagePending) {{
+  if (event.data.type === "big-tree-viewer:ready" && !embeddedLoadSent) {{
     const capabilities = Array.isArray(event.data.capabilities) ? event.data.capabilities : [];
-    if (capabilities.includes("staged-launch")) {{
-      stagePending = true;
+    if (capabilities.includes("window-name-launch") && event.data.windowNameProbe === true) {{
+      completed = true;
       statusNode.textContent = "Transferring the local tree to Big Tree Viewer...";
-      viewer.contentWindow.postMessage({{ type: "big-tree-viewer:stage-launch", payload }}, targetOrigin);
-      stageFallbackTimer = window.setTimeout(sendEmbeddedLoad, 5000);
+      window.name = windowLaunchPrefix + JSON.stringify(payload);
+      const launchUrl = new URL(targetUrl);
+      launchUrl.searchParams.delete("btv_api");
+      launchUrl.searchParams.set("btv_window_launch", "1");
+      window.location.replace(launchUrl.toString());
     }} else {{
       sendEmbeddedLoad();
     }}
-  }}
-  if (event.data.type === "big-tree-viewer:launch-staged" && stagePending && event.data.key) {{
-    completed = true;
-    stagePending = false;
-    window.clearTimeout(stageFallbackTimer);
-    const stagedUrl = new URL(targetUrl);
-    stagedUrl.searchParams.delete("btv_api");
-    stagedUrl.searchParams.set("btv_staged_launch", String(event.data.key));
-    window.location.replace(stagedUrl.toString());
-  }}
-  if (event.data.type === "big-tree-viewer:launch-stage-error" && stagePending) {{
-    sendEmbeddedLoad();
   }}
   if (event.data.type === "big-tree-viewer:loaded") {{
     completed = true;
@@ -313,7 +302,13 @@ window.setTimeout(() => {{
     statusNode.textContent = "Big Tree Viewer did not finish opening. Check the browser console or network connection.";
   }}
 }}, 30000);
-viewer.src = {_inline_json(target_with_api)};
+const probeToken = typeof crypto.randomUUID === "function"
+  ? crypto.randomUUID()
+  : `${{Date.now()}}-${{Math.random().toString(16).slice(2)}}`;
+const probeUrl = new URL({_inline_json(target_with_api)});
+probeUrl.searchParams.set("btv_window_name_probe", probeToken);
+viewer.contentWindow.name = windowNameProbePrefix + probeToken;
+viewer.src = probeUrl.toString();
 </script>
 </body>
 </html>

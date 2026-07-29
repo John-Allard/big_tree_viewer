@@ -40,7 +40,7 @@ python scripts/btv_open.py tree.nwk --view circular --taxonomy true --taxonomy-b
 python scripts/btv_open.py --session-url https://example.org/tree.btvsession
 ```
 
-`btv_open.py` uses only Python's standard library. For a local interactive launch, it opens one temporary handoff page in the user's default browser. Current BTV deployments stage the local tree or session as a one-use payload in BTV's own browser storage, replace the handoff page with a top-level BTV page, and delete the staged payload as it is consumed. The final address bar therefore shows the configured BTV URL, and BTV has normal top-level access to browser-granted file permissions. An older deployment falls back to embedding BTV in the same tab. The helper does not request a pop-up or leave a blank launcher tab. Opening the user's browser is intentional only for this explicitly interactive command; do not use it for unattended rendering.
+`btv_open.py` uses only Python's standard library. For a local interactive launch, it opens one temporary handoff page in the user's default browser. Current BTV deployments verify that the browser preserves a one-use same-tab transfer, replace the handoff page with a top-level BTV page, and clear the transferred payload as it is consumed. The final address bar therefore shows the configured BTV URL, and BTV has normal top-level access to browser-granted file permissions. Browsers or older deployments that cannot make that transfer fall back to embedding BTV in the same tab. The helper does not request a pop-up or leave a blank launcher tab. Opening the user's browser is intentional only for this explicitly interactive command; do not use it for unattended rendering.
 
 ## Render Without Opening the User's Browser
 

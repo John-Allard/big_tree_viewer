@@ -99,6 +99,9 @@ import type {
   TreeCanvasSessionState,
 } from "./components/treeCanvasTypes";
 
+const WINDOW_LAUNCH_PREFIX = "big-tree-viewer-window-launch-v1:";
+const WINDOW_NAME_PROBE_PREFIX = "big-tree-viewer-window-name-probe-v1:";
+
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
     return "n/a";
@@ -5006,6 +5009,43 @@ export default function App() {
     void (async () => {
       void deleteExpiredStagedLaunchPayloads().catch(() => undefined);
       const stagedLaunchParams = new URLSearchParams(window.location.search);
+      const windowLaunchRequested = stagedLaunchParams.get("btv_window_launch") === "1";
+      if (windowLaunchRequested) {
+        stagedLaunchParams.delete("btv_window_launch");
+        const remainingSearch = stagedLaunchParams.toString();
+        window.history.replaceState(
+          window.history.state,
+          "",
+          `${window.location.pathname}${remainingSearch ? `?${remainingSearch}` : ""}${window.location.hash}`,
+        );
+        const serializedPayload = window.name;
+        window.name = "";
+        try {
+          if (!serializedPayload.startsWith(WINDOW_LAUNCH_PREFIX)) {
+            throw new Error("The one-use Big Tree Viewer launch payload was unavailable.");
+          }
+          const rawPayload = JSON.parse(serializedPayload.slice(WINDOW_LAUNCH_PREFIX.length)) as unknown;
+          if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+            throw new Error("The one-use Big Tree Viewer launch payload was invalid.");
+          }
+          const payload = rawPayload as BigTreeViewerLaunchPayload;
+          const result = await loadLaunchPayload(payload, "local file launch");
+          if (!result.loaded) {
+            throw new Error("The local file launch did not include a tree or session.");
+          }
+          if (payload.export) {
+            queueAutomationExport(payload.export, undefined, result.viewMode, result.label);
+          }
+          return;
+        } catch (error) {
+          setLoadState({
+            loading: false,
+            message: "",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+      }
       const stagedLaunchKey = stagedLaunchParams.get("btv_staged_launch");
       if (stagedLaunchKey) {
         stagedLaunchParams.delete("btv_staged_launch");
@@ -5084,8 +5124,29 @@ export default function App() {
       return undefined;
     }
     apiReadyAnnouncedRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const windowNameProbeToken = params.get("btv_window_name_probe");
+    const windowNameProbe = Boolean(
+      windowNameProbeToken
+      && window.name === `${WINDOW_NAME_PROBE_PREFIX}${windowNameProbeToken}`,
+    );
+    if (windowNameProbeToken) {
+      window.name = "";
+      params.delete("btv_window_name_probe");
+      const remainingSearch = params.toString();
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${remainingSearch ? `?${remainingSearch}` : ""}${window.location.hash}`,
+      );
+    }
     window.__BIG_TREE_VIEWER_API_READY__ = true;
-    const readyMessage = { type: "big-tree-viewer:ready", version: 1, capabilities: ["staged-launch"] };
+    const readyMessage = {
+      type: "big-tree-viewer:ready",
+      version: 1,
+      capabilities: ["window-name-launch"],
+      windowNameProbe,
+    };
     window.opener?.postMessage(readyMessage, "*");
     window.parent !== window && window.parent.postMessage(readyMessage, "*");
     return undefined;

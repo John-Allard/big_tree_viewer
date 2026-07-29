@@ -118,6 +118,8 @@ test("interactive helper promotes a local tree into one top-level BTV tab", asyn
   const launcherHtml = await fs.readFile(fileURLToPath(launcherUrl), "utf8");
   expect(launcherHtml).toContain('<iframe id="viewer"');
   expect(launcherHtml).not.toContain("window.open(");
+  expect(launcherHtml).toContain('capabilities.includes("window-name-launch")');
+  expect(launcherHtml).not.toContain("big-tree-viewer:stage-launch");
 
   let popupCount = 0;
   page.on("popup", () => {
@@ -132,6 +134,7 @@ test("interactive helper promotes a local tree into one top-level BTV tab", asyn
   expect(page.url()).toBe(localBtvUrl);
   expect(page.frames()).toHaveLength(1);
   expect(popupCount).toBe(0);
+  expect(await page.evaluate(() => window.name)).toBe("");
   const stagedPayloadCount = await page.evaluate(async () => await new Promise<number>((resolve, reject) => {
     const request = indexedDB.open("big-tree-viewer-launches", 1);
     request.onerror = () => reject(request.error);
