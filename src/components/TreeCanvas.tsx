@@ -108,6 +108,8 @@ const MIN_ZOOMED_RECT_TREE_SPAN_PX = 96;
 const MIN_ZOOMED_CIRCULAR_TREE_RADIUS_PX = 56;
 const MAX_TAXONOMY_ARC_HITBOXES = 4_096;
 const MAX_GLOBAL_COLORED_BRANCH_CACHE_COLORS = 512;
+// Large accelerated Canvas2D Path2Ds can silently fail to stroke in Chromium.
+const MAX_SPIRAL_BRANCH_PATH_COMMANDS = 200_000;
 const ROTATION_PREVIEW_SETTLE_DELAY_MS = 120;
 
 type PhyloPicHitbox = {
@@ -600,6 +602,17 @@ function compressedSpiralTaxonomyMetrics(
   };
 }
 
+function spiralCurveSampleCount(
+  startTheta: number,
+  endTheta: number,
+  scale: number,
+  minSamplesPerRadian: number,
+  maxSamplesPerRadian: number,
+): number {
+  const span = Math.abs(endTheta - startTheta);
+  return Math.max(2, Math.min(2400, Math.ceil(span * Math.max(minSamplesPerRadian, Math.min(maxSamplesPerRadian, scale * 18)))));
+}
+
 function appendSpiralCurve(
   path: Path2D,
   startTheta: number,
@@ -610,8 +623,7 @@ function appendSpiralCurve(
   minSamplesPerRadian = 90,
   maxSamplesPerRadian = 420,
 ): void {
-  const span = Math.abs(endTheta - startTheta);
-  const samples = Math.max(2, Math.min(2400, Math.ceil(span * Math.max(minSamplesPerRadian, Math.min(maxSamplesPerRadian, scale * 18)))));
+  const samples = spiralCurveSampleCount(startTheta, endTheta, scale, minSamplesPerRadian, maxSamplesPerRadian);
   const start = spiralPointAt(startTheta, age, metrics);
   path.moveTo(start.x, start.y);
   for (let index = 1; index <= samples; index += 1) {
@@ -872,14 +884,25 @@ function buildSpiralBranchPathCache(
   for (let node = 0; node < tree.nodeCount; node += 1) {
     thetaByNode[node] = spiralThetaForY(layout.center[node], tree.leafCount, metrics);
   }
-  const getPath = (color: string): Path2D => {
-    const existing = paths.get(color);
-    if (existing) {
-      return existing;
+  const getPath = (color: string, commandCount: number): Path2D => {
+    let batches = paths.get(color);
+    if (!batches) {
+      batches = [];
+      paths.set(color, batches);
     }
-    const created = new Path2D();
-    paths.set(color, created);
-    return created;
+    let batch = batches[batches.length - 1];
+    if (!batch || (
+      batch.commandCount > 0
+      && batch.commandCount + commandCount > MAX_SPIRAL_BRANCH_PATH_COMMANDS
+    )) {
+      batch = {
+        path: new Path2D(),
+        commandCount: 0,
+      };
+      batches.push(batch);
+    }
+    batch.commandCount += commandCount;
+    return batch.path;
   };
   for (let node = 0; node < tree.nodeCount; node += 1) {
     if (hiddenNodes[node]) {
@@ -888,7 +911,7 @@ function buildSpiralBranchPathCache(
     const parent = tree.buffers.parent[node];
     if (parent >= 0) {
       const color = branchColors?.[node] ?? BRANCH_COLOR;
-      const path = getPath(color);
+      const path = getPath(color, 2);
       const theta = thetaByNode[node];
       const start = spiralPointAt(theta, spiralAgeForDepth(tree, tree.buffers.depth[parent], metrics), metrics);
       const end = spiralPointAt(theta, spiralAgeForDepth(tree, tree.buffers.depth[node], metrics), metrics);
@@ -907,10 +930,19 @@ function buildSpiralBranchPathCache(
         continue;
       }
       const childTheta = thetaByNode[child];
+      const startTheta = Math.min(ownerTheta, childTheta);
+      const endTheta = Math.max(ownerTheta, childTheta);
+      const curveCommandCount = 1 + spiralCurveSampleCount(
+        startTheta,
+        endTheta,
+        1,
+        curveMinSamplesPerRadian,
+        curveMaxSamplesPerRadian,
+      );
       appendSpiralCurve(
-        getPath(branchColors?.[child] ?? BRANCH_COLOR),
-        Math.min(ownerTheta, childTheta),
-        Math.max(ownerTheta, childTheta),
+        getPath(branchColors?.[child] ?? BRANCH_COLOR, curveCommandCount),
+        startTheta,
+        endTheta,
         ownerAge,
         metrics,
         1,
@@ -2960,7 +2992,12 @@ type CircularTaxonomyPathCache = Map<string, CircularBranchPathCache>;
 
 type RectTaxonomyPathCache = Map<string, RectBranchPathCache>;
 
-type SpiralBranchPathCache = Map<string, Path2D>;
+type SpiralBranchPathBatch = {
+  path: Path2D;
+  commandCount: number;
+};
+
+type SpiralBranchPathCache = Map<string, SpiralBranchPathBatch[]>;
 
 type SpiralTaxonomyRibbonPathCache = Map<string, Path2D>;
 
@@ -7838,11 +7875,13 @@ export default function TreeCanvas({
       ctx.scale(camera.scale, camera.scale);
       ctx.rotate(camera.rotation);
       ctx.lineCap = "butt";
-      branchPaths?.forEach((path, color) => {
+      branchPaths?.forEach((batches, color) => {
         ctx.strokeStyle = color;
         ctx.globalAlpha = color === BRANCH_COLOR ? 0.74 : 0.86;
         ctx.lineWidth = (0.62 * branchStrokeScale) / Math.max(camera.scale, 1e-6);
-        ctx.stroke(path);
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+          ctx.stroke(batches[batchIndex].path);
+        }
       });
       ctx.globalAlpha = 1;
       ctx.restore();
@@ -8548,6 +8587,12 @@ export default function TreeCanvas({
         visibleTaxonomyRanks,
         logUnit: metrics.logUnit,
         timeExtent: metrics.timeExtent,
+        branchPathBatchCount: branchPaths
+          ? [...branchPaths.values()].reduce((total, batches) => total + batches.length, 0)
+          : 0,
+        branchPathMaxCommandCount: branchPaths
+          ? Math.max(0, ...[...branchPaths.values()].flatMap((batches) => batches.map((batch) => batch.commandCount)))
+          : 0,
       };
     }
 
