@@ -17,10 +17,59 @@ function balancedTreeNewick(tipCount: number): string {
   return `${nodes[0].replace(/:1$/, "")};`;
 }
 
+function balancedSubtreeNewick(names: string[]): string {
+  let nodes = names.map((name) => `${name}:1`);
+  while (nodes.length > 1) {
+    const parents: string[] = [];
+    for (let index = 0; index < nodes.length; index += 2) {
+      parents.push(index + 1 < nodes.length
+        ? `(${nodes[index]},${nodes[index + 1]}):1`
+        : nodes[index]);
+    }
+    nodes = parents;
+  }
+  return nodes[0];
+}
+
 async function settleFrames(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   }));
+}
+
+async function hoverOverlayAlphaAt(
+  page: Page,
+  pointer: { x: number; y: number },
+  sample: { x: number; y: number },
+): Promise<number> {
+  return page.evaluate(({ pointer: pointerPoint, sample: samplePoint }) => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const overlay = document.querySelector(".tree-canvas-overlay");
+    if (!(canvas instanceof HTMLCanvasElement) || !(overlay instanceof HTMLCanvasElement)) {
+      throw new Error("Tree canvas overlay unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true,
+      clientX: rect.left + pointerPoint.x,
+      clientY: rect.top + pointerPoint.y,
+      pointerId: 1,
+      pointerType: "mouse",
+    }));
+    const context = overlay.getContext("2d");
+    if (!context) {
+      throw new Error("Tree canvas overlay context unavailable.");
+    }
+    const dpr = overlay.width / rect.width;
+    const deviceX = Math.max(0, Math.round(samplePoint.x * dpr) - 1);
+    const deviceY = Math.max(0, Math.round(samplePoint.y * dpr) - 1);
+    const pixels = context.getImageData(deviceX, deviceY, 3, 3).data;
+    let maximumAlpha = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      maximumAlpha = Math.max(maximumAlpha, pixels[index]);
+    }
+    return maximumAlpha;
+  }, { pointer, sample });
 }
 
 async function loadFixture(page: Page): Promise<void> {
@@ -160,7 +209,8 @@ test("collapse modes preserve ribbons or minimize to three tips with aligned hov
   await settleFrames(page);
 
   const preserved = await page.evaluate((node) => {
-    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [];
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const hitboxes = canvasTest?.getLabelHitboxes() ?? [];
     const triangle = hitboxes
       .filter((candidate) => candidate.node === node && candidate.source === "collapse")
       .sort((left, right) => Number(right.width) - Number(left.width))[0];
@@ -169,10 +219,37 @@ test("collapse modes preserve ribbons or minimize to three tips with aligned hov
       && candidate.text === "Alphaidae"
       && candidate.source !== "collapse"
     ));
-    if (!triangle || !ribbon) {
+    const trianglePolygon = canvasTest?.getCollapsedTriangleHitboxes()
+      .find((candidate) => candidate.node === node);
+    if (!triangle || !ribbon || !trianglePolygon) {
       throw new Error("Preserved collapse geometry unavailable.");
     }
-    return { triangle, ribbon };
+    const apex = trianglePolygon.points[0];
+    const baseMidpoint = {
+      x: (trianglePolygon.points[1].x + trianglePolygon.points[2].x) * 0.5,
+      y: (trianglePolygon.points[1].y + trianglePolygon.points[2].y) * 0.5,
+    };
+    const axisX = baseMidpoint.x - apex.x;
+    const axisY = baseMidpoint.y - apex.y;
+    const axisLength = Math.hypot(axisX, axisY);
+    const unitX = axisX / axisLength;
+    const unitY = axisY / axisLength;
+    return {
+      triangle,
+      ribbon,
+      preEntryPoint: {
+        x: Number(triangle.x) + 2,
+        y: Number(triangle.y) + 2,
+      },
+      entrancePoint: {
+        x: apex.x + (unitX * 2) - (unitY * 2.5),
+        y: apex.y + (unitY * 2) + (unitX * 2.5),
+      },
+      interiorPoint: {
+        x: apex.x + (axisX * 0.65),
+        y: apex.y + (axisY * 0.65),
+      },
+    };
   }, nodes.collapsedNode);
 
   expect(Number(preserved.ribbon.x)).toBeCloseTo(Number(originalRibbon.x), 3);
@@ -190,6 +267,22 @@ test("collapse modes preserve ribbons or minimize to three tips with aligned hov
     taxonomyRank: "family",
     descendantTipCount: 4,
   });
+  await page.evaluate((pointer) => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Tree canvas unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true,
+      clientX: rect.left + pointer.x,
+      clientY: rect.top + pointer.y,
+      pointerId: 1,
+      pointerType: "mouse",
+    }));
+  }, preserved.preEntryPoint);
+  expect(await hoverOverlayAlphaAt(page, preserved.entrancePoint, preserved.interiorPoint))
+    .toBeGreaterThan(0);
 
   await page.evaluate((node) => {
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCollapsedNodeMode(node, "minimize");
@@ -219,13 +312,46 @@ test("collapse modes preserve ribbons or minimize to three tips with aligned hov
       Number(triangle.x) + (Number(triangle.width) * 0.2),
       Number(triangle.y) + (Number(triangle.height) * 0.5),
     ) ?? null;
+    const trianglePolygon = canvasTest?.getCollapsedTriangleHitboxes()
+      .find((candidate) => candidate.node === collapsedNode);
+    if (!trianglePolygon) {
+      throw new Error("Minimized triangle polygon unavailable.");
+    }
+    const apex = trianglePolygon.points[0];
+    const baseMidpoint = {
+      x: (trianglePolygon.points[1].x + trianglePolygon.points[2].x) * 0.5,
+      y: (trianglePolygon.points[1].y + trianglePolygon.points[2].y) * 0.5,
+    };
+    const axisX = baseMidpoint.x - apex.x;
+    const axisY = baseMidpoint.y - apex.y;
+    const axisLength = Math.hypot(axisX, axisY);
+    const unitX = axisX / axisLength;
+    const unitY = axisY / axisLength;
+    const perpendicularX = -unitY;
+    const perpendicularY = unitX;
+    const triangleEntranceProbe = canvasTest?.probeHoverForTest(
+      apex.x + (unitX * 2) + (perpendicularX * 2.5),
+      apex.y + (unitY * 2) + (perpendicularY * 2.5),
+    ) ?? null;
+    const triangleEntrancePoint = {
+      x: apex.x + (unitX * 2) + (perpendicularX * 2.5),
+      y: apex.y + (unitY * 2) + (perpendicularY * 2.5),
+    };
+    const triangleInteriorPoint = {
+      x: apex.x + (axisX * 0.65),
+      y: apex.y + (axisY * 0.65),
+    };
     const branchProbe = canvasTest?.probeHoverForTest(
       (movedAncestorSegment.x1 + movedAncestorSegment.x2) * 0.5,
       (movedAncestorSegment.y1 + movedAncestorSegment.y2) * 0.5,
     ) ?? null;
+    const rectDebug = canvasTest?.getRenderDebug()?.rect as {
+      taxonomyBandXs?: number[];
+    } | undefined;
     return {
       triangle,
       taxonomyLabel,
+      firstTaxonomyBandX: rectDebug?.taxonomyBandXs?.[0] ?? null,
       collapseHitboxCount: collapseHitboxes.length,
       preservedRibbonStillVisible: hitboxes.some((candidate) => (
         candidate.labelKind === "taxonomy"
@@ -234,6 +360,9 @@ test("collapse modes preserve ribbons or minimize to three tips with aligned hov
       )),
       outsideTipSpacing: Math.abs(firstTipSegment.y1 - secondTipSegment.y1),
       triangleProbe,
+      triangleEntranceProbe,
+      triangleEntrancePoint,
+      triangleInteriorPoint,
       branchProbe,
     };
   }, nodes);
@@ -245,12 +374,25 @@ test("collapse modes preserve ribbons or minimize to three tips with aligned hov
   expect(Number(minimized.taxonomyLabel?.x)).toBeGreaterThan(
     Number(minimized.triangle.x) + Number(minimized.triangle.width),
   );
+  expect(Number(minimized.taxonomyLabel?.x) + 5)
+    .toBeCloseTo(Number(minimized.firstTaxonomyBandX), 3);
   expect(minimized.triangleProbe).toMatchObject({
     kind: "taxonomy",
     name: "Alphaidae",
     taxonomyRank: "family",
     descendantTipCount: 4,
   });
+  expect(minimized.triangleEntranceProbe).toMatchObject({
+    kind: "taxonomy",
+    name: "Alphaidae",
+    taxonomyRank: "family",
+  });
+  const triangleHighlightAlpha = await hoverOverlayAlphaAt(
+    page,
+    minimized.triangleEntrancePoint,
+    minimized.triangleInteriorPoint,
+  );
+  expect(triangleHighlightAlpha).toBeGreaterThan(0);
   expect(minimized.branchProbe).toMatchObject({
     node: nodes.movedAncestorNode,
     targetKind: "stem",
@@ -410,6 +552,302 @@ test("node and taxonomy context menus expose preserve-width and minimize actions
   }, nodes.collapsedNode);
   await page.mouse.click(minimizedTrianglePoint.x, minimizedTrianglePoint.y, { button: "right" });
   await expect(page.getByRole("button", { name: "Expand Group" })).toBeVisible();
+});
+
+test("taxonomy collapse keeps a small basal lineage and excludes a separate occurrence", async ({ page }) => {
+  await loadFixture(page);
+  const previousSignature = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeSignature ?? null
+  ));
+  await page.getByRole("button", { name: "Paste Newick" }).click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(
+    "((U:1,V:1,W:1,X:1):2,(A:1,(((B:1,C:1):1,(D:1,E:1):1):1,((F:1,G:1):1,(H:1,I:1):1):1):1):1,(J:1,K:1,L:1,M:1,S:1,T:1):2)Root;",
+  );
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction((oldSignature) => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(
+      state?.treeLoaded
+      && !state.loading
+      && state.treeSignature !== oldSignature
+      && (window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names ?? []).includes("S")
+    );
+  }, previousSignature);
+  const target = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    if (!app || !canvasTest || !internal?.names || !internal.parent) {
+      throw new Error("Taxonomy collapse test hooks unavailable.");
+    }
+    const nodeByName = new Map<string, number>();
+    for (let node = 0; node < internal.names.length; node += 1) {
+      nodeByName.set(internal.names[node], node);
+    }
+    const tip = (name: string): number => {
+      const node = nodeByName.get(name);
+      if (node === undefined) {
+        throw new Error(`Missing fixture tip ${name}.`);
+      }
+      return node;
+    };
+    const lca = (leftNode: number, rightNode: number): number => {
+      const ancestors = new Set<number>();
+      for (let node = leftNode; node >= 0; node = internal.parent![node]) {
+        ancestors.add(node);
+      }
+      for (let node = rightNode; node >= 0; node = internal.parent![node]) {
+        if (ancestors.has(node)) {
+          return node;
+        }
+      }
+      throw new Error("Fixture LCA unavailable.");
+    };
+    const expectedNode = lca(tip("A"), tip("I"));
+    const derivedOnlyNode = lca(tip("B"), tip("I"));
+    const secondCollapsedNode = lca(tip("U"), tip("X"));
+    const names = ["U", "V", "W", "X", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "S", "T"];
+    app.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: names.length,
+      totalTips: names.length,
+      activeRanks: ["family"],
+      tipRanks: names.map((name) => {
+        const isMainClade = name >= "A" && name <= "I";
+        const isSeparateOccurrence = name === "M";
+        const isMammalia = isMainClade || isSeparateOccurrence;
+        const isPrefixOutgroup = ["U", "V", "W", "X"].includes(name);
+        return {
+          node: tip(name),
+          ranks: {
+            family: isMammalia ? "Mammalia" : isPrefixOutgroup ? "Outgroupia" : `Other-${name}`,
+          },
+          taxIds: {
+            family: isMammalia ? 101 : isPrefixOutgroup ? 202 : 1_000 + name.charCodeAt(0),
+          },
+        };
+      }),
+    });
+    app.setTaxonomyRankVisibilityForTest("family", true);
+    app.setViewMode("rectangular");
+    app.setOrder("input");
+    canvasTest.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return {
+      expectedNode,
+      derivedOnlyNode,
+      secondCollapsedNode,
+    };
+  });
+
+  expect(target.derivedOnlyNode).not.toBe(target.expectedNode);
+  const taxonomyPoint = await page.evaluate(() => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const hitbox = (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [])
+      .find((candidate) => (
+        candidate.labelKind === "taxonomy"
+        && candidate.text === "Mammalia"
+        && candidate.source !== "collapse"
+      ));
+    if (!(canvas instanceof HTMLCanvasElement) || !hitbox) {
+      throw new Error("Mammalia taxonomy label unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(hitbox.x) + (Number(hitbox.width) * 0.5),
+      y: rect.top + Number(hitbox.y) + (Number(hitbox.height) * 0.5),
+    };
+  });
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
+  await page.getByRole("button", { name: "Collapse Group" }).click();
+  await page.getByRole("button", { name: "Minimize" }).click();
+
+  await expect.poll(async () => page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCollapsedNodeModes() ?? []
+  ))).toEqual([[target.expectedNode, "minimize"]]);
+  await settleFrames(page);
+  const collapsedResult = await page.evaluate(async ({ expectedNode, secondCollapsedNode }) => {
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    if (!canvasTest || !(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Collapsed taxonomy geometry unavailable.");
+    }
+    canvasTest.setCollapsedNodeMode(secondCollapsedNode, "minimize");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const labels = canvasTest.getLabelHitboxes() ?? [];
+    const taxonomyLabel = labels.find((candidate) => (
+      candidate.node === expectedNode
+      && candidate.source === "collapse"
+      && candidate.collapsePart === "label"
+      && candidate.labelKind === "taxonomy"
+      && candidate.text === "Mammalia"
+    )) ?? null;
+    const polygons = canvasTest.getCollapsedTriangleHitboxes()
+      .filter((candidate) => candidate.node === expectedNode || candidate.node === secondCollapsedNode);
+    const context = canvas.getContext("2d");
+    if (!context || polygons.length !== 2) {
+      throw new Error("Collapsed triangle pixels unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    const dpr = canvas.width / rect.width;
+    const fillColors = polygons.map((polygon) => {
+      const centerX = polygon.points.reduce((sum, point) => sum + point.x, 0) / polygon.points.length;
+      const centerY = polygon.points.reduce((sum, point) => sum + point.y, 0) / polygon.points.length;
+      return Array.from(context.getImageData(
+        Math.round(centerX * dpr),
+        Math.round(centerY * dpr),
+        1,
+        1,
+      ).data);
+    });
+    return {
+      taxonomyLabel,
+      fillColors,
+    };
+  }, target);
+  expect(collapsedResult.taxonomyLabel).not.toBeNull();
+  for (const fillColor of collapsedResult.fillColors) {
+    expect(fillColor[0]).toBeGreaterThan(150);
+    expect(fillColor[1]).toBeGreaterThan(150);
+    expect(fillColor[2]).toBeGreaterThan(150);
+    expect(fillColor[3]).toBeGreaterThan(0);
+  }
+});
+
+test("taxonomy collapse does not relabel a mixed ancestor as Actinopteri", async ({ page }) => {
+  await loadFixture(page);
+  const mainActinopteri = balancedSubtreeNewick(["B", "C", "D", "E", "F", "G", "H", "I"]);
+  const fillerNames = Array.from({ length: 2_037 }, (_, index) => `O${index}`);
+  const filler = balancedSubtreeNewick(fillerNames);
+  const newick = `((A:1,(X1:1,X2:1):1,${mainActinopteri})Bony:1,${filler})Root;`;
+  const previousSignature = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeSignature ?? null
+  ));
+  await page.getByRole("button", { name: "Paste Newick" }).click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(newick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction((oldSignature) => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(
+      state?.treeLoaded
+      && !state.loading
+      && state.treeSignature !== oldSignature
+      && (window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? []).length === 2_048
+    );
+  }, previousSignature);
+
+  const targets = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    if (!app || !canvasTest || !internal?.leafNodes || !internal.names || !internal.parent) {
+      throw new Error("Mixed taxonomy test hooks unavailable.");
+    }
+    const nodeByName = new Map(internal.names.map((name, node) => [name, node]));
+    const tip = (name: string): number => {
+      const node = nodeByName.get(name);
+      if (node === undefined) {
+        throw new Error(`Missing mixed taxonomy tip ${name}.`);
+      }
+      return node;
+    };
+    const lca = (leftNode: number, rightNode: number): number => {
+      const ancestors = new Set<number>();
+      for (let node = leftNode; node >= 0; node = internal.parent![node]) {
+        ancestors.add(node);
+      }
+      for (let node = rightNode; node >= 0; node = internal.parent![node]) {
+        if (ancestors.has(node)) {
+          return node;
+        }
+      }
+      throw new Error("Mixed taxonomy LCA unavailable.");
+    };
+    const expectedNode = lca(tip("B"), tip("I"));
+    const mixedAncestor = lca(tip("A"), tip("I"));
+    app.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: internal.leafNodes.length,
+      totalTips: internal.leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks: Array.from(internal.leafNodes, (node) => {
+        const name = internal.names![node];
+        const isActinopteri = name === "A" || (name >= "B" && name <= "I");
+        const isSarcopterygii = name === "X1" || name === "X2";
+        return {
+          node,
+          ranks: {
+            class: isActinopteri ? "Actinopteri" : isSarcopterygii ? "Sarcopterygii" : "Outgroupia",
+          },
+          taxIds: {
+            class: isActinopteri ? 101 : isSarcopterygii ? 202 : 303,
+          },
+        };
+      }),
+    });
+    app.setTaxonomyRankVisibilityForTest("class", true);
+    app.setViewMode("rectangular");
+    app.setOrder("input");
+    canvasTest.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const leafIndexMap = canvasTest.getLeafIndexMap();
+    if (!(canvas instanceof HTMLCanvasElement) || !leafIndexMap) {
+      throw new Error("Mixed taxonomy zoom geometry unavailable.");
+    }
+    const targetCenter = (leafIndexMap[tip("A")] + leafIndexMap[tip("I")]) * 0.5;
+    const viewportHeight = canvas.getBoundingClientRect().height;
+    canvasTest.setRectCamera({
+      scaleY: 12,
+      translateY: (viewportHeight * 0.5) - (targetCenter * 12),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return { expectedNode, mixedAncestor };
+  });
+
+  expect(targets.expectedNode).not.toBe(targets.mixedAncestor);
+  const taxonomyTarget = await page.evaluate(() => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const hitbox = (canvasTest?.getLabelHitboxes() ?? []).find((candidate) => (
+      candidate.labelKind === "taxonomy"
+      && candidate.text === "Actinopteri"
+      && candidate.source !== "collapse"
+    ));
+    if (!(canvas instanceof HTMLCanvasElement) || !canvasTest || !hitbox) {
+      throw new Error("Actinopteri mixed-segment label unavailable.");
+    }
+    const localX = Number(hitbox.x) + (Number(hitbox.width) * 0.5);
+    const localY = Number(hitbox.y) + (Number(hitbox.height) * 0.5);
+    const rect = canvas.getBoundingClientRect();
+    return {
+      hover: canvasTest.probeHoverForTest(localX, localY),
+      point: {
+        x: rect.left + localX,
+        y: rect.top + localY,
+      },
+    };
+  });
+  expect(taxonomyTarget.hover).toMatchObject({
+    node: targets.expectedNode,
+    kind: "taxonomy",
+    name: "Actinopteri",
+  });
+  await page.mouse.click(taxonomyTarget.point.x, taxonomyTarget.point.y, { button: "right" });
+  await page.getByRole("button", { name: "Collapse Group" }).click();
+  await page.getByRole("button", { name: "Minimize" }).click();
+  await expect.poll(async () => page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCollapsedNodeModes() ?? []
+  ))).toEqual([[targets.expectedNode, "minimize"]]);
+  const collapsedLabel = await page.evaluate((expectedNode) => (
+    (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? []).find((candidate) => (
+      candidate.node === expectedNode
+      && candidate.source === "collapse"
+      && candidate.collapsePart === "label"
+      && candidate.text === "Actinopteri"
+    )) ?? null
+  ), targets.expectedNode);
+  expect(collapsedLabel).not.toBeNull();
 });
 
 test("large minimized clades retain a viewport sliver until three-tip spacing is larger", async ({ page }) => {

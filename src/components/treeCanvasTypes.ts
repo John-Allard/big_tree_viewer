@@ -214,6 +214,8 @@ export interface ScreenLabel {
   firstNode?: number;
   lastNode?: number;
   taxonomyTipCount?: number;
+  taxonomyStartIndex?: number;
+  taxonomyEndIndex?: number;
   clipArc?: {
     innerRadiusPx: number;
     outerRadiusPx: number;
@@ -227,6 +229,7 @@ export interface LabelHitbox {
   node: number;
   kind: "rect" | "rotated";
   source?: "label" | "collapse" | "collapse-edge";
+  collapsePart?: "triangle" | "label";
   labelKind?: "tip" | "taxonomy" | "genus";
   text?: string;
   taxonomyRank?: string;
@@ -234,6 +237,9 @@ export interface LabelHitbox {
   taxonomyFirstNode?: number;
   taxonomyLastNode?: number;
   taxonomyTipCount?: number;
+  taxonomyStartIndex?: number;
+  taxonomyEndIndex?: number;
+  taxonomyCollapseNode?: number;
   x: number;
   y: number;
   width: number;

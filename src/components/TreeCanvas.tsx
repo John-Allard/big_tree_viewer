@@ -74,7 +74,7 @@ import {
   thetaFor,
   wrapPositive,
 } from "./treeCanvasUtils";
-import type { LayoutOrder, TreeModel, ViewMode } from "../types/tree";
+import type { LayoutBuffers, LayoutOrder, TreeModel, ViewMode } from "../types/tree";
 
 const SOLID_SCALE_TICK_ALPHA_THRESHOLD = 0.6;
 const DASHED_STRIPE_DASH_ARRAY = "6 6";
@@ -138,6 +138,8 @@ type CircularTaxonomyArcMetadata = {
   firstNode: number;
   lastNode: number;
   taxonomyTipCount: number;
+  startIndex: number;
+  endIndex: number;
 };
 
 type CollapsedTaxonomyGroup = {
@@ -2088,6 +2090,102 @@ function lowestCommonAncestor(tree: TreeModel, leftNode: number, rightNode: numb
   return 0;
 }
 
+function lowerBoundNumber(values: number[], target: number): number {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (values[middle] < target) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
+
+function resolveTaxonomySegmentClade(
+  tree: TreeModel,
+  layout: LayoutBuffers,
+  orderedLeaves: number[],
+  taxonomyTipByNode: Map<number, TaxonomyMapPayload["tipRanks"][number]>,
+  mappedPrefix: Uint32Array,
+  rank: TaxonomyRank,
+  label: string,
+  taxId: number | null,
+  firstNode: number,
+  lastNode: number,
+): number | null {
+  const candidate = lowestCommonAncestor(tree, firstNode, lastNode);
+  if (tree.buffers.firstChild[candidate] < 0) {
+    return null;
+  }
+  const leafRange = (node: number): { start: number; end: number } => ({
+    start: Math.max(0, Math.floor(layout.min[node] + 1e-6)),
+    end: Math.min(tree.leafCount, Math.ceil(layout.max[node] - 1e-6) + 1),
+  });
+  const candidateRange = leafRange(candidate);
+  const matchingIndices: number[] = [];
+  for (let leafIndex = candidateRange.start; leafIndex < candidateRange.end; leafIndex += 1) {
+    const tip = taxonomyTipByNode.get(orderedLeaves[leafIndex]);
+    if (
+      tip?.ranks[rank] === label
+      && (taxId === null || (tip.taxIds?.[rank] ?? null) === taxId)
+    ) {
+      matchingIndices.push(leafIndex);
+    }
+  }
+  if (matchingIndices.length < 2) {
+    return null;
+  }
+  const countsForNode = (node: number): { matching: number; mapped: number } => {
+    const range = leafRange(node);
+    const matching = (
+      lowerBoundNumber(matchingIndices, range.end)
+      - lowerBoundNumber(matchingIndices, range.start)
+    );
+    const mapped = mappedPrefix[range.end] - mappedPrefix[range.start];
+    return { matching, mapped };
+  };
+  const isCoherentTaxonomyClade = (node: number): boolean => {
+    const { matching, mapped } = countsForNode(node);
+    if (matching < 2 || mapped < matching) {
+      return false;
+    }
+    const differentlyMapped = mapped - matching;
+    if (differentlyMapped === 0) {
+      return true;
+    }
+    return mapped >= 20 && differentlyMapped <= Math.max(1, Math.floor(mapped * 0.005));
+  };
+  if (isCoherentTaxonomyClade(candidate)) {
+    return candidate;
+  }
+  const coherentRoots: Array<{ node: number; matching: number }> = [];
+  const stack: number[] = [];
+  for (let child = tree.buffers.firstChild[candidate]; child >= 0; child = tree.buffers.nextSibling[child]) {
+    stack.push(child);
+  }
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (tree.buffers.firstChild[node] < 0) {
+      continue;
+    }
+    if (isCoherentTaxonomyClade(node)) {
+      coherentRoots.push({ node, matching: countsForNode(node).matching });
+      continue;
+    }
+    for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+      stack.push(child);
+    }
+  }
+  coherentRoots.sort((left, right) => (
+    right.matching - left.matching
+    || tree.buffers.leafCount[right.node] - tree.buffers.leafCount[left.node]
+  ));
+  return coherentRoots[0]?.node ?? null;
+}
+
 function taxonomyTextColor(fill: string): string {
   const parsed = parseHslColor(fill);
   if (!parsed) {
@@ -2264,6 +2362,47 @@ function pointInPolygon(pointX: number, pointY: number, points: Array<{ x: numbe
     }
   }
   return inside;
+}
+
+function pointInCollapsedTriangleHitArea(
+  pointX: number,
+  pointY: number,
+  points: Array<{ x: number; y: number }>,
+  tolerancePx = 4,
+): boolean {
+  if (points.length < 3) {
+    return false;
+  }
+  if (pointInPolygon(pointX, pointY, points)) {
+    return true;
+  }
+  const apex = points[0];
+  const baseMidpoint = {
+    x: (points[1].x + points[2].x) * 0.5,
+    y: (points[1].y + points[2].y) * 0.5,
+  };
+  const axisX = baseMidpoint.x - apex.x;
+  const axisY = baseMidpoint.y - apex.y;
+  const axisLengthSq = (axisX * axisX) + (axisY * axisY);
+  if (axisLengthSq <= 1e-6) {
+    return false;
+  }
+  const projection = (
+    ((pointX - apex.x) * axisX)
+    + ((pointY - apex.y) * axisY)
+  ) / axisLengthSq;
+  if (projection < 0 || projection > 1) {
+    return false;
+  }
+  const toleranceSq = tolerancePx * tolerancePx;
+  for (let index = 0; index < points.length; index += 1) {
+    const start = points[index];
+    const end = points[(index + 1) % points.length];
+    if (distanceToSegmentSquared(pointX, pointY, start.x, start.y, end.x, end.y) <= toleranceSq) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function polygonBounds(points: Array<{ x: number; y: number }>): { left: number; right: number; top: number; bottom: number } {
@@ -3963,6 +4102,9 @@ export default function TreeCanvas({
       lastNode: number;
       descendantTipCount: number;
       taxId: number | null;
+      startIndex?: number;
+      endIndex?: number;
+      collapseNode?: number;
       tutorialDemo?: boolean;
     }
     | {
@@ -4261,14 +4403,40 @@ export default function TreeCanvas({
     if (minimizedRanges.length === 0) {
       return taxonomyBlocks;
     }
-    const segmentHidden = (segment: { startIndex: number; endIndex: number }): boolean => {
-      if (segment.endIndex < segment.startIndex) {
-        return false;
+    const clipSegment = (
+      segment: { firstNode: number; lastNode: number; startIndex: number; endIndex: number },
+    ): Array<{ firstNode: number; lastNode: number; startIndex: number; endIndex: number }> => {
+      const segmentRuns = segment.endIndex >= segment.startIndex
+        ? [{ startIndex: segment.startIndex, endIndex: segment.endIndex }]
+        : [
+            { startIndex: segment.startIndex, endIndex: tree.leafCount },
+            { startIndex: 0, endIndex: segment.endIndex },
+          ];
+      let visibleRuns = segmentRuns;
+      for (let rangeIndex = 0; rangeIndex < minimizedRanges.length; rangeIndex += 1) {
+        const range = minimizedRanges[rangeIndex];
+        visibleRuns = visibleRuns.flatMap((run) => {
+          if (range.endIndex <= run.startIndex || range.startIndex >= run.endIndex) {
+            return [run];
+          }
+          const fragments: Array<{ startIndex: number; endIndex: number }> = [];
+          if (range.startIndex > run.startIndex) {
+            fragments.push({ startIndex: run.startIndex, endIndex: range.startIndex });
+          }
+          if (range.endIndex < run.endIndex) {
+            fragments.push({ startIndex: range.endIndex, endIndex: run.endIndex });
+          }
+          return fragments;
+        });
       }
-      return minimizedRanges.some((range) => (
-        segment.startIndex >= range.startIndex
-        && segment.endIndex <= range.endIndex
-      ));
+      return visibleRuns
+        .filter((run) => run.endIndex > run.startIndex)
+        .map((run) => ({
+          firstNode: cache.orderedLeaves[order][run.startIndex],
+          lastNode: cache.orderedLeaves[order][run.endIndex - 1],
+          startIndex: run.startIndex,
+          endIndex: run.endIndex,
+        }));
     };
     const orderedLeaves = cache.orderedLeaves[order];
     return TAXONOMY_RANKS.reduce<Record<TaxonomyRank, TaxonomyBlock[]>>((result, rank) => {
@@ -4281,11 +4449,18 @@ export default function TreeCanvas({
               startIndex: block.startIndex ?? 0,
               endIndex: block.endIndex ?? tree.leafCount,
             }];
-        const visibleSegments = segments.filter((segment) => !segmentHidden(segment));
+        const visibleSegments = segments.flatMap(clipSegment);
         if (visibleSegments.length === 0) {
           return [];
         }
-        if (visibleSegments.length === segments.length) {
+        const segmentsUnchanged = (
+          visibleSegments.length === segments.length
+          && visibleSegments.every((segment, index) => (
+            segment.startIndex === segments[index].startIndex
+            && segment.endIndex === segments[index].endIndex
+          ))
+        );
+        if (segmentsUnchanged) {
           return [block];
         }
         const labelSegment = visibleSegments.reduce((largest, segment) => {
@@ -4323,6 +4498,88 @@ export default function TreeCanvas({
     () => (tree && taxonomyMap ? buildTaxonomyConsensusByRank(tree, taxonomyMap, taxonomyConsensusRanks) : null),
     [taxonomyConsensusRanks, taxonomyMap, tree],
   );
+  const taxonomyTipByNode = useMemo(() => (
+    new Map((taxonomyMap?.tipRanks ?? []).map((tip) => [tip.node, tip]))
+  ), [taxonomyMap]);
+  const taxonomyMappedLeafPrefixByRank = useMemo(() => {
+    if (!cache || !taxonomyMap) {
+      return null;
+    }
+    const orderedLeaves = cache.orderedLeaves[order];
+    return new Map(taxonomyMap.activeRanks.map((rank) => {
+      const prefix = new Uint32Array(orderedLeaves.length + 1);
+      for (let leafIndex = 0; leafIndex < orderedLeaves.length; leafIndex += 1) {
+        prefix[leafIndex + 1] = (
+          prefix[leafIndex]
+          + (taxonomyTipByNode.get(orderedLeaves[leafIndex])?.ranks[rank] ? 1 : 0)
+        );
+      }
+      return [rank, prefix] as const;
+    }));
+  }, [cache, order, taxonomyMap, taxonomyTipByNode]);
+  const taxonomySegmentResolutionCacheRef = useRef<{
+    tree: TreeModel;
+    taxonomyMap: TaxonomyMapPayload;
+    order: LayoutOrder;
+    values: Map<string, number | null>;
+  } | null>(null);
+  const resolveTaxonomySegmentNode = useCallback((
+    rank: TaxonomyRank,
+    label: string,
+    taxId: number | null,
+    firstNode: number,
+    lastNode: number,
+    startIndex?: number,
+    endIndex?: number,
+  ): number | null => {
+    if (!tree || !cache || !taxonomyMap || !taxonomyMappedLeafPrefixByRank) {
+      return null;
+    }
+    const mappedPrefix = taxonomyMappedLeafPrefixByRank.get(rank);
+    if (!mappedPrefix) {
+      return null;
+    }
+    let resolutionCache = taxonomySegmentResolutionCacheRef.current;
+    if (
+      !resolutionCache
+      || resolutionCache.tree !== tree
+      || resolutionCache.taxonomyMap !== taxonomyMap
+      || resolutionCache.order !== order
+    ) {
+      resolutionCache = {
+        tree,
+        taxonomyMap,
+        order,
+        values: new Map(),
+      };
+      taxonomySegmentResolutionCacheRef.current = resolutionCache;
+    }
+    const key = `${rank}:${taxonomyEntityKey(label, taxId)}:${startIndex ?? "?"}:${endIndex ?? "?"}:${firstNode}:${lastNode}`;
+    if (resolutionCache.values.has(key)) {
+      return resolutionCache.values.get(key) ?? null;
+    }
+    const resolved = resolveTaxonomySegmentClade(
+      tree,
+      tree.layouts[order],
+      cache.orderedLeaves[order],
+      taxonomyTipByNode,
+      mappedPrefix,
+      rank,
+      label,
+      taxId,
+      firstNode,
+      lastNode,
+    );
+    resolutionCache.values.set(key, resolved);
+    return resolved;
+  }, [
+    cache,
+    order,
+    taxonomyMap,
+    taxonomyMappedLeafPrefixByRank,
+    taxonomyTipByNode,
+    tree,
+  ]);
   const taxonomyTipRanksByNode = useMemo(() => {
     const byNode = new Map<number, Partial<Record<TaxonomyRank, string>>>();
     if (!taxonomyMap) {
@@ -4380,6 +4637,10 @@ export default function TreeCanvas({
     ) {
       return byNode;
     }
+    const collapsedRanges = Array.from(collapsedNodes, (node) => ({
+      start: tree.layouts[order].min[node],
+      end: tree.layouts[order].max[node],
+    }));
     const activeRankSet = new Set(taxonomyMap.activeRanks);
     for (let rankIndex = TAXONOMY_RANKS.length - 1; rankIndex >= 0; rankIndex -= 1) {
       const rank = TAXONOMY_RANKS[rankIndex];
@@ -4396,10 +4657,28 @@ export default function TreeCanvas({
               lastNode: block.lastNode,
               startIndex: block.startIndex ?? 0,
               endIndex: block.endIndex ?? tree.leafCount,
-            }];
+        }];
         for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
           const segment = segments[segmentIndex];
-          const collapsedNode = lowestCommonAncestor(tree, segment.firstNode, segment.lastNode);
+          const endpointCandidate = lowestCommonAncestor(tree, segment.firstNode, segment.lastNode);
+          if (!collapsedRanges.some((range) => (
+            range.start >= tree.layouts[order].min[endpointCandidate]
+            && range.end <= tree.layouts[order].max[endpointCandidate]
+          ))) {
+            continue;
+          }
+          const collapsedNode = resolveTaxonomySegmentNode(
+            rank,
+            block.label,
+            block.taxId ?? null,
+            segment.firstNode,
+            segment.lastNode,
+            segment.startIndex,
+            segment.endIndex,
+          );
+          if (collapsedNode === null) {
+            continue;
+          }
           if (!collapsedNodes.has(collapsedNode) || byNode.has(collapsedNode)) {
             continue;
           }
@@ -4415,7 +4694,15 @@ export default function TreeCanvas({
       }
     }
     return byNode;
-  }, [collapsedNodes, taxonomyBlocks, taxonomyEnabled, taxonomyMap, tree]);
+  }, [
+    collapsedNodes,
+    order,
+    taxonomyBlocks,
+    taxonomyEnabled,
+    taxonomyMap,
+    resolveTaxonomySegmentNode,
+    tree,
+  ]);
   const manualBranchColorVersion = useMemo(() => {
     const branchKey = branchColorAssignmentKey(manualBranchColorAssignments);
     const subtreeKey = branchColorAssignmentKey(manualSubtreeColorAssignments);
@@ -5053,7 +5340,7 @@ export default function TreeCanvas({
     }
     const hoveredTriangle = collapsedTriangleHitsRef.current.find((triangle) => (
       triangle.node === hover.node
-      && pointInPolygon(hover.screenX, hover.screenY, triangle.points)
+      && pointInCollapsedTriangleHitArea(hover.screenX, hover.screenY, triangle.points)
     ));
     if (hoveredTriangle) {
       ctx.beginPath();
@@ -7277,6 +7564,7 @@ export default function TreeCanvas({
         : globalTipLabelSpacePx;
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
+      let rectangularFirstTaxonomyBandX: number | null = null;
       const taxonomyOverlayStartTime = performance.now();
       if (taxonomyEnabled && renderedTaxonomyBlocks) {
         const visibleRanks = visibleTaxonomyRanks;
@@ -7290,6 +7578,9 @@ export default function TreeCanvas({
         const renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }> = [];
         let taxonomyConnectorSegmentCount = 0;
         let bandCursorX = tipSideX + effectiveTipLabelSpacePx + taxonomyBaselineGapPx + taxonomyGapPx;
+        if (visibleRanks.length > 0) {
+          rectangularFirstTaxonomyBandX = bandCursorX;
+        }
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
         const preservedKeys = previousTaxonomyState
           && previousTaxonomyState.tree === tree
@@ -7559,6 +7850,8 @@ export default function TreeCanvas({
               firstNode: labelSegment.firstNode,
               lastNode: labelSegment.lastNode,
               taxonomyTipCount: totalTipCount,
+              taxonomyStartIndex: labelSegment.startIndex,
+              taxonomyEndIndex: labelSegment.endIndex,
               offsetY: 0,
             });
             placedKeys.push(blockKey);
@@ -7644,6 +7937,8 @@ export default function TreeCanvas({
             taxonomyFirstNode: label.firstNode,
             taxonomyLastNode: label.lastNode,
             taxonomyTipCount: label.taxonomyTipCount,
+            taxonomyStartIndex: label.taxonomyStartIndex,
+            taxonomyEndIndex: label.taxonomyEndIndex,
             x: label.x - Math.max(10, (label.fontSize ?? baseFontSize) * 0.7),
             y: label.y - (labelMetrics.width * 0.5),
             width: Math.max(20, (label.fontSize ?? baseFontSize) * 1.4),
@@ -8048,10 +8343,10 @@ export default function TreeCanvas({
       }
 
       if (visibleCollapsedNodes.length > 0) {
-        ctx.fillStyle = "#cbd5e1";
-        ctx.strokeStyle = "#64748b";
         ctx.lineWidth = 1.1;
         for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
+          ctx.fillStyle = "#cbd5e1";
+          ctx.strokeStyle = "#64748b";
           const node = visibleCollapsedNodes[index];
           const collapseMode = collapsedNodeModes.get(node) ?? "preserve-width";
           const taxonomyGroup = collapsedTaxonomyGroupByNode.get(node) ?? null;
@@ -8064,6 +8359,7 @@ export default function TreeCanvas({
                 taxonomyFirstNode: taxonomyGroup.firstNode,
                 taxonomyLastNode: taxonomyGroup.lastNode,
                 taxonomyTipCount: taxonomyGroup.descendantTipCount,
+                taxonomyCollapseNode: node,
               }
             : {};
           const parent = tree.buffers.parent[node];
@@ -8106,6 +8402,7 @@ export default function TreeCanvas({
             node,
             kind: "rect",
             source: "collapse",
+            collapsePart: "triangle",
             ...taxonomyHitbox,
             x: hitMinX,
             y: hitMinY,
@@ -8116,7 +8413,8 @@ export default function TreeCanvas({
             const fontSize = scaleLabelFontSize("taxonomy", 14);
             ctx.font = fontSpec("taxonomy", fontSize);
             const labelWidth = ctx.measureText(taxonomyGroup.label).width;
-            const labelX = hitMaxX + 8 + (labelWidth * 0.5);
+            const labelLeftX = rectangularFirstTaxonomyBandX ?? (hitMaxX + 8);
+            const labelX = labelLeftX + (labelWidth * 0.5);
             const labelY = (hitMinY + hitMaxY) * 0.5;
             ctx.fillStyle = "#1f2937";
             ctx.textAlign = "center";
@@ -8135,6 +8433,7 @@ export default function TreeCanvas({
               node,
               kind: "rect",
               source: "collapse",
+              collapsePart: "label",
               ...taxonomyHitbox,
               x: labelX - (labelWidth * 0.5) - 5,
               y: labelY - (fontSize * 0.65),
@@ -8605,10 +8904,10 @@ export default function TreeCanvas({
         }
       }
       if (visibleCollapsedNodes.length > 0) {
-        ctx.fillStyle = "#cbd5e1";
-        ctx.strokeStyle = "#64748b";
         ctx.lineWidth = 1.1;
         for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
+          ctx.fillStyle = "#cbd5e1";
+          ctx.strokeStyle = "#64748b";
           const node = visibleCollapsedNodes[index];
           const collapseMode = collapsedNodeModes.get(node) ?? "preserve-width";
           const taxonomyGroup = collapsedTaxonomyGroupByNode.get(node) ?? null;
@@ -8621,6 +8920,7 @@ export default function TreeCanvas({
                 taxonomyFirstNode: taxonomyGroup.firstNode,
                 taxonomyLastNode: taxonomyGroup.lastNode,
                 taxonomyTipCount: taxonomyGroup.descendantTipCount,
+                taxonomyCollapseNode: node,
               }
             : {};
           const apexTheta = spiralThetaForY(layout.center[node], tree.leafCount, metrics);
@@ -8674,6 +8974,7 @@ export default function TreeCanvas({
             node,
             kind: "rect",
             source: "collapse",
+            collapsePart: "triangle",
             ...taxonomyHitbox,
             x: hitMinX,
             y: hitMinY,
@@ -8703,6 +9004,7 @@ export default function TreeCanvas({
               node,
               kind: "rect",
               source: "collapse",
+              collapsePart: "label",
               ...taxonomyHitbox,
               x: labelX - (labelWidth * 0.5) - 5,
               y: labelY - (fontSize * 0.65),
@@ -10718,6 +11020,8 @@ export default function TreeCanvas({
                 firstNode: blockSegment.firstNode,
                 lastNode: blockSegment.lastNode,
                 taxonomyTipCount: totalTipCount,
+                startIndex: blockSegment.startIndex,
+                endIndex: blockSegment.endIndex,
               };
               for (let visibleSpanIndex = 0; visibleSpanIndex < visibleDrawSpans.length; visibleSpanIndex += 1) {
                 const visibleDrawSpan = visibleDrawSpans[visibleSpanIndex];
@@ -11170,6 +11474,8 @@ export default function TreeCanvas({
               firstNode: primaryLabelSegment.firstNode,
               lastNode: primaryLabelSegment.lastNode,
               taxonomyTipCount: totalTipCount,
+              taxonomyStartIndex: primaryLabelSegment.startIndex,
+              taxonomyEndIndex: primaryLabelSegment.endIndex,
               // Circular taxonomy label anchors already sit on the ring midpoint and the draw pass uses
               // textBaseline="middle", so any extra baseline compensation here creates direction-dependent
               // radial drift once the label is rotated around the circle.
@@ -11823,10 +12129,10 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
       if (visibleCollapsedNodes.length > 0) {
-        ctx.fillStyle = "#cbd5e1";
-        ctx.strokeStyle = "#64748b";
         ctx.lineWidth = 1.1;
         for (let index = 0; index < visibleCollapsedNodes.length; index += 1) {
+          ctx.fillStyle = "#cbd5e1";
+          ctx.strokeStyle = "#64748b";
           const node = visibleCollapsedNodes[index];
           const collapseMode = collapsedNodeModes.get(node) ?? "preserve-width";
           const taxonomyGroup = collapsedTaxonomyGroupByNode.get(node) ?? null;
@@ -11839,6 +12145,7 @@ export default function TreeCanvas({
                 taxonomyFirstNode: taxonomyGroup.firstNode,
                 taxonomyLastNode: taxonomyGroup.lastNode,
                 taxonomyTipCount: taxonomyGroup.descendantTipCount,
+                taxonomyCollapseNode: node,
               }
             : {};
           const parent = tree.buffers.parent[node];
@@ -11890,6 +12197,7 @@ export default function TreeCanvas({
             node,
             kind: "rect",
             source: "collapse",
+            collapsePart: "triangle",
             ...taxonomyHitbox,
             x: hitMinX,
             y: hitMinY,
@@ -11919,6 +12227,7 @@ export default function TreeCanvas({
               node,
               kind: "rect",
               source: "collapse",
+              collapsePart: "label",
               ...taxonomyHitbox,
               x: labelX - (labelWidth * 0.5) - 5,
               y: labelY - (fontSize * 0.65),
@@ -12086,6 +12395,8 @@ export default function TreeCanvas({
             taxonomyFirstNode: label.firstNode,
             taxonomyLastNode: label.lastNode,
             taxonomyTipCount: label.taxonomyTipCount,
+            taxonomyStartIndex: label.taxonomyStartIndex,
+            taxonomyEndIndex: label.taxonomyEndIndex,
             x: label.x - (labelMetrics.width * 0.5),
             y: label.y - Math.max(10, (label.fontSize ?? circularGenusBaseFontSize) * 0.7),
             width: Math.max(20, labelMetrics.width),
@@ -13552,7 +13863,7 @@ export default function TreeCanvas({
     const circularHitIndex = collapsedSpatialCache?.circularIndex ?? cache.circularIndices[order];
     const findLabelHitboxAt = (localX: number, localY: number): LabelHitbox | null => {
       const collapsedTriangle = collapsedTriangleHitsRef.current.find((triangle) => (
-        pointInPolygon(localX, localY, triangle.points)
+        pointInCollapsedTriangleHitArea(localX, localY, triangle.points)
       ));
       if (collapsedTriangle) {
         const triangleHitbox = labelHitsRef.current.find((hitbox) => (
@@ -13570,6 +13881,9 @@ export default function TreeCanvas({
       let fallback: LabelHitbox | null = null;
       for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
         const hitbox = labelHitsRef.current[index];
+        if (hitbox.source === "collapse" && hitbox.collapsePart === "triangle") {
+          continue;
+        }
         if (!pointInLabelHitbox(localX, localY, hitbox)) {
           continue;
         }
@@ -13631,7 +13945,15 @@ export default function TreeCanvas({
       return null;
     };
     const taxonomyHoverInfoFromArcHitbox = (hitbox: TaxonomyArcHitbox, localX: number, localY: number): CanvasHoverInfo => {
-      const mrcaNode = lowestCommonAncestor(tree, hitbox.firstNode, hitbox.lastNode);
+      const mrcaNode = resolveTaxonomySegmentNode(
+        hitbox.rank,
+        hitbox.label,
+        hitbox.taxId,
+        hitbox.firstNode,
+        hitbox.lastNode,
+        hitbox.startIndex,
+        hitbox.endIndex,
+      ) ?? lowestCommonAncestor(tree, hitbox.firstNode, hitbox.lastNode);
       const parent = tree.buffers.parent[mrcaNode];
       const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
       return {
@@ -13640,7 +13962,7 @@ export default function TreeCanvas({
         parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
         parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
         childAge: mrcaAge,
-        descendantTipCount: hitbox.taxonomyTipCount ?? tree.buffers.leafCount[mrcaNode],
+        descendantTipCount: tree.buffers.leafCount[mrcaNode],
         name: hitbox.label,
         screenX: localX,
         screenY: localY,
@@ -13725,7 +14047,15 @@ export default function TreeCanvas({
           && typeof hitbox.taxonomyFirstNode === "number"
           && typeof hitbox.taxonomyLastNode === "number"
         ) {
-          const mrcaNode = lowestCommonAncestor(tree, hitbox.taxonomyFirstNode, hitbox.taxonomyLastNode);
+          const mrcaNode = hitbox.taxonomyCollapseNode ?? resolveTaxonomySegmentNode(
+            hitbox.taxonomyRank as TaxonomyRank,
+            hitbox.text,
+            hitbox.taxonomyTaxId ?? null,
+            hitbox.taxonomyFirstNode,
+            hitbox.taxonomyLastNode,
+            hitbox.taxonomyStartIndex,
+            hitbox.taxonomyEndIndex,
+          ) ?? lowestCommonAncestor(tree, hitbox.taxonomyFirstNode, hitbox.taxonomyLastNode);
           const parent = tree.buffers.parent[mrcaNode];
           const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
           hover = {
@@ -13734,7 +14064,7 @@ export default function TreeCanvas({
             parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
             parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
             childAge: mrcaAge,
-            descendantTipCount: hitbox.taxonomyTipCount ?? tree.buffers.leafCount[mrcaNode],
+            descendantTipCount: tree.buffers.leafCount[mrcaNode],
             name: hitbox.text,
             screenX: localX,
             screenY: localY,
@@ -14093,16 +14423,26 @@ export default function TreeCanvas({
       const localY = event.clientY - rect.top;
       const hover = hitTestAt(localX, localY);
       const prev = hoverRef.current;
-      if (
+      const identityChanged = (
         prev?.node !== hover?.node ||
         prev?.targetKind !== hover?.targetKind ||
         prev?.ownerNode !== hover?.ownerNode ||
         prev?.kind !== hover?.kind ||
         prev?.taxonomyRank !== hover?.taxonomyRank
-      ) {
-        hoverRef.current = hover;
+      );
+      const collapsedHoverMoved = Boolean(
+        !identityChanged
+        && hover
+        && prev
+        && collapsedNodes.has(hover.node)
+        && (hover.screenX !== prev.screenX || hover.screenY !== prev.screenY),
+      );
+      hoverRef.current = hover;
+      if (identityChanged) {
         updateHoverTooltip(hover);
         onHoverChange(hover);
+      }
+      if (identityChanged || collapsedHoverMoved) {
         drawHoverHighlightOverlay();
       }
     };
@@ -14125,7 +14465,17 @@ export default function TreeCanvas({
       const localY = event.clientY - rect.top;
       for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
         const hitbox = labelHitsRef.current[index];
-        if (hitbox.source !== "collapse" || !pointInLabelHitbox(localX, localY, hitbox)) {
+        if (hitbox.source !== "collapse") {
+          continue;
+        }
+        if (hitbox.collapsePart === "triangle") {
+          const triangle = collapsedTriangleHitsRef.current.find((candidate) => (
+            candidate.node === hitbox.node
+          ));
+          if (!triangle || !pointInCollapsedTriangleHitArea(localX, localY, triangle.points)) {
+            continue;
+          }
+        } else if (!pointInLabelHitbox(localX, localY, hitbox)) {
           continue;
         }
         toggleCollapsedNode(hitbox.node);
@@ -14351,6 +14701,15 @@ export default function TreeCanvas({
         && typeof labelHitbox.taxonomyFirstNode === "number"
         && typeof labelHitbox.taxonomyLastNode === "number"
       ) {
+        const collapseNode = labelHitbox.taxonomyCollapseNode ?? resolveTaxonomySegmentNode(
+          labelHitbox.taxonomyRank as TaxonomyRank,
+          labelHitbox.text,
+          labelHitbox.taxonomyTaxId ?? null,
+          labelHitbox.taxonomyFirstNode,
+          labelHitbox.taxonomyLastNode,
+          labelHitbox.taxonomyStartIndex,
+          labelHitbox.taxonomyEndIndex,
+        );
         hoverRef.current = null;
         updateHoverTooltip(null);
         drawHoverHighlightOverlay();
@@ -14363,14 +14722,28 @@ export default function TreeCanvas({
           rank: labelHitbox.taxonomyRank as TaxonomyRank,
           firstNode: labelHitbox.taxonomyFirstNode,
           lastNode: labelHitbox.taxonomyLastNode,
-          descendantTipCount: labelHitbox.taxonomyTipCount ?? 0,
+          descendantTipCount: collapseNode === null
+            ? labelHitbox.taxonomyTipCount ?? 0
+            : tree.buffers.leafCount[collapseNode],
           taxId: labelHitbox.taxonomyTaxId ?? null,
+          startIndex: labelHitbox.taxonomyStartIndex,
+          endIndex: labelHitbox.taxonomyEndIndex,
+          collapseNode: collapseNode ?? undefined,
         });
         scheduleDraw();
         return;
       }
       const taxonomyArcHitbox = findTaxonomyArcHitboxAt(localX, localY);
       if (taxonomyArcHitbox) {
+        const collapseNode = resolveTaxonomySegmentNode(
+          taxonomyArcHitbox.rank,
+          taxonomyArcHitbox.label,
+          taxonomyArcHitbox.taxId,
+          taxonomyArcHitbox.firstNode,
+          taxonomyArcHitbox.lastNode,
+          taxonomyArcHitbox.startIndex,
+          taxonomyArcHitbox.endIndex,
+        );
         hoverRef.current = null;
         updateHoverTooltip(null);
         drawHoverHighlightOverlay();
@@ -14383,8 +14756,13 @@ export default function TreeCanvas({
           rank: taxonomyArcHitbox.rank,
           firstNode: taxonomyArcHitbox.firstNode,
           lastNode: taxonomyArcHitbox.lastNode,
-          descendantTipCount: taxonomyArcHitbox.taxonomyTipCount,
+          descendantTipCount: collapseNode === null
+            ? taxonomyArcHitbox.taxonomyTipCount
+            : tree.buffers.leafCount[collapseNode],
           taxId: taxonomyArcHitbox.taxId,
+          startIndex: taxonomyArcHitbox.startIndex,
+          endIndex: taxonomyArcHitbox.endIndex,
+          collapseNode: collapseNode ?? undefined,
         });
         scheduleDraw();
         return;
@@ -14507,6 +14885,7 @@ export default function TreeCanvas({
     onHoverChange,
     order,
     rectClampPadding,
+    resolveTaxonomySegmentNode,
     scheduleDraw,
     size.height,
     size.width,
@@ -14664,13 +15043,26 @@ export default function TreeCanvas({
     if (!contextMenu || !tree) {
       return null;
     }
-    const node = contextMenu.kind === "taxonomy"
-      ? lowestCommonAncestor(tree, contextMenu.firstNode, contextMenu.lastNode)
-      : contextMenu.kind === "node"
-        ? contextMenu.node
-        : null;
+    let node: number | null = null;
+    if (contextMenu.kind === "taxonomy") {
+      if (typeof contextMenu.collapseNode === "number") {
+        node = contextMenu.collapseNode;
+      } else {
+        node = resolveTaxonomySegmentNode(
+          contextMenu.rank,
+          contextMenu.name,
+          contextMenu.taxId,
+          contextMenu.firstNode,
+          contextMenu.lastNode,
+          contextMenu.startIndex,
+          contextMenu.endIndex,
+        );
+      }
+    } else if (contextMenu.kind === "node") {
+      node = contextMenu.node;
+    }
     return node !== null && tree.buffers.firstChild[node] >= 0 ? node : null;
-  }, [contextMenu, tree]);
+  }, [contextMenu, resolveTaxonomySegmentNode, tree]);
 
   const handleContextCollapse = useCallback((mode: CollapsedNodeMode | null) => {
     if (contextMenuCollapseTarget === null) {
