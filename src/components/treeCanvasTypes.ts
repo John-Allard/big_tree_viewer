@@ -59,6 +59,7 @@ export interface TreeCanvasProps {
   useAutoCircularCenterScaleAngle: boolean;
   showCircularCenterRadialScaleBar: boolean;
   showTipLabels: boolean;
+  alignTipLabels: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
   taxonomyOverlayStyle: TaxonomyOverlayStyle;

@@ -283,6 +283,7 @@ type BigTreeViewerSessionSettings = {
   circularCenterScaleAngleDegrees: number;
   showCircularCenterRadialScaleBar: boolean;
   showTipLabels: boolean;
+  alignTipLabels: boolean;
   showGenusLabels: boolean;
   showInternalNodeLabels: boolean;
   showBootstrapLabels: boolean;
@@ -1005,6 +1006,7 @@ const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
 const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = -5;
 const DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR = false;
 const DEFAULT_SPIRAL_TURNS = 5.5;
+const MIN_SPIRAL_TIP_COUNT = 1000;
 const DEFAULT_TIME_STRIPE_STYLE: TimeStripeStyle = "bands";
 const DEFAULT_TIME_STRIPE_LINE_WEIGHT = 1.1;
 const DEFAULT_TAXONOMY_OVERLAY_STYLE: TaxonomyOverlayStyle = "ribbons";
@@ -1758,6 +1760,7 @@ export default function App() {
   const [timeStripeStyle, setTimeStripeStyle] = useState<TimeStripeStyle>(DEFAULT_TIME_STRIPE_STYLE);
   const [timeStripeLineWeight, setTimeStripeLineWeight] = useState(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
   const [showTipLabels, setShowTipLabels] = useState(true);
+  const [alignTipLabels, setAlignTipLabels] = useState(false);
   const [showGenusLabels, setShowGenusLabels] = useState(true);
   const [showInternalNodeLabels, setShowInternalNodeLabels] = useState(false);
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
@@ -1968,6 +1971,18 @@ export default function App() {
       window.removeEventListener("keyup", handleKeyUp);
     };
   }, [showSpiralViewOption]);
+  useEffect(() => {
+    if (tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT && viewMode === "spiral") {
+      setViewMode("circular");
+    }
+  }, [tree, viewMode]);
+  const selectViewMode = useCallback((nextMode: ViewMode): void => {
+    if (nextMode === "spiral" && tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT) {
+      setViewMode("circular");
+      return;
+    }
+    setViewMode(nextMode);
+  }, [tree]);
 
   const openSectionForTutorialStep = useCallback((stepIndex: number): void => {
     const step = TUTORIAL_STEPS[stepIndex];
@@ -2304,6 +2319,7 @@ export default function App() {
     setCircularCenterScaleAngleDegrees(visual.circularCenterScaleAngleDegrees);
     setShowCircularCenterRadialScaleBar(visual.showCircularCenterRadialScaleBar);
     setShowTipLabels(visual.showTipLabels);
+    setAlignTipLabels(visual.alignTipLabels);
     setShowGenusLabels(visual.showGenusLabels);
     setShowInternalNodeLabels(visual.showInternalNodeLabels);
     setShowBootstrapLabels(visual.showBootstrapLabels);
@@ -2358,6 +2374,9 @@ export default function App() {
     }
     if (typeof visual.showTipLabels === "boolean") {
       setShowTipLabels(visual.showTipLabels);
+    }
+    if (typeof visual.alignTipLabels === "boolean") {
+      setAlignTipLabels(visual.alignTipLabels);
     }
     if (typeof visual.showGenusLabels === "boolean") {
       setShowGenusLabels(visual.showGenusLabels);
@@ -3858,6 +3877,7 @@ export default function App() {
     circularCenterScaleAngleDegrees,
     showCircularCenterRadialScaleBar,
     showTipLabels,
+    alignTipLabels,
     showGenusLabels,
     showInternalNodeLabels,
     showBootstrapLabels,
@@ -3969,6 +3989,7 @@ export default function App() {
     showSpiralViewOption,
     showTimeStripes,
     showTipLabels,
+    alignTipLabels,
     spiralTurns,
     taxonomyBranchColoringEnabled,
     taxonomyCollapseRank,
@@ -4020,6 +4041,7 @@ export default function App() {
     setCircularCenterScaleAngleDegrees(settings.circularCenterScaleAngleDegrees);
     setShowCircularCenterRadialScaleBar(settings.showCircularCenterRadialScaleBar);
     setShowTipLabels(settings.showTipLabels);
+    setAlignTipLabels(Boolean(settings.alignTipLabels));
     setShowGenusLabels(settings.showGenusLabels);
     setShowInternalNodeLabels(settings.showInternalNodeLabels);
     setShowBootstrapLabels(settings.showBootstrapLabels);
@@ -4910,6 +4932,7 @@ export default function App() {
       || timeAxisScaleParam
       || paletteParam
       || params.has("btv_tip_labels")
+      || params.has("btv_align_tip_labels")
       || params.has("btv_genus_labels")
       || params.has("btv_time_stripes")
       || params.has("btv_scale_bars")
@@ -4935,6 +4958,7 @@ export default function App() {
         circularRotationDegrees: readLaunchNumberParam(params, "btv_rotation") ?? payload.visual?.circularRotationDegrees,
         spiralTurns: readLaunchNumberParam(params, "btv_spiral_turns") ?? payload.visual?.spiralTurns,
         showTipLabels: readLaunchBoolParam(params, "btv_tip_labels") ?? payload.visual?.showTipLabels,
+        alignTipLabels: readLaunchBoolParam(params, "btv_align_tip_labels") ?? payload.visual?.alignTipLabels,
         showGenusLabels: readLaunchBoolParam(params, "btv_genus_labels") ?? payload.visual?.showGenusLabels,
         showTimeStripes: readLaunchBoolParam(params, "btv_time_stripes") ?? payload.visual?.showTimeStripes,
         showScaleBars: readLaunchBoolParam(params, "btv_scale_bars") ?? payload.visual?.showScaleBars,
@@ -5829,6 +5853,7 @@ export default function App() {
     setShowNodeErrorBars(DEFAULT_SHOW_NODE_ERROR_BARS);
     setErrorBarThicknessPx(DEFAULT_ERROR_BAR_THICKNESS_PX);
     setErrorBarCapSizePx(DEFAULT_ERROR_BAR_CAP_SIZE_PX);
+    setAlignTipLabels(false);
     setActiveLabelStylePopover(null);
     setVisualResetRequest((current) => current + 1);
   }, []);
@@ -5847,6 +5872,7 @@ export default function App() {
         order,
         timeAxisScale,
         showTipLabels,
+        alignTipLabels,
         showGenusLabels,
         taxonomyEnabled,
         taxonomyStatus,
@@ -5938,9 +5964,10 @@ export default function App() {
           node: result.node,
         })),
       }),
-      setViewMode,
+      setViewMode: selectViewMode,
       setOrder,
       setShowTipLabels,
+      setAlignTipLabels,
       setShowGenusLabels,
       setShowInternalNodeLabels,
       setShowBootstrapLabels,
@@ -6151,6 +6178,7 @@ export default function App() {
     metadataTable,
     metadataValueColumn,
     order,
+    alignTipLabels,
     branchThicknessScale,
     downloadTaxonomy,
     figureStyles,
@@ -6158,6 +6186,7 @@ export default function App() {
     runTaxonomyMapping,
     searchQuery,
     searchResults,
+    selectViewMode,
     showTipLabels,
     showBootstrapLabels,
     showGenusLabels,
@@ -6518,7 +6547,7 @@ export default function App() {
             <button
               type="button"
               className={viewMode === "rectangular" ? "active" : ""}
-              onClick={() => setViewMode("rectangular")}
+              onClick={() => selectViewMode("rectangular")}
               title="Draw the tree in a linear rectangular layout."
             >
               Rectangular
@@ -6526,7 +6555,7 @@ export default function App() {
             <button
               type="button"
               className={viewMode === "circular" ? "active" : ""}
-              onClick={() => setViewMode("circular")}
+              onClick={() => selectViewMode("circular")}
               title="Draw the tree radially around a circle."
             >
               Circular
@@ -6535,8 +6564,13 @@ export default function App() {
               <button
                 type="button"
                 className={viewMode === "spiral" ? "active" : ""}
-                onClick={() => setViewMode("spiral")}
-                title="Draw time-calibrated trees as a spiral so deep time and recent tips can share the same figure."
+                onClick={() => selectViewMode("spiral")}
+                disabled={!tree || tree.leafCount < MIN_SPIRAL_TIP_COUNT}
+                title={
+                  tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT
+                    ? `Spiral mode requires at least ${MIN_SPIRAL_TIP_COUNT.toLocaleString()} tips.`
+                    : "Draw time-calibrated trees as a spiral so deep time and recent tips can share the same figure."
+                }
               >
                 Spiral
               </button>
@@ -6664,6 +6698,30 @@ export default function App() {
                   disabledReason="Enable tip labels first."
                   onToggle={() => setActiveLabelStylePopover((current) => current === "tip" ? null : "tip")}
                   onUpdate={updateFigureStyle}
+                  extraControls={(
+                    <label
+                      className={`label-style-inline-toggle${
+                        viewMode === "spiral" || viewTree?.isUltrametric
+                          ? " label-style-disabled-control"
+                          : ""
+                      }`}
+                      title={
+                        viewMode === "spiral"
+                          ? "This option applies to rectangular and circular trees."
+                          : viewTree?.isUltrametric
+                            ? "Tip labels are already aligned because this tree is ultrametric."
+                            : undefined
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={alignTipLabels}
+                        disabled={viewMode === "spiral" || Boolean(viewTree?.isUltrametric)}
+                        onChange={(event) => setAlignTipLabels(event.target.checked)}
+                      />
+                      Align labels at tree edge
+                    </label>
+                  )}
                 />
               </div>
             </div>
@@ -8129,6 +8187,7 @@ export default function App() {
           useAutoCircularCenterScaleAngle={useAutoCircularCenterScaleAngle}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
           showTipLabels={showTipLabels}
+          alignTipLabels={alignTipLabels}
           showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyOverlayStyle={taxonomyOverlayStyle}
@@ -8197,7 +8256,7 @@ export default function App() {
           tutorialBranchMenuDemoActive={tutorialActive && TUTORIAL_STEPS[tutorialStepIndex]?.id === "branchMenu"}
           onHoverChange={handleHoverChange}
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
-          onViewModeChange={setViewMode}
+          onViewModeChange={selectViewMode}
           onSessionStateSnapshot={handleSessionStateSnapshot}
           onSessionRestoreComplete={handleSessionRestoreComplete}
           onAutomationExportComplete={handleAutomationExportComplete}

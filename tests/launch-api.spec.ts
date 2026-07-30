@@ -184,6 +184,23 @@ test("spiral view option stays hidden on ordinary page load until the shortcut i
   await expect(page.getByRole("button", { name: "Spiral" })).toBeVisible();
 });
 
+test("URL launch falls back from spiral for trees below the minimum tip count", async ({ page }) => {
+  const tips = Array.from({ length: 32 }, (_, index) => `Tip_${index}:1`);
+  const params = new URLSearchParams({
+    btv_newick: `(${tips.join(",")})Root;`,
+    btv_view: "spiral",
+  });
+
+  await page.goto(`/?${params.toString()}`);
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode !== "spiral"
+  ));
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
+  expect(state?.viewMode).toBe("circular");
+});
+
 test("remote Newick URL launch fetches a public tree and applies URL settings", async ({ page }) => {
   await page.route("**/remote-tree.nwk", async (route) => {
     await route.fulfill({
@@ -196,6 +213,7 @@ test("remote Newick URL launch fetches a public tree and applies URL settings", 
     btv_newick_url: "/remote-tree.nwk",
     btv_view: "circular",
     btv_tip_labels: "false",
+    btv_align_tip_labels: "true",
     btv_branch_thickness: "1.6",
   });
 
@@ -205,6 +223,7 @@ test("remote Newick URL launch fetches a public tree and applies URL settings", 
   const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
   expect(state?.viewMode).toBe("circular");
   expect(state?.showTipLabels).toBe(false);
+  expect(state?.alignTipLabels).toBe(true);
   expect(state?.branchThicknessScale).toBeCloseTo(1.6);
   expect(state?.loadError).toBeNull();
 });

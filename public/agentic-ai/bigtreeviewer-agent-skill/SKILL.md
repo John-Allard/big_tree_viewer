@@ -17,6 +17,7 @@ Use this skill when a user asks to open, inspect, style, or render a phylogeneti
 - For huge trees, avoid SVG unless the user explicitly needs vector output for a limited visible region. SVG can become slow or unusable because every visible branch is vector geometry; PNG is usually safer.
 - For slide figures, prefer setting PNG `--width`/`--height` to the final on-slide pixel box, or use `--export-viewport-width`/`--export-viewport-height` to preserve slide-scale styling while exporting at higher pixel density.
 - Circular and spiral PNG exports must be square. Use landscape or portrait dimensions only for rectangular trees.
+- Use spiral mode only for trees with at least 1,000 tips; the viewer disables it for smaller trees.
 - If the user does not request export dimensions, keep browser-window-scale defaults: rectangular PNG exports default to 1600 x 1000 pixels, and circular/spiral PNG exports default to 1200 x 1200 pixels.
 - For large local trees, prefer the scripts' postMessage launch path instead of putting Newick directly into a URL.
 - Use Big Tree Viewer's defaults unless the user asks for a different setting or the figure goal clearly requires it. Do not send every possible visual/API setting just because it exists.
@@ -74,6 +75,7 @@ python scripts/btv_render.py tree.nwk --output figure.png --payload-json setting
 The JSON file may include Big Tree Viewer launch API fields such as `newickUrl`, `sessionUrl`, `session`, `visual`, `metadata`, `taxonomy`, `canvas`, and `export`. Command-line options are applied after the JSON payload.
 Keep launch payloads minimal. Omit `visual`, `metadata`, `taxonomy`, `canvas`, or individual setting keys when the default viewer behavior is acceptable. Only specify settings needed to satisfy the user's request, reproduce a saved view, apply metadata/taxonomy, choose an export format/size, or fix a concrete figure-composition problem.
 For session-style programmatic styling, put saved setting names in `visual`; Big Tree Viewer accepts the same setting names saved in `.btvsession` files for view mode, time stripes, label classes, taxonomy ribbons, metadata display settings, branch thickness, and PhyloPic placement.
+For non-ultrametric rectangular or circular trees, set `visual.alignTipLabels: true` to align terminal labels at the tree edge. Rectangular views draw dotted leaders from shorter tips; circular views use a common outer label radius without leaders.
 Use `metadata` for CSV/TSV overlays. Set `enabled`, `keyColumn`, `valueColumn`, `colorMode`, and `applyScope` for metadata branch/subtree coloring; set `labelsEnabled`/`labelColumn`, `markersEnabled`/`markerColumn`, or `piesEnabled` with `pieStartColumn` and `pieEndColumn` for labels, markers, or pie-chart glyphs.
 Use `canvas` when the user needs session-style viewport state, collapsed clades, or manual branch/subtree colors. `canvas` accepts the same shape saved in `.btvsession` files: `camera`, `viewportWidth`, `viewportHeight`, `collapsedNodes`, `manualBranchColors`, and `manualSubtreeColors`.
 For rectangular camera control, use `canvas.camera` with `kind: "rect"`, `scaleX`, `scaleY`, `translateX`, and `translateY`.

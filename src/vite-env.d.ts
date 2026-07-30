@@ -11,6 +11,7 @@ declare global {
       setViewMode: (mode: "rectangular" | "circular" | "spiral") => void;
       setOrder: (order: "input" | "desc" | "asc") => void;
       setShowTipLabels: (visible: boolean) => void;
+      setAlignTipLabels: (aligned: boolean) => void;
       setShowGenusLabels: (visible: boolean) => void;
       setShowInternalNodeLabels: (visible: boolean) => void;
       setShowBootstrapLabels: (visible: boolean) => void;

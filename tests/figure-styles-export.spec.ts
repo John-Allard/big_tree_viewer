@@ -67,6 +67,160 @@ test("tip labels can export with bold and italic styling", async ({ page }) => {
   expect(svg).toContain("font-weight=\"700\"");
 });
 
+test("non-ultrametric tip labels can align at rectangular and circular tree edges", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "(Short_tip:0.4,Medium_tip:1.2,Mid_tip:1.8,Long_tip:2.1,Longest_tip:2.5)Root;");
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Tip labels settings" }).click();
+  const alignControl = page.getByLabel("Align labels at tree edge");
+  await expect(alignControl).toBeVisible();
+  await expect(alignControl).not.toBeChecked();
+  await alignControl.check();
+
+  const aligned = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!app || !canvas) {
+      throw new Error("Aligned tip-label test controls unavailable.");
+    }
+    app.setShowGenusLabels(false);
+    app.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const tipLabels = canvas.getLabelHitboxes()
+      .filter((hitbox) => hitbox.labelKind === "tip")
+      .map((hitbox) => ({
+        text: String(hitbox.text),
+        x: Number(hitbox.x),
+      }));
+    return {
+      state: app.getState(),
+      tipLabels,
+      svg: canvas.buildCurrentSvgForTest(),
+    };
+  });
+
+  expect(aligned.state.alignTipLabels).toBe(true);
+  expect(aligned.tipLabels).toHaveLength(5);
+  expect(new Set(aligned.tipLabels.map((label) => label.x.toFixed(3))).size).toBe(1);
+  expect(aligned.svg).toContain("stroke-dasharray=\"1.5 3\"");
+
+  const withTaxonomy = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    if (!app || !canvas || leafNodes.length !== 5) {
+      throw new Error("Taxonomy alignment test setup unavailable.");
+    }
+    app.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks: leafNodes.map((node) => ({
+        node,
+        ranks: { class: "TestClass" },
+      })),
+    });
+    app.setTaxonomyRankVisibilityAutoForTest(false);
+    app.setTaxonomyRankVisibilityForTest("class", true);
+    app.setTaxonomyEnabled(true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const tipLabels = canvas.getLabelHitboxes()
+      .filter((hitbox) => hitbox.labelKind === "tip")
+      .map((hitbox) => ({
+        x: Number(hitbox.x),
+        right: Number(hitbox.x) + Number(hitbox.width),
+      }));
+    const debug = canvas.getRenderDebug()?.rect as {
+      taxonomyBandXs?: number[];
+    } | undefined;
+    return {
+      tipLabels,
+      firstRibbonX: Number(debug?.taxonomyBandXs?.[0] ?? Number.NaN),
+    };
+  });
+
+  expect(new Set(withTaxonomy.tipLabels.map((label) => label.x.toFixed(3))).size).toBe(1);
+  expect(withTaxonomy.firstRibbonX).toBeGreaterThan(
+    Math.max(...withTaxonomy.tipLabels.map((label) => label.right)),
+  );
+
+  const alignedCircular = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!app || !canvas) {
+      throw new Error("Circular aligned-label test controls unavailable.");
+    }
+    app.setTaxonomyEnabled(false);
+    app.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const circularApp = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const circularCanvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!circularApp || !circularCanvas) {
+      throw new Error("Updated circular test controls unavailable.");
+    }
+    circularApp.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const svg = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest();
+    if (!svg) {
+      throw new Error("Circular aligned-label SVG unavailable.");
+    }
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable.");
+    }
+    const centerX = Number(camera.translateX);
+    const centerY = Number(camera.translateY);
+    const radii = (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [])
+      .filter((hitbox) => hitbox.labelKind === "tip")
+      .map((hitbox) => Math.hypot(
+        Number(hitbox.x) - centerX,
+        Number(hitbox.y) - centerY,
+      ));
+    return { radii, svg };
+  });
+
+  await expect(alignControl).toBeEnabled();
+  expect(alignedCircular.radii).toHaveLength(5);
+  expect(Math.max(...alignedCircular.radii) - Math.min(...alignedCircular.radii)).toBeLessThan(0.5);
+  expect(alignedCircular.svg).not.toContain("stroke-dasharray=\"1.5 3\"");
+
+  const unalignedCircularRadii = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setAlignTipLabels(false);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Circular camera unavailable after disabling alignment.");
+    }
+    const centerX = Number(camera.translateX);
+    const centerY = Number(camera.translateY);
+    return (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [])
+      .filter((hitbox) => hitbox.labelKind === "tip")
+      .map((hitbox) => Math.hypot(
+        Number(hitbox.x) - centerX,
+        Number(hitbox.y) - centerY,
+      ));
+  });
+  expect(Math.max(...unalignedCircularRadii) - Math.min(...unalignedCircularRadii)).toBeGreaterThan(20);
+});
+
+test("aligned tip-label control is disabled for ultrametric trees", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((Alpha_tip:1,Beta_tip:1):1,(Gamma_tip:1,Delta_tip:1):1)Root;");
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Tip labels settings" }).click();
+  const control = page.getByLabel("Align labels at tree edge");
+  await expect(control).toBeDisabled();
+  const controlLabel = control.locator("xpath=..");
+  await expect(controlLabel).toHaveClass(/label-style-disabled-control/);
+  await expect(controlLabel).toHaveAttribute(
+    "title",
+    "Tip labels are already aligned because this tree is ultrametric.",
+  );
+});
+
 test("label style popovers stay open while interacting with the tree and close on sidebar clicks", async ({ page }) => {
   await waitForViewer(page);
 
@@ -211,11 +365,12 @@ test("circular vector SVG export preserves taxonomy and metadata annotations", a
 
 test("spiral SVG export includes vector tree content instead of a blank scene", async ({ page }) => {
   await waitForViewer(page);
-  await loadTreeFromPaste(page, "(((Alpha_one:1,Alpha_two:1)Alpha:1,(Beta_one:1,Beta_two:1)Beta:1)Left:1,((Gamma_one:1,Gamma_two:1)Gamma:1,(Delta_one:1,Delta_two:1)Delta:1)Right:1)Root;");
+  const tips = Array.from({ length: 1000 }, (_, index) => `Tip_${index}:1`);
+  await loadTreeFromPaste(page, `(${tips.join(",")})Root;`);
 
   const svg = await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowGenusLabels(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowGenusLabels(false);
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     await new Promise<void>((resolve) => {
@@ -238,7 +393,186 @@ test("spiral SVG export includes vector tree content instead of a blank scene", 
   expect(svg).not.toContain("<image");
   expect(svg).toContain("<path");
   expect(svg).toContain("<line");
-  expect(svg).toMatch(/>(Alpha|Beta|Gamma|Delta)</);
+});
+
+test("spiral mode is disabled for trees with fewer than 1000 tips", async ({ page }) => {
+  await waitForViewer(page);
+  const tipNames = Array.from({ length: 32 }, (_, index) => (
+    `${String.fromCharCode(65 + Math.floor(index / 2))}_${index % 2 === 0 ? "one" : "two"}:1`
+  ));
+  await loadTreeFromPaste(page, `(${tipNames.join(",")})Root;`);
+
+  await page.keyboard.down("Shift");
+  await page.keyboard.down("S");
+  await page.keyboard.down("P");
+  await page.keyboard.up("P");
+  await page.keyboard.up("S");
+  await page.keyboard.up("Shift");
+
+  const spiralButton = page.getByRole("button", { name: "Spiral" });
+  await expect(spiralButton).toBeDisabled();
+  await expect(spiralButton).toHaveAttribute(
+    "title",
+    "Spiral mode requires at least 1,000 tips.",
+  );
+
+  const viewMode = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    if (!app) {
+      throw new Error("Spiral minimum-size test controls unavailable.");
+    }
+    app.setViewMode("spiral");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode;
+  });
+  expect(viewMode).not.toBe("spiral");
+});
+
+test("zoomed spiral labels remain radial and wait for inter-turn clearance", async ({ page }) => {
+  await waitForViewer(page);
+  const tips = Array.from({ length: 1000 }, (_, index) => `Tip_${String(index).padStart(4, "0")}:1`);
+  await loadTreeFromPaste(page, `(${tips.join(",")})Root;`);
+
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    if (!app) {
+      throw new Error("Zoomed spiral label test controls unavailable.");
+    }
+    app.setViewMode("spiral");
+    app.setShowTipLabels(true);
+    app.setShowGenusLabels(false);
+    app.requestFit();
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral"
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()?.kind === "circular"
+  ));
+
+  const result = await page.evaluate(async () => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!canvas) {
+      throw new Error("Zoomed spiral canvas test controls unavailable.");
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const fitDebug = canvas.getRenderDebug()?.spiral as {
+      tipLabelsVisible?: boolean;
+    } | undefined;
+    const fitCamera = canvas.getCamera();
+    if (!fitCamera || fitCamera.kind !== "circular") {
+      throw new Error("Spiral fit camera unavailable.");
+    }
+    canvas.setCircularCamera({
+      scale: Number(fitCamera.scale) * 20,
+      translateX: Number(fitCamera.translateX),
+      translateY: Number(fitCamera.translateY),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const zoomedCamera = canvas.getCamera();
+    const zoomedDebug = canvas.getRenderDebug()?.spiral as {
+      firstTipWorld?: { x?: number; y?: number };
+    } | undefined;
+    const treeCanvas = document.querySelector("[data-testid=tree-canvas]");
+    if (
+      !zoomedCamera
+      || zoomedCamera.kind !== "circular"
+      || !zoomedDebug?.firstTipWorld
+      || !(treeCanvas instanceof HTMLCanvasElement)
+    ) {
+      throw new Error("Zoomed spiral target state unavailable.");
+    }
+    const rect = treeCanvas.getBoundingClientRect();
+    canvas.setCircularCamera({
+      translateX: (rect.width * 0.5) - (Number(zoomedDebug.firstTipWorld.x) * Number(zoomedCamera.scale)),
+      translateY: (rect.height * 0.5) - (Number(zoomedDebug.firstTipWorld.y) * Number(zoomedCamera.scale)),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const camera = canvas.getCamera();
+    const debug = canvas.getRenderDebug()?.spiral as {
+      interTurnGapPx?: number;
+      tipLabelRequiredClearancePx?: number;
+      tipLabelsVisible?: boolean;
+      placedTipLabelCount?: number;
+    } | undefined;
+    if (!camera || camera.kind !== "circular" || !debug) {
+      throw new Error("Zoomed spiral render state unavailable.");
+    }
+    const centerX = Number(camera.translateX);
+    const centerY = Number(camera.translateY);
+    const radialAlignment = canvas.getLabelHitboxes()
+      .filter((hitbox) => hitbox.labelKind === "tip")
+      .map((hitbox) => {
+        const dx = Number(hitbox.x) - centerX;
+        const dy = Number(hitbox.y) - centerY;
+        const radius = Math.hypot(dx, dy);
+        const rotation = Number(hitbox.rotation);
+        return Math.abs(
+          ((dx / radius) * Math.cos(rotation))
+          + ((dy / radius) * Math.sin(rotation)),
+        );
+      });
+    return { fitLabelsVisible: fitDebug?.tipLabelsVisible, debug, radialAlignment };
+  });
+
+  expect(result.fitLabelsVisible).toBe(false);
+  expect(result.debug.tipLabelsVisible).toBe(true);
+  expect(result.debug.placedTipLabelCount).toBeGreaterThan(2);
+  expect(result.debug.tipLabelRequiredClearancePx).toBeLessThanOrEqual(
+    Number(result.debug.interTurnGapPx) + 0.01,
+  );
+  expect(result.radialAlignment.length).toBe(result.debug.placedTipLabelCount);
+  expect(Math.min(...result.radialAlignment)).toBeGreaterThan(0.85);
+});
+
+test("spiral branches strengthen as dense overplotting resolves during zoom", async ({ page }) => {
+  await waitForViewer(page);
+  const tips = Array.from({ length: 5000 }, (_, index) => `Tip_${index}:1`);
+  await loadTreeFromPaste(page, `(${tips.join(",")})Root;`);
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral"
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()?.kind === "circular"
+  ));
+
+  const styles = await page.evaluate(async () => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!canvas) {
+      throw new Error("Spiral branch-style test controls unavailable.");
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const readStyle = () => {
+      const debug = canvas.getRenderDebug()?.spiral as {
+        branchLineWidthPx?: number;
+        baseBranchOpacity?: number;
+        branchDetailProgress?: number;
+      } | undefined;
+      return {
+        width: Number(debug?.branchLineWidthPx),
+        opacity: Number(debug?.baseBranchOpacity),
+        progress: Number(debug?.branchDetailProgress),
+      };
+    };
+    const fit = readStyle();
+    const camera = canvas.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Spiral branch-style camera unavailable.");
+    }
+    canvas.setCircularCamera({ scale: Number(camera.scale) * 5 });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return { fit, zoomed: readStyle() };
+  });
+
+  expect(styles.zoomed.progress).toBeGreaterThan(styles.fit.progress);
+  expect(styles.zoomed.width).toBeGreaterThan(styles.fit.width);
+  expect(styles.zoomed.opacity).toBeGreaterThan(styles.fit.opacity);
+  expect(styles.zoomed.width).toBeCloseTo(1.05, 2);
+  expect(styles.zoomed.opacity).toBeCloseTo(0.96, 2);
 });
 
 test("taxonomy label size and band thickness controls are independent", async ({ page }) => {

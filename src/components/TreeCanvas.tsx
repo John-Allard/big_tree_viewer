@@ -1125,6 +1125,12 @@ const SPIRAL_TIME_AXIS_LOG_BASE_MULTIPLIER = 100;
 const SPIRAL_TAXONOMY_RANK_COUNT_ZOOM_THRESHOLDS = [1, 1.45, 2.25, 3.5, 5.25] as const;
 const SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX = 2.9;
 const SPIRAL_TAXONOMY_COMPRESSION_COMPLETE_SPACING_PX = 12;
+const SPIRAL_BRANCH_DETAIL_START_SPACING_PX = 0.6;
+const SPIRAL_DENSE_BRANCH_WIDTH_PX = 0.62;
+const SPIRAL_DETAIL_BRANCH_WIDTH_PX = 1.05;
+const SPIRAL_DENSE_BASE_BRANCH_OPACITY = 0.74;
+const SPIRAL_DENSE_COLORED_BRANCH_OPACITY = 0.86;
+const SPIRAL_DETAIL_BRANCH_OPACITY = 0.96;
 
 const MANUAL_BRANCH_SWATCHES = [
   { label: "Slate", color: "#334155" },
@@ -3911,6 +3917,7 @@ export default function TreeCanvas({
   useAutoCircularCenterScaleAngle,
   showCircularCenterRadialScaleBar,
   showTipLabels,
+  alignTipLabels,
   showGenusLabels,
   taxonomyEnabled,
   taxonomyOverlayStyle,
@@ -7492,6 +7499,7 @@ export default function TreeCanvas({
         width: number;
         fittedFontSize: number;
         renderedWidth: number;
+        leaderStartX: number;
       }> = [];
       const tipFontSize = scaleLabelFontSize("tip", Math.max(6.5, Math.min(22, effectiveTipSpacingPx * 0.58)));
       const microTipFontSize = scaleLabelFontSize("tip", Math.max(4.2, Math.min(6.25, effectiveTipSpacingPx * 0.34)));
@@ -7529,6 +7537,8 @@ export default function TreeCanvas({
       };
       const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
       const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + (showTipLabels ? 8 : 0);
+      const alignedTipLabelX = tipSideX + metadataTipDecorationLabelExtraPx + figureStyles.tip.offsetPx;
+      const alignedTipLabelSpacePx = Math.max(1, globalTipLabelSpacePx - metadataTipDecorationLabelExtraPx);
       const orderedLeaves = cache.orderedLeaves[order];
       const startLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, minY - 2);
       const endLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, maxY + 2.000001);
@@ -7545,6 +7555,7 @@ export default function TreeCanvas({
         width: number;
         fittedFontSize: number;
         renderedWidth: number;
+        leaderStartX: number;
       }> = [];
       const maxVisibleLabels = 5200;
       const canRenderMeasuredTipLabels = microTipLabelsVisible && visibleLeafCount <= maxVisibleLabels;
@@ -7561,24 +7572,37 @@ export default function TreeCanvas({
           const y = layout.center[node];
           const text = displayTipLabelForView(node);
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
-          const x = screen.x + rectTipLabelOffsetPx(node) + figureStyles.tip.offsetPx;
+          const tipLabelOffsetPx = rectTipLabelOffsetPx(node);
+          const x = alignTipLabels
+            ? alignedTipLabelX
+            : screen.x + tipLabelOffsetPx + figureStyles.tip.offsetPx;
+          const widthLimitPx = alignTipLabels ? alignedTipLabelSpacePx : globalTipLabelSpacePx;
           const width = ctx.measureText(text).width;
           const fittedFontSize = Math.max(
             4,
             Math.min(
               renderedTipFontSize,
-              renderedTipFontSize * Math.min(1, globalTipLabelSpacePx / Math.max(1e-6, width)),
+              renderedTipFontSize * Math.min(1, widthLimitPx / Math.max(1e-6, width)),
             ),
           );
           const renderedWidth = width * (fittedFontSize / Math.max(1e-6, tipFontSize));
           if (needsExactTipLabelEnvelope) {
             tipLabelMaxRightPx = Math.max(tipLabelMaxRightPx, x + renderedWidth);
           }
-          measuredLabels.push({ node, text, x, y: screen.y, width, fittedFontSize, renderedWidth });
+          measuredLabels.push({
+            node,
+            text,
+            x,
+            y: screen.y,
+            width,
+            fittedFontSize,
+            renderedWidth,
+            leaderStartX: screen.x + Math.max(2, tipLabelOffsetPx - 4),
+          });
         }
       }
       if (canRenderMeasuredTipLabels && measuredLabels.length <= maxVisibleLabels) {
-        visibleTipLabels = measuredLabels.map(({ node, text, x, y, width, fittedFontSize, renderedWidth }) => ({
+        visibleTipLabels = measuredLabels.map(({ node, text, x, y, width, fittedFontSize, renderedWidth, leaderStartX }) => ({
           node,
           text,
           x,
@@ -7586,6 +7610,7 @@ export default function TreeCanvas({
           width,
           fittedFontSize,
           renderedWidth,
+          leaderStartX,
         }));
       }
       const effectiveTipLabelSpacePx = needsExactTipLabelEnvelope
@@ -8305,6 +8330,35 @@ export default function TreeCanvas({
       timing.taxonomyOverlayMs += performance.now() - taxonomyOverlayStartTime;
 
       if (visibleTipLabels.length > 0) {
+        if (alignTipLabels) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(100,116,139,0.7)";
+          ctx.lineWidth = 0.9;
+          ctx.lineCap = "round";
+          ctx.setLineDash([1.5, 3]);
+          ctx.beginPath();
+          for (let index = 0; index < visibleTipLabels.length; index += 1) {
+            const label = visibleTipLabels[index];
+            const leaderEndX = label.x - 4;
+            if (leaderEndX <= label.leaderStartX + 1) {
+              continue;
+            }
+            ctx.moveTo(label.leaderStartX, label.y);
+            ctx.lineTo(leaderEndX, label.y);
+            pushSceneLine(
+              label.leaderStartX,
+              label.y,
+              leaderEndX,
+              label.y,
+              "#64748b",
+              0.9,
+              0.7,
+              "1.5 3",
+            );
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         for (let index = 0; index < visibleTipLabels.length; index += 1) {
@@ -8830,6 +8884,80 @@ export default function TreeCanvas({
       const metrics = buildSpiralMetrics(tree, spiralTurns, visibleTaxonomyRanks.length, taxonomyBandThicknessScale, effectiveTimeAxisLogBase);
       const timeBoundaryValues = buildSpiralTimeBoundaries(metrics.timeExtent);
       const spiralToScreen = (point: { x: number; y: number }) => worldToScreenCircular(camera, point.x, point.y);
+      const spiralTipSpacingPx = (
+        (metrics.totalArcLength / Math.max(1, tree.leafCount - 1))
+        * camera.scale
+        * (collapsedView?.effectiveLeafScale ?? 1)
+      );
+      const spiralTaxonomyWidth = visibleTaxonomyRanks.length > 0
+        ? (visibleTaxonomyRanks.length * metrics.taxonomyRibbonWidth)
+          + (Math.max(0, visibleTaxonomyRanks.length - 1) * metrics.taxonomyRibbonGap)
+          + metrics.taxonomyLabelGap
+        : 0;
+      const spiralInterTurnGapPx = Math.max(
+        0,
+        (metrics.pitch - metrics.bandWidth - spiralTaxonomyWidth) * camera.scale,
+      );
+      const spiralTipRampProgress = smoothstep01(
+        (spiralTipSpacingPx - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX)
+        / Math.max(1e-6, 20 - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX),
+      );
+      const spiralNaturalTipFontSize = scaleLabelFontSize(
+        "tip",
+        Math.max(
+          1.8,
+          Math.min(
+            15,
+            2 + (13 * spiralTipRampProgress),
+            spiralTipSpacingPx * 0.72,
+          ),
+        ),
+      );
+      const spiralRenderedTipFontSize = spiralNaturalTipFontSize;
+      const spiralNaturalTipLabelBandWidthPx = estimateLabelWidth(
+        Math.max(spiralRenderedTipFontSize, 1.8),
+        reservedTipLabelCharacters,
+      );
+      const spiralTipLabelGapPx = Math.max(5, spiralRenderedTipFontSize * 0.55)
+        + Math.max(0, figureStyles.tip.offsetPx);
+      const spiralRequiredTipClearancePx = visibleTaxonomyRanks.length > 0
+        ? taxonomyGapPx
+          + taxonomyBaselineGapPx
+          + spiralNaturalTipLabelBandWidthPx
+          + Math.max(0, figureStyles.tip.offsetPx)
+        : spiralTipLabelGapPx + spiralNaturalTipLabelBandWidthPx;
+      const spiralTipLabelsVisible = (
+        showTipLabels
+        && spiralTipSpacingPx > SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX
+        && spiralInterTurnGapPx >= spiralRequiredTipClearancePx
+      );
+      const spiralTipLabelBandWidthPx = spiralTipLabelsVisible
+        ? spiralNaturalTipLabelBandWidthPx
+        : 0;
+      const spiralBranchDetailProgress = smoothstep01(
+        (spiralTipSpacingPx - SPIRAL_BRANCH_DETAIL_START_SPACING_PX)
+        / Math.max(
+          1e-6,
+          SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX - SPIRAL_BRANCH_DETAIL_START_SPACING_PX,
+        ),
+      );
+      const spiralBranchLineWidthPx = (
+        SPIRAL_DENSE_BRANCH_WIDTH_PX
+        + (
+          (SPIRAL_DETAIL_BRANCH_WIDTH_PX - SPIRAL_DENSE_BRANCH_WIDTH_PX)
+          * spiralBranchDetailProgress
+        )
+      ) * branchStrokeScale;
+      const spiralBaseBranchOpacity = SPIRAL_DENSE_BASE_BRANCH_OPACITY
+        + (
+          (SPIRAL_DETAIL_BRANCH_OPACITY - SPIRAL_DENSE_BASE_BRANCH_OPACITY)
+          * spiralBranchDetailProgress
+        );
+      const spiralColoredBranchOpacity = SPIRAL_DENSE_COLORED_BRANCH_OPACITY
+        + (
+          (SPIRAL_DETAIL_BRANCH_OPACITY - SPIRAL_DENSE_COLORED_BRANCH_OPACITY)
+          * spiralBranchDetailProgress
+        );
 
       if (showTimeStripes && timeStripeStyle === "bands") {
         const bandCount = Math.max(1, timeBoundaryValues.length - 1);
@@ -8916,8 +9044,10 @@ export default function TreeCanvas({
       ctx.lineCap = "butt";
       branchPaths?.forEach((batches, color) => {
         ctx.strokeStyle = color;
-        ctx.globalAlpha = color === BRANCH_COLOR ? 0.74 : 0.86;
-        ctx.lineWidth = (0.62 * branchStrokeScale) / Math.max(camera.scale, 1e-6);
+        ctx.globalAlpha = color === BRANCH_COLOR
+          ? spiralBaseBranchOpacity
+          : spiralColoredBranchOpacity;
+        ctx.lineWidth = spiralBranchLineWidthPx / Math.max(camera.scale, 1e-6);
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
           ctx.stroke(batches[batchIndex].path);
         }
@@ -8936,14 +9066,16 @@ export default function TreeCanvas({
           }
           const parent = tree.buffers.parent[node];
           const branchColor = effectiveBranchColors?.[node] ?? BRANCH_COLOR;
-          const branchOpacity = branchColor === BRANCH_COLOR ? 0.74 : 0.86;
+          const branchOpacity = branchColor === BRANCH_COLOR
+            ? spiralBaseBranchOpacity
+            : spiralColoredBranchOpacity;
           if (parent >= 0) {
             const theta = thetaByNode[node];
             const start = spiralPointAt(theta, spiralAgeForDepth(tree, tree.buffers.depth[parent], metrics), metrics);
             const end = spiralPointAt(theta, spiralAgeForDepth(tree, tree.buffers.depth[node], metrics), metrics);
             const startScreen = spiralToScreen(start);
             const endScreen = spiralToScreen(end);
-            pushSceneLine(startScreen.x, startScreen.y, endScreen.x, endScreen.y, branchColor, 0.62 * branchStrokeScale, branchOpacity);
+            pushSceneLine(startScreen.x, startScreen.y, endScreen.x, endScreen.y, branchColor, spiralBranchLineWidthPx, branchOpacity);
           }
           const ordered = spiralChildren[node];
           if (ordered.length < 2 || collapsedNodes.has(node)) {
@@ -8967,9 +9099,11 @@ export default function TreeCanvas({
                 1,
               ),
               childColor,
-              0.62 * branchStrokeScale,
+              spiralBranchLineWidthPx,
               undefined,
-              childColor === BRANCH_COLOR ? 0.74 : 0.86,
+              childColor === BRANCH_COLOR
+                ? spiralBaseBranchOpacity
+                : spiralColoredBranchOpacity,
             );
           }
         }
@@ -9087,11 +9221,6 @@ export default function TreeCanvas({
       }
 
       if (taxonomyEnabled && renderedTaxonomyBlocks && visibleTaxonomyRanks.length > 0) {
-        const spiralTipSpacingPx = (
-          (metrics.totalArcLength / Math.max(1, tree.leafCount - 1))
-          * camera.scale
-          * (collapsedView?.effectiveLeafScale ?? 1)
-        );
         const taxonomyMetrics = compressedSpiralTaxonomyMetrics(
           metrics,
           camera.scale,
@@ -9099,23 +9228,12 @@ export default function TreeCanvas({
           visibleTaxonomyRanks.length,
           taxonomyBandThicknessScale,
         );
-        const tipRampProgress = smoothstep01((spiralTipSpacingPx - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX) / Math.max(1e-6, 20 - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX));
-        const fittedTipBaseSize = 2 + (13 * tipRampProgress);
-        const spiralTipFontSize = scaleLabelFontSize(
-          "tip",
-          Math.max(1.8, Math.min(15, fittedTipBaseSize, spiralTipSpacingPx * 0.72)),
-        );
-        const microBandWidthPx = estimateLabelWidth(Math.max(spiralTipFontSize, 1.8), reservedTipLabelCharacters);
-        const readableBandWidthPx = estimateLabelWidth(Math.max(spiralTipFontSize, 1.8), reservedTipLabelCharacters);
-        const tipLabelBandWidthPx = showTipLabels && spiralTipSpacingPx > SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX
-          ? interpolateTipBandWidthPx(spiralTipSpacingPx, 2.75, SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX, 4.5, microBandWidthPx, readableBandWidthPx)
-          : 0;
-        const hasTipLabelBand = tipLabelBandWidthPx > 0.5;
+        const hasTipLabelBand = spiralTipLabelBandWidthPx > 0.5;
         const taxonomyGapWorld = hasTipLabelBand
           ? (
             taxonomyGapPx
             + taxonomyBaselineGapPx
-            + tipLabelBandWidthPx
+            + spiralTipLabelBandWidthPx
             + Math.max(0, figureStyles.tip.offsetPx)
           ) / Math.max(camera.scale, 1e-6)
           : 0;
@@ -9640,22 +9758,11 @@ export default function TreeCanvas({
         }
       }
 
-      const spiralTipSpacingPx = (
-        (metrics.totalArcLength / Math.max(1, tree.leafCount - 1))
-        * camera.scale
-        * (collapsedView?.effectiveLeafScale ?? 1)
-      );
-      const spiralMicroTipLabelsVisible = showTipLabels && spiralTipSpacingPx > SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX;
-      if (spiralMicroTipLabelsVisible) {
+      let spiralPlacedTipLabelCount = 0;
+      if (spiralTipLabelsVisible) {
         const orderedLeaves = cache.orderedLeaves[order];
-        const tipRampProgress = smoothstep01((spiralTipSpacingPx - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX) / Math.max(1e-6, 20 - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX));
-        const fittedTipBaseSize = 2 + (13 * tipRampProgress);
-        const renderedTipFontSize = scaleLabelFontSize(
-          "tip",
-          Math.max(1.8, Math.min(15, fittedTipBaseSize, spiralTipSpacingPx * 0.72)),
-        );
         const placedTipLabels: ScreenLabel[] = [];
-        ctx.font = fontSpec("tip", renderedTipFontSize);
+        ctx.font = fontSpec("tip", spiralRenderedTipFontSize);
         ctx.textBaseline = "middle";
         for (let index = 0; index < orderedLeaves.length; index += 1) {
           const node = orderedLeaves[index];
@@ -9674,8 +9781,10 @@ export default function TreeCanvas({
           const normalScreenX = Math.cos(normalAngle);
           const normalScreenY = Math.sin(normalAngle);
           const onReadableRightSide = normalScreenX >= 0;
-          const rotation = normalizeRotation((onReadableRightSide ? normalAngle : normalAngle + Math.PI) * 180 / Math.PI) * Math.PI / 180;
-          const gapPx = Math.max(5, renderedTipFontSize * 0.55) + Math.max(0, figureStyles.tip.offsetPx);
+          const rotation = normalizeRotation(
+            (onReadableRightSide ? normalAngle : normalAngle + Math.PI) * 180 / Math.PI,
+          ) * Math.PI / 180;
+          const gapPx = spiralTipLabelGapPx;
           const anchorX = tip.x + (normalScreenX * gapPx);
           const anchorY = tip.y + (normalScreenY * gapPx);
           placedTipLabels.push({
@@ -9683,7 +9792,7 @@ export default function TreeCanvas({
             y: anchorY,
             text,
             alpha: 1,
-            fontSize: renderedTipFontSize,
+            fontSize: spiralRenderedTipFontSize,
             rotation,
             align: onReadableRightSide ? "left" : "right",
           });
@@ -9696,18 +9805,19 @@ export default function TreeCanvas({
             x: anchorX,
             y: anchorY,
             width,
-            height: renderedTipFontSize * 1.15,
+            height: spiralRenderedTipFontSize * 1.15,
             rotation,
             align: onReadableRightSide ? "left" : "right",
           });
         }
+        spiralPlacedTipLabelCount = placedTipLabels.length;
         ctx.fillStyle = "#111827";
         for (let index = 0; index < placedTipLabels.length; index += 1) {
           const label = placedTipLabels[index];
           ctx.save();
           ctx.translate(label.x, label.y);
           ctx.rotate(label.rotation ?? 0);
-          ctx.font = `${label.fontSize ?? renderedTipFontSize}px ${labelFontFamilies.tip}`;
+          ctx.font = `${label.fontSize ?? spiralRenderedTipFontSize}px ${labelFontFamilies.tip}`;
           ctx.textAlign = label.align ?? "left";
           ctx.fillText(label.text, 0, 0);
           ctx.restore();
@@ -9716,7 +9826,7 @@ export default function TreeCanvas({
             label.x,
             label.y,
             "#111827",
-            label.fontSize ?? renderedTipFontSize,
+            label.fontSize ?? spiralRenderedTipFontSize,
             labelFontFamilies.tip,
             label.align === "right" ? "end" : "start",
             label.rotation ?? 0,
@@ -9842,9 +9952,26 @@ export default function TreeCanvas({
 
       renderDebug.spiral = {
         turns: spiralTurns,
+        firstTipWorld: (() => {
+          const firstTipNode = cache.orderedLeaves[order][0];
+          const firstTipTheta = spiralThetaForY(layout.center[firstTipNode], tree.leafCount, metrics);
+          const firstTipFrame = spiralFrameAt(firstTipTheta, metrics.bandWidth, metrics);
+          return { x: firstTipFrame.x, y: firstTipFrame.y };
+        })(),
         visibleTaxonomyRanks,
         logUnit: metrics.logUnit,
         timeExtent: metrics.timeExtent,
+        tipSpacingPx: spiralTipSpacingPx,
+        interTurnGapPx: spiralInterTurnGapPx,
+        tipLabelsVisible: spiralTipLabelsVisible,
+        tipLabelFontSizePx: spiralRenderedTipFontSize,
+        tipLabelBandWidthPx: spiralTipLabelBandWidthPx,
+        tipLabelRequiredClearancePx: spiralRequiredTipClearancePx,
+        placedTipLabelCount: spiralPlacedTipLabelCount,
+        branchDetailProgress: spiralBranchDetailProgress,
+        branchLineWidthPx: spiralBranchLineWidthPx,
+        baseBranchOpacity: spiralBaseBranchOpacity,
+        coloredBranchOpacity: spiralColoredBranchOpacity,
         branchPathBatchCount: branchPaths
           ? [...branchPaths.values()].reduce((total, batches) => total + batches.length, 0)
           : 0,
@@ -10821,7 +10948,6 @@ export default function TreeCanvas({
         ctx.font = fontSpec("tip", tipFontSize);
         ctx.fillStyle = "#111827";
         ctx.textBaseline = "middle";
-        const labelAnchorRadius = microTipLabelsVisible ? tipLabelRadius : cueTipLabelRadius;
         for (let rangeIndex = 0; rangeIndex < visibleLeafRanges.length; rangeIndex += 1) {
           const range = visibleLeafRanges[rangeIndex];
           for (let index = range.startIndex; index < range.endIndex; index += 1) {
@@ -10830,6 +10956,17 @@ export default function TreeCanvas({
               continue;
             }
             const theta = thetaFor(layout.center, node, tree.leafCount);
+            const labelAnchorRadius = alignTipLabels
+              ? (microTipLabelsVisible ? tipLabelRadius : cueTipLabelRadius)
+              : axisDepth(tree.buffers.depth[node])
+                + (
+                  (
+                    microTipLabelsVisible
+                      ? metadataTipDecorationLabelClearancePx
+                      : Math.max(8, metadataTipDecorationLabelClearancePx * 0.55)
+                  )
+                  / Math.max(camera.scale, 1e-6)
+                );
             const point = polarToCartesian(labelAnchorRadius, theta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
             if (
@@ -13112,6 +13249,7 @@ export default function TreeCanvas({
     activeSearchGenusCenterNode,
     activeSearchNode,
     activeSearchTaxonomyKey,
+    alignTipLabels,
     axisDepth,
     branchThicknessScale,
     cache,
@@ -15143,6 +15281,7 @@ export default function TreeCanvas({
       circularCenterScaleAngleDegrees,
       showCircularCenterRadialScaleBar,
       showTipLabels,
+      alignTipLabels,
       showGenusLabels,
       showInternalNodeLabels,
       showBootstrapLabels,
@@ -15192,6 +15331,7 @@ export default function TreeCanvas({
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
     showTipLabels,
+    alignTipLabels,
     showGenusLabels,
     showIntermediateScaleTicks,
     showInternalNodeLabels,
@@ -15727,6 +15867,7 @@ export default function TreeCanvas({
           circularCenterScaleAngleDegrees,
           showCircularCenterRadialScaleBar,
           showTipLabels,
+          alignTipLabels,
           showGenusLabels,
           showInternalNodeLabels,
           showBootstrapLabels,
@@ -15779,6 +15920,7 @@ export default function TreeCanvas({
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
     showTipLabels,
+    alignTipLabels,
     showGenusLabels,
     showIntermediateScaleTicks,
     showInternalNodeLabels,

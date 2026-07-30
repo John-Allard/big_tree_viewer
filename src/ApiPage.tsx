@@ -134,9 +134,10 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
         <section className="api-doc-section">
           <h2>Useful URL options</h2>
           <dl className="api-option-list">
-            <div><dt>btv_view</dt><dd>`rectangular`, `circular`, or `spiral`.</dd></div>
+            <div><dt>btv_view</dt><dd>`rectangular`, `circular`, or `spiral`. Spiral mode requires at least 1,000 tips.</dd></div>
             <div><dt>btv_order</dt><dd>`asc`, `desc`, or `input`.</dd></div>
             <div><dt>btv_tip_labels</dt><dd>`true` or `false`.</dd></div>
+            <div><dt>btv_align_tip_labels</dt><dd>Align tip labels at the rectangular tree edge with dotted leaders or at the circular outer radius.</dd></div>
             <div><dt>btv_genus_labels</dt><dd>`true` or `false`.</dd></div>
             <div><dt>btv_taxonomy</dt><dd>Show taxonomy overlays if taxonomy is loaded in the payload.</dd></div>
             <div><dt>btv_taxonomy_branch_colors</dt><dd>Color branches from taxonomy mapping.</dd></div>
@@ -219,6 +220,7 @@ window.addEventListener("message", (event) => {
     viewMode?: "rectangular" | "circular" | "spiral",
     order?: "asc" | "desc" | "input",
     showTipLabels?: boolean,
+    alignTipLabels?: boolean,
     showGenusLabels?: boolean,
     branchThicknessScale?: number,
     taxonomyEnabled?: boolean,

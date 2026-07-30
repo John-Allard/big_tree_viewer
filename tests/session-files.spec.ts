@@ -40,6 +40,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
     app.importMetadataTextForTest("name,group\nA_species,Alpha\nB_species,Beta\n", "groups.csv");
     app.setViewMode("circular");
     app.setShowTipLabels(false);
+    app.setAlignTipLabels(true);
     app.setShowGenusLabels(true);
     canvas.setManualBranchColor(firstLeaf, "#ff0000");
   });
@@ -80,6 +81,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(session.metadata?.text).toContain("A_species,Alpha");
   expect(session.settings?.viewMode).toBe("circular");
   expect(session.settings?.showTipLabels).toBe(false);
+  expect(session.settings?.alignTipLabels).toBe(true);
   expect(session.canvas?.camera?.kind).toBe("circular");
   expect(Number(session.canvas?.viewportWidth ?? 0)).toBeGreaterThan(0);
   expect(Number(session.canvas?.viewportHeight ?? 0)).toBeGreaterThan(0);
@@ -112,6 +114,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   }));
   expect(restored.app?.viewMode).toBe("circular");
   expect(restored.app?.showTipLabels).toBe(false);
+  expect(restored.app?.alignTipLabels).toBe(true);
   expect(restored.app?.metadataRowCount).toBe(2);
   expect(restored.camera?.kind).toBe("circular");
   expect(restored.branchColors).toContain("#ff0000");
