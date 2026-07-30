@@ -453,6 +453,210 @@ test("collapse modes preserve ribbons or minimize to three tips with aligned hov
   });
 });
 
+test("circular minimized collapse preserves colored connectors and uses radial taxonomy geometry", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(
+    window.__BIG_TREE_VIEWER_APP_TEST__
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__,
+  ));
+  await page.getByRole("button", { name: "Paste Newick" }).click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(balancedTreeNewick(1024));
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded
+    && !window.__BIG_TREE_VIEWER_APP_TEST__?.getState().loading
+    && (window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names ?? []).includes("T1023")
+  ));
+
+  const targetNode = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    if (
+      !app
+      || !internal?.leafNodes
+      || !internal.names
+      || !internal.parent
+      || !internal.firstChild
+      || !internal.nextSibling
+    ) {
+      throw new Error("Circular collapse setup unavailable.");
+    }
+    const leafSet = new Set(internal.leafNodes);
+    const descendantCounts = new Array<number>(internal.parent.length).fill(0);
+    for (let node = internal.parent.length - 1; node >= 0; node -= 1) {
+      let count = leafSet.has(node) ? 1 : 0;
+      for (let child = internal.firstChild[node]; child >= 0; child = internal.nextSibling[child]) {
+        count += descendantCounts[child];
+      }
+      descendantCounts[node] = count;
+    }
+    const firstTip = internal.names.indexOf("T0");
+    let target = firstTip;
+    while (target >= 0 && descendantCounts[target] < 256) {
+      target = internal.parent[target];
+    }
+    if (target < 0 || descendantCounts[target] !== 256) {
+      throw new Error("Circular collapse target unavailable.");
+    }
+    const targetDescendants = new Set<number>();
+    for (const leaf of internal.leafNodes) {
+      for (let node = leaf; node >= 0; node = internal.parent[node]) {
+        if (node === target) {
+          targetDescendants.add(leaf);
+          break;
+        }
+      }
+    }
+    app.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: internal.leafNodes.length,
+      totalTips: internal.leafNodes.length,
+      activeRanks: ["family"],
+      tipRanks: internal.leafNodes.map((node) => {
+        const tipIndex = Number(internal.names![node].slice(1));
+        const quarter = Math.min(3, Math.floor(tipIndex / 256));
+        const labels = ["Alphaidae", "Betaidae", "Gammaidae", "Deltaidae"];
+        return {
+          node,
+          ranks: { family: labels[quarter] },
+          taxIds: { family: 1001 + quarter },
+        };
+      }),
+    });
+    app.setTaxonomyRankVisibilityAutoForTest(false);
+    app.setTaxonomyRankVisibilityForTest("family", true);
+    app.setTaxonomyBranchColoringEnabled(true);
+    app.setTaxonomyEnabled(true);
+    app.setViewMode("rectangular");
+    app.setOrder("input");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCollapsedNodeMode(target, "preserve-width");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    app.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    if (targetDescendants.size !== 256) {
+      throw new Error("Circular collapse target descendants are inconsistent.");
+    }
+    return target;
+  });
+  await expect.poll(async () => page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCollapsedNodeModes() ?? []
+  ))).toContainEqual([targetNode, "minimize"]);
+  await page.evaluate((node) => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCollapsedNodeMode(node, "preserve-width");
+  }, targetNode);
+  await expect.poll(async () => page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCollapsedNodeModes() ?? []
+  ))).toContainEqual([targetNode, "minimize"]);
+
+  const result = await page.evaluate((node) => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const camera = canvas?.getCamera();
+    const debug = canvas?.getRenderDebug()?.circular as {
+      branchRenderMode?: string;
+      renderedColoredStemCount?: number | null;
+      renderedColoredConnectorCount?: number | null;
+      taxonomyFirstRingInnerRadiusPx?: number | null;
+    } | undefined;
+    const triangle = canvas?.getCollapsedTriangleHitboxes().find((candidate) => candidate.node === node);
+    const label = canvas?.getLabelHitboxes().find((candidate) => (
+      candidate.node === node
+      && candidate.source === "collapse"
+      && candidate.collapsePart === "label"
+      && candidate.text === "Alphaidae"
+    ));
+    if (!camera || camera.kind !== "circular" || !debug || !triangle || !label) {
+      throw new Error("Circular radial collapse render state unavailable.");
+    }
+    const center = { x: camera.translateX, y: camera.translateY };
+    const startTheta = Math.atan2(
+      triangle.points[1].y - center.y,
+      triangle.points[1].x - center.x,
+    );
+    const endTheta = Math.atan2(
+      triangle.points[2].y - center.y,
+      triangle.points[2].x - center.x,
+    );
+    let angularSpan = Math.abs(endTheta - startTheta);
+    if (angularSpan > Math.PI) {
+      angularSpan = (Math.PI * 2) - angularSpan;
+    }
+    return {
+      branchRenderMode: debug.branchRenderMode,
+      renderedColoredStemCount: Number(debug.renderedColoredStemCount ?? 0),
+      renderedColoredConnectorCount: Number(debug.renderedColoredConnectorCount ?? 0),
+      angularSpan,
+      labelKind: label.kind,
+      labelRadiusPx: Math.hypot(Number(label.x) - center.x, Number(label.y) - center.y),
+      taxonomyFirstRingInnerRadiusPx: Number(debug.taxonomyFirstRingInnerRadiusPx ?? 0),
+    };
+  }, targetNode);
+
+  expect(result.branchRenderMode).toBe("full-tree");
+  expect(result.renderedColoredStemCount).toBeGreaterThan(700);
+  expect(result.renderedColoredConnectorCount).toBeGreaterThan(700);
+  expect(result.angularSpan).toBeGreaterThanOrEqual(Math.PI * 2 * 0.0095);
+  expect(result.angularSpan).toBeLessThanOrEqual(Math.PI * 2 * 0.0105);
+  expect(result.labelKind).toBe("rotated");
+  expect(result.labelRadiusPx).toBeCloseTo(result.taxonomyFirstRingInnerRadiusPx, 1);
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.evaluate((node) => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCollapsedNodeMode(node, "preserve-width");
+  }, targetNode);
+  await expect.poll(async () => page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCollapsedNodeModes() ?? []
+  ))).toContainEqual([targetNode, "minimize"]);
+  const spiralResult = await page.evaluate((node) => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const debug = canvas?.getRenderDebug()?.spiral as {
+      collapsedMinimizedAngularSpans?: Array<{ node?: number; span?: number }>;
+    } | undefined;
+    const label = canvas?.getLabelHitboxes().find((candidate) => (
+      candidate.node === node
+      && candidate.source === "collapse"
+      && candidate.collapsePart === "label"
+      && candidate.text === "Alphaidae"
+    ));
+    const triangle = canvas?.getCollapsedTriangleHitboxes().find((candidate) => candidate.node === node);
+    const span = debug?.collapsedMinimizedAngularSpans
+      ?.find((candidate) => candidate.node === node)?.span;
+    if (!label || !triangle || typeof span !== "number") {
+      throw new Error("Spiral radial collapse render state unavailable.");
+    }
+    return {
+      labelKind: label.kind,
+      labelRotation: Number(label.rotation),
+      span,
+      triangleArea: Math.abs(
+        (
+          triangle.points[0].x
+          * (triangle.points[1].y - triangle.points[2].y)
+          + triangle.points[1].x
+          * (triangle.points[2].y - triangle.points[0].y)
+          + triangle.points[2].x
+          * (triangle.points[0].y - triangle.points[1].y)
+        ) * 0.5
+      ),
+    };
+  }, targetNode);
+
+  expect(spiralResult.labelKind).toBe("rotated");
+  expect(Number.isFinite(spiralResult.labelRotation)).toBe(true);
+  expect(spiralResult.span).toBeGreaterThanOrEqual(Math.PI * 2 * 0.0095);
+  expect(spiralResult.span).toBeLessThan(Math.PI * 0.2);
+  expect(spiralResult.triangleArea).toBeGreaterThan(2);
+});
+
 test("node and taxonomy context menus expose preserve-width and minimize actions", async ({ page }) => {
   await loadFixture(page);
   const nodes = await configureTaxonomy(page);
@@ -552,6 +756,65 @@ test("node and taxonomy context menus expose preserve-width and minimize actions
   }, nodes.collapsedNode);
   await page.mouse.click(minimizedTrianglePoint.x, minimizedTrianglePoint.y, { button: "right" });
   await expect(page.getByRole("button", { name: "Expand Group" })).toBeVisible();
+  await page.getByRole("button", { name: "Expand Group" }).click();
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const circularBranchPoint = await page.evaluate((node) => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const segment = canvasTest?.getBranchScreenSegmentForTest(node);
+    if (!(canvas instanceof HTMLCanvasElement) || !canvasTest || !segment) {
+      throw new Error("Circular node context-menu target unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    for (const fraction of [0.2, 0.35, 0.5, 0.65, 0.8]) {
+      const localX = segment.x1 + ((segment.x2 - segment.x1) * fraction);
+      const localY = segment.y1 + ((segment.y2 - segment.y1) * fraction);
+      const hover = canvasTest.probeHoverForTest(localX, localY);
+      if (hover?.node === node && hover.targetKind === "stem") {
+        return { x: rect.left + localX, y: rect.top + localY };
+      }
+    }
+    throw new Error("No circular node context-menu target found.");
+  }, nodes.collapsedNode);
+  await page.mouse.click(circularBranchPoint.x, circularBranchPoint.y, { button: "right" });
+  await page.getByRole("button", { name: "Collapse Subtree" }).click();
+  const circularNodePreserveWidth = page.getByRole("button", { name: "Preserve Width" });
+  await expect(circularNodePreserveWidth).toBeDisabled();
+  await expect(circularNodePreserveWidth).toHaveAttribute("title", "Only available in rectangular mode.");
+  await page.getByRole("button", { name: "Minimize" }).click();
+  await page.evaluate((node) => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCollapsedNodeMode(node, null);
+  }, nodes.collapsedNode);
+  await settleFrames(page);
+
+  const circularTaxonomyPoint = await page.evaluate(() => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const hitbox = (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes() ?? [])
+      .find((candidate) => (
+        candidate.labelKind === "taxonomy"
+        && candidate.text === "Alphaidae"
+        && candidate.source !== "collapse"
+      ));
+    if (!(canvas instanceof HTMLCanvasElement) || !hitbox) {
+      throw new Error("Circular taxonomy context-menu target unavailable.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + Number(hitbox.x) + (Number(hitbox.width) * 0.5),
+      y: rect.top + Number(hitbox.y) + (Number(hitbox.height) * 0.5),
+    };
+  });
+  await page.mouse.click(circularTaxonomyPoint.x, circularTaxonomyPoint.y, { button: "right" });
+  await page.getByRole("button", { name: "Collapse Group" }).click();
+  const circularTaxonomyPreserveWidth = page.getByRole("button", { name: "Preserve Width" });
+  await expect(circularTaxonomyPreserveWidth).toBeDisabled();
+  await expect(circularTaxonomyPreserveWidth).toHaveAttribute("title", "Only available in rectangular mode.");
 });
 
 test("taxonomy collapse keeps a small basal lineage and excludes a separate occurrence", async ({ page }) => {

@@ -16,6 +16,16 @@ async function waitForViewer(page: Page): Promise<void> {
   await waitForViewerReady(page);
 }
 
+async function loadTreeFromPaste(page: Page, newick: string): Promise<void> {
+  await page.getByRole("button", { name: "Paste Newick" }).click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(newick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.treeLoaded) && !Boolean(state?.loading);
+  });
+}
+
 async function enableMockTaxonomy(page: Page): Promise<void> {
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy();
@@ -87,6 +97,83 @@ test("rectangular taxonomy columns render when taxonomy is enabled", async ({ pa
 
   expect((rectDebug.taxonomyVisibleRanks ?? []).length).toBeGreaterThan(0);
   expect(Number(rectDebug.genusBandX ?? 0)).toBeGreaterThan(Number(rectDebug.tipSideX ?? 0) + 10);
+});
+
+test("multi-turn spiral taxonomy labels follow the visible interval into the viewport", async ({ page }) => {
+  await waitForViewer(page);
+  const tips = Array.from({ length: 1000 }, (_, index) => `Fish_${index}:1`);
+  await loadTreeFromPaste(page, `(${tips.join(",")})Root;`);
+
+  await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    if (!app || leafNodes.length !== 1000) {
+      throw new Error("Multi-turn taxonomy test setup unavailable.");
+    }
+    app.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks: leafNodes.map((node) => ({
+        node,
+        ranks: { class: "Actinopteri" },
+      })),
+    });
+    app.setTaxonomyRankVisibilityAutoForTest(false);
+    app.setTaxonomyRankVisibilityForTest("class", true);
+    app.setTaxonomyEnabled(true);
+    app.setViewMode("spiral");
+    app.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral"
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()?.kind === "circular"
+  ));
+
+  const result = await page.evaluate(async () => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const camera = canvas?.getCamera();
+    const debug = canvas?.getRenderDebug()?.spiral as {
+      firstTipWorld?: { x?: number; y?: number };
+    } | undefined;
+    const element = document.querySelector("[data-testid=tree-canvas]");
+    if (
+      !canvas
+      || !camera
+      || camera.kind !== "circular"
+      || !debug?.firstTipWorld
+      || !(element instanceof HTMLCanvasElement)
+    ) {
+      throw new Error("Multi-turn spiral camera unavailable.");
+    }
+    const rect = element.getBoundingClientRect();
+    const scale = Number(camera.scale) * 8;
+    canvas.setCircularCamera({
+      scale,
+      translateX: (rect.width * 0.5) - (Number(debug.firstTipWorld.x) * scale),
+      translateY: (rect.height * 0.5) - (Number(debug.firstTipWorld.y) * scale),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const label = canvas.getLabelHitboxes().find((hitbox) => (
+      hitbox.labelKind === "taxonomy"
+      && hitbox.text === "Actinopteri"
+    ));
+    return {
+      label: label
+        ? { x: Number(label.x), y: Number(label.y) }
+        : null,
+      center: { x: rect.width * 0.5, y: rect.height * 0.5 },
+    };
+  });
+
+  expect(result.label).not.toBeNull();
+  expect(Math.hypot(
+    Number(result.label?.x) - result.center.x,
+    Number(result.label?.y) - result.center.y,
+  )).toBeLessThan(120);
 });
 
 test("rectangular fit-view taxonomy keeps cached colored connectors visible", async ({ page }) => {

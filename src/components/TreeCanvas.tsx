@@ -90,6 +90,7 @@ const RECT_TAXONOMY_BITMAP_REUSE_SCALE_MULTIPLIER = 1.2;
 const RECT_TAXONOMY_BITMAP_MIN_PADDING_PX = 180;
 const CIRCULAR_TAXONOMY_LABEL_LOCK_MIN_VISIBLE_FRACTION = 0.15;
 const MINIMIZED_TRIANGLE_MIN_VIEWPORT_FRACTION = 0.01;
+const MINIMIZED_TRIANGLE_MIN_CIRCUMFERENCE_FRACTION = 0.01;
 const MINIMIZED_TRIANGLE_MIN_PX = 4;
 const CIRCULAR_TAXONOMY_VISIBLE_FILTER_MAX_VISIBLE_FRACTION = 0.88;
 const CIRCULAR_RIBBON_CANVAS_STABILITY_RADIUS_PX = 6000;
@@ -4109,6 +4110,22 @@ export default function TreeCanvas({
   const [contextMenuCustomColor, setContextMenuCustomColor] = useState("#2563eb");
   const nativeColorPickerActiveRef = useRef(false);
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
+  useLayoutEffect(() => {
+    if (viewMode === "rectangular") {
+      return;
+    }
+    setCollapsedNodeModes((current) => {
+      let changed = false;
+      const next = new Map(current);
+      next.forEach((mode, node) => {
+        if (mode === "preserve-width") {
+          next.set(node, "minimize");
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [viewMode]);
   const [contextMenu, setContextMenu] = useState<(
     {
       kind: "node";
@@ -5056,45 +5073,20 @@ export default function TreeCanvas({
       size.height * MINIMIZED_TRIANGLE_MIN_VIEWPORT_FRACTION,
     );
     const projectionCamera = cameraRef.current;
-    const projectedPixelsPerLayoutUnit = (node: number): number => {
-      if (!projectionCamera) {
+    const spiralCollapseMetrics = viewMode === "spiral"
+      ? buildSpiralMetrics(
+        tree,
+        spiralTurns,
+        visibleSpiralTaxonomyRanks.length,
+        taxonomyBandThicknessScale,
+        effectiveTimeAxisLogBase,
+      )
+      : null;
+    const projectedPixelsPerLayoutUnit = (): number => {
+      if (!projectionCamera || projectionCamera.kind !== "rect") {
         return 0;
       }
-      if (projectionCamera.kind === "rect") {
-        return projectionCamera.scaleY;
-      }
-      const center = baseLayout.center[node];
-      const subtreeTipDepth = measureSubtreeMaxDepth(tree, node);
-      if (viewMode === "spiral") {
-        const metrics = buildSpiralMetrics(
-          tree,
-          spiralTurns,
-          visibleSpiralTaxonomyRanks.length,
-          taxonomyBandThicknessScale,
-          effectiveTimeAxisLogBase,
-        );
-        const age = spiralAgeForDepth(tree, subtreeTipDepth, metrics);
-        const firstTheta = spiralThetaForY(center - 0.5, tree.leafCount, metrics);
-        const secondTheta = spiralThetaForY(center + 0.5, tree.leafCount, metrics);
-        const firstWorld = spiralPointAt(firstTheta, age, metrics);
-        const secondWorld = spiralPointAt(secondTheta, age, metrics);
-        const firstScreen = worldToScreenCircular(projectionCamera, firstWorld.x, firstWorld.y);
-        const secondScreen = worldToScreenCircular(projectionCamera, secondWorld.x, secondWorld.y);
-        return Math.hypot(secondScreen.x - firstScreen.x, secondScreen.y - firstScreen.y);
-      }
-      const firstTheta = ((center - 0.5) / Math.max(1, tree.leafCount)) * Math.PI * 2;
-      const secondTheta = ((center + 0.5) / Math.max(1, tree.leafCount)) * Math.PI * 2;
-      const firstScreen = worldToScreenCircular(
-        projectionCamera,
-        Math.cos(firstTheta) * subtreeTipDepth,
-        Math.sin(firstTheta) * subtreeTipDepth,
-      );
-      const secondScreen = worldToScreenCircular(
-        projectionCamera,
-        Math.cos(secondTheta) * subtreeTipDepth,
-        Math.sin(secondTheta) * subtreeTipDepth,
-      );
-      return Math.hypot(secondScreen.x - firstScreen.x, secondScreen.y - firstScreen.y);
+      return projectionCamera.scaleY;
     };
     const compactIntervals = visibleCollapsedNodes.map((node) => {
       const originalCount = Math.max(1, tree.buffers.leafCount[node]);
@@ -5105,7 +5097,7 @@ export default function TreeCanvas({
         start: baseLayout.min[node],
         end: baseLayout.max[node],
         originalCount,
-        pixelsPerLayoutUnit: projectedPixelsPerLayoutUnit(node),
+        pixelsPerLayoutUnit: projectedPixelsPerLayoutUnit(),
         targetSpan: mode === "minimize" ? Math.min(2, originalCount - 1) : originalCount - 1,
         targetCount: mode === "minimize" ? Math.min(3, originalCount) : originalCount,
       };
@@ -5121,15 +5113,67 @@ export default function TreeCanvas({
         ),
       );
       compactScale = tree.leafCount / effectiveLeafCount;
+      const iterationCompactOffset = (compactScale - 1) * 0.5;
+      const compactPositionForIteration = (value: number): number => {
+        let removedCount = 0;
+        for (let intervalIndex = 0; intervalIndex < compactIntervals.length; intervalIndex += 1) {
+          const candidate = compactIntervals[intervalIndex];
+          if (value < candidate.start) {
+            break;
+          }
+          if (value <= candidate.end) {
+            const span = Math.max(1, candidate.end - candidate.start);
+            const progress = (value - candidate.start) / span;
+            const compactValue = candidate.start - removedCount + (progress * candidate.targetSpan);
+            return (compactValue * compactScale) + iterationCompactOffset;
+          }
+          removedCount += candidate.originalCount - candidate.targetCount;
+        }
+        return ((value - removedCount) * compactScale) + iterationCompactOffset;
+      };
       let changed = false;
       for (let index = 0; index < compactIntervals.length; index += 1) {
         const interval = compactIntervals[index];
-        if (interval.mode !== "minimize" || !(interval.pixelsPerLayoutUnit > 0)) {
+        if (interval.mode !== "minimize") {
           continue;
+        }
+        let requiredFinalLayoutSpan = tree.leafCount
+          * MINIMIZED_TRIANGLE_MIN_CIRCUMFERENCE_FRACTION;
+        if (viewMode === "rectangular") {
+          requiredFinalLayoutSpan = interval.pixelsPerLayoutUnit > 0
+            ? minimumTriangleSpanPx / interval.pixelsPerLayoutUnit
+            : 2;
+        } else if (viewMode === "spiral" && spiralCollapseMetrics) {
+          const centerLayout = compactPositionForIteration(
+            (interval.start + interval.end) * 0.5,
+          );
+          const centerTheta = spiralThetaForY(
+            centerLayout,
+            tree.leafCount,
+            spiralCollapseMetrics,
+          );
+          const desiredThetaSpan = Math.PI * 2 * MINIMIZED_TRIANGLE_MIN_CIRCUMFERENCE_FRACTION;
+          let startTheta = centerTheta - (desiredThetaSpan * 0.5);
+          let endTheta = centerTheta + (desiredThetaSpan * 0.5);
+          const spiralStartTheta = spiralCollapseMetrics.startTheta;
+          const spiralEndTheta = spiralStartTheta + spiralCollapseMetrics.totalTheta;
+          if (startTheta < spiralStartTheta) {
+            endTheta += spiralStartTheta - startTheta;
+            startTheta = spiralStartTheta;
+          }
+          if (endTheta > spiralEndTheta) {
+            startTheta -= endTheta - spiralEndTheta;
+            endTheta = spiralEndTheta;
+          }
+          const startLayout = spiralArcFractionForTheta(startTheta, spiralCollapseMetrics)
+            * Math.max(1, tree.leafCount - 1);
+          const endLayout = spiralArcFractionForTheta(endTheta, spiralCollapseMetrics)
+            * Math.max(1, tree.leafCount - 1);
+          requiredFinalLayoutSpan = Math.max(0, endLayout - startLayout);
         }
         const desiredSpan = Math.min(
           interval.originalCount - 1,
-          Math.max(2, minimumTriangleSpanPx / (interval.pixelsPerLayoutUnit * compactScale)),
+          Math.max(2, requiredFinalLayoutSpan / compactScale),
         );
         const desiredCount = Math.min(interval.originalCount, desiredSpan + 1);
         if (Math.abs(desiredCount - interval.targetCount) > 1e-4) {
@@ -6239,20 +6283,30 @@ export default function TreeCanvas({
     if (!tree || tree.buffers.firstChild[node] < 0) {
       return;
     }
+    const normalizedMode = mode === "preserve-width" && viewMode !== "rectangular"
+      ? "minimize"
+      : mode;
     setCollapsedNodeModes((current) => {
       const next = new Map(current);
-      if (mode === null) {
+      if (normalizedMode === null) {
         next.delete(node);
       } else {
-        next.set(node, mode);
+        next.set(node, normalizedMode);
       }
       return next;
     });
-  }, [tree]);
+  }, [tree, viewMode]);
 
   const toggleCollapsedNode = useCallback((node: number) => {
-    setCollapsedNodeMode(node, collapsedNodeModes.has(node) ? null : "preserve-width");
-  }, [collapsedNodeModes, setCollapsedNodeMode]);
+    setCollapsedNodeMode(
+      node,
+      collapsedNodeModes.has(node)
+        ? null
+        : viewMode === "rectangular"
+          ? "preserve-width"
+          : "minimize",
+    );
+  }, [collapsedNodeModes, setCollapsedNodeMode, viewMode]);
 
   const convertCameraForViewMode = useCallback((fromCamera: CameraState, previousMode?: ViewMode): CameraState => {
     if (!tree) {
@@ -8934,6 +8988,25 @@ export default function TreeCanvas({
       const spiralTipLabelBandWidthPx = spiralTipLabelsVisible
         ? spiralNaturalTipLabelBandWidthPx
         : 0;
+      const taxonomyMetrics = compressedSpiralTaxonomyMetrics(
+        metrics,
+        camera.scale,
+        spiralTipSpacingPx,
+        visibleTaxonomyRanks.length,
+        taxonomyBandThicknessScale,
+      );
+      const hasSpiralTipLabelBand = spiralTipLabelBandWidthPx > 0.5;
+      const spiralTaxonomyGapWorld = hasSpiralTipLabelBand
+        ? (
+          taxonomyGapPx
+          + taxonomyBaselineGapPx
+          + spiralTipLabelBandWidthPx
+          + Math.max(0, figureStyles.tip.offsetPx)
+        ) / Math.max(camera.scale, 1e-6)
+        : 0;
+      const spiralFirstTaxonomyRibbonInnerOffset = taxonomyMetrics.bandWidth
+        + taxonomyMetrics.taxonomyLabelGap
+        + spiralTaxonomyGapWorld;
       const spiralBranchDetailProgress = smoothstep01(
         (spiralTipSpacingPx - SPIRAL_BRANCH_DETAIL_START_SPACING_PX)
         / Math.max(
@@ -9141,16 +9214,8 @@ export default function TreeCanvas({
           const baseStartWorld = spiralPointAt(startTheta, baseAge, metrics);
           const baseEndWorld = spiralPointAt(endTheta, baseAge, metrics);
           const apex = spiralToScreen(apexWorld);
-          let baseStart = spiralToScreen(baseStartWorld);
-          let baseEnd = spiralToScreen(baseEndWorld);
-          if (collapseMode === "minimize") {
-            [baseStart, baseEnd] = expandedMinimizedTriangleBase(
-              apex,
-              baseStart,
-              baseEnd,
-              renderSize.height,
-            );
-          }
+          const baseStart = spiralToScreen(baseStartWorld);
+          const baseEnd = spiralToScreen(baseEndWorld);
           ctx.beginPath();
           ctx.moveTo(apex.x, apex.y);
           ctx.lineTo(baseStart.x, baseStart.y);
@@ -9190,53 +9255,59 @@ export default function TreeCanvas({
             const fontSize = scaleLabelFontSize("taxonomy", 14);
             ctx.font = fontSpec("taxonomy", fontSize);
             const labelWidth = ctx.measureText(taxonomyGroup.label).width;
-            const labelX = hitMaxX + 8 + (labelWidth * 0.5);
-            const labelY = (hitMinY + hitMaxY) * 0.5;
+            const labelFrame = spiralFrameAt(
+              apexTheta,
+              spiralFirstTaxonomyRibbonInnerOffset,
+              taxonomyMetrics,
+            );
+            const labelPoint = spiralToScreen(labelFrame);
+            const cosRotation = Math.cos(camera.rotation);
+            const sinRotation = Math.sin(camera.rotation);
+            const normalX = (labelFrame.normalX * cosRotation) - (labelFrame.normalY * sinRotation);
+            const normalY = (labelFrame.normalX * sinRotation) + (labelFrame.normalY * cosRotation);
+            const renderedNormalAngle = Math.atan2(normalY, normalX);
+            const onRightSide = normalX >= 0;
+            const labelRotation = onRightSide
+              ? renderedNormalAngle
+              : renderedNormalAngle + Math.PI;
+            const labelAlign: CanvasTextAlign = onRightSide ? "left" : "right";
             ctx.fillStyle = "#1f2937";
-            ctx.textAlign = "center";
+            ctx.textAlign = labelAlign;
             ctx.textBaseline = "middle";
-            ctx.fillText(taxonomyGroup.label, labelX, labelY);
+            ctx.save();
+            ctx.translate(labelPoint.x, labelPoint.y);
+            ctx.rotate(labelRotation);
+            ctx.fillText(taxonomyGroup.label, 0, 0);
+            ctx.restore();
             pushSceneText(
               taxonomyGroup.label,
-              labelX,
-              labelY,
+              labelPoint.x,
+              labelPoint.y,
               "#1f2937",
               fontSize,
               labelFontFamilies.taxonomy,
-              "middle",
+              onRightSide ? "start" : "end",
+              labelRotation,
             );
             labelHitsRef.current.push({
               node,
-              kind: "rect",
+              kind: "rotated",
               source: "collapse",
               collapsePart: "label",
               ...taxonomyHitbox,
-              x: labelX - (labelWidth * 0.5) - 5,
-              y: labelY - (fontSize * 0.65),
-              width: labelWidth + 10,
+              x: labelPoint.x,
+              y: labelPoint.y,
+              width: labelWidth,
               height: fontSize * 1.3,
+              rotation: labelRotation,
+              align: labelAlign,
             });
           }
         }
       }
 
       if (taxonomyEnabled && renderedTaxonomyBlocks && visibleTaxonomyRanks.length > 0) {
-        const taxonomyMetrics = compressedSpiralTaxonomyMetrics(
-          metrics,
-          camera.scale,
-          spiralTipSpacingPx,
-          visibleTaxonomyRanks.length,
-          taxonomyBandThicknessScale,
-        );
-        const hasTipLabelBand = spiralTipLabelBandWidthPx > 0.5;
-        const taxonomyGapWorld = hasTipLabelBand
-          ? (
-            taxonomyGapPx
-            + taxonomyBaselineGapPx
-            + spiralTipLabelBandWidthPx
-            + Math.max(0, figureStyles.tip.offsetPx)
-          ) / Math.max(camera.scale, 1e-6)
-          : 0;
+        const taxonomyGapWorld = spiralTaxonomyGapWorld;
         const labelOnlySpiralRanks = visibleTaxonomyRanks.filter((rank) => taxonomyRankDisplayModeForRank(rank) === "label-only");
         const taxonomyRibbonPaths = taxonomyOverlayStyle === "ribbons"
           ? getSpiralTaxonomyRibbonPaths(
@@ -9518,8 +9589,7 @@ export default function TreeCanvas({
               let labelWorld = { x: labelFrame.x, y: labelFrame.y, radius: labelFrame.radius };
               let labelScreen = spiralToScreen(labelWorld);
               if (
-                labelIntervals.length === 1
-                && (labelScreen.x < 0 || labelScreen.x > renderSize.width || labelScreen.y < 0 || labelScreen.y > renderSize.height)
+                (labelScreen.x < 0 || labelScreen.x > renderSize.width || labelScreen.y < 0 || labelScreen.y > renderSize.height)
                 && viewportCenterTheta >= labelInterval.startTheta
                 && viewportCenterTheta <= labelInterval.endTheta
               ) {
@@ -9978,6 +10048,16 @@ export default function TreeCanvas({
         branchPathMaxCommandCount: branchPaths
           ? Math.max(0, ...[...branchPaths.values()].flatMap((batches) => batches.map((batch) => batch.commandCount)))
           : 0,
+        taxonomyFirstRibbonInnerOffsetWorld: spiralFirstTaxonomyRibbonInnerOffset,
+        collapsedMinimizedAngularSpans: visibleCollapsedNodes
+          .filter((node) => collapsedNodeModes.get(node) === "minimize")
+          .map((node) => ({
+            node,
+            span: Math.abs(
+              spiralThetaForY(layout.max[node], tree.leafCount, metrics)
+              - spiralThetaForY(layout.min[node], tree.leafCount, metrics)
+            ),
+          })),
       };
     }
 
@@ -10249,6 +10329,8 @@ export default function TreeCanvas({
         );
       }
       const circularBranchStartTime = performance.now();
+      let circularRenderedColoredStemCount: number | null = null;
+      let circularRenderedColoredConnectorCount: number | null = null;
       if (cachedCircularTaxonomyBitmap) {
         const bitmapScaleRatio = camera.scale / Math.max(cachedCircularTaxonomyBitmap.scale, 1e-6);
         const sourceWidth = Math.max(1, cachedCircularTaxonomyBitmap.viewportWidth / Math.max(bitmapScaleRatio, 1e-6));
@@ -10537,6 +10619,8 @@ export default function TreeCanvas({
         const colorStemPaths = new Map<string, Path2D>();
         const colorArcPaths = new Map<string, Path2D>();
         let coloredSegmentCount = 0;
+        let coloredStemCount = 0;
+        let coloredConnectorCount = 0;
         const coloredSegmentBudget = useLargeMetadataBranchLOD ? LARGE_METADATA_COLORED_SEGMENT_BUDGET : Number.POSITIVE_INFINITY;
         const getColorPath = (paths: Map<string, Path2D>, color: string): Path2D => {
           let path = paths.get(color);
@@ -10561,6 +10645,7 @@ export default function TreeCanvas({
           path.moveTo(x1, y1);
           path.lineTo(x2, y2);
           coloredSegmentCount += 1;
+          coloredStemCount += 1;
           pushSceneLine(x1, y1, x2, y2, color, 1.2 * branchStrokeScale, 0.95);
         };
         const pushArc = (color: string, radiusPx: number, start: number, end: number): void => {
@@ -10585,6 +10670,7 @@ export default function TreeCanvas({
           );
           path.arc(centerPoint.x, centerPoint.y, radiusPx, start, end, false);
           coloredSegmentCount += 1;
+          coloredConnectorCount += 1;
           pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, start, end), color, 1.2 * branchStrokeScale, undefined, 0.95);
         };
         if (useSampledColoredCircularRendering) {
@@ -10758,6 +10844,40 @@ export default function TreeCanvas({
             if (lineIntersectsRect(start.x, start.y, end.x, end.y, 0, 0, renderSize.width, renderSize.height)) {
               pushStem(color, start.x, start.y, end.x, end.y);
             }
+            if (collapsedNodes.has(node) || children[node].length < 2) {
+              continue;
+            }
+            const ownerTheta = thetaFor(layout.center, node, tree.leafCount);
+            const ownerArcStart = thetaFor(layout.min, node, tree.leafCount);
+            const ownerArcEnd = thetaFor(layout.max, node, tree.leafCount);
+            const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
+            const radiusPx = axisDepth(tree.buffers.depth[node]) * camera.scale;
+            for (
+              let childIndex = 0;
+              childIndex < children[node].length && coloredSegmentCount < coloredSegmentBudget;
+              childIndex += 1
+            ) {
+              const child = children[node][childIndex];
+              if (hiddenNodes[child]) {
+                continue;
+              }
+              const childTheta = thetaFor(layout.center, child, tree.leafCount);
+              const arcSpan = arcSubspanWithinSpan(
+                ownerTheta,
+                childTheta,
+                ownerArcStart,
+                ownerArcLength,
+              );
+              if (!arcSpan) {
+                continue;
+              }
+              pushArc(
+                effectiveBranchColors?.[child] ?? BRANCH_COLOR,
+                radiusPx,
+                arcSpan.start + rotationAngle,
+                arcSpan.end + rotationAngle,
+              );
+            }
           }
         }
         colorArcPaths.forEach((path, color) => {
@@ -10774,6 +10894,8 @@ export default function TreeCanvas({
           ctx.globalAlpha = 0.95;
           ctx.stroke(path);
         });
+        circularRenderedColoredStemCount = coloredStemCount;
+        circularRenderedColoredConnectorCount = coloredConnectorCount;
       }
       timing.branchBaseMs += performance.now() - circularBranchStartTime;
 
@@ -10987,6 +11109,7 @@ export default function TreeCanvas({
       let circularGenusLabels: ScreenLabel[] = [];
       let circularGenusArcs: CircularOverlayArc[] = [];
       let circularGenusBaseFontSize = 0;
+      let circularFirstTaxonomyRingInnerRadiusPx: number | null = null;
       const circularTaxonomyOverlayStartTime = performance.now();
       if (taxonomyEnabled && renderedTaxonomyBlocks) {
         const visibleRanks = visibleTaxonomyRanks;
@@ -10995,6 +11118,9 @@ export default function TreeCanvas({
         const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
         const metrics = taxonomyRingMetricsPx(visibleRanks.length, taxonomyMetricBaseSize, taxonomyBandThicknessScale, circularOverlayViewportScale);
         const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx + taxonomyBaselineGapPx + taxonomyGapPx;
+        circularFirstTaxonomyRingInnerRadiusPx = visibleRanks.length > 0
+          ? tipBandOuterRadiusPx + metrics.ringGapPx
+          : null;
         const viewportCenterRenderedTheta = wrapPositive(Math.atan2((renderSize.height * 0.5) - centerPoint.y, (renderSize.width * 0.5) - centerPoint.x));
         let ringCursorOuterPx = tipBandOuterRadiusPx + metrics.ringGapPx;
         const placedLabels: ScreenLabel[] = [];
@@ -12471,24 +12597,16 @@ export default function TreeCanvas({
             Math.sin(apexTheta) * tree.buffers.depth[node],
           );
           const subtreeTipDepth = measureSubtreeMaxDepth(tree, node);
-          let baseStart = worldToScreenCircular(
+          const baseStart = worldToScreenCircular(
             camera,
             Math.cos(startTheta) * subtreeTipDepth,
             Math.sin(startTheta) * subtreeTipDepth,
           );
-          let baseEnd = worldToScreenCircular(
+          const baseEnd = worldToScreenCircular(
             camera,
             Math.cos(endTheta) * subtreeTipDepth,
             Math.sin(endTheta) * subtreeTipDepth,
           );
-          if (collapseMode === "minimize") {
-            [baseStart, baseEnd] = expandedMinimizedTriangleBase(
-              apex,
-              baseStart,
-              baseEnd,
-              renderSize.height,
-            );
-          }
           ctx.beginPath();
           ctx.moveTo(apex.x, apex.y);
           ctx.lineTo(baseStart.x, baseStart.y);
@@ -12521,12 +12639,24 @@ export default function TreeCanvas({
             const fontSize = scaleLabelFontSize("taxonomy", 14);
             ctx.font = fontSpec("taxonomy", fontSize);
             const labelWidth = ctx.measureText(taxonomyGroup.label).width;
-            const labelX = hitMaxX + 8 + (labelWidth * 0.5);
-            const labelY = (hitMinY + hitMaxY) * 0.5;
+            const renderedTheta = apexTheta + rotationAngle;
+            const firstRenderedTaxonomyArc = circularGenusArcs.find((arc) => arc.mode !== "divider");
+            const labelRadiusPx = circularOverlayInnerRadiusPx(firstRenderedTaxonomyArc)
+              ?? circularFirstTaxonomyRingInnerRadiusPx
+              ?? (subtreeTipDepth * camera.scale);
+            const labelX = centerPoint.x + (Math.cos(renderedTheta) * labelRadiusPx);
+            const labelY = centerPoint.y + (Math.sin(renderedTheta) * labelRadiusPx);
+            const onRightSide = Math.cos(renderedTheta) >= 0;
+            const labelRotation = onRightSide ? renderedTheta : renderedTheta + Math.PI;
+            const labelAlign: CanvasTextAlign = onRightSide ? "left" : "right";
             ctx.fillStyle = "#1f2937";
-            ctx.textAlign = "center";
+            ctx.textAlign = labelAlign;
             ctx.textBaseline = "middle";
-            ctx.fillText(taxonomyGroup.label, labelX, labelY);
+            ctx.save();
+            ctx.translate(labelX, labelY);
+            ctx.rotate(labelRotation);
+            ctx.fillText(taxonomyGroup.label, 0, 0);
+            ctx.restore();
             pushSceneText(
               taxonomyGroup.label,
               labelX,
@@ -12534,18 +12664,21 @@ export default function TreeCanvas({
               "#1f2937",
               fontSize,
               labelFontFamilies.taxonomy,
-              "middle",
+              onRightSide ? "start" : "end",
+              labelRotation,
             );
             labelHitsRef.current.push({
               node,
-              kind: "rect",
+              kind: "rotated",
               source: "collapse",
               collapsePart: "label",
               ...taxonomyHitbox,
-              x: labelX - (labelWidth * 0.5) - 5,
-              y: labelY - (fontSize * 0.65),
-              width: labelWidth + 10,
+              x: labelX,
+              y: labelY,
+              width: labelWidth,
               height: fontSize * 1.3,
+              rotation: labelRotation,
+              align: labelAlign,
             });
           }
           if (parent >= 0) {
@@ -12998,6 +13131,17 @@ export default function TreeCanvas({
       (renderDebug.circular as Record<string, unknown>).showCentralScaleLabels = showCentralTimeLabels;
       (renderDebug.circular as Record<string, unknown>).centerScaleTickCount = displayedCircularCenterScaleBoundaries.length;
       (renderDebug.circular as Record<string, unknown>).showCenterRadialScaleBar = showCentralTimeLabels && showCircularCenterRadialScaleBar;
+      (renderDebug.circular as Record<string, unknown>).renderedColoredStemCount = circularRenderedColoredStemCount;
+      (renderDebug.circular as Record<string, unknown>).renderedColoredConnectorCount = circularRenderedColoredConnectorCount;
+      (renderDebug.circular as Record<string, unknown>).collapsedMinimizedAngularSpans = visibleCollapsedNodes
+        .filter((node) => collapsedNodeModes.get(node) === "minimize")
+        .map((node) => ({
+          node,
+          span: Math.abs(
+            thetaFor(layout.max, node, tree.leafCount)
+            - thetaFor(layout.min, node, tree.leafCount)
+          ),
+        }));
 
       if (showScaleBars) {
         ctx.fillStyle = "#6b7280";
@@ -13726,12 +13870,18 @@ export default function TreeCanvas({
     const restoredCollapsedModes = new Map<number, CollapsedNodeMode>();
     for (const [node, mode] of sessionRestoreState.collapsedNodeModes ?? []) {
       if (isValidNode(node) && tree.buffers.firstChild[node] >= 0) {
-        restoredCollapsedModes.set(node, mode);
+        restoredCollapsedModes.set(
+          node,
+          mode === "preserve-width" && viewMode !== "rectangular" ? "minimize" : mode,
+        );
       }
     }
     for (const node of sessionRestoreState.collapsedNodes) {
       if (isValidNode(node) && tree.buffers.firstChild[node] >= 0 && !restoredCollapsedModes.has(node)) {
-        restoredCollapsedModes.set(node, "preserve-width");
+        restoredCollapsedModes.set(
+          node,
+          viewMode === "rectangular" ? "preserve-width" : "minimize",
+        );
       }
     }
     setCollapsedNodeModes(restoredCollapsedModes);
@@ -16212,9 +16362,17 @@ export default function TreeCanvas({
                     </button>
                     {contextMenuCollapseMenuOpen ? (
                       <div className="tree-context-menu-swatch-panel">
-                        <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse("preserve-width")}>
-                          Preserve Width
-                        </button>
+                        <div title={viewMode === "rectangular" ? undefined : "Only available in rectangular mode."}>
+                          <button
+                            type="button"
+                            className="tree-context-menu-item"
+                            disabled={viewMode !== "rectangular"}
+                            title={viewMode === "rectangular" ? undefined : "Only available in rectangular mode."}
+                            onClick={() => handleContextCollapse("preserve-width")}
+                          >
+                            Preserve Width
+                          </button>
+                        </div>
                         <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse("minimize")}>
                           Minimize
                         </button>
@@ -16315,9 +16473,17 @@ export default function TreeCanvas({
                     </button>
                     {contextMenuCollapseMenuOpen ? (
                       <div className="tree-context-menu-swatch-panel">
-                        <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse("preserve-width")}>
-                          Preserve Width
-                        </button>
+                        <div title={viewMode === "rectangular" ? undefined : "Only available in rectangular mode."}>
+                          <button
+                            type="button"
+                            className="tree-context-menu-item"
+                            disabled={viewMode !== "rectangular"}
+                            title={viewMode === "rectangular" ? undefined : "Only available in rectangular mode."}
+                            onClick={() => handleContextCollapse("preserve-width")}
+                          >
+                            Preserve Width
+                          </button>
+                        </div>
                         <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse("minimize")}>
                           Minimize
                         </button>
