@@ -89,6 +89,11 @@ declare global {
       requestFit: () => void;
     };
     __BIG_TREE_VIEWER_RENDER_DEBUG__?: Record<string, unknown> | null;
+    __BIG_TREE_VIEWER_COLLAPSE_DRAW_CAPTURE__?: {
+      node: number;
+      neighborNode: number;
+      samples: Array<{ centerY: number; height: number; neighborY: number | null }>;
+    };
     __BIG_TREE_VIEWER_API_READY__?: boolean;
     __BIG_TREE_VIEWER_APP_TEST_INTERNAL__?: {
       leafNodes: number[];
@@ -108,6 +113,17 @@ declare global {
       setCircularCamera: (partial: Record<string, unknown>) => void;
       getLeafIndexMap: () => Record<number, number> | null;
       getLabelHitboxes: () => Array<Record<string, unknown>>;
+      getCollapsedTriangleHitboxes: () => Array<{
+        node: number;
+        points: Array<{ x: number; y: number }>;
+      }>;
+      startCollapsedTriangleDrawCapture: (node: number, neighborNode: number) => void;
+      stopCollapsedTriangleDrawCapture: () => Array<{
+        centerY: number;
+        height: number;
+        neighborY: number | null;
+      }>;
+      isTerminalRectConnectorForTest: (node: number) => boolean;
       getTaxonomyArcHitboxes: () => Array<Record<string, unknown>>;
       getPhyloPicHitboxes: () => Array<Record<string, unknown>>;
       probeHoverForTest: (localX: number, localY: number) => Record<string, unknown> | null;
