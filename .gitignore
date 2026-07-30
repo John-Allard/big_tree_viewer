@@ -5,6 +5,7 @@ dist/
 *.nwk
 !backbone_hang_supertree.nwk
 !public/example-tree.nwk
+!tests/fixtures/collapse-subtree-tree.nwk
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

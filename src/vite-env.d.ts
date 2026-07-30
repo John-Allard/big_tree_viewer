@@ -117,6 +117,14 @@ declare global {
       clearManualBranchColor: (node: number) => void;
       setManualSubtreeColor: (node: number, color: string) => void;
       clearManualSubtreeColor: (node: number) => void;
+      setCollapsedNodeMode: (node: number, mode: "preserve-width" | "minimize" | null) => void;
+      getCollapsedNodeModes: () => Array<[number, "preserve-width" | "minimize"]>;
+      getBranchScreenSegmentForTest: (node: number) => {
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
+      } | null;
       buildCurrentSvgForTest: () => string | null;
     };
   }

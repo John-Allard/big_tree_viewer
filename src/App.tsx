@@ -96,6 +96,7 @@ import type {
   AutomationExportRequest,
   AutomationExportResult,
   CameraState,
+  CollapsedNodeMode,
   TreeCanvasSessionState,
 } from "./components/treeCanvasTypes";
 
@@ -734,6 +735,16 @@ function normalizeLaunchCanvasState(raw: unknown): TreeCanvasSessionState | null
         ))
       : []
   );
+  const cleanCollapsedNodeModes = (assignments: unknown): Array<[number, CollapsedNodeMode]> => (
+    Array.isArray(assignments)
+      ? assignments.filter((entry): entry is [number, CollapsedNodeMode] => (
+          Array.isArray(entry)
+          && Number.isInteger(entry[0])
+          && entry[0] >= 0
+          && (entry[1] === "preserve-width" || entry[1] === "minimize")
+        ))
+      : []
+  );
   const viewportWidth = typeof value.viewportWidth === "number" && Number.isFinite(value.viewportWidth)
     ? value.viewportWidth
     : undefined;
@@ -745,6 +756,7 @@ function normalizeLaunchCanvasState(raw: unknown): TreeCanvasSessionState | null
     viewportWidth,
     viewportHeight,
     collapsedNodes: cleanNodeList(value.collapsedNodes),
+    collapsedNodeModes: cleanCollapsedNodeModes(value.collapsedNodeModes),
     manualBranchColors: cleanColorAssignments(value.manualBranchColors),
     manualSubtreeColors: cleanColorAssignments(value.manualSubtreeColors),
   };

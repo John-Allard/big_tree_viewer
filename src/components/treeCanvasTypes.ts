@@ -156,11 +156,14 @@ export interface CircularCamera {
 
 export type CameraState = RectCamera | CircularCamera;
 
+export type CollapsedNodeMode = "preserve-width" | "minimize";
+
 export interface TreeCanvasSessionState {
   camera: CameraState | null;
   viewportWidth?: number;
   viewportHeight?: number;
   collapsedNodes: number[];
+  collapsedNodeModes?: Array<[number, CollapsedNodeMode]>;
   manualBranchColors: Array<[number, string]>;
   manualSubtreeColors: Array<[number, string]>;
 }
