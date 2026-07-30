@@ -850,6 +850,75 @@ test("taxonomy collapse does not relabel a mixed ancestor as Actinopteri", async
   expect(collapsedLabel).not.toBeNull();
 });
 
+test("tip-label thresholds use visible spacing after minimized clades compact the layout", async ({ page }) => {
+  await loadFixture(page);
+  const previousSignature = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeSignature ?? null
+  ));
+  await page.getByRole("button", { name: "Paste Newick" }).click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(balancedTreeNewick(256));
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction((oldSignature) => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(
+      state?.treeLoaded
+      && !state.loading
+      && state.treeSignature !== oldSignature
+      && (window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? []).length === 256
+    );
+  }, previousSignature);
+
+  const result = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    if (!app || !canvasTest || !internal?.parent || !internal.firstChild || !internal.nextSibling) {
+      throw new Error("Compacted tip-label test hooks unavailable.");
+    }
+    const descendantCounts = new Array<number>(internal.parent.length).fill(0);
+    const leafSet = new Set(internal.leafNodes ?? []);
+    for (let node = internal.parent.length - 1; node >= 0; node -= 1) {
+      let count = leafSet.has(node) ? 1 : 0;
+      for (let child = internal.firstChild[node]; child >= 0; child = internal.nextSibling[child]) {
+        count += descendantCounts[child];
+      }
+      descendantCounts[node] = count;
+    }
+    const targetNode = descendantCounts.findIndex((count, node) => (
+      count === 128 && internal.firstChild![node] >= 0
+    ));
+    if (targetNode < 0) {
+      throw new Error("Half-tree collapse target unavailable.");
+    }
+    app.setViewMode("rectangular");
+    app.setOrder("input");
+    app.setShowTipLabels(true);
+    canvasTest.fitView();
+    canvasTest.setCollapsedNodeMode(targetNode, "minimize");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const camera = canvasTest.getCamera();
+    const debug = canvasTest.getRenderDebug()?.rect as {
+      effectiveTipSpacingPx?: number;
+      tipVisible?: boolean;
+      tipBandFontSize?: number;
+    } | undefined;
+    if (!camera || camera.kind !== "rect" || !debug) {
+      throw new Error("Compacted tip-label render state unavailable.");
+    }
+    return {
+      rawScaleY: camera.scaleY,
+      effectiveTipSpacingPx: Number(debug.effectiveTipSpacingPx ?? 0),
+      tipVisible: Boolean(debug.tipVisible),
+      tipBandFontSize: Number(debug.tipBandFontSize ?? 0),
+    };
+  });
+
+  expect(result.rawScaleY).toBeLessThanOrEqual(4.2);
+  expect(result.effectiveTipSpacingPx).toBeGreaterThan(4.2);
+  expect(result.tipVisible).toBe(true);
+  expect(result.tipBandFontSize).toBeGreaterThan(6);
+});
+
 test("large minimized clades retain a viewport sliver until three-tip spacing is larger", async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto("/");

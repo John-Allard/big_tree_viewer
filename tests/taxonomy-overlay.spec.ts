@@ -982,6 +982,180 @@ test("taxonomy label context menu exposes subtree, copy, and NCBI actions", asyn
   expect(openedUrl).toContain("id=8782");
 });
 
+test("taxonomy ribbons remain interactive when their labels do not fit", async ({ page }) => {
+  await waitForViewer(page);
+  const ribbonLabel = "A_very_long_taxonomy_name_that_cannot_fit_in_this_ribbon";
+  await page.evaluate(async (label) => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for unlabeled ribbon test.");
+    }
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 7,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks: leafNodes.map((node, index) => ({
+        node,
+        ranks: {
+          class: index < 8 ? label : "Aves",
+        },
+        taxIds: {
+          class: index < 8 ? 999_001 : 8782,
+        },
+      })),
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  }, ribbonLabel);
+
+  const ribbonTarget = await page.evaluate((label) => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const labelExists = (canvasTest?.getLabelHitboxes() ?? []).some((hitbox) => (
+      hitbox.labelKind === "taxonomy" && hitbox.text === label
+    ));
+    const ribbon = (canvasTest?.getTaxonomyArcHitboxes() ?? []).find((hitbox) => (
+      hitbox.label === label
+      && Array.isArray(hitbox.screenPolygonPoints)
+      && hitbox.screenPolygonPoints.length >= 4
+    ));
+    if (!(canvas instanceof HTMLCanvasElement) || !canvasTest || !ribbon) {
+      throw new Error("Unlabeled taxonomy ribbon hitbox unavailable.");
+    }
+    const bounds = ribbon.screenPolygonBounds as {
+      left: number;
+      right: number;
+      top: number;
+      bottom: number;
+    };
+    const rect = canvas.getBoundingClientRect();
+    const localX = (
+      Math.max(0, bounds.left)
+      + Math.min(rect.width, bounds.right)
+    ) * 0.5;
+    const localY = (
+      Math.max(0, bounds.top)
+      + Math.min(rect.height, bounds.bottom)
+    ) * 0.5;
+    return {
+      labelExists,
+      hover: canvasTest.probeHoverForTest(localX, localY),
+      point: {
+        x: rect.left + localX,
+        y: rect.top + localY,
+      },
+    };
+  }, ribbonLabel);
+
+  expect(ribbonTarget.labelExists).toBe(false);
+  expect(ribbonTarget.hover).toMatchObject({
+    kind: "taxonomy",
+    name: ribbonLabel,
+    taxonomyRank: "class",
+  });
+  await page.mouse.move(ribbonTarget.point.x, ribbonTarget.point.y);
+  await expect(page.locator(".hover-tooltip")).toContainText(ribbonLabel);
+  await expect(page.locator(".hover-tooltip")).toContainText("Rank: class");
+  await page.mouse.click(ribbonTarget.point.x, ribbonTarget.point.y, { button: "right" });
+  await expect(page.getByRole("button", { name: "Copy Name" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open In NCBI Taxonomy" })).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await page.evaluate(async (label) => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const camera = canvasTest?.getCamera();
+    const ribbon = (canvasTest?.getTaxonomyArcHitboxes() ?? []).find((hitbox) => (
+      hitbox.label === label
+      && Array.isArray(hitbox.screenPolygonPoints)
+      && hitbox.screenPolygonPoints.length >= 10
+    ));
+    if (!(canvas instanceof HTMLCanvasElement) || !canvasTest || !camera || camera.kind !== "circular" || !ribbon) {
+      throw new Error("Spiral ribbon zoom target unavailable.");
+    }
+    const points = ribbon.screenPolygonPoints as Array<{ x: number; y: number }>;
+    const middle = Math.floor((points.length / 2) * 0.5);
+    const opposite = points.length - 1 - middle;
+    const targetX = (points[middle].x + points[opposite].x) * 0.5;
+    const targetY = (points[middle].y + points[opposite].y) * 0.5;
+    const rect = canvas.getBoundingClientRect();
+    const zoom = 8;
+    canvasTest.setCircularCamera({
+      scale: Number(camera.scale) * zoom,
+      translateX: (rect.width * 0.5) - ((targetX - Number(camera.translateX)) * zoom),
+      translateY: (rect.height * 0.5) - ((targetY - Number(camera.translateY)) * zoom),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  }, ribbonLabel);
+  const spiralRibbonTarget = await page.evaluate((label) => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const labelExists = (canvasTest?.getLabelHitboxes() ?? []).some((hitbox) => (
+      hitbox.labelKind === "taxonomy" && hitbox.text === label
+    ));
+    const ribbon = (canvasTest?.getTaxonomyArcHitboxes() ?? []).find((hitbox) => (
+      hitbox.label === label
+      && Array.isArray(hitbox.screenPolygonPoints)
+      && hitbox.screenPolygonPoints.length >= 10
+    ));
+    if (!(canvas instanceof HTMLCanvasElement) || !canvasTest || !ribbon) {
+      throw new Error("Unlabeled spiral taxonomy ribbon hitbox unavailable.");
+    }
+    const points = ribbon.screenPolygonPoints as Array<{ x: number; y: number }>;
+    const halfLength = points.length / 2;
+    const rect = canvas.getBoundingClientRect();
+    let localX = Number.NaN;
+    let localY = Number.NaN;
+    let hover: Record<string, unknown> | null = null;
+    for (let sample = 0; sample < halfLength; sample += 1) {
+      const opposite = points.length - 1 - sample;
+      const candidateX = Math.round((points[sample].x + points[opposite].x) * 0.5);
+      const candidateY = Math.round((points[sample].y + points[opposite].y) * 0.5);
+      if (
+        candidateX >= 1
+        && candidateX <= rect.width - 1
+        && candidateY >= 1
+        && candidateY <= rect.height - 1
+      ) {
+        const candidateHover = canvasTest.probeHoverForTest(candidateX, candidateY);
+        if (candidateHover?.kind === "taxonomy" && candidateHover.name === label) {
+          localX = candidateX;
+          localY = candidateY;
+          hover = candidateHover;
+          break;
+        }
+      }
+    }
+    if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
+      throw new Error("Visible spiral taxonomy ribbon sample unavailable.");
+    }
+    return {
+      labelExists,
+      hover,
+      point: {
+        x: rect.left + localX,
+        y: rect.top + localY,
+      },
+    };
+  }, ribbonLabel);
+  expect(spiralRibbonTarget.labelExists).toBe(false);
+  expect(spiralRibbonTarget.hover).toMatchObject({
+    kind: "taxonomy",
+    name: ribbonLabel,
+    taxonomyRank: "class",
+  });
+  await page.mouse.move(spiralRibbonTarget.point.x, spiralRibbonTarget.point.y);
+  await expect(page.locator(".hover-tooltip")).toContainText(ribbonLabel);
+  await page.mouse.click(spiralRibbonTarget.point.x, spiralRibbonTarget.point.y, { button: "right" });
+  await expect(page.getByRole("button", { name: "Copy Name" })).toBeVisible();
+});
+
 test("taxonomy label hover shows taxonomy tooltip details instead of branch metrics", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
