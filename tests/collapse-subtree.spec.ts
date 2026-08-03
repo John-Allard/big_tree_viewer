@@ -604,6 +604,85 @@ test("circular minimized collapse preserves colored connectors and uses radial t
   expect(result.labelKind).toBe("rotated");
   expect(result.labelRadiusPx).toBeCloseTo(result.taxonomyFirstRingInnerRadiusPx, 1);
 
+  const adjacentLabelFit = await page.evaluate(async (node) => {
+    const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const camera = canvasTest?.getCamera();
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    const triangle = canvasTest?.getCollapsedTriangleHitboxes().find((candidate) => candidate.node === node);
+    if (!canvasTest || !camera || camera.kind !== "circular" || !(canvas instanceof HTMLCanvasElement) || !triangle) {
+      throw new Error("Circular collapsed-boundary zoom setup unavailable.");
+    }
+    const viewport = canvas.getBoundingClientRect();
+    const boundaryScreen = triangle.points[2];
+    const dx = (boundaryScreen.x - camera.translateX) / camera.scale;
+    const dy = (boundaryScreen.y - camera.translateY) / camera.scale;
+    const boundaryWorldX = (dx * camera.rotationCos) + (dy * camera.rotationSin);
+    const boundaryWorldY = (-dx * camera.rotationSin) + (dy * camera.rotationCos);
+    const boundaryRadius = Math.hypot(boundaryWorldX, boundaryWorldY);
+    const adjacentTheta = Math.atan2(boundaryWorldY, boundaryWorldX) + 0.025;
+    const focusWorldX = Math.cos(adjacentTheta) * boundaryRadius;
+    const focusWorldY = Math.sin(adjacentTheta) * boundaryRadius;
+    const nextScale = camera.scale * 12;
+    const rotatedFocusX = (focusWorldX * camera.rotationCos) - (focusWorldY * camera.rotationSin);
+    const rotatedFocusY = (focusWorldX * camera.rotationSin) + (focusWorldY * camera.rotationCos);
+    canvasTest.setCircularCamera({
+      scale: nextScale,
+      translateX: (viewport.width * 0.5) - (rotatedFocusX * nextScale),
+      translateY: (viewport.height * 0.5) - (rotatedFocusY * nextScale),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const nextCamera = canvasTest.getCamera();
+    const debug = canvasTest.getRenderDebug()?.circular as {
+      taxonomyPlacedLabels?: Array<{
+        text: string;
+        fontSize: number;
+        x: number;
+        y: number;
+        theta?: number | null;
+        clipArc?: { startTheta: number; endTheta: number } | null;
+      }>;
+    } | undefined;
+    const context = canvas.getContext("2d");
+    if (!nextCamera || nextCamera.kind !== "circular" || !debug || !context) {
+      throw new Error("Circular adjacent-label debug unavailable.");
+    }
+    const tau = Math.PI * 2;
+    const overflowByLabel = (debug.taxonomyPlacedLabels ?? []).flatMap((label) => {
+      if (typeof label.theta !== "number" || !label.clipArc) {
+        return [];
+      }
+      context.font = `${label.fontSize}px "IBM Plex Sans", "Segoe UI", sans-serif`;
+      let start = label.clipArc.startTheta + nextCamera.rotation;
+      let end = label.clipArc.endTheta + nextCamera.rotation;
+      while (end <= start) {
+        end += tau;
+      }
+      let theta = label.theta;
+      while (theta < start) {
+        theta += tau;
+      }
+      while (theta > end) {
+        theta -= tau;
+      }
+      const ringRadiusPx = Math.hypot(
+        label.x - nextCamera.translateX,
+        label.y - nextCamera.translateY,
+      );
+      const halfTheta = context.measureText(label.text).width / Math.max(2 * ringRadiusPx, 1e-6);
+      return [{
+        text: label.text,
+        overflowPx: Math.max(0, start - (theta - halfTheta), (theta + halfTheta) - end) * ringRadiusPx,
+      }];
+    });
+    return {
+      labels: overflowByLabel.map((label) => label.text),
+      maxOverflowPx: overflowByLabel.reduce((maximum, label) => Math.max(maximum, label.overflowPx), 0),
+    };
+  }, targetNode);
+  expect(adjacentLabelFit.labels.length).toBeGreaterThan(0);
+  expect(adjacentLabelFit.maxOverflowPx).toBeLessThanOrEqual(1.25);
+
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));

@@ -11610,6 +11610,29 @@ export default function TreeCanvas({
             };
             const taxonomyTaxId = block.taxId ?? null;
             const labelSegments = [primaryLabelSegment];
+            const centeredArcLengthPx = (
+              anchorTheta: number,
+              rawStartTheta: number,
+              rawEndTheta: number,
+            ): number => {
+              const tau = Math.PI * 2;
+              let start = rawStartTheta;
+              let end = rawEndTheta;
+              while (end <= start) {
+                end += tau;
+              }
+              let anchor = anchorTheta;
+              while (anchor < start) {
+                anchor += tau;
+              }
+              while (anchor > end) {
+                anchor -= tau;
+              }
+              if (anchor < start || anchor > end) {
+                return 0;
+              }
+              return Math.max(0, 2 * Math.min(anchor - start, end - anchor) * lineRadiusPx);
+            };
             for (let segmentIndex = 0; segmentIndex < labelSegments.length; segmentIndex += 1) {
               const segment = labelSegments[segmentIndex];
               const { startTheta, endTheta } = thetaSpanForTaxonomyRange(segment.startIndex, segment.endIndex);
@@ -11654,14 +11677,18 @@ export default function TreeCanvas({
                       Math.sin(previousTheta) * lineRadius,
                     );
                     if (isScreenPointVisible(previousPoint.x, previousPoint.y, renderSize.width, renderSize.height, circularTaxonomyLabelAnchorMarginPx)) {
-                      const candidateArcLengthPx = totalRenderedSpan * lineRadiusPx;
+                      const candidateArcLengthPx = centeredArcLengthPx(
+                        previousRenderedTheta,
+                        renderedWrappedStart,
+                        renderedWrappedEnd,
+                      );
                       if (!bestLabelCandidate || candidateArcLengthPx > bestLabelCandidate.arcLengthPx) {
                         bestLabelCandidate = {
                           theta: previousTheta,
                           visibleStart: renderedWrappedStart,
                           visibleEnd: renderedWrappedEnd >= renderedWrappedStart ? renderedWrappedEnd : renderedWrappedEnd + (Math.PI * 2),
                           arcLengthPx: candidateArcLengthPx,
-                          fitArcLengthPx: totalArcLengthPx,
+                          fitArcLengthPx: candidateArcLengthPx,
                           spanTheta: totalRenderedSpan,
                         };
                       }
@@ -11675,14 +11702,18 @@ export default function TreeCanvas({
                     Math.sin(viewportCenterRenderedTheta - rotationAngle) * lineRadius,
                   );
                   if (isScreenPointVisible(viewportAnchoredPoint.x, viewportAnchoredPoint.y, renderSize.width, renderSize.height, circularTaxonomyLabelAnchorMarginPx)) {
-                    const candidateArcLengthPx = totalRenderedSpan * lineRadiusPx;
+                    const candidateArcLengthPx = centeredArcLengthPx(
+                      viewportCenterRenderedTheta,
+                      renderedWrappedStart,
+                      renderedWrappedEnd,
+                    );
                     if (!bestLabelCandidate || candidateArcLengthPx > bestLabelCandidate.arcLengthPx) {
                       bestLabelCandidate = {
                         theta: viewportCenterRenderedTheta - rotationAngle,
                         visibleStart: renderedWrappedStart,
                         visibleEnd: renderedWrappedEnd >= renderedWrappedStart ? renderedWrappedEnd : renderedWrappedEnd + (Math.PI * 2),
                         arcLengthPx: candidateArcLengthPx,
-                        fitArcLengthPx: totalArcLengthPx,
+                        fitArcLengthPx: candidateArcLengthPx,
                         spanTheta: totalRenderedSpan,
                       };
                     }
@@ -11746,7 +11777,7 @@ export default function TreeCanvas({
                       visibleStart: candidateStart,
                       visibleEnd: candidateEnd >= candidateStart ? candidateEnd : candidateEnd + (Math.PI * 2),
                       arcLengthPx: candidateArcLengthPx,
-                      fitArcLengthPx: totalArcLengthPx,
+                      fitArcLengthPx: candidateArcLengthPx,
                       spanTheta: candidateSpan,
                     };
                   }
