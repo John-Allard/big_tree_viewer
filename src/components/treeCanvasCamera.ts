@@ -135,11 +135,28 @@ export function clampCircularCamera(
   extraRadiusPx = 0,
 ): void {
   const visibleMargin = 56;
-  const radiusPx = (Math.max(tree.maxDepth, tree.branchLengthMinPositive) * camera.scale) + extraRadiusPx;
+  const minimumTreeMargin = 8;
+  const treeRadiusPx = Math.max(tree.maxDepth, tree.branchLengthMinPositive) * camera.scale;
+  const radiusPx = treeRadiusPx + extraRadiusPx;
   const minTranslateX = visibleMargin - radiusPx;
   const maxTranslateX = width - visibleMargin + radiusPx;
   const minTranslateY = visibleMargin - radiusPx;
   const maxTranslateY = height - visibleMargin + radiusPx;
   camera.translateX = Math.min(maxTranslateX, Math.max(minTranslateX, camera.translateX));
   camera.translateY = Math.min(maxTranslateY, Math.max(minTranslateY, camera.translateY));
+
+  const closestViewportX = Math.min(width, Math.max(0, camera.translateX));
+  const closestViewportY = Math.min(height, Math.max(0, camera.translateY));
+  const offsetX = camera.translateX - closestViewportX;
+  const offsetY = camera.translateY - closestViewportY;
+  const distanceFromViewport = Math.hypot(offsetX, offsetY);
+  const maxDistanceFromViewport = Math.max(0, Math.min(
+    radiusPx - visibleMargin,
+    treeRadiusPx - minimumTreeMargin,
+  ));
+  if (distanceFromViewport > maxDistanceFromViewport && distanceFromViewport > 0) {
+    const correctionScale = maxDistanceFromViewport / distanceFromViewport;
+    camera.translateX = closestViewportX + (offsetX * correctionScale);
+    camera.translateY = closestViewportY + (offsetY * correctionScale);
+  }
 }
