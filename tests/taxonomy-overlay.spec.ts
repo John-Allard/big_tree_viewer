@@ -99,6 +99,69 @@ test("rectangular taxonomy columns render when taxonomy is enabled", async ({ pa
   expect(Number(rectDebug.genusBandX ?? 0)).toBeGreaterThan(Number(rectDebug.tipSideX ?? 0) + 10);
 });
 
+test("rectangular taxonomy bands remain beyond near-ultrametric tip branches at extreme horizontal zoom", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "(A:100,B:99.8,C:100.2)Root;");
+
+  await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const leafNodes = internal?.leafNodes ?? [];
+    const names = internal?.names ?? [];
+    if (!app || leafNodes.length !== 3) {
+      throw new Error("Near-ultrametric taxonomy test setup unavailable.");
+    }
+    app.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks: leafNodes.map((node) => ({
+        node,
+        ranks: { class: names[node] === "C" ? "DeepClass" : "OtherClass" },
+      })),
+    });
+    app.setTaxonomyRankVisibilityAutoForTest(false);
+    app.setTaxonomyRankVisibilityForTest("class", true);
+    app.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera || camera.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setRectCamera({
+      scaleX: 3000,
+      scaleY: 100,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const result = await page.evaluate(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState() as {
+      isUltrametric?: boolean;
+    } | undefined;
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    const names = internal?.names ?? [];
+    const deepestTip = (internal?.leafNodes ?? []).find((node) => names[node] === "C") ?? -1;
+    const segment = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getBranchScreenSegmentForTest(deepestTip);
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyBandXs?: number[];
+    } | undefined;
+    return {
+      isUltrametric: Boolean(state?.isUltrametric),
+      branchEndX: Number(segment?.x2 ?? Number.NaN),
+      firstBandX: Number(debug?.taxonomyBandXs?.[0] ?? Number.NaN),
+    };
+  });
+
+  expect(result.isUltrametric).toBe(true);
+  expect(Number.isFinite(result.branchEndX)).toBe(true);
+  expect(Number.isFinite(result.firstBandX)).toBe(true);
+  expect(result.firstBandX).toBeGreaterThan(result.branchEndX);
+});
+
 test("multi-turn spiral taxonomy labels follow the visible interval into the viewport", async ({ page }) => {
   await waitForViewer(page);
   const tips = Array.from({ length: 1000 }, (_, index) => `Fish_${index}:1`);

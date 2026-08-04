@@ -547,7 +547,15 @@ test("spiral branches strengthen as dense overplotting resolves during zoom", as
     }
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const readStyle = () => {
-      const debug = canvas.getRenderDebug()?.spiral as {
+      const renderDebug = canvas.getRenderDebug() as {
+        branchStrokeAutoMultiplier?: number;
+        spiral?: {
+          branchLineWidthPx?: number;
+          baseBranchOpacity?: number;
+          branchDetailProgress?: number;
+        };
+      } | null | undefined;
+      const debug = renderDebug?.spiral as {
         branchLineWidthPx?: number;
         baseBranchOpacity?: number;
         branchDetailProgress?: number;
@@ -556,6 +564,7 @@ test("spiral branches strengthen as dense overplotting resolves during zoom", as
         width: Number(debug?.branchLineWidthPx),
         opacity: Number(debug?.baseBranchOpacity),
         progress: Number(debug?.branchDetailProgress),
+        autoMultiplier: Number(renderDebug?.branchStrokeAutoMultiplier),
       };
     };
     const fit = readStyle();
@@ -571,7 +580,7 @@ test("spiral branches strengthen as dense overplotting resolves during zoom", as
   expect(styles.zoomed.progress).toBeGreaterThan(styles.fit.progress);
   expect(styles.zoomed.width).toBeGreaterThan(styles.fit.width);
   expect(styles.zoomed.opacity).toBeGreaterThan(styles.fit.opacity);
-  expect(styles.zoomed.width).toBeCloseTo(1.05, 2);
+  expect(styles.zoomed.width).toBeCloseTo(1.05 * styles.zoomed.autoMultiplier, 6);
   expect(styles.zoomed.opacity).toBeCloseTo(0.96, 2);
 });
 

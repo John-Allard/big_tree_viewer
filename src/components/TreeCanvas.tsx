@@ -1132,6 +1132,8 @@ const SPIRAL_DETAIL_BRANCH_WIDTH_PX = 1.05;
 const SPIRAL_DENSE_BASE_BRANCH_OPACITY = 0.74;
 const SPIRAL_DENSE_COLORED_BRANCH_OPACITY = 0.86;
 const SPIRAL_DETAIL_BRANCH_OPACITY = 0.96;
+const DETAIL_BRANCH_THICKNESS_MAX_MULTIPLIER = 1.45;
+const DETAIL_BRANCH_THICKNESS_FULL_SPACING_PX = 24;
 
 const MANUAL_BRANCH_SWATCHES = [
   { label: "Slate", color: "#334155" },
@@ -3339,6 +3341,20 @@ function drawHighlightedText(
 function smoothstep01(value: number): number {
   const clamped = clamp01(value);
   return clamped * clamped * (3 - (2 * clamped));
+}
+
+function detailBranchThicknessMultiplier(
+  tipSpacingPx: number,
+  fullTipLabelSpacingPx: number,
+): number {
+  if (tipSpacingPx <= fullTipLabelSpacingPx) {
+    return 1;
+  }
+  const progress = smoothstep01(
+    (tipSpacingPx - fullTipLabelSpacingPx)
+    / Math.max(1e-6, DETAIL_BRANCH_THICKNESS_FULL_SPACING_PX - fullTipLabelSpacingPx),
+  );
+  return 1 + ((DETAIL_BRANCH_THICKNESS_MAX_MULTIPLIER - 1) * progress);
 }
 
 function interpolateTipBandWidthPx(
@@ -7017,6 +7033,15 @@ export default function TreeCanvas({
       const tipLabelCueVisible = showTipLabels && effectiveTipSpacingPx > 1.45;
       const microTipLabelsVisible = showTipLabels && effectiveTipSpacingPx > 2.7;
       const tipLabelsVisible = showTipLabels && effectiveTipSpacingPx > 4.2;
+      const rectBranchStrokeAutoMultiplier = detailBranchThicknessMultiplier(
+        effectiveTipSpacingPx,
+        4.2,
+      );
+      const rectBranchStrokeScale = branchStrokeScale * rectBranchStrokeAutoMultiplier;
+      renderDebug.tipSpacingPx = effectiveTipSpacingPx;
+      renderDebug.tipLabelsVisible = tipLabelsVisible;
+      renderDebug.branchStrokeAutoMultiplier = rectBranchStrokeAutoMultiplier;
+      renderDebug.renderedBranchStrokeScale = rectBranchStrokeScale;
       const visibleTaxonomyRanks = taxonomyEnabled && taxonomyConsensus
         ? rectVisibleTaxonomyRanksForScaleY(camera.scaleY)
         : [];
@@ -7049,7 +7074,8 @@ export default function TreeCanvas({
         && useCachedRectTaxonomyPaths
         && cachedRectTaxonomyPaths !== null
         && nearRectFit
-        && useRectTaxonomyBitmapAtCurrentScale;
+        && useRectTaxonomyBitmapAtCurrentScale
+        && rectBranchStrokeAutoMultiplier === 1;
       const cachedRectTaxonomyBitmap = useCachedRectTaxonomyBitmap
         ? getRectTaxonomyBitmapCache(order, coloredBranchKey, cachedRectTaxonomyPaths, camera)
         : null;
@@ -7177,9 +7203,9 @@ export default function TreeCanvas({
         cachedRectTaxonomyPaths.forEach((paths, color) => {
           ctx.strokeStyle = color;
           ctx.globalAlpha = 0.95;
-          ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scaleX, 1e-6);
+          ctx.lineWidth = (1.2 * rectBranchStrokeScale) / Math.max(camera.scaleX, 1e-6);
           ctx.stroke(paths.connectors);
-          ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scaleY, 1e-6);
+          ctx.lineWidth = (1.2 * rectBranchStrokeScale) / Math.max(camera.scaleY, 1e-6);
           ctx.stroke(paths.stems);
         });
         ctx.globalAlpha = 1;
@@ -7190,14 +7216,14 @@ export default function TreeCanvas({
         ctx.scale(camera.scaleX, camera.scaleY);
         ctx.strokeStyle = BRANCH_COLOR;
         ctx.lineCap = "butt";
-        ctx.lineWidth = branchStrokeScale / Math.max(camera.scaleX, 1e-6);
+        ctx.lineWidth = rectBranchStrokeScale / Math.max(camera.scaleX, 1e-6);
         ctx.stroke(cachedRectBasePaths.connectors);
-        ctx.lineWidth = branchStrokeScale / Math.max(camera.scaleY, 1e-6);
+        ctx.lineWidth = rectBranchStrokeScale / Math.max(camera.scaleY, 1e-6);
         ctx.stroke(cachedRectBasePaths.stems);
         ctx.restore();
       } else if (!useColoredBranchRendering) {
         ctx.strokeStyle = BRANCH_COLOR;
-        ctx.lineWidth = branchStrokeScale;
+        ctx.lineWidth = rectBranchStrokeScale;
         ctx.beginPath();
         if (visibleRectSegments) {
           for (let index = 0; index < visibleRectSegments.length; index += 1) {
@@ -7216,7 +7242,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, rectBranchStrokeScale);
           }
         } else {
           for (let node = 0; node < tree.nodeCount; node += 1) {
@@ -7244,7 +7270,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, rectBranchStrokeScale);
           }
           for (let node = 0; node < tree.nodeCount; node += 1) {
             if (hiddenNodes[node]) {
@@ -7271,7 +7297,7 @@ export default function TreeCanvas({
             }
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, rectBranchStrokeScale);
           }
         }
         ctx.stroke();
@@ -7283,9 +7309,9 @@ export default function TreeCanvas({
           ctx.strokeStyle = BRANCH_COLOR;
           ctx.globalAlpha = 0.62;
           ctx.lineCap = "butt";
-          ctx.lineWidth = branchStrokeScale / Math.max(camera.scaleX, 1e-6);
+          ctx.lineWidth = rectBranchStrokeScale / Math.max(camera.scaleX, 1e-6);
           ctx.stroke(largeMetadataRectBasePaths.connectors);
-          ctx.lineWidth = branchStrokeScale / Math.max(camera.scaleY, 1e-6);
+          ctx.lineWidth = rectBranchStrokeScale / Math.max(camera.scaleY, 1e-6);
           ctx.stroke(largeMetadataRectBasePaths.stems);
           ctx.restore();
           ctx.globalAlpha = 1;
@@ -7309,7 +7335,7 @@ export default function TreeCanvas({
           path.moveTo(x1, y1);
           path.lineTo(x2, y2);
           coloredSegmentCount += 1;
-          pushSceneLine(x1, y1, x2, y2, color, branchStrokeScale);
+          pushSceneLine(x1, y1, x2, y2, color, rectBranchStrokeScale);
         };
         if (visibleRectSegments) {
           for (let index = 0; index < visibleRectSegments.length && coloredSegmentCount < coloredSegmentBudget; index += 1) {
@@ -7414,15 +7440,15 @@ export default function TreeCanvas({
         }
         colorPaths.forEach((path, color) => {
           ctx.strokeStyle = color;
-          ctx.lineWidth = branchStrokeScale;
+          ctx.lineWidth = rectBranchStrokeScale;
           ctx.globalAlpha = 1;
           ctx.stroke(path);
         });
       }
       {
         const terminalConnectorStrokeWidth = cachedRectTaxonomyPaths
-          ? 1.2 * branchStrokeScale
-          : branchStrokeScale;
+          ? 1.2 * rectBranchStrokeScale
+          : rectBranchStrokeScale;
         const terminalConnectorPaths = new Map<string, Path2D>();
         const terminalPathForColor = (color: string): Path2D => {
           const existing = terminalConnectorPaths.get(color);
@@ -7590,7 +7616,7 @@ export default function TreeCanvas({
         );
         return Math.max(8, tipGlyphSizePx > 0 ? (tipGlyphSizePx * 0.5) + 6 : 8);
       };
-      const tipSideDepth = tree.isUltrametric ? tree.rootAge : tree.maxDepth;
+      const tipSideDepth = axisDepth(tree.maxDepth);
       const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + (showTipLabels ? 8 : 0);
       const alignedTipLabelX = tipSideX + metadataTipDecorationLabelExtraPx + figureStyles.tip.offsetPx;
       const alignedTipLabelSpacePx = Math.max(1, globalTipLabelSpacePx - metadataTipDecorationLabelExtraPx);
@@ -7626,7 +7652,7 @@ export default function TreeCanvas({
           }
           const y = layout.center[node];
           const text = displayTipLabelForView(node);
-          const screen = worldToScreenRect(camera, tree.buffers.depth[node], y);
+          const screen = worldToScreenRect(camera, axisDepth(tree.buffers.depth[node]), y);
           const tipLabelOffsetPx = rectTipLabelOffsetPx(node);
           const x = alignTipLabels
             ? alignedTipLabelX
@@ -9015,13 +9041,21 @@ export default function TreeCanvas({
           SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX - SPIRAL_BRANCH_DETAIL_START_SPACING_PX,
         ),
       );
+      const spiralBranchStrokeAutoMultiplier = detailBranchThicknessMultiplier(
+        spiralTipSpacingPx,
+        SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX,
+      );
       const spiralBranchLineWidthPx = (
         SPIRAL_DENSE_BRANCH_WIDTH_PX
         + (
           (SPIRAL_DETAIL_BRANCH_WIDTH_PX - SPIRAL_DENSE_BRANCH_WIDTH_PX)
           * spiralBranchDetailProgress
         )
-      ) * branchStrokeScale;
+      ) * branchStrokeScale * spiralBranchStrokeAutoMultiplier;
+      renderDebug.tipSpacingPx = spiralTipSpacingPx;
+      renderDebug.tipLabelsVisible = spiralTipLabelsVisible;
+      renderDebug.branchStrokeAutoMultiplier = spiralBranchStrokeAutoMultiplier;
+      renderDebug.renderedBranchStrokeScale = branchStrokeScale * spiralBranchStrokeAutoMultiplier;
       const spiralBaseBranchOpacity = SPIRAL_DENSE_BASE_BRANCH_OPACITY
         + (
           (SPIRAL_DETAIL_BRANCH_OPACITY - SPIRAL_DENSE_BASE_BRANCH_OPACITY)
@@ -10074,6 +10108,15 @@ export default function TreeCanvas({
         * (Math.PI * 2 / Math.max(1, tree.leafCount))
         * (collapsedView?.effectiveLeafScale ?? 1)
       );
+      const circularBranchStrokeAutoMultiplier = detailBranchThicknessMultiplier(
+        angularSpacingPx,
+        4.5,
+      );
+      const circularBranchStrokeScale = branchStrokeScale * circularBranchStrokeAutoMultiplier;
+      renderDebug.tipSpacingPx = angularSpacingPx;
+      renderDebug.tipLabelsVisible = showTipLabels && angularSpacingPx > 4.5;
+      renderDebug.branchStrokeAutoMultiplier = circularBranchStrokeAutoMultiplier;
+      renderDebug.renderedBranchStrokeScale = circularBranchStrokeScale;
       const stripeExtent = effectiveTimeAxisScale === "log" ? timeAxisExtent : (tree.isUltrametric ? tree.rootAge : tree.maxDepth);
       const circularRadiusForBoundary = (value: number): number => (
         tree.isUltrametric ? axisDepth(tree.rootAge - value) : axisDepth(value)
@@ -10357,7 +10400,7 @@ export default function TreeCanvas({
         ctx.lineCap = "butt";
         cachedCircularTaxonomyPaths.forEach((pathCache, color) => {
           ctx.strokeStyle = color;
-          ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(camera.scale, 1e-6);
+          ctx.lineWidth = (1.2 * circularBranchStrokeScale) / Math.max(camera.scale, 1e-6);
           ctx.globalAlpha = 0.95;
           ctx.stroke(pathCache.connectors);
           ctx.stroke(pathCache.stems);
@@ -10370,14 +10413,14 @@ export default function TreeCanvas({
           ctx.scale(camera.scale, camera.scale);
           ctx.rotate(rotationAngle);
         ctx.strokeStyle = BRANCH_COLOR;
-        ctx.lineWidth = branchStrokeScale / Math.max(camera.scale, 1e-6);
+        ctx.lineWidth = circularBranchStrokeScale / Math.max(camera.scale, 1e-6);
           ctx.lineCap = "butt";
           ctx.stroke(cachedCircularBasePath.connectors);
           ctx.stroke(cachedCircularBasePath.stems);
           ctx.restore();
         } else if (!useColoredBranchRendering) {
           ctx.strokeStyle = BRANCH_COLOR;
-          ctx.lineWidth = branchStrokeScale;
+          ctx.lineWidth = circularBranchStrokeScale;
           const connectorPath = new Path2D();
           const stemPath = new Path2D();
           if (useHugeTreeZoomedCircularRendering && collapsedNodes.size === 0) {
@@ -10518,11 +10561,11 @@ export default function TreeCanvas({
                 centerPoint.y + Math.sin(arcAngles.start + rotationAngle) * radiusPx,
               );
               connectorPath.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
-              pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, branchStrokeScale);
+              pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, circularBranchStrokeScale);
             } else {
               stemPath.moveTo(start.x, start.y);
               stemPath.lineTo(end.x, end.y);
-              pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
+              pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, circularBranchStrokeScale);
             }
           }
         } else {
@@ -10569,7 +10612,7 @@ export default function TreeCanvas({
             }
             connectorPath.moveTo(startX, startY);
             connectorPath.arc(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle, false);
-            pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, branchStrokeScale);
+            pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, arcAngles.start + rotationAngle, arcAngles.end + rotationAngle), BRANCH_COLOR, circularBranchStrokeScale);
           }
           for (let node = 0; node < tree.nodeCount; node += 1) {
             if (hiddenNodes[node]) {
@@ -10596,7 +10639,7 @@ export default function TreeCanvas({
             }
             stemPath.moveTo(start.x, start.y);
             stemPath.lineTo(end.x, end.y);
-            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, branchStrokeScale);
+            pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, circularBranchStrokeScale);
           }
         }
         ctx.lineCap = "butt";
@@ -10611,7 +10654,7 @@ export default function TreeCanvas({
           ctx.strokeStyle = BRANCH_COLOR;
           ctx.globalAlpha = 0.62;
           ctx.lineCap = "butt";
-          ctx.lineWidth = branchStrokeScale / Math.max(camera.scale, 1e-6);
+          ctx.lineWidth = circularBranchStrokeScale / Math.max(camera.scale, 1e-6);
           ctx.stroke(largeMetadataCircularBasePath.connectors);
           ctx.stroke(largeMetadataCircularBasePath.stems);
           ctx.restore();
@@ -10647,7 +10690,7 @@ export default function TreeCanvas({
           path.lineTo(x2, y2);
           coloredSegmentCount += 1;
           coloredStemCount += 1;
-          pushSceneLine(x1, y1, x2, y2, color, 1.2 * branchStrokeScale, 0.95);
+          pushSceneLine(x1, y1, x2, y2, color, 1.2 * circularBranchStrokeScale, 0.95);
         };
         const pushArc = (color: string, radiusPx: number, start: number, end: number): void => {
           if (radiusPx < 0.25 || end <= start || coloredSegmentCount >= coloredSegmentBudget) {
@@ -10672,7 +10715,7 @@ export default function TreeCanvas({
           path.arc(centerPoint.x, centerPoint.y, radiusPx, start, end, false);
           coloredSegmentCount += 1;
           coloredConnectorCount += 1;
-          pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, start, end), color, 1.2 * branchStrokeScale, undefined, 0.95);
+          pushScenePath(svgArcPath(centerPoint.x, centerPoint.y, radiusPx, start, end), color, 1.2 * circularBranchStrokeScale, undefined, 0.95);
         };
         if (useSampledColoredCircularRendering) {
           const tau = Math.PI * 2;
@@ -10883,14 +10926,14 @@ export default function TreeCanvas({
         }
         colorArcPaths.forEach((path, color) => {
           ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2 * branchStrokeScale;
+          ctx.lineWidth = 1.2 * circularBranchStrokeScale;
           ctx.lineCap = "butt";
           ctx.globalAlpha = 0.95;
           ctx.stroke(path);
         });
         colorStemPaths.forEach((path, color) => {
           ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2 * branchStrokeScale;
+          ctx.lineWidth = 1.2 * circularBranchStrokeScale;
           ctx.lineCap = "butt";
           ctx.globalAlpha = 0.95;
           ctx.stroke(path);
