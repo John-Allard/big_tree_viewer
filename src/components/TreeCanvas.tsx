@@ -4072,6 +4072,7 @@ export default function TreeCanvas({
   const macGestureScaleRef = useRef<number | null>(null);
   const pointerDownRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const lastCanvasPointerRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
   const genusLabelHistoryRef = useRef<{
@@ -11180,8 +11181,7 @@ export default function TreeCanvas({
           .join("|");
         const canUseCircularTaxonomyOverlayLayoutCache = !exportCapture
           && collapsedNodes.size === 0
-          && lockTaxonomyLabelsToClade
-          && taxonomyOverlayRingsFullyVisible;
+          && lockTaxonomyLabelsToClade;
         const circularTaxonomyOverlayLayoutSignature = canUseCircularTaxonomyOverlayLayoutCache
           ? [
             order,
@@ -11197,7 +11197,9 @@ export default function TreeCanvas({
             renderSize.height,
             camera.scale.toFixed(6),
             camera.rotation.toFixed(6),
-            taxonomyOverlayRingsFullyVisible ? "fully-visible" : visibleLeafRangesSignature,
+            taxonomyOverlayRingsFullyVisible
+              ? "fully-visible"
+              : `${visibleLeafRangesSignature}:${camera.translateX.toFixed(6)}:${camera.translateY.toFixed(6)}`,
             visibleRankBlockCountsSignature,
             taxonomyLabelSizeScale.toFixed(3),
             taxonomyBandThicknessScale.toFixed(3),
@@ -13548,14 +13550,22 @@ export default function TreeCanvas({
     viewMode,
   ]);
 
-  const zoomAtViewportCenter = useCallback((zoom: number): void => {
+  const zoomAtKeyboardAnchor = useCallback((zoom: number): void => {
     hoverRef.current = null;
     updateHoverTooltip(null);
     onHoverChange(null);
     if (!cameraRef.current) {
       fitCamera();
     }
-    zoomAtPoint(size.width * 0.5, size.height * 0.5, zoom);
+    const pointer = lastCanvasPointerRef.current;
+    const anchor = pointer
+      && pointer.x >= 0
+      && pointer.x <= size.width
+      && pointer.y >= 0
+      && pointer.y <= size.height
+      ? pointer
+      : { x: size.width * 0.5, y: size.height * 0.5 };
+    zoomAtPoint(anchor.x, anchor.y, zoom);
     draw();
   }, [draw, fitCamera, onHoverChange, size.height, size.width, updateHoverTooltip, zoomAtPoint]);
 
@@ -14233,19 +14243,19 @@ export default function TreeCanvas({
       }
       if (event.key === "+" || event.code === "NumpadAdd") {
         event.preventDefault();
-        zoomAtViewportCenter(1.2);
+        zoomAtKeyboardAnchor(1.2);
         return;
       }
       if (event.key === "-" || event.code === "NumpadSubtract") {
         event.preventDefault();
-        zoomAtViewportCenter(1 / 1.2);
+        zoomAtKeyboardAnchor(1 / 1.2);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [tree, zoomAtViewportCenter]);
+  }, [tree, zoomAtKeyboardAnchor]);
 
   useEffect(() => {
     if (exportSvgRequest === 0 || handledExportRequestRef.current === exportSvgRequest) {
@@ -15004,6 +15014,7 @@ export default function TreeCanvas({
       const rect = canvas.getBoundingClientRect();
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
+      lastCanvasPointerRef.current = { x: localX, y: localY };
       for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
         const hitbox = labelHitsRef.current[index];
         if (hitbox.source !== "collapse") {
@@ -15065,6 +15076,11 @@ export default function TreeCanvas({
     };
 
     const handlePointerMove = (event: PointerEvent): void => {
+      const rect = canvas.getBoundingClientRect();
+      lastCanvasPointerRef.current = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
       const camera = cameraRef.current;
       if (!camera) {
         return;
@@ -15090,7 +15106,6 @@ export default function TreeCanvas({
         const distance = Math.max(1, Math.hypot(dx, dy));
         const centerClientX = (points[0].clientX + points[1].clientX) * 0.5;
         const centerClientY = (points[0].clientY + points[1].clientY) * 0.5;
-        const rect = canvas.getBoundingClientRect();
         const localX = centerClientX - rect.left;
         const localY = centerClientY - rect.top;
         const previous = pinchGestureRef.current;
@@ -15159,6 +15174,7 @@ export default function TreeCanvas({
       pinchGestureRef.current = null;
       pointerDownRef.current = false;
       lastPointerRef.current = null;
+      lastCanvasPointerRef.current = null;
       clearHoverState();
     };
 
@@ -15172,6 +15188,7 @@ export default function TreeCanvas({
       const rect = canvas.getBoundingClientRect();
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
+      lastCanvasPointerRef.current = { x: localX, y: localY };
       markPanBenchmarkInput();
       clearHoverState();
         if (isHorizontalWheelPanEvent(event)) {

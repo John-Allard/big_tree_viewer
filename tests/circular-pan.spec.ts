@@ -44,6 +44,42 @@ async function loadPastedTree(page: Page, newick: string): Promise<void> {
   });
 }
 
+async function readWorldPointAt(page: Page, x: number, y: number): Promise<{
+  kind: "rect" | "circular";
+  x: number;
+  y: number;
+  scale: number;
+}> {
+  return page.evaluate(({ localX, localY }) => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!camera) {
+      throw new Error("Camera unavailable for keyboard zoom test.");
+    }
+    if (camera.kind === "rect") {
+      return {
+        kind: "rect" as const,
+        x: (localX - Number(camera.translateX)) / Number(camera.scaleX),
+        y: (localY - Number(camera.translateY)) / Number(camera.scaleY),
+        scale: Number(camera.scaleX),
+      };
+    }
+    const dx = (localX - Number(camera.translateX)) / Number(camera.scale);
+    const dy = (localY - Number(camera.translateY)) / Number(camera.scale);
+    return {
+      kind: "circular" as const,
+      x: (dx * Number(camera.rotationCos)) + (dy * Number(camera.rotationSin)),
+      y: (-dx * Number(camera.rotationSin)) + (dy * Number(camera.rotationCos)),
+      scale: Number(camera.scale),
+    };
+  }, { localX: x, localY: y });
+}
+
+async function settleFrames(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+}
+
 async function configureCircularDeepZoom(page: Page): Promise<void> {
   await page.evaluate(() => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
@@ -418,6 +454,42 @@ test("small pixel wheel deltas from trackpads zoom with usable sensitivity", asy
   expect(Number(after?.scaleX ?? 0) / Number(before?.scaleX ?? 1)).toBeGreaterThan(1.025);
   expect(Number(after?.scaleY ?? 0) / Number(before?.scaleY ?? 1)).toBeGreaterThan(1.025);
 });
+
+for (const mode of ["rectangular", "circular"] as const) {
+  test(`${mode} keyboard zoom keeps the world point under the mouse fixed`, async ({ page }) => {
+    await waitForViewer(page);
+    await page.evaluate(async (nextMode) => {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode(nextMode);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, mode);
+
+    const canvas = page.getByTestId("tree-canvas");
+    const bounds = await canvas.boundingBox();
+    if (!bounds) {
+      throw new Error("Canvas bounds unavailable for keyboard zoom test.");
+    }
+    const localX = bounds.width * 0.64;
+    const localY = bounds.height * 0.41;
+    await page.mouse.move(bounds.x + localX, bounds.y + localY);
+
+    const before = await readWorldPointAt(page, localX, localY);
+    await page.keyboard.press("Shift+Equal");
+    await settleFrames(page);
+    const afterZoomIn = await readWorldPointAt(page, localX, localY);
+    expect(afterZoomIn.kind).toBe(before.kind);
+    expect(afterZoomIn.scale).toBeGreaterThan(before.scale);
+    expect(Math.abs(afterZoomIn.x - before.x)).toBeLessThan(0.001);
+    expect(Math.abs(afterZoomIn.y - before.y)).toBeLessThan(0.001);
+
+    await page.keyboard.press("-");
+    await settleFrames(page);
+    const afterZoomOut = await readWorldPointAt(page, localX, localY);
+    expect(Math.abs(afterZoomOut.x - before.x)).toBeLessThan(0.001);
+    expect(Math.abs(afterZoomOut.y - before.y)).toBeLessThan(0.001);
+  });
+}
 
 test("rectangular gesturechange input zooms the camera", async ({ page }) => {
   await waitForViewer(page);
