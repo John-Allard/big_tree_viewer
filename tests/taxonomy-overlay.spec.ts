@@ -2296,6 +2296,7 @@ test("circular taxonomy labels persist once a visible arc can fit them", async (
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
@@ -2331,7 +2332,7 @@ test("circular taxonomy labels persist once a visible arc can fit them", async (
     taxonomyLabelKeys?: string[];
   });
 
-  expect(firstDebug.taxonomyLabelKeys ?? []).toContain("class:ArcLabelTarget");
+  expect((firstDebug.taxonomyLabelKeys ?? []).some((key) => key.startsWith("class:ArcLabelTarget:"))).toBeTruthy();
 
   await setScale(1.5);
 
@@ -2339,7 +2340,7 @@ test("circular taxonomy labels persist once a visible arc can fit them", async (
     taxonomyLabelKeys?: string[];
   });
 
-  expect(secondDebug.taxonomyLabelKeys ?? []).toContain("class:ArcLabelTarget");
+  expect((secondDebug.taxonomyLabelKeys ?? []).some((key) => key.startsWith("class:ArcLabelTarget:"))).toBeTruthy();
 });
 
 test("circular taxonomy labels return after sliding offscreen and back", async ({ page }) => {
@@ -2364,6 +2365,8 @@ test("circular taxonomy labels return after sliding offscreen and back", async (
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setCircularRotationDegreesForTest(33);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
@@ -2379,11 +2382,12 @@ test("circular taxonomy labels return after sliding offscreen and back", async (
     const radiusWorld = Number(state.isUltrametric ? state.rootAge : state.maxDepth);
     const rect = canvas.getBoundingClientRect();
     const theta = ((20 / leafNodes.length) * Math.PI * 2);
+    const renderedTheta = theta + Number(currentCamera.rotation);
     const scale = Math.max(Number(currentCamera.scale) * 80, 18);
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
       scale,
-      translateX: (rect.width * 0.45) - (Math.cos(theta) * radiusWorld * scale),
-      translateY: rect.height * 0.58,
+      translateX: (rect.width * 0.45) - (Math.cos(renderedTheta) * radiusWorld * scale),
+      translateY: (rect.height * 0.58) - (Math.sin(renderedTheta) * radiusWorld * scale),
     });
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const updatedCamera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
@@ -2403,20 +2407,20 @@ test("circular taxonomy labels return after sliding offscreen and back", async (
     } | undefined;
     return debug?.taxonomyLabelKeys ?? [];
   });
-  expect(initiallyVisible).toContain("class:ArcLabelTarget");
+  expect(initiallyVisible.some((key) => key.startsWith("class:ArcLabelTarget:"))).toBeTruthy();
 
   let hiddenDelta: number | null = null;
-  for (const deltaX of [260, 420, 620, 860]) {
-    await page.evaluate(async ({ camera, translateDeltaX }) => {
+  for (let deltaY = -10; deltaY >= -600; deltaY -= 10) {
+    await page.evaluate(async ({ camera, translateDeltaY }) => {
       window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
         scale: Number(camera.scale),
-        translateX: Number(camera.translateX) + Number(translateDeltaX),
-        translateY: Number(camera.translateY),
+        translateX: Number(camera.translateX),
+        translateY: Number(camera.translateY) + Number(translateDeltaY),
       });
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     }, {
       camera: baseCamera,
-      translateDeltaX: deltaX,
+      translateDeltaY: deltaY,
     });
 
     const hidden = await page.evaluate(() => {
@@ -2425,21 +2429,25 @@ test("circular taxonomy labels return after sliding offscreen and back", async (
       } | undefined;
       return debug?.taxonomyLabelKeys ?? [];
     });
-    if (!hidden.includes("class:ArcLabelTarget")) {
-      hiddenDelta = deltaX;
-      break;
+    if (!hidden.some((key) => key.startsWith("class:ArcLabelTarget:"))) {
+      hiddenDelta = deltaY;
     }
   }
   expect(hiddenDelta).not.toBeNull();
 
-  await page.evaluate(async (camera) => {
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
-      scale: Number(camera.scale),
-      translateX: Number(camera.translateX),
-      translateY: Number(camera.translateY),
+  for (let deltaY = -590; deltaY <= 0; deltaY += 10) {
+    await page.evaluate(async ({ camera, translateDeltaY }) => {
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        scale: Number(camera.scale),
+        translateX: Number(camera.translateX),
+        translateY: Number(camera.translateY) + Number(translateDeltaY),
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, {
+      camera: baseCamera,
+      translateDeltaY: deltaY,
     });
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  }, baseCamera);
+  }
 
   const returned = await page.evaluate(() => {
     const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
@@ -2447,7 +2455,94 @@ test("circular taxonomy labels return after sliding offscreen and back", async (
     } | undefined;
     return debug?.taxonomyLabelKeys ?? [];
   });
-  expect(returned).toContain("class:ArcLabelTarget");
+  expect(returned.some((key) => key.startsWith("class:ArcLabelTarget:"))).toBeTruthy();
+});
+
+test("near-fit circular taxonomy labels return after an edge excursion", async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 1100 });
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const leaves = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    const labels = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
+    app?.setTaxonomyMapForTest({
+      version: 3,
+      mappedCount: leaves.length,
+      totalTips: leaves.length,
+      activeRanks: ["class"],
+      tipRanks: leaves.map((node, index) => ({
+        node,
+        ranks: {
+          class: labels[Math.min(labels.length - 1, Math.floor((index / leaves.length) * labels.length))],
+        },
+      })),
+    });
+    app?.setTaxonomyRankVisibilityAutoForTest(false);
+    app?.setTaxonomyRankDisplayModeForTest("class", "ribbon");
+    app?.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const baseCamera = await page.evaluate(async () => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const camera = canvas?.getCamera();
+    if (!camera || camera.kind !== "circular") {
+      throw new Error("Near-fit circular camera unavailable.");
+    }
+    canvas.setCircularCamera({ scale: camera.scale * 1.25 });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const updated = canvas.getCamera();
+    if (!updated || updated.kind !== "circular") {
+      throw new Error("Updated near-fit circular camera unavailable.");
+    }
+    return {
+      scale: updated.scale,
+      translateX: updated.translateX,
+      translateY: updated.translateY,
+    };
+  });
+
+  const initialLabels = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
+      ?.map((label) => label.text).sort() ?? []
+  ));
+  expect(initialLabels).toEqual(["Alpha", "Beta", "Delta", "Epsilon", "Gamma"]);
+
+  for (const deltaY of [-100, -200, -300, -400, -500]) {
+    await page.evaluate(async ({ camera, delta }) => {
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        scale: Number(camera.scale),
+        translateX: Number(camera.translateX),
+        translateY: Number(camera.translateY) + delta,
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, { camera: baseCamera, delta: deltaY });
+  }
+
+  const offscreenLabels = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
+      ?.map((label) => label.text).sort() ?? []
+  ));
+  expect(offscreenLabels.length).toBeLessThan(initialLabels.length);
+
+  for (const deltaY of [-400, -300, -200, -100, 0]) {
+    await page.evaluate(async ({ camera, delta }) => {
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        scale: Number(camera.scale),
+        translateX: Number(camera.translateX),
+        translateY: Number(camera.translateY) + delta,
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, { camera: baseCamera, delta: deltaY });
+  }
+
+  const returnedLabels = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
+      ?.map((label) => label.text).sort() ?? []
+  ));
+  expect(returnedLabels).toEqual(initialLabels);
 });
 
 test("single unmapped interlopers do not split taxonomy continuity", async ({ page }) => {
@@ -2656,6 +2751,7 @@ test("circular taxonomy labels on the same ring do not overlap after zooming int
 
 test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape zoom", async ({ page }) => {
   test.setTimeout(60000);
+  await page.setViewportSize({ width: 1400, height: 900 });
   await waitForViewer(page);
   await page.evaluate(async () => {
     await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
@@ -2677,7 +2773,8 @@ test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape
     const leafIndexMap = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLeafIndexMap() ?? {};
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
-    if (!camera || camera.kind !== "circular" || !state) {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    if (!camera || camera.kind !== "circular" || !state || !(canvas instanceof HTMLCanvasElement)) {
       throw new Error("Circular camera unavailable for Pongo test.");
     }
     const pongoIndices = leafNodes
@@ -2701,10 +2798,11 @@ test("real mapped Pongo appears as an in-arc circular taxonomy label at deep ape
     const scale = Number(camera.scale) * 384;
     const rotatedX = ((Math.cos(midTheta) * radiusWorld) * camera.rotationCos) - ((Math.sin(midTheta) * radiusWorld) * camera.rotationSin);
     const rotatedY = ((Math.cos(midTheta) * radiusWorld) * camera.rotationSin) + ((Math.sin(midTheta) * radiusWorld) * camera.rotationCos);
+    const rect = canvas.getBoundingClientRect();
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
       scale,
-      translateX: (1400 * 0.56) - (rotatedX * scale),
-      translateY: (900 * 0.50) - (rotatedY * scale),
+      translateX: (rect.width * 0.56) - (rotatedX * scale),
+      translateY: (rect.height * 0.50) - (rotatedY * scale),
     });
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });

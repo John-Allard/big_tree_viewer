@@ -11134,6 +11134,32 @@ export default function TreeCanvas({
           }
         };
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
+        const canReusePreviousTaxonomyLabelHistory = Boolean(
+          previousTaxonomyState
+          && previousTaxonomyState.tree === tree
+          && previousTaxonomyState.viewMode === "circular"
+          && previousTaxonomyState.order === order,
+        );
+        const eligibleTaxonomyLabelKeys = new Set(
+          visibleRanks.flatMap((rank) => (
+            (renderedTaxonomyBlocks[rank] ?? []).map((block) => taxonomyBlockStableKey(block))
+          )),
+        );
+        const mergeTaxonomyLabelThetas = (labels: ScreenLabel[]): Array<{ key: string; theta: number }> => {
+          const current = labels
+            .filter((label) => typeof label.key === "string" && typeof label.theta === "number")
+            .map((label) => ({ key: label.key as string, theta: label.theta as number }));
+          if (!canReusePreviousTaxonomyLabelHistory || !previousTaxonomyState) {
+            return current;
+          }
+          const currentKeys = new Set(current.map((entry) => entry.key));
+          return [
+            ...current,
+            ...(previousTaxonomyState.labelThetas ?? []).filter((entry) => (
+              eligibleTaxonomyLabelKeys.has(entry.key) && !currentKeys.has(entry.key)
+            )),
+          ];
+        };
         let previewRingCursorOuterPx = tipBandOuterRadiusPx + metrics.ringGapPx;
         let taxonomyOverlayRingsFullyVisible = visibleRanks.length > 0;
         for (let rankIndex = 0; rankIndex < visibleRanks.length; rankIndex += 1) {
@@ -11154,7 +11180,8 @@ export default function TreeCanvas({
           .join("|");
         const canUseCircularTaxonomyOverlayLayoutCache = !exportCapture
           && collapsedNodes.size === 0
-          && lockTaxonomyLabelsToClade;
+          && lockTaxonomyLabelsToClade
+          && taxonomyOverlayRingsFullyVisible;
         const circularTaxonomyOverlayLayoutSignature = canUseCircularTaxonomyOverlayLayoutCache
           ? [
             order,
@@ -11271,9 +11298,7 @@ export default function TreeCanvas({
             order,
             zoom: camera.scale,
             visibleKeys: cachedCircularTaxonomyOverlay.placedKeys,
-            labelThetas: allTaxonomyLabels
-              .filter((label) => typeof label.key === "string" && typeof label.theta === "number")
-              .map((label) => ({ key: label.key as string, theta: label.theta as number })),
+            labelThetas: mergeTaxonomyLabelThetas(allTaxonomyLabels),
             peakZoom: previousTaxonomyState && previousTaxonomyState.tree === tree && previousTaxonomyState.viewMode === "circular" && previousTaxonomyState.order === order
               ? Math.max(previousTaxonomyState.peakZoom, camera.scale)
               : camera.scale,
@@ -11669,12 +11694,13 @@ export default function TreeCanvas({
               } else {
                 const previousTheta = previousLabelThetaByKey.get(blockKey);
                 if (typeof previousTheta === "number") {
-                  const previousRenderedTheta = wrapPositive(previousTheta + rotationAngle);
+                  const previousRenderedTheta = wrapPositive(previousTheta);
                   if (wrappedAngleWithinInterval(previousRenderedTheta, renderedWrappedStart, renderedWrappedEnd)) {
+                    const previousUnrotatedTheta = previousRenderedTheta - rotationAngle;
                     const previousPoint = worldToScreenCircular(
                       camera,
-                      Math.cos(previousTheta) * lineRadius,
-                      Math.sin(previousTheta) * lineRadius,
+                      Math.cos(previousUnrotatedTheta) * lineRadius,
+                      Math.sin(previousUnrotatedTheta) * lineRadius,
                     );
                     if (isScreenPointVisible(previousPoint.x, previousPoint.y, renderSize.width, renderSize.height, circularTaxonomyLabelAnchorMarginPx)) {
                       const candidateArcLengthPx = centeredArcLengthPx(
@@ -11684,12 +11710,12 @@ export default function TreeCanvas({
                       );
                       if (!bestLabelCandidate || candidateArcLengthPx > bestLabelCandidate.arcLengthPx) {
                         bestLabelCandidate = {
-                          theta: previousTheta,
+                          theta: previousUnrotatedTheta,
                           visibleStart: renderedWrappedStart,
                           visibleEnd: renderedWrappedEnd >= renderedWrappedStart ? renderedWrappedEnd : renderedWrappedEnd + (Math.PI * 2),
                           arcLengthPx: candidateArcLengthPx,
                           fitArcLengthPx: candidateArcLengthPx,
-                          spanTheta: totalRenderedSpan,
+                          spanTheta: candidateArcLengthPx / Math.max(lineRadiusPx, 1e-6),
                         };
                       }
                     }
@@ -11714,7 +11740,7 @@ export default function TreeCanvas({
                         visibleEnd: renderedWrappedEnd >= renderedWrappedStart ? renderedWrappedEnd : renderedWrappedEnd + (Math.PI * 2),
                         arcLengthPx: candidateArcLengthPx,
                         fitArcLengthPx: candidateArcLengthPx,
-                        spanTheta: totalRenderedSpan,
+                        spanTheta: candidateArcLengthPx / Math.max(lineRadiusPx, 1e-6),
                       };
                     }
                   }
@@ -12081,9 +12107,7 @@ export default function TreeCanvas({
           order,
           zoom: camera.scale,
           visibleKeys: placedKeys,
-          labelThetas: allTaxonomyLabels
-            .filter((label) => typeof label.key === "string" && typeof label.theta === "number")
-            .map((label) => ({ key: label.key as string, theta: label.theta as number })),
+          labelThetas: mergeTaxonomyLabelThetas(allTaxonomyLabels),
           peakZoom: previousTaxonomyState && previousTaxonomyState.tree === tree && previousTaxonomyState.viewMode === "circular" && previousTaxonomyState.order === order
             ? Math.max(previousTaxonomyState.peakZoom, camera.scale)
             : camera.scale,
