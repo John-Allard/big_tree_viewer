@@ -62,7 +62,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--metadata", help="Optional local CSV/TSV metadata file.")
     parser.add_argument("--metadata-key", help="Metadata column matched to tree labels.")
     parser.add_argument("--metadata-value", help="Metadata value/color column.")
-    parser.add_argument("--view", choices=["rectangular", "circular", "spiral"], help="Tree view mode.")
+    parser.add_argument("--view", choices=["rectangular", "circular", "fan", "spiral"], help="Tree view mode.")
     parser.add_argument("--order", choices=["asc", "desc", "input"], help="Child ordering.")
     parser.add_argument("--tip-labels", type=parse_bool, help="Show tip labels: true or false.")
     parser.add_argument("--genus-labels", type=parse_bool, help="Show genus labels: true or false.")
@@ -151,13 +151,13 @@ def load_payload(args: argparse.Namespace, *, require_source: bool = True) -> di
 
 def payload_view_mode(payload: dict[str, Any], fallback: str = "rectangular") -> str:
     visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
-    if visual.get("viewMode") in {"rectangular", "circular", "spiral"}:
+    if visual.get("viewMode") in {"rectangular", "circular", "fan", "spiral"}:
         return str(visual["viewMode"])
     session = payload.get("session") if isinstance(payload.get("session"), dict) else {}
     settings = session.get("settings") if isinstance(session.get("settings"), dict) else {}
-    if settings.get("viewMode") in {"rectangular", "circular", "spiral"}:
+    if settings.get("viewMode") in {"rectangular", "circular", "fan", "spiral"}:
         return str(settings["viewMode"])
-    return fallback if fallback in {"rectangular", "circular", "spiral"} else "rectangular"
+    return fallback if fallback in {"rectangular", "circular", "fan", "spiral"} else "rectangular"
 
 
 def export_dimensions_for_view(
@@ -170,7 +170,7 @@ def export_dimensions_for_view(
 ) -> tuple[int | None, int | None, int | None, int | None]:
     if export_format != "png":
         return None, None, viewport_width, viewport_height
-    if view_mode == "rectangular":
+    if view_mode in {"rectangular", "fan"}:
         return (
             width if width is not None else DEFAULT_RECTANGULAR_EXPORT_SIZE[0],
             height if height is not None else DEFAULT_RECTANGULAR_EXPORT_SIZE[1],

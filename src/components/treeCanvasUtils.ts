@@ -311,11 +311,19 @@ export function extractGenusToken(name: string): string | null {
   return token.length >= 2 ? token : null;
 }
 
-export function thetaFor(center: Float64Array, node: number, leafCount: number): number {
+export function thetaFor(
+  center: Float64Array,
+  node: number,
+  leafCount: number,
+  angleStart = 0,
+  angleSpan = Math.PI * 2,
+): number {
   if (leafCount <= 0) {
-    return 0;
+    return angleStart;
   }
-  return (center[node] / leafCount) * (Math.PI * 2);
+  const closesLoop = Math.abs(angleSpan - (Math.PI * 2)) < 1e-9;
+  const divisor = closesLoop ? leafCount : Math.max(1, leafCount - 1);
+  return angleStart + ((center[node] / divisor) * angleSpan);
 }
 
 export function wrapPositive(angle: number): number {
@@ -425,6 +433,8 @@ export function pickCircularConnectorChild(
   leafCount: number,
   arcStart: number,
   arcLength: number,
+  angleStart = 0,
+  angleSpan = Math.PI * 2,
 ): number | null {
   const ownerOffset = angleOffsetWithinSpan(ownerTheta, arcStart, arcLength);
   const hoverOffset = angleOffsetWithinSpan(hoverTheta, arcStart, arcLength);
@@ -435,7 +445,7 @@ export function pickCircularConnectorChild(
   let bestDistance = Number.POSITIVE_INFINITY;
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index];
-    const childTheta = thetaFor(center, child, leafCount);
+    const childTheta = thetaFor(center, child, leafCount, angleStart, angleSpan);
     const childOffset = angleOffsetWithinSpan(childTheta, arcStart, arcLength);
     if (childOffset === null) {
       continue;
@@ -456,7 +466,11 @@ export function pickCircularConnectorChild(
   }
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index];
-    const childOffset = angleOffsetWithinSpan(thetaFor(center, child, leafCount), arcStart, arcLength);
+    const childOffset = angleOffsetWithinSpan(
+      thetaFor(center, child, leafCount, angleStart, angleSpan),
+      arcStart,
+      arcLength,
+    );
     if (childOffset === null) {
       continue;
     }

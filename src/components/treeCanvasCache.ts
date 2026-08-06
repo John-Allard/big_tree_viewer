@@ -107,7 +107,13 @@ export function computeOrderedChildren(tree: TreeModel, order: LayoutOrder): num
   return childrenByNode;
 }
 
-export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "linear", timeAxisLogBase = DEFAULT_TIME_AXIS_LOG_BASE): RenderCache {
+export function buildCache(
+  tree: TreeModel,
+  timeAxisScale: TimeAxisScale = "linear",
+  timeAxisLogBase = DEFAULT_TIME_AXIS_LOG_BASE,
+  polarAngleStart = 0,
+  polarAngleSpan = Math.PI * 2,
+): RenderCache {
   const orderedChildren = lazyOrderRecord((order) => computeOrderedChildren(tree, order));
   const orderedLeaves = lazyOrderRecord((order) => computeOrderedLeaves(tree, order));
   const genusBlocks = lazyOrderRecord((order) => computeGenusBlocks(tree, orderedLeaves[order], timeAxisScale, timeAxisLogBase));
@@ -180,17 +186,17 @@ export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "line
       const parent = tree.buffers.parent[node];
       if (parent < 0) {
         if (children[node].length >= 2) {
-          const startTheta = thetaFor(center, children[node][0], tree.leafCount);
-          const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount);
-          const arcStart = thetaFor(layout.min, node, tree.leafCount);
-          const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+          const startTheta = thetaFor(center, children[node][0], tree.leafCount, polarAngleStart, polarAngleSpan);
+          const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount, polarAngleStart, polarAngleSpan);
+          const arcStart = thetaFor(layout.min, node, tree.leafCount, polarAngleStart, polarAngleSpan);
+          const arcEnd = thetaFor(layout.max, node, tree.leafCount, polarAngleStart, polarAngleSpan);
           const arcLength = Math.max(0, arcEnd - arcStart);
           const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
           appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
         }
         continue;
       }
-      const theta = thetaFor(center, node, tree.leafCount);
+      const theta = thetaFor(center, node, tree.leafCount, polarAngleStart, polarAngleSpan);
       const start = polarToCartesian(axisDepth(parent), theta);
       const end = polarToCartesian(axisDepth(node), theta);
       radial.push({
@@ -202,10 +208,10 @@ export function buildCache(tree: TreeModel, timeAxisScale: TimeAxisScale = "line
         y2: end.y,
       });
       if (children[node].length >= 2) {
-        const startTheta = thetaFor(center, children[node][0], tree.leafCount);
-        const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount);
-        const arcStart = thetaFor(layout.min, node, tree.leafCount);
-        const arcEnd = thetaFor(layout.max, node, tree.leafCount);
+        const startTheta = thetaFor(center, children[node][0], tree.leafCount, polarAngleStart, polarAngleSpan);
+        const endTheta = thetaFor(center, children[node][children[node].length - 1], tree.leafCount, polarAngleStart, polarAngleSpan);
+        const arcStart = thetaFor(layout.min, node, tree.leafCount, polarAngleStart, polarAngleSpan);
+        const arcEnd = thetaFor(layout.max, node, tree.leafCount, polarAngleStart, polarAngleSpan);
         const arcLength = Math.max(0, arcEnd - arcStart);
         const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
         appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);

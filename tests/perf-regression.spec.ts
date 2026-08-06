@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
-const DEFAULT_PERF_TREE_PATH = "/home/john/Repos/TimeTree_CSTA/results/full_v9_tipdepth1_reconcile_rootcap4300_safehomonyms_withtt5/131567_cellular_organisms_reconcile_rootcap4300.nwk";
-const PERF_TREE_PATH = process.env.BIG_TREE_VIEWER_PERF_TREE ?? DEFAULT_PERF_TREE_PATH;
-const PERF_TREE_AVAILABLE = fs.existsSync(PERF_TREE_PATH);
+const PERF_TREE_PATH = process.env.BIG_TREE_VIEWER_PERF_TREE ?? "";
+const PERF_TREE_AVAILABLE = PERF_TREE_PATH.length > 0 && fs.existsSync(PERF_TREE_PATH);
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -626,7 +625,7 @@ async function waitForCircularTaxonomySnapshot(page: Page, timeoutMs = 30_000): 
 
 test.describe("local circular perf regression", () => {
   test.describe.configure({ mode: "serial" });
-  test.skip(!PERF_TREE_AVAILABLE, `Missing local perf tree: ${PERF_TREE_PATH}`);
+  test.skip(!PERF_TREE_AVAILABLE, "Set BIG_TREE_VIEWER_PERF_TREE to run local performance regressions.");
 
   test("fit-view wheel zoom stays on cached taxonomy paths before class appears", async ({ page }) => {
     test.slow();

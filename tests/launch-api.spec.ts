@@ -258,6 +258,15 @@ test("export dialog defaults to browser-scale PNG dimensions", async ({ page }) 
   await expect(dialog.getByLabel("Print width (in)")).toHaveValue("6");
   await expect(dialog.getByLabel("Print height (in)")).toHaveValue("6");
   await expect(dialog.getByLabel("DPI")).toHaveValue("200");
+
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Fan", exact: true }).click();
+  await page.getByRole("button", { name: "Export View" }).click();
+  dialog = page.getByRole("dialog", { name: "Export view settings" });
+  await expect(dialog.getByLabel("Width px")).toHaveValue("1600");
+  await expect(dialog.getByLabel("Height px")).toHaveValue("1000");
+  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("8");
+  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("5");
 });
 
 test("remote session URL launch fetches and restores a saved session", async ({ page }) => {

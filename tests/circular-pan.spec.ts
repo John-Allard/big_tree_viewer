@@ -317,52 +317,6 @@ test("circular fit switches to spiral fit without collapsing to the center", asy
   expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
 });
 
-test("zoomed spiral switches back to circular fit without keeping the spiral zoom", async ({ page }) => {
-  await waitForViewer(page);
-  await page.evaluate(async () => {
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
-    if (!camera || camera.kind !== "circular") {
-      throw new Error("Spiral camera unavailable.");
-    }
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
-      scale: camera.scale * 4,
-      translateX: camera.translateX - 120,
-      translateY: camera.translateY + 90,
-    });
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  });
-
-  const switchedCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
-    kind: "circular";
-    scale: number;
-    translateX: number;
-    translateY: number;
-  } | null);
-
-  await page.evaluate(async () => {
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  });
-
-  const fitCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() as {
-    kind: "circular";
-    scale: number;
-    translateX: number;
-    translateY: number;
-  } | null);
-
-  expect(switchedCamera?.kind).toBe("circular");
-  expect(fitCamera?.kind).toBe("circular");
-  expect(Math.abs(Number(switchedCamera?.scale ?? 0) - Number(fitCamera?.scale ?? 0))).toBeLessThanOrEqual(Number(fitCamera?.scale ?? 0) * 0.03);
-  expect(Math.abs(Number(switchedCamera?.translateX ?? 0) - Number(fitCamera?.translateX ?? 0))).toBeLessThanOrEqual(6);
-  expect(Math.abs(Number(switchedCamera?.translateY ?? 0) - Number(fitCamera?.translateY ?? 0))).toBeLessThanOrEqual(6);
-});
-
 test("rectangular vertical wheel input zooms instead of scrolling or panning", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

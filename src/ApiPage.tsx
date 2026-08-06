@@ -104,8 +104,8 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
           </p>
           <p>
             PNG defaults are browser-window-scale: 1600 x 1000 pixels for
-            rectangular views and 1200 x 1200 pixels for circular or spiral
-            views. SVG is useful for smaller or moderately detailed vector
+            rectangular or fan views and 1200 x 1200 pixels for circular or
+            spiral views. SVG is useful for smaller or moderately detailed vector
             figures, but for huge trees PNG is usually safer because SVG output
             can contain an enormous number of vector elements.
           </p>
@@ -134,7 +134,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
         <section className="api-doc-section">
           <h2>Useful URL options</h2>
           <dl className="api-option-list">
-            <div><dt>btv_view</dt><dd>`rectangular`, `circular`, or `spiral`. Spiral mode requires at least 1,000 tips.</dd></div>
+            <div><dt>btv_view</dt><dd>`rectangular`, `circular`, `fan`, or `spiral`. Fan draws an upper semicircle at zero rotation. Spiral mode requires at least 1,000 tips.</dd></div>
             <div><dt>btv_order</dt><dd>`asc`, `desc`, or `input`.</dd></div>
             <div><dt>btv_tip_labels</dt><dd>`true` or `false`.</dd></div>
             <div><dt>btv_align_tip_labels</dt><dd>Align tip labels at the rectangular tree edge with dotted leaders or at the circular outer radius.</dd></div>
@@ -152,7 +152,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
             <div><dt>btv_export</dt><dd>`svg` or `png`; exports after launch.</dd></div>
             <div><dt>btv_export_delivery</dt><dd>`download` or `postMessage`.</dd></div>
-            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Circular and spiral exports are always square; non-square requests are coerced to the larger dimension.</dd></div>
+            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Circular and spiral exports are always square; rectangular and fan exports may use independent dimensions.</dd></div>
             <div><dt>btv_export_filename</dt><dd>Suggested filename for downloads and automation results.</dd></div>
           </dl>
         </section>
@@ -284,7 +284,7 @@ window.addEventListener("message", (event) => {
     height?: number
   },
   visual?: {
-    viewMode?: "rectangular" | "circular" | "spiral",
+    viewMode?: "rectangular" | "circular" | "fan" | "spiral",
     order?: "asc" | "desc" | "input",
     showTipLabels?: boolean,
     alignTipLabels?: boolean,

@@ -16,9 +16,9 @@ Use this skill when a user asks to open, inspect, style, or render a phylogeneti
 - `btv_open.py --download-export png|svg` remains compatible with older commands, but now renders headlessly and saves the named file instead of using the active browser's download UI.
 - For huge trees, avoid SVG unless the user explicitly needs vector output for a limited visible region. SVG can become slow or unusable because every visible branch is vector geometry; PNG is usually safer.
 - For slide figures, prefer setting PNG `--width`/`--height` to the final on-slide pixel box, or use `--export-viewport-width`/`--export-viewport-height` to preserve slide-scale styling while exporting at higher pixel density.
-- Circular and spiral PNG exports must be square. Use landscape or portrait dimensions only for rectangular trees.
+- Circular and spiral PNG exports must be square. Rectangular and fan trees may use landscape or portrait dimensions.
 - Use spiral mode only for trees with at least 1,000 tips; the viewer disables it for smaller trees.
-- If the user does not request export dimensions, keep browser-window-scale defaults: rectangular PNG exports default to 1600 x 1000 pixels, and circular/spiral PNG exports default to 1200 x 1200 pixels.
+- If the user does not request export dimensions, keep browser-window-scale defaults: rectangular/fan PNG exports default to 1600 x 1000 pixels, and circular/spiral PNG exports default to 1200 x 1200 pixels.
 - For large local trees, prefer the scripts' postMessage launch path instead of putting Newick directly into a URL.
 - Use Big Tree Viewer's defaults unless the user asks for a different setting or the figure goal clearly requires it. Do not send every possible visual/API setting just because it exists.
 

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-type ViewMode = "rectangular" | "circular" | "spiral";
+type ViewMode = "rectangular" | "circular" | "fan" | "spiral";
 
 interface ThicknessSample {
   spacing: number;
@@ -74,6 +74,7 @@ test("branch strokes thicken gradually after full tip labels appear", async ({ p
   const configurations: Array<{ mode: ViewMode; threshold: number }> = [
     { mode: "rectangular", threshold: 4.2 },
     { mode: "circular", threshold: 4.5 },
+    { mode: "fan", threshold: 4.5 },
     { mode: "spiral", threshold: 2.9 },
   ];
   for (const { mode, threshold } of configurations) {

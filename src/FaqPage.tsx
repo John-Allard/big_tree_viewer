@@ -215,11 +215,12 @@ export default function FaqPage() {
           </article>
 
           <article className="faq-entry">
-            <h2>What is the difference between rectangular, circular, and spiral views?</h2>
+            <h2>What is the difference between rectangular, circular, fan, and spiral views?</h2>
             <div className="faq-answer">
               <p>
                 Rectangular view is useful for local detail and independent x/y
                 zoom. Circular view is useful for compact whole-tree figures.
+                Fan view arranges the tree across a rotatable semicircle.
                 Spiral view is intended for time-calibrated trees where deep
                 time and recent tips need to share the same figure.
               </p>

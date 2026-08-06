@@ -1186,6 +1186,20 @@ button.secondary {
   color: #f8fafc;
 }
 
+.view-mode-segmented {
+  grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.view-mode-segmented.has-spiral {
+  grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(0, 1fr));
+}
+
+.view-mode-segmented button {
+  padding-inline: 0.35rem;
+  font-size: 0.8rem;
+}
+
 .section-body > .segmented + .segmented,
 .section-body > .segmented + .button-row,
 .section-body > .button-row + .segmented,
@@ -1324,6 +1338,27 @@ button.secondary {
 
 .rotation-controls input[type="range"] {
   width: 100%;
+}
+
+.rotation-value-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.rotation-value-input input {
+  min-width: 0;
+}
+
+.rotation-value-input span {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.rotation-reset-button {
+  min-height: 2.35rem;
+  padding: 0.4rem 0.7rem;
 }
 
 .search-controls {

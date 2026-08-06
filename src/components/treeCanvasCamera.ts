@@ -74,6 +74,54 @@ export function fitCircularCamera(width: number, height: number, tree: TreeModel
   return camera;
 }
 
+function fanUnitBounds(rotation: number): { minX: number; maxX: number; minY: number; maxY: number } {
+  const start = Math.PI + rotation;
+  const end = (Math.PI * 2) + rotation;
+  const angles = [start, end];
+  const firstQuarter = Math.ceil(start / (Math.PI * 0.5));
+  const lastQuarter = Math.floor(end / (Math.PI * 0.5));
+  for (let quarter = firstQuarter; quarter <= lastQuarter; quarter += 1) {
+    angles.push(quarter * Math.PI * 0.5);
+  }
+  const xs = [0, ...angles.map((angle) => Math.cos(angle))];
+  const ys = [0, ...angles.map((angle) => Math.sin(angle))];
+  return {
+    minX: Math.min(...xs),
+    maxX: Math.max(...xs),
+    minY: Math.min(...ys),
+    maxY: Math.max(...ys),
+  };
+}
+
+export function fitFanCamera(
+  width: number,
+  height: number,
+  tree: TreeModel,
+  rotation = 0,
+  extraRadiusPx = 0,
+): CircularCamera {
+  const radius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+  const bounds = fanUnitBounds(rotation);
+  const padding = 28 + Math.max(0, extraRadiusPx);
+  const usableWidth = Math.max(1, width - (padding * 2));
+  const usableHeight = Math.max(1, height - (padding * 2));
+  const scale = Math.min(
+    usableWidth / Math.max(1e-9, radius * (bounds.maxX - bounds.minX)),
+    usableHeight / Math.max(1e-9, radius * (bounds.maxY - bounds.minY)),
+  );
+  const camera: CircularCamera = {
+    kind: "circular",
+    scale,
+    translateX: (width * 0.5) - (((bounds.minX + bounds.maxX) * 0.5) * radius * scale),
+    translateY: (height * 0.5) - (((bounds.minY + bounds.maxY) * 0.5) * radius * scale),
+    rotation,
+    rotationCos: 1,
+    rotationSin: 0,
+  };
+  setCircularCameraRotation(camera, rotation);
+  return camera;
+}
+
 export function worldToScreenRect(camera: RectCamera, x: number, y: number): { x: number; y: number } {
   return {
     x: camera.translateX + (x * camera.scaleX),
@@ -133,10 +181,11 @@ export function clampCircularCamera(
   width: number,
   height: number,
   extraRadiusPx = 0,
+  treeRadiusWorld = Math.max(tree.maxDepth, tree.branchLengthMinPositive),
 ): void {
   const visibleMargin = 56;
   const minimumTreeMargin = 8;
-  const treeRadiusPx = Math.max(tree.maxDepth, tree.branchLengthMinPositive) * camera.scale;
+  const treeRadiusPx = Math.max(treeRadiusWorld, tree.branchLengthMinPositive) * camera.scale;
   const radiusPx = treeRadiusPx + extraRadiusPx;
   const minTranslateX = visibleMargin - radiusPx;
   const maxTranslateX = width - visibleMargin + radiusPx;

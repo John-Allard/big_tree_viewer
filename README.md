@@ -33,7 +33,7 @@ For small trees, pass URL parameters:
 /?btv_newick_b64=<base64url-utf8-newick>&btv_view=circular&btv_tip_labels=false
 ```
 
-Useful URL fields include `btv_newick` or `btv_newick_b64`, `btv_label`, `btv_metadata` or `btv_metadata_b64`, `btv_view=rectangular|circular|spiral`, `btv_order=input|asc|desc`, `btv_tip_labels`, `btv_align_tip_labels`, `btv_genus_labels`, `btv_taxonomy`, `btv_taxonomy_branch_colors`, `btv_palette`, `btv_branch_thickness`, `btv_time_axis=linear|log`, `btv_hide_download_newick`, and metadata controls such as `btv_metadata_key`, `btv_metadata_value`, `btv_metadata_color_mode`, `btv_metadata_labels`, and `btv_metadata_markers`.
+Useful URL fields include `btv_newick` or `btv_newick_b64`, `btv_label`, `btv_metadata` or `btv_metadata_b64`, `btv_view=rectangular|circular|fan|spiral`, `btv_order=input|asc|desc`, `btv_tip_labels`, `btv_align_tip_labels`, `btv_genus_labels`, `btv_taxonomy`, `btv_taxonomy_branch_colors`, `btv_palette`, `btv_branch_thickness`, `btv_time_axis=linear|log`, `btv_hide_download_newick`, and metadata controls such as `btv_metadata_key`, `btv_metadata_value`, `btv_metadata_color_mode`, `btv_metadata_labels`, and `btv_metadata_markers`.
 Spiral mode is available for trees with at least 1,000 tips.
 
 For public files hosted elsewhere, use `btv_newick_url` for a Newick/NEXUS file or `btv_session_url` for a saved `.btvsession` file:

@@ -178,6 +178,7 @@ test("agent skill renders all view modes without using the active browser", asyn
   const browserPath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || chromium.executablePath();
   const profilePath = testInfo.outputPath("isolated-browser-profile");
   const circularPath = testInfo.outputPath("circular.png");
+  const fanPath = testInfo.outputPath("fan.png");
   const rectangularPath = testInfo.outputPath("rectangular-metadata.png");
   const spiralPath = testInfo.outputPath("spiral.png");
   const svgPath = testInfo.outputPath("circular.svg");
@@ -210,6 +211,27 @@ test("agent skill renders all view modes without using the active browser", asyn
   expect(circularContentWidth / circularContentHeight).toBeLessThan(1.05);
   expect(Math.abs((circular.left + circular.right) - circular.width)).toBeLessThan(circular.width * 0.08);
   expect(Math.abs((circular.top + circular.bottom) - circular.height)).toBeLessThan(circular.height * 0.08);
+
+  await runSkillScript("btv_render.py", [
+    treePath,
+    "--output", fanPath,
+    "--view", "fan",
+    "--rotation", "7.25",
+    "--tip-labels", "false",
+    "--genus-labels", "false",
+    "--time-stripes", "false",
+    "--scale-bars", "false",
+    "--width", "800",
+    "--height", "500",
+    ...sharedArgs,
+  ]);
+  const fan = await inspectPng(page, fanPath);
+  expect(fan.width).toBe(800);
+  expect(fan.height).toBe(500);
+  expect(fan.count).toBeGreaterThan(100);
+  const fanContentWidth = fan.right - fan.left + 1;
+  const fanContentHeight = fan.bottom - fan.top + 1;
+  expect(fanContentWidth / fanContentHeight).toBeGreaterThan(1.5);
 
   await runSkillScript("btv_render.py", [
     treePath,

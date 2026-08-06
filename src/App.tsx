@@ -161,7 +161,7 @@ const DEFAULT_EXPORT_DPI = 200;
 const SVG_LARGE_TREE_TIP_WARNING_THRESHOLD = 100000;
 
 function defaultExportPixelSizeForMode(mode: ViewMode): { width: number; height: number } {
-  return mode === "rectangular"
+  return mode === "rectangular" || mode === "fan"
     ? { width: DEFAULT_EXPORT_RECT_WIDTH_PX, height: DEFAULT_EXPORT_RECT_HEIGHT_PX }
     : { width: DEFAULT_EXPORT_SQUARE_SIZE_PX, height: DEFAULT_EXPORT_SQUARE_SIZE_PX };
 }
@@ -180,7 +180,7 @@ function squarePngExportSizeForMode(
   width: number | undefined,
   height: number | undefined,
 ): { width: number | undefined; height: number | undefined } {
-  if (mode === "rectangular") {
+  if (mode === "rectangular" || mode === "fan") {
     return { width, height };
   }
   if (width === undefined && height === undefined) {
@@ -1065,7 +1065,7 @@ const TUTORIAL_STEPS: Array<{
     id: "navigation",
     target: "view",
     title: "Navigate the tree",
-    body: "Switch between rectangular and circular layouts, choose tip ordering, fit the view, and zoom with the wheel, trackpad pinch, +/-, or touch gestures. Rectangular mode can lock zoom to X, Y, or both axes.",
+    body: "Switch between rectangular, circular, and fan layouts, choose tip ordering, fit the view, and zoom with the wheel, trackpad pinch, +/-, or touch gestures. Rectangular mode can lock zoom to X, Y, or both axes.",
   },
   {
     id: "visual",
@@ -2364,7 +2364,7 @@ export default function App() {
     if (!visual) {
       return;
     }
-    if (visual.viewMode === "rectangular" || visual.viewMode === "circular" || visual.viewMode === "spiral") {
+    if (visual.viewMode === "rectangular" || visual.viewMode === "circular" || visual.viewMode === "fan" || visual.viewMode === "spiral") {
       setViewMode(visual.viewMode);
       if (visual.viewMode === "spiral") {
         setShowSpiralViewOption(true);
@@ -3192,7 +3192,7 @@ export default function App() {
         } | null;
       }).__BIG_TREE_VIEWER_RENDER_DEBUG__;
       const visibleRanks = (
-        viewMode === "circular"
+        viewMode === "circular" || viewMode === "fan"
           ? renderDebug?.circular?.taxonomyVisibleRanks
           : viewMode === "spiral"
             ? renderDebug?.spiral?.visibleTaxonomyRanks
@@ -3260,7 +3260,7 @@ export default function App() {
         spiral?: { visibleTaxonomyRanks?: TaxonomyRank[] };
       } | null | undefined;
       const rawRanks = (
-        viewMode === "circular"
+        viewMode === "circular" || viewMode === "fan"
           ? renderDebug?.circular?.taxonomyVisibleRanks
           : viewMode === "spiral"
             ? renderDebug?.spiral?.visibleTaxonomyRanks
@@ -3682,8 +3682,9 @@ export default function App() {
     if (!subtreeKey) {
       return false;
     }
-    const sharedPayload = await getSharedSubtreePayload(subtreeKey);
-    const raw = sharedPayload ? JSON.stringify(sharedPayload) : window.localStorage.getItem(subtreeKey);
+    const localPayload = window.localStorage.getItem(subtreeKey);
+    const sharedPayload = localPayload ? null : await getSharedSubtreePayload(subtreeKey);
+    const raw = localPayload ?? (sharedPayload ? JSON.stringify(sharedPayload) : null);
     if (!raw) {
       setLoadState({
         loading: false,
@@ -4047,7 +4048,7 @@ export default function App() {
   ]);
 
   const applySessionSettings = useCallback((settings: BigTreeViewerSessionSettings): void => {
-    if (settings.viewMode === "rectangular" || settings.viewMode === "circular" || settings.viewMode === "spiral") {
+    if (settings.viewMode === "rectangular" || settings.viewMode === "circular" || settings.viewMode === "fan" || settings.viewMode === "spiral") {
       setViewMode(settings.viewMode);
       if (settings.viewMode === "spiral" || settings.showSpiralViewOption) {
         setShowSpiralViewOption(true);
@@ -4787,6 +4788,7 @@ export default function App() {
       const label = payload.label?.trim() || (sessionUrl ? launchLabelFromUrl(sessionUrl, "remote session") : "launch session");
       const effectiveViewMode = payload.visual?.viewMode === "rectangular"
         || payload.visual?.viewMode === "circular"
+        || payload.visual?.viewMode === "fan"
         || payload.visual?.viewMode === "spiral"
         ? payload.visual.viewMode
         : session.settings.viewMode;
@@ -4847,6 +4849,7 @@ export default function App() {
         : sourceLabel);
     const effectiveViewMode = payload.visual?.viewMode === "rectangular"
       || payload.visual?.viewMode === "circular"
+      || payload.visual?.viewMode === "fan"
       || payload.visual?.viewMode === "spiral"
       ? payload.visual.viewMode
       : viewMode;
@@ -5004,7 +5007,7 @@ export default function App() {
     if (visualParamsPresent) {
       payload.visual = {
         ...payload.visual,
-        viewMode: viewModeParam === "rectangular" || viewModeParam === "circular" || viewModeParam === "spiral"
+        viewMode: viewModeParam === "rectangular" || viewModeParam === "circular" || viewModeParam === "fan" || viewModeParam === "spiral"
           ? viewModeParam
           : payload.visual?.viewMode,
         order: orderParam === "asc" || orderParam === "desc" || orderParam === "input"
@@ -6557,7 +6560,7 @@ export default function App() {
                     Set pixels from print size
                   </button>
                   <p className="export-options-help">
-                    PNG exports the current viewport at the pixel dimensions above. Circular and spiral PNG exports are kept square; use independent width and height for rectangular views. Very large exports can take a few seconds.
+                    PNG exports the current viewport at the pixel dimensions above. Circular and spiral PNG exports are kept square; rectangular and fan views support independent width and height. Very large exports can take a few seconds.
                   </p>
                 </>
               ) : (
@@ -6601,7 +6604,7 @@ export default function App() {
         </PanelSection>
 
         <PanelSection title="View" isOpen={viewOpen} onToggle={() => setViewOpen(!viewOpen)} tourId="view">
-          <div className="segmented">
+          <div className={`segmented view-mode-segmented${showSpiralViewOption ? " has-spiral" : ""}`}>
             <button
               type="button"
               className={viewMode === "rectangular" ? "active" : ""}
@@ -6617,6 +6620,14 @@ export default function App() {
               title="Draw the tree radially around a circle."
             >
               Circular
+            </button>
+            <button
+              type="button"
+              className={viewMode === "fan" ? "active" : ""}
+              onClick={() => selectViewMode("fan")}
+              title="Draw the tree across a semicircular fan, oriented upward by default."
+            >
+              Fan
             </button>
             {showSpiralViewOption ? (
               <button
@@ -6685,9 +6696,9 @@ export default function App() {
             <span className="view-zoom-hint-desktop">Push + to zoom in and - to zoom out.</span>
             <span className="view-zoom-hint-mobile">Pinch to zoom.</span>
           </p>
-          {viewMode === "circular" || viewMode === "spiral" ? (
+          {viewMode === "circular" || viewMode === "fan" || viewMode === "spiral" ? (
             <div className="rotation-controls">
-              <label htmlFor="circular-rotation" title="Rotate the circular or spiral tree around its center.">Rotation</label>
+              <label htmlFor="circular-rotation" title="Rotate the circular, fan, or spiral tree around its center.">Rotation</label>
               <input
                 id="circular-rotation"
                 type="range"
@@ -6697,22 +6708,27 @@ export default function App() {
                 value={circularRotationDegrees}
                 onChange={(event) => setCircularRotationDegrees(Number(event.target.value))}
               />
-              <div className="button-row">
+              <div className="rotation-value-input">
+                <input
+                  type="number"
+                  aria-label="Rotation degrees"
+                  step={0.01}
+                  value={circularRotationDegrees}
+                  onChange={(event) => {
+                    const nextValue = event.target.valueAsNumber;
+                    if (Number.isFinite(nextValue)) {
+                      setCircularRotationDegrees(nextValue);
+                    }
+                  }}
+                />
+                <span>deg</span>
                 <button
                   type="button"
-                  className="secondary"
-                  onClick={() => setCircularRotationDegrees((value) => Math.max(-180, value - 15))}
+                  className="secondary rotation-reset-button"
+                  onClick={() => setCircularRotationDegrees(0)}
+                  disabled={circularRotationDegrees === 0}
+                  title="Reset rotation to zero degrees."
                 >
-                  Rotate Left
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => setCircularRotationDegrees((value) => Math.min(180, value + 15))}
-                >
-                  Rotate Right
-                </button>
-                <button type="button" className="secondary" onClick={() => setCircularRotationDegrees(0)}>
                   Reset
                 </button>
               </div>

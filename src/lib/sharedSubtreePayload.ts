@@ -164,7 +164,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     parsedTaxonomyRankDisplayModes[legacyLabelOnlyRank] = "label-only";
   }
   return {
-    viewMode: coerceEnum(source.viewMode, ["rectangular", "circular", "spiral"] as const, "rectangular"),
+    viewMode: coerceEnum(source.viewMode, ["rectangular", "circular", "fan", "spiral"] as const, "rectangular"),
     order: coerceEnum(source.order, ["asc", "desc", "input"] as const, "asc"),
     zoomAxisMode: coerceEnum(source.zoomAxisMode, ["both", "x", "y"] as const, "both"),
     circularRotationDegrees: coerceFiniteNumber(source.circularRotationDegrees, 0),
@@ -294,11 +294,30 @@ export function rebuildSharedSubtreeTaxonomyMap(
   if (!tipRanks.length) {
     return null;
   }
+  const derivedActiveRanks = deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
+  if (derivedActiveRanks.length === 0 && tipRanks.length > 1) {
+    const finestRepeatedRank = [...TAXONOMY_RANKS]
+      .reverse()
+      .filter((rank) => payload.activeRanks.includes(rank))
+      .find((rank) => {
+        const counts = new Map<string, number>();
+        for (let index = 0; index < tipRanks.length; index += 1) {
+          const label = tipRanks[index].ranks[rank];
+          if (label) {
+            counts.set(label, (counts.get(label) ?? 0) + 1);
+          }
+        }
+        return Array.from(counts.values()).some((count) => count > 1);
+      });
+    if (finestRepeatedRank) {
+      derivedActiveRanks.push(finestRepeatedRank);
+    }
+  }
   return {
     version: payload.version,
     mappedCount: tipRanks.length,
     totalTips: tree.leafNodes.length,
-    activeRanks: deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks)),
+    activeRanks: derivedActiveRanks,
     tipRanks,
   };
 }

@@ -860,6 +860,54 @@ test("switching to circular view and fitting in the same turn produces a real fi
   expect(result.debug?.branchRenderMode).toBeTruthy();
 });
 
+test("circular fit keeps genus labels inside the viewport without taxonomy ribbons", async ({ page }) => {
+  await waitForViewer(page);
+
+  for (const rotation of [0, 90]) {
+    const bounds = await page.evaluate(async (degrees) => {
+      const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+      app?.setTaxonomyEnabled(false);
+      app?.setShowGenusLabels(true);
+      app?.setViewMode("circular");
+      app?.setCircularRotationDegreesForTest(degrees);
+      app?.requestFit();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+      const svgMarkup = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+      const host = document.createElement("div");
+      host.style.cssText = "position:fixed;left:0;top:0;z-index:-1";
+      host.innerHTML = svgMarkup;
+      document.body.append(host);
+      const svg = host.querySelector("svg");
+      if (!(svg instanceof SVGSVGElement)) {
+        host.remove();
+        throw new Error("Circular SVG export was unavailable.");
+      }
+      const svgBounds = svg.getBoundingClientRect();
+      const labelBounds = Array.from(svg.querySelectorAll("text"))
+        .filter((label) => !label.textContent?.includes("mya"))
+        .map((label) => label.getBoundingClientRect());
+      const result = {
+        width: svgBounds.width,
+        height: svgBounds.height,
+        labelCount: labelBounds.length,
+        minLeft: Math.min(...labelBounds.map((label) => label.left - svgBounds.left)),
+        maxRight: Math.max(...labelBounds.map((label) => label.right - svgBounds.left)),
+        minTop: Math.min(...labelBounds.map((label) => label.top - svgBounds.top)),
+        maxBottom: Math.max(...labelBounds.map((label) => label.bottom - svgBounds.top)),
+      };
+      host.remove();
+      return result;
+    }, rotation);
+
+    expect(bounds.labelCount).toBeGreaterThan(10);
+    expect(bounds.minLeft).toBeGreaterThanOrEqual(8);
+    expect(bounds.maxRight).toBeLessThanOrEqual(bounds.width - 8);
+    expect(bounds.minTop).toBeGreaterThanOrEqual(8);
+    expect(bounds.maxBottom).toBeLessThanOrEqual(bounds.height - 8);
+  }
+});
+
 test("circular radial scale bar offsets below and rotates center labels", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");

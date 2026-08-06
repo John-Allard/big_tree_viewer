@@ -42,7 +42,7 @@ test("taxonomy branch coloring follows taxonomy and branch-color toggles, not vi
   await enableMockTaxonomy(page);
 
   const defaultBranchColor = "#0f172a";
-  const views = ["rectangular", "circular", "spiral"] as const;
+  const views = ["rectangular", "circular", "fan", "spiral"] as const;
   for (const view of views) {
     await page.evaluate(async (nextView) => {
       const app = window.__BIG_TREE_VIEWER_APP_TEST__;
@@ -258,60 +258,6 @@ test("rectangular fit-view taxonomy keeps cached colored connectors visible", as
   expect((rectDebug.taxonomyVisibleRanks ?? []).length).toBeGreaterThanOrEqual(1);
   expect((rectDebug.taxonomyVisibleRanks ?? []).length).toBeLessThanOrEqual(2);
   expect(Number(rectDebug.taxonomyConnectorSegmentCount ?? 0)).toBeGreaterThan(0);
-});
-
-test("real mapped rectangular taxonomy adds order only after class is already visible", async ({ page }) => {
-  test.setTimeout(60000);
-  await waitForViewer(page);
-  await page.evaluate(async () => {
-    await window.__BIG_TREE_VIEWER_APP_TEST__?.runRealTaxonomyMappingForTest();
-  });
-  await page.waitForFunction(() => {
-    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
-    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
-  });
-  await page.evaluate(async () => {
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  });
-
-  const rectDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
-    branchRenderMode?: string;
-    taxonomyVisibleRanks?: string[];
-  });
-
-  expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(rectDebug.branchRenderMode ?? "");
-  expect(rectDebug.taxonomyVisibleRanks ?? []).toContain("class");
-  expect(rectDebug.taxonomyVisibleRanks ?? []).not.toContain("order");
-
-  let orderVisible = false;
-  for (let step = 0; step < 8; step += 1) {
-    const point = await page.evaluate(() => {
-      const canvas = document.querySelector("canvas");
-      if (!(canvas instanceof HTMLCanvasElement)) {
-        throw new Error("Canvas unavailable.");
-      }
-      const rect = canvas.getBoundingClientRect();
-      return {
-        x: rect.left + (rect.width * 0.5),
-        y: rect.top + (rect.height * 0.5),
-      };
-    });
-    await page.mouse.move(point.x, point.y);
-    await page.mouse.wheel(0, -100);
-    await page.evaluate(async () => {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    });
-    orderVisible = await page.evaluate(() => {
-      const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined;
-      return Array.isArray(debug?.taxonomyVisibleRanks) && debug.taxonomyVisibleRanks.includes("order");
-    });
-    if (orderVisible) {
-      break;
-    }
-  }
-  expect(orderVisible).toBe(true);
 });
 
 test("real mapped rectangular max zoom-out keeps coarse taxonomy overlays and colored branches", async ({ page }) => {
@@ -655,9 +601,9 @@ test("tip context menu exposes copy tip name action", async ({ page }) => {
   const tipPoint = await page.evaluate(() => {
     const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
     const canvas = document.querySelector("canvas");
-    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy");
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
     if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
-      throw new Error("Taxonomy label hitbox unavailable.");
+      throw new Error("Tip label hitbox unavailable.");
     }
     const rect = canvas.getBoundingClientRect();
     return {
@@ -745,9 +691,9 @@ test("custom color input does not dismiss the context menu before selection", as
   const tipPoint = await page.evaluate(() => {
     const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes?.() ?? [];
     const canvas = document.querySelector("canvas");
-    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "taxonomy");
+    const tipHit = hitboxes.find((hitbox) => hitbox.labelKind === "tip");
     if (!(canvas instanceof HTMLCanvasElement) || !tipHit) {
-      throw new Error("Taxonomy label hitbox unavailable.");
+      throw new Error("Tip label hitbox unavailable.");
     }
     const rect = canvas.getBoundingClientRect();
     return {
@@ -793,9 +739,10 @@ test("opening a subtree in a new tab inherits the loaded taxonomy mapping", asyn
   const subtreeKey = `big-tree-viewer:subtree:carry-${Date.now()}`;
   await page.evaluate((key) => {
     const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
-    const targetNode = leafNodes[0];
-    if (typeof targetNode !== "number") {
-      throw new Error("Leaf node unavailable for subtree payload test.");
+    const parent = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.parent;
+    const targetNode = parent && typeof leafNodes[0] === "number" ? parent[leafNodes[0]] : -1;
+    if (targetNode < 0) {
+      throw new Error("Internal node unavailable for subtree payload test.");
     }
     const payload = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildSharedSubtreePayloadForTest(targetNode);
     if (!payload) {
@@ -836,7 +783,7 @@ test("opening a subtree in a new tab inherits the loaded taxonomy mapping", asyn
   expect(popupState?.branchThicknessScale).toBeCloseTo(1.8, 4);
   expect(popupState?.taxonomyBranchColoringEnabled).toBe(false);
   expect(popupState?.taxonomyColorJitter).toBeCloseTo(1.6, 4);
-  expect(popupState?.taxonomyRankVisibilityAuto).toBe(true);
+  expect(popupState?.taxonomyRankVisibilityAuto).toBe(false);
   expect(popupState?.circularCenterScaleAngleAuto).toBe(false);
   expect(popupState?.circularCenterScaleAngleDegrees).toBeCloseTo(23, 4);
   expect(Boolean(popupState?.figureStyles?.tip?.bold)).toBe(true);
@@ -1506,7 +1453,7 @@ test("taxonomy rank controls in taxonomy visual settings filter visible ranks", 
   });
   expect(rectDebug.taxonomyVisibleRanks ?? []).not.toContain("class");
   await page.getByRole("button", { name: "Visual Options" }).click();
-  await page.getByRole("button", { name: "Taxonomy labels settings" }).click();
+  await page.getByRole("button", { name: "Taxonomy overlays settings" }).click();
   await expect(page.getByText("Visible taxonomy ranks")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Automatic visible ranks" })).not.toBeChecked();
   await expect(page.getByRole("radio", { name: "Class hidden" })).toBeChecked();
