@@ -54,6 +54,7 @@ import {
   type SharedSubtreeTaxonomyPayload,
   type SharedSubtreeVisualPayload,
 } from "./lib/sharedSubtreePayload";
+import { compactTaxonomyToMap } from "./lib/compactTaxonomy";
 import {
   consumeStagedLaunchPayload,
   deleteExpiredStagedLaunchPayloads,
@@ -86,7 +87,13 @@ import {
 import { rerootTreePayload, type RerootMode } from "./lib/rerootTree";
 import { looksLikeTreeText, normalizeImportedTreeText } from "./lib/treeImport";
 import type { WorkerResponse } from "./types/messages";
-import { TAXONOMY_RANKS, type TaxonomyCollapseRank, type TaxonomyMapPayload, type TaxonomyRank } from "./types/taxonomy";
+import {
+  TAXONOMY_RANKS,
+  type CompactTaxonomyPayload,
+  type TaxonomyCollapseRank,
+  type TaxonomyMapPayload,
+  type TaxonomyRank,
+} from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
@@ -193,6 +200,7 @@ type BigTreeViewerLaunchPayload = {
   label?: string;
   taxonomy?: {
     map?: TaxonomyMapPayload | null;
+    compact?: CompactTaxonomyPayload;
     runMapping?: boolean;
     lowMemoryMode?: boolean;
     allowDownload?: boolean;
@@ -1705,6 +1713,8 @@ export default function App() {
   const pendingTreeReplacementTaxonomyEnabledRef = useRef<boolean | null>(null);
   const pendingSessionTaxonomyRef = useRef<TaxonomyMapPayload | null | undefined>(undefined);
   const pendingSessionTaxonomyEnabledRef = useRef<boolean | null>(null);
+  const pendingSessionTaxonomySourceRef = useRef<"session" | "launch payload">("session");
+  const pendingCompactLaunchTaxonomyRef = useRef<CompactTaxonomyPayload | null>(null);
   const pendingLaunchTaxonomyMappingRef = useRef<{
     lowMemoryMode: boolean;
     allowDownload: boolean;
@@ -3351,6 +3361,30 @@ export default function App() {
       return;
     }
     const nextTree = buildTreeModel(data.payload);
+    const pendingCompactTaxonomy = pendingCompactLaunchTaxonomyRef.current;
+    if (pendingCompactTaxonomy) {
+      try {
+        pendingSessionTaxonomyRef.current = compactTaxonomyToMap(nextTree, pendingCompactTaxonomy);
+      } catch (error) {
+        pendingCompactLaunchTaxonomyRef.current = null;
+        pendingSessionTaxonomyRef.current = undefined;
+        pendingSessionTaxonomyEnabledRef.current = null;
+        const compactError = error instanceof Error ? error : new Error(String(error));
+        const rejectParse = pendingTreeParseRejecterRef.current;
+        pendingTreeParseResolverRef.current = null;
+        pendingTreeParseRejecterRef.current = null;
+        pendingTreeSignatureRef.current = null;
+        pendingTreeLabelRef.current = "";
+        setLoadState({
+          loading: false,
+          message: "Failed to apply compact taxonomy.",
+          error: compactError.message,
+        });
+        rejectParse?.(compactError);
+        return;
+      }
+      pendingCompactLaunchTaxonomyRef.current = null;
+    }
     const nextSignature = pendingTreeSignatureRef.current;
     currentTreeRef.current = nextTree;
     currentTreeSignatureRef.current = nextSignature;
@@ -4314,14 +4348,16 @@ export default function App() {
     if (pendingSessionTaxonomyRef.current !== undefined || pendingSessionCanvasStateRef.current !== undefined) {
       const sessionTaxonomy = pendingSessionTaxonomyRef.current;
       const sessionTaxonomyEnabled = pendingSessionTaxonomyEnabledRef.current;
+      const sessionTaxonomySource = pendingSessionTaxonomySourceRef.current;
       const hasPendingCanvasState = pendingSessionCanvasStateRef.current !== undefined;
       const resolveSessionRestore = pendingSessionRestoreResolverRef.current;
       pendingSessionTaxonomyRef.current = undefined;
       pendingSessionTaxonomyEnabledRef.current = null;
+      pendingSessionTaxonomySourceRef.current = "session";
       setTaxonomyMap(sessionTaxonomy ?? null);
       setTaxonomyEnabled(sessionTaxonomy ? sessionTaxonomyEnabled ?? true : false);
       setTaxonomyStatus(sessionTaxonomy
-        ? `Loaded taxonomy mapping from session (${sessionTaxonomy.mappedCount.toLocaleString()} mapped tips).`
+        ? `Loaded taxonomy mapping from ${sessionTaxonomySource} (${sessionTaxonomy.mappedCount.toLocaleString()} mapped tips).`
         : "");
       setTaxonomyError(null);
       setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, sessionTaxonomy ?? null));
@@ -4491,6 +4527,7 @@ export default function App() {
       setSessionStatus(`Parsing tree from ${label}...`);
       pendingSessionTaxonomyRef.current = session.taxonomy?.map ?? null;
       pendingSessionTaxonomyEnabledRef.current = session.settings.taxonomyEnabled;
+      pendingSessionTaxonomySourceRef.current = "session";
       pendingSessionPhyloPicRef.current = session.phylopic;
       pendingSessionCanvasStateRef.current = session.canvas ?? null;
       const restoreApplied = new Promise<void>((resolve) => {
@@ -4723,7 +4760,12 @@ export default function App() {
     }
     const launchTaxonomyMap = normalizeLaunchTaxonomyMap(payload.taxonomy?.map);
     const launchTaxonomyProvided = launchTaxonomyMap !== undefined;
+    const launchCompactTaxonomy = payload.taxonomy?.compact;
+    const launchCompactTaxonomyProvided = launchCompactTaxonomy !== undefined;
     const launchTaxonomyRunMapping = payload.taxonomy?.runMapping === true;
+    if (launchCompactTaxonomyProvided && (launchTaxonomyProvided || launchTaxonomyRunMapping)) {
+      throw new Error("taxonomy.compact cannot be combined with taxonomy.map or taxonomy.runMapping.");
+    }
     const launchTaxonomyLowMemoryMode = payload.taxonomy?.lowMemoryMode ?? useLowMemoryTaxonomyMapping;
     const launchTaxonomyAllowDownload = payload.taxonomy?.allowDownload === true;
     const waitForLaunchTaxonomyMapping = (): Promise<TaxonomyMapPayload | null> | null => {
@@ -4753,14 +4795,21 @@ export default function App() {
       }
       await applyLaunchMetadata(payload.metadata);
       applyLaunchVisualSettings(payload.visual);
-      if (launchTaxonomyProvided) {
-        setTaxonomyMap(launchTaxonomyMap ?? null);
-        setTaxonomyEnabled(launchTaxonomyMap ? payload.visual?.taxonomyEnabled ?? true : false);
-        setTaxonomyStatus(launchTaxonomyMap
-          ? `Loaded taxonomy mapping from launch payload (${launchTaxonomyMap.mappedCount.toLocaleString()} mapped tips).`
+      if (launchTaxonomyProvided || launchCompactTaxonomyProvided) {
+        const restoredTree = currentTreeRef.current;
+        if (launchCompactTaxonomyProvided && !restoredTree) {
+          throw new Error("The compact taxonomy could not be applied because the session did not load a tree.");
+        }
+        const suppliedTaxonomyMap = launchCompactTaxonomyProvided
+          ? compactTaxonomyToMap(restoredTree!, launchCompactTaxonomy)
+          : launchTaxonomyMap ?? null;
+        setTaxonomyMap(suppliedTaxonomyMap);
+        setTaxonomyEnabled(suppliedTaxonomyMap ? payload.visual?.taxonomyEnabled ?? true : false);
+        setTaxonomyStatus(suppliedTaxonomyMap
+          ? `Loaded taxonomy mapping from launch payload (${suppliedTaxonomyMap.mappedCount.toLocaleString()} mapped tips).`
           : "");
         setTaxonomyError(null);
-        setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, launchTaxonomyMap ?? null));
+        setTaxonomyMappingWarning(buildTaxonomyMappingWarning(restoredTree, suppliedTaxonomyMap));
       }
       const canvas = normalizeLaunchCanvasState(payload.canvas);
       if (canvas !== undefined) {
@@ -4803,11 +4852,16 @@ export default function App() {
       : viewMode;
     const canvas = normalizeLaunchCanvasState(payload.canvas);
     const taxonomyMappingDone = waitForLaunchTaxonomyMapping();
-    const restoreApplied = canvas !== undefined || (launchTaxonomyProvided && !launchTaxonomyRunMapping)
+    const restoreApplied = canvas !== undefined || launchTaxonomyProvided || launchCompactTaxonomyProvided
       ? new Promise<void>((resolve) => {
-          if (launchTaxonomyProvided && !launchTaxonomyRunMapping) {
+          if (launchTaxonomyProvided) {
             pendingSessionTaxonomyRef.current = launchTaxonomyMap ?? null;
             pendingSessionTaxonomyEnabledRef.current = launchTaxonomyMap ? payload.visual?.taxonomyEnabled ?? true : false;
+            pendingSessionTaxonomySourceRef.current = "launch payload";
+          } else if (launchCompactTaxonomyProvided) {
+            pendingCompactLaunchTaxonomyRef.current = launchCompactTaxonomy;
+            pendingSessionTaxonomyEnabledRef.current = payload.visual?.taxonomyEnabled ?? true;
+            pendingSessionTaxonomySourceRef.current = "launch payload";
           }
           pendingSessionCanvasStateRef.current = canvas;
           pendingSessionRestoreResolverRef.current = resolve;
@@ -4827,6 +4881,10 @@ export default function App() {
       await waitForMetadataOverlayCompletion();
     } catch (error) {
       if (restoreApplied) {
+        pendingCompactLaunchTaxonomyRef.current = null;
+        pendingSessionTaxonomyRef.current = undefined;
+        pendingSessionTaxonomyEnabledRef.current = null;
+        pendingSessionTaxonomySourceRef.current = "session";
         pendingSessionCanvasStateRef.current = undefined;
         pendingSessionRestoreResolverRef.current = null;
       }

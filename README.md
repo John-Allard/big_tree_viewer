@@ -53,6 +53,7 @@ For larger trees or richer metadata, open `/?btv_api=1` and send a message after
 ```js
 const viewer = window.open("https://bigtreeviewer.net/?btv_api=1", "_blank");
 window.addEventListener("message", (event) => {
+  if (event.origin !== "https://bigtreeviewer.net" || event.source !== viewer) return;
   if (event.data?.type !== "big-tree-viewer:ready") return;
   viewer.postMessage({
     type: "big-tree-viewer:load",
@@ -69,6 +70,39 @@ window.addEventListener("message", (event) => {
     },
   }, "https://bigtreeviewer.net");
 });
+```
+
+Sites that already have taxonomy for every tip can supply a compact taxon graph
+without running BTV taxonomy mapping or downloading the NCBI taxdump. Tip indices
+are zero-based and follow the left-to-right leaf order in the supplied Newick;
+`tipLabel` is optional but recommended as a validation check.
+
+```js
+viewer.postMessage({
+  type: "big-tree-viewer:load",
+  payload: {
+    newick: "(Homo_sapiens:1,Pan_troglodytes:1)Hominini;",
+    taxonomy: {
+      compact: {
+        format: "big-tree-viewer-compact-taxonomy",
+        version: 1,
+        taxa: [
+          { taxId: 1, parentTaxId: 1, rank: "no rank", name: "root" },
+          { taxId: 9604, parentTaxId: 1, rank: "family", name: "Hominidae" },
+          { taxId: 9605, parentTaxId: 9604, rank: "genus", name: "Homo" },
+          { taxId: 9606, parentTaxId: 9605, rank: "species", name: "Homo sapiens" },
+          { taxId: 9596, parentTaxId: 9604, rank: "genus", name: "Pan" },
+          { taxId: 9598, parentTaxId: 9596, rank: "species", name: "Pan troglodytes" },
+        ],
+        tips: [
+          { tipIndex: 0, tipLabel: "Homo_sapiens", taxId: 9606 },
+          { tipIndex: 1, tipLabel: "Pan_troglodytes", taxId: 9598 },
+        ],
+      },
+    },
+    visual: { viewMode: "circular", taxonomyEnabled: true },
+  },
+}, "https://bigtreeviewer.net");
 ```
 
 ## Automated tests

@@ -162,11 +162,18 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
           <p>
             URLs are not suitable for large trees. Open Big Tree Viewer with
             `?btv_api=1`, wait for `big-tree-viewer:ready`, then send a load
-            message containing the payload.
+            message containing the payload. Open the viewer synchronously from
+            the user&apos;s click before awaiting any API request, otherwise the
+            browser may block the new tab.
           </p>
-          <pre><code>{`const viewer = window.open("${origin}?btv_api=1", "_blank");
+          <pre><code>{`const btvOrigin = "${origin.replace(/\/$/, "")}";
+const viewer = window.open(
+  btvOrigin + "/?btv_api=1",
+  "BigTreeViewer"
+);
 
 window.addEventListener("message", (event) => {
+  if (event.origin !== btvOrigin || event.source !== viewer) return;
   if (event.data?.type !== "big-tree-viewer:ready") return;
   viewer.postMessage({
     type: "big-tree-viewer:load",
@@ -185,8 +192,58 @@ window.addEventListener("message", (event) => {
         enabled: true
       }
     }
-  }, "${origin.replace(/\/$/, "")}");
+  }, btvOrigin);
 });`}</code></pre>
+        </section>
+
+        <section className="api-doc-section">
+          <h2>Compact taxonomy handoff</h2>
+          <p>
+            A site that already knows the taxonomy for every tree tip can send a
+            deduplicated taxon graph in `taxonomy.compact`. This avoids downloading
+            the NCBI taxdump and does not require the sender to know Big Tree
+            Viewer&apos;s internal node numbers. Each zero-based `tipIndex` identifies
+            a leaf in left-to-right Newick input order. The optional `tipLabel` is
+            checked against the parsed tree so mismatched data fails explicitly.
+          </p>
+          <p>
+            Taxon records may include species, unranked, or intermediate nodes.
+            Big Tree Viewer follows `parentTaxId` links and extracts superkingdom,
+            phylum, class, order, family, and genus. A parent link may also skip
+            omitted intermediate nodes and point directly to the next supplied
+            ancestor. End a lineage with a null, omitted, or self-referencing
+            parent.
+          </p>
+          <pre><code>{`viewer.postMessage({
+  type: "big-tree-viewer:load",
+  payload: {
+    newick: "(Homo_sapiens:1,Pan_troglodytes:1)Hominini;",
+    label: "TimeTree query",
+    taxonomy: {
+      compact: {
+        format: "big-tree-viewer-compact-taxonomy",
+        version: 1,
+        taxa: [
+          { taxId: 1, parentTaxId: 1, rank: "no rank", name: "root" },
+          { taxId: 2759, parentTaxId: 1, rank: "superkingdom", name: "Eukaryota" },
+          { taxId: 7711, parentTaxId: 2759, rank: "phylum", name: "Chordata" },
+          { taxId: 40674, parentTaxId: 7711, rank: "class", name: "Mammalia" },
+          { taxId: 9443, parentTaxId: 40674, rank: "order", name: "Primates" },
+          { taxId: 9604, parentTaxId: 9443, rank: "family", name: "Hominidae" },
+          { taxId: 9605, parentTaxId: 9604, rank: "genus", name: "Homo" },
+          { taxId: 9606, parentTaxId: 9605, rank: "species", name: "Homo sapiens" },
+          { taxId: 9596, parentTaxId: 9604, rank: "genus", name: "Pan" },
+          { taxId: 9598, parentTaxId: 9596, rank: "species", name: "Pan troglodytes" }
+        ],
+        tips: [
+          { tipIndex: 0, tipLabel: "Homo_sapiens", taxId: 9606 },
+          { tipIndex: 1, tipLabel: "Pan_troglodytes", taxId: 9598 }
+        ]
+      }
+    },
+    visual: { viewMode: "circular", taxonomyEnabled: true }
+  }
+}, "${origin.replace(/\/$/, "")}");`}</code></pre>
         </section>
 
         <section className="api-doc-section">
@@ -209,6 +266,16 @@ window.addEventListener("message", (event) => {
   session?: object,
   sessionUrl?: string,
   label?: string,
+  taxonomy?: {
+    map?: object,
+    compact?: {
+      format: "big-tree-viewer-compact-taxonomy",
+      version: 1,
+      taxa: Array<{ taxId: number, parentTaxId?: number | null, rank: string, name: string }>,
+      tips: Array<{ tipIndex: number, tipLabel?: string, taxId: number }>
+    },
+    runMapping?: boolean
+  },
   export?: {
     format?: "svg" | "png",
     delivery?: "download" | "postMessage",

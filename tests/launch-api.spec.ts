@@ -593,6 +593,24 @@ test("launch API announces readiness once per viewer document", async ({ page })
             type: "big-tree-viewer:load",
             payload: {
               newick: "(A_species:1,B_species:1)Root;",
+              taxonomy: {
+                compact: {
+                  format: "big-tree-viewer-compact-taxonomy",
+                  version: 1,
+                  taxa: [
+                    { taxId: 1, parentTaxId: 1, rank: "no rank", name: "root" },
+                    { taxId: 2, parentTaxId: 1, rank: "family", name: "Testaceae" },
+                    { taxId: 3, parentTaxId: 2, rank: "genus", name: "A" },
+                    { taxId: 4, parentTaxId: 3, rank: "species", name: "A species" },
+                    { taxId: 5, parentTaxId: 2, rank: "genus", name: "B" },
+                    { taxId: 6, parentTaxId: 5, rank: "species", name: "B species" },
+                  ],
+                  tips: [
+                    { tipIndex: 0, tipLabel: "A_species", taxId: 4 },
+                    { tipIndex: 1, tipLabel: "B_species", taxId: 6 },
+                  ],
+                },
+              },
               visual: { viewMode: "circular" },
             },
           }, window.location.origin);
@@ -609,15 +627,19 @@ test("launch API announces readiness once per viewer document", async ({ page })
   await page.waitForFunction(() => (
     (window as typeof window & { __btvLoadedCount?: number }).__btvLoadedCount === 1
   ));
+  await popup.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
   await page.waitForTimeout(250);
   const counts = await page.evaluate(() => ({
     ready: (window as typeof window & { __btvReadyCount?: number }).__btvReadyCount ?? 0,
     loaded: (window as typeof window & { __btvLoadedCount?: number }).__btvLoadedCount ?? 0,
   }));
+  const popupState = await popup.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
   await popup.close();
 
   expect(counts.ready).toBe(1);
   expect(counts.loaded).toBe(1);
+  expect(popupState?.taxonomyEnabled).toBe(true);
+  expect(popupState?.taxonomyMappedCount).toBe(2);
 });
 
 test("postMessage launch API accepts a taxonomy map payload", async ({ page }) => {
@@ -658,6 +680,225 @@ test("postMessage launch API accepts a taxonomy map payload", async ({ page }) =
   expect(state?.viewMode).toBe("circular");
   expect(state?.taxonomyEnabled).toBe(true);
   expect(state?.taxonomyMappedCount).toBe(2);
+});
+
+test("postMessage launch API resolves compact taxonomy by input tip order", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1,C_species:1,D_species:1)Root;",
+        label: "compact-taxonomy-launch-tree",
+        taxonomy: {
+          compact: {
+            format: "big-tree-viewer-compact-taxonomy",
+            version: 1,
+            taxa: [
+              { taxId: 1, parentTaxId: 1, rank: "no rank", name: "root" },
+              { taxId: 2, parentTaxId: 1, rank: "superkingdom", name: "Eukaryota" },
+              { taxId: 3, parentTaxId: 2, rank: "phylum", name: "Chordata" },
+              { taxId: 4, parentTaxId: 3, rank: "class", name: "Mammalia" },
+              { taxId: 5, parentTaxId: 4, rank: "order", name: "Primates" },
+              { taxId: 6, parentTaxId: 5, rank: "family", name: "Hominidae" },
+              { taxId: 7, parentTaxId: 6, rank: "genus", name: "Homo" },
+              { taxId: 8, parentTaxId: 7, rank: "species", name: "A species" },
+              { taxId: 9, parentTaxId: 7, rank: "species", name: "B species" },
+              { taxId: 10, parentTaxId: 4, rank: "order", name: "Rodentia" },
+              { taxId: 11, parentTaxId: 10, rank: "family", name: "Muridae" },
+              { taxId: 12, parentTaxId: 11, rank: "genus", name: "Mus" },
+              { taxId: 13, parentTaxId: 12, rank: "species", name: "C species" },
+              { taxId: 14, parentTaxId: 12, rank: "species", name: "D species" },
+            ],
+            tips: [
+              { tipIndex: 0, tipLabel: "A_species", taxId: 8 },
+              { tipIndex: 1, tipLabel: "B_species", taxId: 9 },
+              { tipIndex: 2, tipLabel: "C_species", taxId: 13 },
+              { tipIndex: 3, tipLabel: "D_species", taxId: 14 },
+            ],
+          },
+        },
+        visual: {
+          viewMode: "circular",
+          taxonomyEnabled: true,
+          taxonomyRankVisibility: { family: true, genus: true },
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 4);
+
+  const result = await page.evaluate(() => {
+    const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
+    return {
+      state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
+      leafNodes: internal?.leafNodes ?? [],
+      taxonomy: window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null,
+    };
+  });
+
+  expect(result.state?.viewMode).toBe("circular");
+  expect(result.state?.taxonomyEnabled).toBe(true);
+  expect(result.taxonomy?.mappedCount).toBe(4);
+  expect(result.taxonomy?.totalTips).toBe(4);
+  expect(result.taxonomy?.activeRanks).toEqual(["genus", "family", "order"]);
+  expect(result.taxonomy?.tipRanks.map((tip) => tip.node)).toEqual(result.leafNodes);
+  expect(result.taxonomy?.tipRanks[0]?.ranks).toMatchObject({
+    superkingdom: "Eukaryota",
+    phylum: "Chordata",
+    class: "Mammalia",
+    order: "Primates",
+    family: "Hominidae",
+    genus: "Homo",
+  });
+  expect(result.taxonomy?.tipRanks[0]?.taxIds?.genus).toBe(7);
+  expect(result.taxonomy?.tipRanks[2]?.ranks.genus).toBe("Mus");
+});
+
+test("postMessage compact taxonomy supports partial tip mappings", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(Mapped_A:1,Unmapped:1,Mapped_B:1)Root;",
+        taxonomy: {
+          compact: {
+            format: "big-tree-viewer-compact-taxonomy",
+            version: 1,
+            taxa: [
+              { taxId: 1, parentTaxId: 1, rank: "no rank", name: "root" },
+              { taxId: 2, parentTaxId: 1, rank: "family", name: "Exampleidae" },
+              { taxId: 3, parentTaxId: 2, rank: "genus", name: "Alpha" },
+              { taxId: 4, parentTaxId: 3, rank: "species", name: "Mapped A" },
+              { taxId: 5, parentTaxId: 2, rank: "genus", name: "Beta" },
+              { taxId: 6, parentTaxId: 5, rank: "species", name: "Mapped B" },
+            ],
+            tips: [
+              { tipIndex: 0, tipLabel: "Mapped_A", taxId: 4 },
+              { tipIndex: 2, tipLabel: "Mapped_B", taxId: 6 },
+            ],
+          },
+        },
+        visual: { taxonomyEnabled: true },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+
+  expect(taxonomy?.mappedCount).toBe(2);
+  expect(taxonomy?.totalTips).toBe(3);
+  expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus)).toEqual(["Alpha", "Beta"]);
+});
+
+test("postMessage compact taxonomy handles a 1000-tip handoff without downloading taxdump", async ({ page }) => {
+  let taxdumpRequestCount = 0;
+  await page.route("https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip", async (route) => {
+    taxdumpRequestCount += 1;
+    await route.abort();
+  });
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    const tipCount = 1000;
+    const tips = Array.from({ length: tipCount }, (_, index) => `Tip_${index.toString().padStart(4, "0")}`);
+    const taxa: Array<{ taxId: number; parentTaxId: number; rank: string; name: string }> = [
+      { taxId: 1, parentTaxId: 1, rank: "no rank", name: "root" },
+      { taxId: 2, parentTaxId: 1, rank: "phylum", name: "Examplephylum" },
+    ];
+    for (let familyIndex = 0; familyIndex < 10; familyIndex += 1) {
+      taxa.push({
+        taxId: 100 + familyIndex,
+        parentTaxId: 2,
+        rank: "family",
+        name: `Family_${familyIndex}`,
+      });
+    }
+    for (let genusIndex = 0; genusIndex < 100; genusIndex += 1) {
+      taxa.push({
+        taxId: 1000 + genusIndex,
+        parentTaxId: 100 + Math.floor(genusIndex / 10),
+        rank: "genus",
+        name: `Genus_${genusIndex}`,
+      });
+    }
+    for (let tipIndex = 0; tipIndex < tipCount; tipIndex += 1) {
+      taxa.push({
+        taxId: 10_000 + tipIndex,
+        parentTaxId: 1000 + Math.floor(tipIndex / 10),
+        rank: "species",
+        name: `Species ${tipIndex}`,
+      });
+    }
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: `(${tips.map((tip) => `${tip}:1`).join(",")})Root;`,
+        taxonomy: {
+          compact: {
+            format: "big-tree-viewer-compact-taxonomy",
+            version: 1,
+            taxa,
+            tips: tips.map((tipLabel, tipIndex) => ({
+              tipIndex,
+              tipLabel,
+              taxId: 10_000 + tipIndex,
+            })),
+          },
+        },
+        visual: { viewMode: "circular", taxonomyEnabled: true },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 1000);
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+
+  expect(taxonomy?.mappedCount).toBe(1000);
+  expect(taxonomy?.totalTips).toBe(1000);
+  expect(taxonomy?.tipRanks).toHaveLength(1000);
+  expect(taxonomy?.activeRanks).toEqual(["genus", "family"]);
+  expect(taxdumpRequestCount).toBe(0);
+});
+
+test("postMessage compact taxonomy rejects mismatched tip labels", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(Actual_label:1,Other:1)Root;",
+        taxonomy: {
+          compact: {
+            format: "big-tree-viewer-compact-taxonomy",
+            version: 1,
+            taxa: [{ taxId: 10, rank: "genus", name: "Actual" }],
+            tips: [{ tipIndex: 0, tipLabel: "Wrong_label", taxId: 10 }],
+          },
+        },
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => (
+    String(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().loadError ?? "").includes("label mismatch")
+  ));
+  const result = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null);
+
+  expect(result?.loadError).toContain('expected "Actual_label", received "Wrong_label"');
+  expect(result?.treeLoaded).toBe(false);
 });
 
 test("postMessage launch API can run the standard taxonomy mapper", async ({ page }) => {

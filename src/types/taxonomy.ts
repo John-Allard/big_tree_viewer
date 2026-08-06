@@ -33,6 +33,26 @@ export interface TaxonomyMapPayload {
   tipRanks: TaxonomyTipRanks[];
 }
 
+export interface CompactTaxonomyTaxon {
+  taxId: number;
+  parentTaxId?: number | null;
+  rank: string;
+  name: string;
+}
+
+export interface CompactTaxonomyTip {
+  tipIndex: number;
+  tipLabel?: string;
+  taxId: number;
+}
+
+export interface CompactTaxonomyPayload {
+  format: "big-tree-viewer-compact-taxonomy";
+  version: 1;
+  taxa: CompactTaxonomyTaxon[];
+  tips: CompactTaxonomyTip[];
+}
+
 export interface TaxonomyBlock {
   rank: TaxonomyRank;
   label: string;

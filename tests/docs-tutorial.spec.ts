@@ -10,6 +10,8 @@ test("API documentation page is linked and documents launch parameters", async (
   await expect(page.getByRole("heading", { name: "Launch API" })).toBeVisible();
   await expect(page.getByText("btv_newick").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Large trees with postMessage" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Compact taxonomy handoff" })).toBeVisible();
+  await expect(page.getByText("big-tree-viewer-compact-taxonomy").first()).toBeVisible();
   await expect(page.getByText("Metadata-driven branch colors")).toBeVisible();
 });
 
