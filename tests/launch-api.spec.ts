@@ -96,7 +96,6 @@ function sessionSettings(overrides: Record<string, unknown> = {}): Record<string
   };
   return {
     viewMode: "rectangular",
-    showSpiralViewOption: false,
     order: "asc",
     zoomAxisMode: "both",
     circularRotationDegrees: 0,
@@ -168,18 +167,9 @@ function sessionSettings(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
-test("spiral view option stays hidden on ordinary page load until the shortcut is pressed", async ({ page }) => {
+test("spiral view option is available on ordinary page load", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
-
-  await expect(page.getByRole("button", { name: "Spiral" })).toHaveCount(0);
-
-  await page.keyboard.down("Shift");
-  await page.keyboard.down("S");
-  await page.keyboard.down("P");
-  await page.keyboard.up("P");
-  await page.keyboard.up("S");
-  await page.keyboard.up("Shift");
 
   await expect(page.getByRole("button", { name: "Spiral" })).toBeVisible();
 });

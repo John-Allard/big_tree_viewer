@@ -272,7 +272,6 @@ type LaunchLoadResult = {
 
 type BigTreeViewerSessionSettings = {
   viewMode: ViewMode;
-  showSpiralViewOption: boolean;
   order: LayoutOrder;
   zoomAxisMode: ZoomAxisMode;
   circularRotationDegrees: number;
@@ -1737,7 +1736,6 @@ export default function App() {
   const automationExportRequestCounterRef = useRef(0);
   const automationExportReplyTargetsRef = useRef<Map<number, { target: Window | null; origin: string }>>(new Map());
   const apiReadyAnnouncedRef = useRef(false);
-  const spiralShortcutKeysRef = useRef(new Set<string>());
   const [tree, setTree] = useState<TreeModel | null>(null);
   const [treeSignature, setTreeSignature] = useState<string | null>(null);
   const currentTreeRef = useRef<TreeModel | null>(null);
@@ -1748,7 +1746,6 @@ export default function App() {
     message: "Load a Newick tree to begin.",
     error: null,
   });
-  const [showSpiralViewOption, setShowSpiralViewOption] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("rectangular");
   const [order, setOrder] = useState<LayoutOrder>("asc");
   const [zoomAxisMode, setZoomAxisMode] = useState<ZoomAxisMode>("both");
@@ -1949,38 +1946,6 @@ export default function App() {
     setTutorialActive(false);
     setTutorialCardReady(false);
   }, [tutorialSuppressedForMobile]);
-  useEffect(() => {
-    if (showSpiralViewOption) {
-      return;
-    }
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.repeat || !event.shiftKey) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      if (key !== "s" && key !== "p") {
-        return;
-      }
-      const pressed = spiralShortcutKeysRef.current;
-      pressed.add(key);
-      if (pressed.has("s") && pressed.has("p")) {
-        setShowSpiralViewOption(true);
-        pressed.clear();
-      }
-    };
-    const handleKeyUp = (event: KeyboardEvent): void => {
-      spiralShortcutKeysRef.current.delete(event.key.toLowerCase());
-      if (event.key === "Shift") {
-        spiralShortcutKeysRef.current.clear();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, [showSpiralViewOption]);
   useEffect(() => {
     if (tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT && viewMode === "spiral") {
       setViewMode("circular");
@@ -2366,9 +2331,6 @@ export default function App() {
     }
     if (visual.viewMode === "rectangular" || visual.viewMode === "circular" || visual.viewMode === "fan" || visual.viewMode === "spiral") {
       setViewMode(visual.viewMode);
-      if (visual.viewMode === "spiral") {
-        setShowSpiralViewOption(true);
-      }
     }
     if (visual.order === "asc" || visual.order === "desc" || visual.order === "input") {
       setOrder(visual.order);
@@ -3893,7 +3855,6 @@ export default function App() {
 
   const captureSessionSettings = useCallback((): BigTreeViewerSessionSettings => ({
     viewMode,
-    showSpiralViewOption,
     order,
     zoomAxisMode,
     circularRotationDegrees,
@@ -4021,7 +3982,6 @@ export default function App() {
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
-    showSpiralViewOption,
     showTimeStripes,
     showTipLabels,
     alignTipLabels,
@@ -4050,9 +4010,6 @@ export default function App() {
   const applySessionSettings = useCallback((settings: BigTreeViewerSessionSettings): void => {
     if (settings.viewMode === "rectangular" || settings.viewMode === "circular" || settings.viewMode === "fan" || settings.viewMode === "spiral") {
       setViewMode(settings.viewMode);
-      if (settings.viewMode === "spiral" || settings.showSpiralViewOption) {
-        setShowSpiralViewOption(true);
-      }
     }
     if (settings.order === "input" || settings.order === "asc" || settings.order === "desc") {
       setOrder(settings.order);
@@ -6604,7 +6561,7 @@ export default function App() {
         </PanelSection>
 
         <PanelSection title="View" isOpen={viewOpen} onToggle={() => setViewOpen(!viewOpen)} tourId="view">
-          <div className={`segmented view-mode-segmented${showSpiralViewOption ? " has-spiral" : ""}`}>
+          <div className="segmented view-mode-segmented has-spiral">
             <button
               type="button"
               className={viewMode === "rectangular" ? "active" : ""}
@@ -6629,21 +6586,19 @@ export default function App() {
             >
               Fan
             </button>
-            {showSpiralViewOption ? (
-              <button
-                type="button"
-                className={viewMode === "spiral" ? "active" : ""}
-                onClick={() => selectViewMode("spiral")}
-                disabled={!tree || tree.leafCount < MIN_SPIRAL_TIP_COUNT}
-                title={
-                  tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT
-                    ? `Spiral mode requires at least ${MIN_SPIRAL_TIP_COUNT.toLocaleString()} tips.`
-                    : "Draw time-calibrated trees as a spiral so deep time and recent tips can share the same figure."
-                }
-              >
-                Spiral
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className={viewMode === "spiral" ? "active" : ""}
+              onClick={() => selectViewMode("spiral")}
+              disabled={!tree || tree.leafCount < MIN_SPIRAL_TIP_COUNT}
+              title={
+                tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT
+                  ? `Spiral mode requires at least ${MIN_SPIRAL_TIP_COUNT.toLocaleString()} tips.`
+                  : "Draw time-calibrated trees as a spiral so deep time and recent tips can share the same figure."
+              }
+            >
+              Spiral
+            </button>
           </div>
           <div className="view-group-divider" aria-hidden="true" />
           <div className="segmented">
