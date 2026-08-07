@@ -639,6 +639,33 @@ function compressedSpiralTaxonomyMetrics(
   };
 }
 
+function compressedSpiralGenusStyle(
+  metrics: SpiralMetrics,
+  cameraScale: number,
+  spiralTipSpacingPx: number,
+  tipLabelsVisible: boolean,
+  tipLabelGapPx: number,
+  tipLabelBandWidthPx: number,
+): { progress: number; offset: number; lineWidthPx: number } {
+  const progress = smoothstep01(
+    (spiralTipSpacingPx - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX)
+    / Math.max(1e-6, SPIRAL_TAXONOMY_COMPRESSION_COMPLETE_SPACING_PX - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX),
+  );
+  const safeScale = Math.max(cameraScale, 1e-6);
+  const naturalOffsetPx = 0.08 * safeScale;
+  const targetOffsetPx = tipLabelsVisible
+    ? tipLabelGapPx + tipLabelBandWidthPx + 12
+    : Math.min(naturalOffsetPx, 12);
+  const naturalLineWidthPx = Math.max(1.2, 0.008 * safeScale);
+  return {
+    progress,
+    offset: metrics.bandWidth + (
+      ((naturalOffsetPx * (1 - progress)) + (targetOffsetPx * progress)) / safeScale
+    ),
+    lineWidthPx: (naturalLineWidthPx * (1 - progress)) + (1.2 * progress),
+  };
+}
+
 function spiralCurveSampleCount(
   startTheta: number,
   endTheta: number,
@@ -9535,6 +9562,11 @@ export default function TreeCanvas({
           (SPIRAL_DETAIL_BRANCH_OPACITY - SPIRAL_DENSE_COLORED_BRANCH_OPACITY)
           * spiralBranchDetailProgress
         );
+      let spiralGenusOffsetFromTipsPx: number | null = null;
+      let spiralGenusLineWidthPx: number | null = null;
+      let spiralGenusMaxFontSizePx: number | null = null;
+      let spiralPlacedGenusLabelCount = 0;
+      let spiralFirstGenusWorld: { x: number; y: number } | null = null;
 
       if (showTimeStripes && timeStripeStyle === "bands") {
         const bandCount = Math.max(1, timeBoundaryValues.length - 1);
@@ -10231,11 +10263,23 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       } else if (!taxonomyEnabled && showGenusLabels) {
         const genusBlocks = cache.genusBlocksPriority[order];
-        const genusOffset = metrics.bandWidth + 0.08;
+        const genusStyle = compressedSpiralGenusStyle(
+          metrics,
+          camera.scale,
+          spiralTipSpacingPx,
+          spiralTipLabelsVisible,
+          spiralTipLabelGapPx,
+          spiralTipLabelBandWidthPx,
+        );
+        const genusOffset = genusStyle.offset;
+        const genusArcLineWidthPx = genusStyle.lineWidthPx;
         const genusPath = new Path2D();
         const placedGenusLabels: ScreenLabel[] = [];
         const minGenusFontSize = scaleLabelFontSize("genus", 5.8);
-        const maxGenusFontSize = scaleLabelFontSize("genus", Math.max(8, Math.min(30, 7 + (Math.sqrt(Math.max(0, camera.scale)) * 0.95))));
+        const naturalMaxGenusFontSize = scaleLabelFontSize("genus", Math.max(8, Math.min(30, 7 + (Math.sqrt(Math.max(0, camera.scale)) * 0.95))));
+        const targetMaxGenusFontSize = scaleLabelFontSize("genus", Math.max(8, Math.min(18, 7 + (spiralTipSpacingPx * 0.55))));
+        const maxGenusFontSize = (naturalMaxGenusFontSize * (1 - genusStyle.progress))
+          + (targetMaxGenusFontSize * genusStyle.progress);
         const genusLabelLimit = Math.floor(300 + (Math.max(0, Math.log2(Math.max(1, camera.scale))) * 90));
         for (let index = 0; index < genusBlocks.length; index += 1) {
           const block = genusBlocks[index];
@@ -10246,6 +10290,9 @@ export default function TreeCanvas({
           const endTheta = spiralThetaForY(layout.center[block.lastNode], tree.leafCount, metrics);
           const midTheta = (startTheta + endTheta) * 0.5;
           const midPoint = spiralNormalOffsetPoint(midTheta, genusOffset, metrics);
+          if (spiralFirstGenusWorld === null) {
+            spiralFirstGenusWorld = { x: midPoint.x, y: midPoint.y };
+          }
           const midScreen = spiralToScreen(midPoint);
           const spanPx = Math.abs(spiralArcLengthBetween(
             Math.min(startTheta, endTheta) - metrics.startTheta,
@@ -10262,17 +10309,25 @@ export default function TreeCanvas({
           ) {
             continue;
           }
-          appendSpiralCurve(genusPath, Math.min(startTheta, endTheta), Math.max(startTheta, endTheta), 0, {
-            ...metrics,
-            bandWidth: genusOffset,
-          }, 1);
+          appendSpiralOffsetCurve(
+            genusPath,
+            Math.min(startTheta, endTheta),
+            Math.max(startTheta, endTheta),
+            genusOffset,
+            metrics,
+            camera.scale,
+          );
           pushScenePath(
-            svgSpiralCurveScreenPath(camera, Math.min(startTheta, endTheta), Math.max(startTheta, endTheta), 0, {
-              ...metrics,
-              bandWidth: genusOffset,
-            }, 1),
+            svgSpiralOffsetCurveScreenPath(
+              camera,
+              Math.min(startTheta, endTheta),
+              Math.max(startTheta, endTheta),
+              genusOffset,
+              metrics,
+              camera.scale,
+            ),
             GENUS_COLOR,
-            Math.max(1.2, 0.008 * camera.scale),
+            genusArcLineWidthPx,
             undefined,
             0.82,
           );
@@ -10290,8 +10345,7 @@ export default function TreeCanvas({
           }
           const midFrame = spiralFrameAt(midTheta, genusOffset, metrics);
           const normalAngle = Math.atan2(midFrame.normalY, midFrame.normalX) + camera.rotation;
-          const arcLineWidthPx = Math.max(1.2, 0.008 * camera.scale);
-          const labelGapPx = (arcLineWidthPx * 0.5) + (fittedGenusFontSize * 0.68) + 3;
+          const labelGapPx = (genusArcLineWidthPx * 0.5) + (fittedGenusFontSize * 0.68) + 3;
           const labelX = midScreen.x + (Math.cos(normalAngle) * labelGapPx);
           const labelY = midScreen.y + (Math.sin(normalAngle) * labelGapPx);
           const rotation = normalizeRotation((spiralTangentAngle(midTheta, genusOffset, metrics) + camera.rotation) * 180 / Math.PI) * Math.PI / 180;
@@ -10314,7 +10368,7 @@ export default function TreeCanvas({
         ctx.rotate(camera.rotation);
         ctx.strokeStyle = GENUS_COLOR;
         ctx.globalAlpha = 0.82;
-        ctx.lineWidth = Math.max(1.2 / Math.max(camera.scale, 1e-6), 0.008);
+        ctx.lineWidth = genusArcLineWidthPx / Math.max(camera.scale, 1e-6);
         ctx.stroke(genusPath);
         ctx.restore();
         ctx.globalAlpha = 1;
@@ -10341,6 +10395,10 @@ export default function TreeCanvas({
             labelFontStyles.genus,
           );
         }
+        spiralGenusOffsetFromTipsPx = (genusOffset - metrics.bandWidth) * camera.scale;
+        spiralGenusLineWidthPx = genusArcLineWidthPx;
+        spiralGenusMaxFontSizePx = maxGenusFontSize;
+        spiralPlacedGenusLabelCount = placedGenusLabels.length;
       }
 
       let spiralPlacedTipLabelCount = 0;
@@ -10557,6 +10615,11 @@ export default function TreeCanvas({
         branchLineWidthPx: spiralBranchLineWidthPx,
         baseBranchOpacity: spiralBaseBranchOpacity,
         coloredBranchOpacity: spiralColoredBranchOpacity,
+        genusOffsetFromTipsPx: spiralGenusOffsetFromTipsPx,
+        genusLineWidthPx: spiralGenusLineWidthPx,
+        genusMaxFontSizePx: spiralGenusMaxFontSizePx,
+        placedGenusLabelCount: spiralPlacedGenusLabelCount,
+        firstGenusWorld: spiralFirstGenusWorld,
         branchPathBatchCount: branchPaths
           ? [...branchPaths.values()].reduce((total, batches) => total + batches.length, 0)
           : 0,

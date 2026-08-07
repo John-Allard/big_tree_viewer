@@ -402,13 +402,6 @@ test("spiral mode is disabled for trees with fewer than 1000 tips", async ({ pag
   ));
   await loadTreeFromPaste(page, `(${tipNames.join(",")})Root;`);
 
-  await page.keyboard.down("Shift");
-  await page.keyboard.down("S");
-  await page.keyboard.down("P");
-  await page.keyboard.up("P");
-  await page.keyboard.up("S");
-  await page.keyboard.up("Shift");
-
   const spiralButton = page.getByRole("button", { name: "Spiral" });
   await expect(spiralButton).toBeDisabled();
   await expect(spiralButton).toHaveAttribute(
@@ -524,6 +517,81 @@ test("zoomed spiral labels remain radial and wait for inter-turn clearance", asy
   );
   expect(result.radialAlignment.length).toBe(result.debug.placedTipLabelCount);
   expect(Math.min(...result.radialAlignment)).toBeGreaterThan(0.85);
+});
+
+test("spiral genus guides converge to stable screen spacing and thickness at deep zoom", async ({ page }) => {
+  await waitForViewer(page);
+  const tips = Array.from({ length: 1200 }, (_, index) => (
+    `Genus${String(Math.floor(index / 20)).padStart(3, "0")}_species${String(index).padStart(4, "0")}:1`
+  ));
+  await loadTreeFromPaste(page, `(${tips.join(",")})Root;`);
+
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setTaxonomyEnabled(false);
+    app?.setShowTipLabels(true);
+    app?.setShowGenusLabels(true);
+    app?.setViewMode("spiral");
+    app?.requestFit();
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral"
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()?.kind === "circular"
+  ));
+
+  const styles = await page.evaluate(async () => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const treeCanvas = document.querySelector("[data-testid=tree-canvas]");
+    const fitCamera = canvas?.getCamera();
+    if (!canvas || !fitCamera || fitCamera.kind !== "circular" || !(treeCanvas instanceof HTMLCanvasElement)) {
+      throw new Error("Spiral genus compression controls unavailable.");
+    }
+    const rect = treeCanvas.getBoundingClientRect();
+    const readAtScale = async (scale: number) => {
+      canvas.setCircularCamera({ scale });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const debugBeforeCenter = canvas.getRenderDebug()?.spiral as {
+        firstGenusWorld?: { x?: number; y?: number } | null;
+      } | undefined;
+      if (!debugBeforeCenter?.firstGenusWorld) {
+        throw new Error("Spiral genus compression target unavailable.");
+      }
+      canvas.setCircularCamera({
+        translateX: (rect.width * 0.5) - (Number(debugBeforeCenter.firstGenusWorld.x) * scale),
+        translateY: (rect.height * 0.5) - (Number(debugBeforeCenter.firstGenusWorld.y) * scale),
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const debug = canvas.getRenderDebug()?.spiral as {
+        tipLabelsVisible?: boolean;
+        genusOffsetFromTipsPx?: number | null;
+        genusLineWidthPx?: number | null;
+        genusMaxFontSizePx?: number | null;
+        placedGenusLabelCount?: number;
+      } | undefined;
+      return {
+        tipLabelsVisible: Boolean(debug?.tipLabelsVisible),
+        offset: Number(debug?.genusOffsetFromTipsPx),
+        lineWidth: Number(debug?.genusLineWidthPx),
+        maxFontSize: Number(debug?.genusMaxFontSizePx),
+        labelCount: Number(debug?.placedGenusLabelCount),
+      };
+    };
+    return {
+      deep: await readAtScale(Number(fitCamera.scale) * 80),
+      deeper: await readAtScale(Number(fitCamera.scale) * 160),
+    };
+  });
+
+  expect(styles.deep.tipLabelsVisible).toBe(true);
+  expect(styles.deeper.tipLabelsVisible).toBe(true);
+  expect(styles.deep.labelCount).toBeGreaterThan(0);
+  expect(styles.deeper.labelCount).toBeGreaterThan(0);
+  expect(styles.deep.offset).toBeGreaterThan(20);
+  expect(styles.deeper.offset).toBeCloseTo(styles.deep.offset, 3);
+  expect(styles.deep.lineWidth).toBeCloseTo(1.2, 3);
+  expect(styles.deeper.lineWidth).toBeCloseTo(1.2, 3);
+  expect(styles.deep.maxFontSize).toBeLessThanOrEqual(18.01);
+  expect(styles.deeper.maxFontSize).toBeCloseTo(styles.deep.maxFontSize, 3);
 });
 
 test("spiral branches strengthen as dense overplotting resolves during zoom", async ({ page }) => {
