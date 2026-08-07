@@ -14,7 +14,8 @@ async function waitForViewer(page: Page): Promise<void> {
   await page.waitForFunction(() => Boolean(
     window.__BIG_TREE_VIEWER_APP_TEST__
     && window.__BIG_TREE_VIEWER_CANVAS_TEST__
-    && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded,
+    && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded
+    && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
   ));
 }
 
@@ -67,8 +68,10 @@ async function sampleAtSpacing(page: Page, targetSpacing: number): Promise<Thick
 test("branch strokes thicken gradually after full tip labels appear", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   await waitForViewer(page);
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyEnabled(false);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setBranchThicknessScaleForTest(1.6);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
 
   const configurations: Array<{ mode: ViewMode; threshold: number }> = [

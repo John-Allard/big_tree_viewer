@@ -7,13 +7,15 @@ async function waitForViewer(page: Page): Promise<void> {
       window.__BIG_TREE_VIEWER_APP_TEST__
       && window.__BIG_TREE_VIEWER_CANVAS_TEST__
       && window.__BIG_TREE_VIEWER_RENDER_DEBUG__
-      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded,
+      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded
+      && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
     );
   });
 }
 
 async function configureRectangularView(page: Page): Promise<void> {
   await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyEnabled(false);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowGenusLabels(true);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));

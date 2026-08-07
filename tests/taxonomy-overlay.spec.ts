@@ -6,7 +6,8 @@ async function waitForViewerReady(page: Page): Promise<void> {
       window.__BIG_TREE_VIEWER_APP_TEST__
       && window.__BIG_TREE_VIEWER_CANVAS_TEST__
       && window.__BIG_TREE_VIEWER_RENDER_DEBUG__
-      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded,
+      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded
+      && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
     );
   });
 }
@@ -2685,7 +2686,7 @@ test("circular taxonomy labels on the same ring do not overlap after zooming int
     const dy = (anchor.y - camera.translateY) / camera.scale;
     const worldX = (dx * camera.rotationCos) + (dy * camera.rotationSin);
     const worldY = (-dx * camera.rotationSin) + (dy * camera.rotationCos);
-    const scale = camera.scale * 20;
+    const scale = camera.scale * 40;
     const rotatedX = (worldX * camera.rotationCos) - (worldY * camera.rotationSin);
     const rotatedY = (worldX * camera.rotationSin) + (worldY * camera.rotationCos);
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({

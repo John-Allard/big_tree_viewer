@@ -21,6 +21,27 @@ async function loadTreeFromPaste(page: Page, newick: string): Promise<void> {
   });
 }
 
+test("bundled example loads its embedded taxonomy mapping without downloading taxonomy data", async ({ page }) => {
+  const requestedUrls: string[] = [];
+  page.on("request", (request) => requestedUrls.push(request.url()));
+
+  await waitForViewer(page);
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
+  });
+
+  const result = await page.evaluate(() => ({
+    tipCount: window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes.length ?? 0,
+    taxonomy: window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null,
+  }));
+  expect(result.tipCount).toBe(50062);
+  expect(result.taxonomy?.version).toBe(8);
+  expect(result.taxonomy?.mappedCount).toBe(50033);
+  expect(requestedUrls.some((url) => url.endsWith("/example_tree.btvsession"))).toBe(true);
+  expect(requestedUrls.some((url) => url.includes("taxdmp.zip") || url.includes("ncbi.nlm.nih.gov"))).toBe(false);
+});
+
 test("session file saves and reloads tree data, metadata, settings, and canvas state", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(() => {

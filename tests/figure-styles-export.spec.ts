@@ -7,7 +7,8 @@ async function waitForViewer(page: Page): Promise<void> {
     window.__BIG_TREE_VIEWER_APP_TEST__
     && window.__BIG_TREE_VIEWER_CANVAS_TEST__
     && window.__BIG_TREE_VIEWER_RENDER_DEBUG__
-    && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded,
+    && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded
+    && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
   ));
 }
 
@@ -291,11 +292,20 @@ test("point-anchored label styles support separate x and y offsets", async ({ pa
   const baseInternal = extractTextPosition(baseSvg ?? "", "CladeOne");
   const baseBootstrap = extractTextPosition(baseSvg ?? "", "92");
 
-  const offsetSvg = await page.evaluate(async () => {
+  await page.evaluate(() => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "offsetXPx", 18);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("internalNode", "offsetYPx", -10);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "offsetXPx", -12);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "offsetYPx", 14);
+  });
+  await page.waitForFunction(() => {
+    const styles = window.__BIG_TREE_VIEWER_APP_TEST__?.getState().figureStyles;
+    return styles?.internalNode.offsetXPx === 18
+      && styles.internalNode.offsetYPx === -10
+      && styles.bootstrap.offsetXPx === -12
+      && styles.bootstrap.offsetYPx === 14;
+  });
+  const offsetSvg = await page.evaluate(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? null;
   });

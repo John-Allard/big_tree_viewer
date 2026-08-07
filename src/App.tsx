@@ -3666,29 +3666,6 @@ export default function App() {
     return true;
   }, [applySharedSubtreeVisualSettings, parseText]);
 
-  const loadExample = async (): Promise<void> => {
-    setHideDownloadNewick(true);
-    setLoadState({
-      loading: true,
-      message: "Loading bundled example tree...",
-      error: null,
-    });
-    try {
-      const response = await fetch(`${import.meta.env.BASE_URL}example-tree.nwk`);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const text = await response.text();
-      await parseText(text, "example tree");
-    } catch (error) {
-      setLoadState({
-        loading: false,
-        message: "Unable to load bundled example tree.",
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
   const downloadCurrentTreeNewick = useCallback((): void => {
     if (!tree || typeof window === "undefined") {
       return;
@@ -4515,6 +4492,69 @@ export default function App() {
     clearMetadata,
     parseText,
   ]);
+
+  const loadExample = useCallback(async (): Promise<void> => {
+    setHideDownloadNewick(true);
+    setSessionLoading(true);
+    setLoadState({
+      loading: true,
+      message: "Loading bundled example tree...",
+      error: null,
+    });
+    try {
+      const sessionResponse = await fetch(`${import.meta.env.BASE_URL}example_tree.btvsession`);
+      if (!sessionResponse.ok) {
+        throw new Error(`HTTP ${sessionResponse.status}`);
+      }
+      const session = await parseSessionBytes(new Uint8Array(await sessionResponse.arrayBuffer()));
+      if (!session.tree?.newick) {
+        throw new Error("The bundled example session did not include a tree.");
+      }
+      pendingSessionTaxonomyRef.current = session.taxonomy?.map ?? null;
+      pendingSessionTaxonomyEnabledRef.current = Boolean(session.taxonomy?.map);
+      pendingSessionTaxonomySourceRef.current = "session";
+      pendingSessionPhyloPicRef.current = undefined;
+      pendingSessionCanvasStateRef.current = undefined;
+      const restoreApplied = new Promise<void>((resolve) => {
+        pendingSessionRestoreResolverRef.current = resolve;
+      });
+      currentTreeRef.current = null;
+      currentTreeSignatureRef.current = null;
+      setTree(null);
+      setTreeSignature(null);
+      try {
+        await parseText(session.tree.newick, session.tree.label || "example tree");
+        await restoreApplied;
+      } catch (error) {
+        pendingSessionRestoreResolverRef.current = null;
+        throw error;
+      }
+      setSessionStatus("");
+    } catch (sessionError) {
+      pendingSessionTaxonomyRef.current = undefined;
+      pendingSessionTaxonomyEnabledRef.current = null;
+      pendingSessionRestoreResolverRef.current = null;
+      try {
+        const treeResponse = await fetch(`${import.meta.env.BASE_URL}example_tree.nwk`);
+        if (!treeResponse.ok) {
+          throw new Error(`HTTP ${treeResponse.status}`);
+        }
+        await parseText(await treeResponse.text(), "example tree");
+      } catch (treeError) {
+        setLoadState({
+          loading: false,
+          message: "Unable to load bundled example tree.",
+          error: treeError instanceof Error
+            ? treeError.message
+            : sessionError instanceof Error
+              ? sessionError.message
+              : String(treeError),
+        });
+      }
+    } finally {
+      setSessionLoading(false);
+    }
+  }, [parseText]);
 
   const loadSession = useCallback(async (mode: "full" | "settings"): Promise<void> => {
     try {
@@ -5882,9 +5922,9 @@ export default function App() {
     }
     window.__BIG_TREE_VIEWER_APP_TEST__ = {
       getState: () => ({
-        treeLoaded: tree !== null,
+        treeLoaded: tree !== null && !sessionLoading,
         treeSignature,
-        loading: loadState.loading,
+        loading: loadState.loading || sessionLoading,
         loadError: loadState.error,
         viewMode,
         order,
@@ -6204,6 +6244,7 @@ export default function App() {
     runTaxonomyMapping,
     searchQuery,
     searchResults,
+    sessionLoading,
     selectViewMode,
     showTipLabels,
     showBootstrapLabels,
@@ -6349,13 +6390,14 @@ export default function App() {
 
         <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)} tourId="data">
           <div className="button-row">
-            <button type="button" onClick={() => void loadExample()} disabled={loadState.loading} title="Load the bundled example tree and reset the current tree view.">
+            <button type="button" onClick={() => void loadExample()} disabled={loadState.loading || sessionLoading} title="Load the bundled example tree and reset the current tree view.">
               Load Example
             </button>
             <button
               type="button"
               className="secondary"
               onClick={() => fileInputRef.current?.click()}
+              disabled={loadState.loading || sessionLoading}
               title="Open a Newick, NEXUS, or Big Tree Viewer session file from your computer."
             >
               Open File
@@ -6364,6 +6406,7 @@ export default function App() {
               type="button"
               className="secondary"
               onClick={() => setShowPasteInput((value) => !value)}
+              disabled={loadState.loading || sessionLoading}
               title="Paste a Newick or NEXUS tree directly instead of opening a file."
             >
               Paste Newick
@@ -6372,6 +6415,7 @@ export default function App() {
               ref={fileInputRef}
               type="file"
               accept=".nwk,.newick,.tree,.tre,.txt,.nex,.nexus,.btvsession,.json"
+              disabled={loadState.loading || sessionLoading}
               hidden
               onChange={(event) => void onFileChange(event)}
             />

@@ -11,7 +11,8 @@ async function waitForViewer(page: Page): Promise<void> {
       window.__BIG_TREE_VIEWER_APP_TEST__
       && window.__BIG_TREE_VIEWER_CANVAS_TEST__
       && window.__BIG_TREE_VIEWER_RENDER_DEBUG__
-      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded,
+      && window.__BIG_TREE_VIEWER_APP_TEST__.getState().treeLoaded
+      && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
     );
   });
 }
@@ -657,6 +658,7 @@ test("large circular fit-view falls back to the cached base path", async ({ page
   await waitForViewer(page);
   await loadTreeFile(page, path.resolve(TEST_DIR, "..", "backbone_hang_supertree.nwk"));
   await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyEnabled(false);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
