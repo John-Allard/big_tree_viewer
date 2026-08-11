@@ -37,10 +37,27 @@ const figureSections = [
     text: "In rectangular mode, x and y zoom can be adjusted independently. Zooming out along x first, then y, reveals broader branch-length and taxonomic context while keeping local tip and ribbon alignment clear.",
   },
   {
-    title: "Map metadata onto the tree",
-    image: `${import.meta.env.BASE_URL}about/example-50k-metadata-overlay.png`,
-    alt: "Big Tree Viewer screenshot showing a circular tree with CSV metadata coloring branches gray and blue, with the Metadata panel open.",
-    text: "CSV or TSV metadata can be joined to tip labels and used to color branches, add labels, or draw tip markers. This example marks tips from genera with more than 50 species in blue and all other tips in gray.",
+    title: "Spiral layout for immense trees",
+    image: `${import.meta.env.BASE_URL}about/example-50k-spiral-taxonomy.png`,
+    alt: "Big Tree Viewer screenshot showing a 50,062-tip taxonomy-mapped tree arranged as a multilevel spiral.",
+    text: "Spiral mode distributes very large trees across multiple turns, using more of the available screen area while retaining branch-length structure, taxonomy ribbons, and smooth access to local detail.",
+    crop: "cover",
+  },
+  {
+    title: "Map metadata onto trees",
+    images: [
+      {
+        src: `${import.meta.env.BASE_URL}about/example-50k-metadata-overlay.png`,
+        alt: "Big Tree Viewer screenshot showing a circular tree with CSV metadata coloring branches gray and blue, with the Metadata panel open.",
+      },
+      {
+        src: `${import.meta.env.BASE_URL}about/example-metadata-pie-charts.png`,
+        alt: "Circular Big Tree Viewer tree with multicolored pie charts showing four metadata values at each tip.",
+      },
+    ],
+    alt: "Two Big Tree Viewer metadata examples showing branch coloring and per-tip pie charts.",
+    text: "CSV or TSV metadata can color branches, add labels and markers, or display several numeric values together as pie charts. The examples show a binary branch-color overlay on a 50,062-tip tree and four-part composition data on individual tips.",
+    wide: true,
   },
   {
     title: "Hundreds of thousands of tips",
@@ -63,9 +80,15 @@ type AboutFigure = {
   alt: string;
   text: string;
   image?: string;
+  images?: readonly {
+    src: string;
+    alt: string;
+  }[];
   videoWebm?: string;
   videoMp4?: string;
   poster?: string;
+  wide?: boolean;
+  crop?: "cover";
 };
 
 function AboutMedia({ item, eager = false }: { item: AboutFigure; eager?: boolean }) {
@@ -91,6 +114,16 @@ function AboutMedia({ item, eager = false }: { item: AboutFigure; eager?: boolea
     return () => observer.disconnect();
   }, [isVideo, shouldLoadVideo]);
 
+  if (item.images && item.images.length > 0) {
+    return (
+      <div ref={rootRef} className="about-media-frame about-media-frame-pair">
+        {item.images.map((image) => (
+          <img key={image.src} src={image.src} alt={image.alt} loading={eager ? "eager" : "lazy"} />
+        ))}
+      </div>
+    );
+  }
+
   if (isVideo) {
     return (
       <div ref={rootRef} className="about-media-frame">
@@ -115,7 +148,7 @@ function AboutMedia({ item, eager = false }: { item: AboutFigure; eager?: boolea
   }
 
   return (
-    <div ref={rootRef} className="about-media-frame">
+    <div ref={rootRef} className={`about-media-frame${item.crop === "cover" ? " about-media-frame-cover" : ""}`}>
       <img src={item.image ?? ""} alt={item.alt} loading={eager ? "eager" : "lazy"} />
     </div>
   );
@@ -128,7 +161,7 @@ const capabilities = [
   },
   {
     label: "Layouts",
-    text: "Rectangular and circular, with input-order and descendant-count tip orderings and continuous rotation in circular mode.",
+    text: "Rectangular, circular, fan, and spiral geometries, with input-order and descendant-count tip orderings and continuous rotation in radial modes.",
   },
   {
     label: "Scale",
@@ -140,7 +173,7 @@ const capabilities = [
   },
   {
     label: "Metadata",
-    text: "CSV/TSV tables can be joined to tip labels to drive label colors, branch colors, and tip markers, with continuous and categorical palettes.",
+    text: "CSV/TSV tables can be joined to tree labels to drive branch colors, labels, markers, and multivalue pie charts, with continuous and categorical palettes.",
   },
   {
     label: "Search and navigation",
@@ -204,7 +237,7 @@ export default function AboutPage() {
           {figureSections.slice(1).map((item, index) => (
             <section
               key={item.title}
-              className={`about-figure-section${index % 2 === 1 ? " reverse" : ""}`}
+              className={`about-figure-section${index % 2 === 1 ? " reverse" : ""}${"wide" in item && item.wide ? " wide" : ""}`}
             >
               <figure className="about-gallery-card">
                 <AboutMedia item={item} />

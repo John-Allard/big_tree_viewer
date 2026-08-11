@@ -4,8 +4,8 @@ dist/
 *.log
 *.nwk
 !backbone_hang_supertree.nwk
-!public/example_tree.nwk
 !tests/fixtures/collapse-subtree-tree.nwk
+!tests/fixtures/about-metadata-pies.nwk
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

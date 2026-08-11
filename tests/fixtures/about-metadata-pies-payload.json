@@ -1,0 +1,21 @@
+{
+  "visual": {
+    "viewMode": "circular",
+    "showTipLabels": false,
+    "showGenusLabels": false,
+    "showTimeStripes": false,
+    "showScaleBars": false,
+    "metadataPiesEnabled": true,
+    "metadataPieStartColumn": "Forest",
+    "metadataPieEndColumn": "Urban",
+    "metadataPiePalette": "categorical",
+    "metadataPieSizePx": 50
+  },
+  "metadata": {
+    "piesEnabled": true,
+    "pieStartColumn": "Forest",
+    "pieEndColumn": "Urban",
+    "piePalette": "categorical",
+    "pieSizePx": 50
+  }
+}
