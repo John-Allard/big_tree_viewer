@@ -4530,27 +4530,15 @@ export default function App() {
         throw error;
       }
       setSessionStatus("");
-    } catch (sessionError) {
+    } catch (error) {
       pendingSessionTaxonomyRef.current = undefined;
       pendingSessionTaxonomyEnabledRef.current = null;
       pendingSessionRestoreResolverRef.current = null;
-      try {
-        const treeResponse = await fetch(`${import.meta.env.BASE_URL}example_tree.nwk`);
-        if (!treeResponse.ok) {
-          throw new Error(`HTTP ${treeResponse.status}`);
-        }
-        await parseText(await treeResponse.text(), "example tree");
-      } catch (treeError) {
-        setLoadState({
-          loading: false,
-          message: "Unable to load bundled example tree.",
-          error: treeError instanceof Error
-            ? treeError.message
-            : sessionError instanceof Error
-              ? sessionError.message
-              : String(treeError),
-        });
-      }
+      setLoadState({
+        loading: false,
+        message: "Unable to load bundled example tree.",
+        error: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setSessionLoading(false);
     }
