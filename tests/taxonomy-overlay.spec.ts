@@ -1542,6 +1542,54 @@ test("hidden taxonomy ranks can still drive branch color jitter", async ({ page 
   expect(result.firstFamilyColor).not.toBe(result.secondFamilyColor);
 });
 
+test("taxonomy jitter gives every child taxon a distinct color from its parent", async ({ page }) => {
+  await waitForViewer(page);
+  const result = await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes?.slice(0, 60);
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!leafNodes || leafNodes.length < 60 || !app || !canvas) {
+      throw new Error("Viewer controls unavailable for taxonomy jitter inheritance test.");
+    }
+    app.setTaxonomyMapForTest({
+      version: 11,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["order", "class"],
+      tipRanks: leafNodes.map((node, index) => ({
+        node,
+        ranks: {
+          class: "Aves",
+          order: index < 30 ? "Passeriformes" : "Piciformes",
+        },
+      })),
+    });
+    app.setViewMode("rectangular");
+    app.setOrder("input");
+    app.setTaxonomyColorRootRankForTest("class");
+    app.setTaxonomyColorJitterForTest(1);
+    app.setTaxonomyColorJitterRankForTest("class");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const parentColor = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors()?.[leafNodes[0]] ?? null;
+
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyColorJitterRankForTest("order");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const childColors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? [];
+    return {
+      parentColor,
+      firstChildColor: childColors[leafNodes[0]] ?? null,
+      secondChildColor: childColors[leafNodes[leafNodes.length - 1]] ?? null,
+    };
+  });
+
+  expect(result.parentColor).toBeTruthy();
+  expect(result.firstChildColor).toBeTruthy();
+  expect(result.secondChildColor).toBeTruthy();
+  expect(result.firstChildColor).not.toBe(result.parentColor);
+  expect(result.secondChildColor).not.toBe(result.parentColor);
+  expect(result.firstChildColor).not.toBe(result.secondChildColor);
+});
+
 test("top-level taxonomy color override cascades through descendants when jitter is zero", async ({ page }) => {
   await waitForViewer(page);
   const taxonomyPoint = await page.evaluate(async () => {

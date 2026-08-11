@@ -614,13 +614,10 @@ function compressedSpiralTaxonomyMetrics(
   visibleRankCount: number,
   bandThicknessScale: number,
 ): SpiralMetrics {
-  const progress = smoothstep01(
+  const spacingProgress = smoothstep01(
     (spiralTipSpacingPx - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX)
     / Math.max(1e-6, SPIRAL_TAXONOMY_COMPRESSION_COMPLETE_SPACING_PX - SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX),
   );
-  if (progress <= 0) {
-    return metrics;
-  }
   const safeScale = Math.max(cameraScale, 1e-6);
   const naturalRibbonWidthPx = metrics.taxonomyRibbonWidth * safeScale;
   const naturalGapPx = metrics.taxonomyRibbonGap * safeScale;
@@ -629,6 +626,16 @@ function compressedSpiralTaxonomyMetrics(
   const circularLikeMetrics = taxonomyRingMetricsPx(visibleRankCount, circularLikeBaseSize, bandThicknessScale);
   const circularLikeRibbonWidthPx = circularLikeMetrics.ringWidthsPx[0] ?? 0;
   const targetRibbonWidthPx = Math.min(naturalRibbonWidthPx, circularLikeRibbonWidthPx);
+  const screenSizeProgress = targetRibbonWidthPx > 0
+    ? smoothstep01(
+      (naturalRibbonWidthPx - targetRibbonWidthPx)
+      / Math.max(1e-6, targetRibbonWidthPx),
+    )
+    : 0;
+  const progress = Math.max(spacingProgress, screenSizeProgress);
+  if (progress <= 0) {
+    return metrics;
+  }
   const targetGapPx = Math.min(naturalGapPx, circularLikeMetrics.ringGapPx);
   const targetLabelGapPx = Math.min(naturalLabelGapPx, Math.max(5, Math.min(9, spiralTipSpacingPx * 0.5)));
   return {
@@ -2101,10 +2108,10 @@ function buildTaxonomyColorMap(
       const parentColor = colorsByRank[parentRank]?.[parentEntityKey] ?? hslColor(0, 0, 55);
       const parsed = parseHslColor(parentColor) ?? { h: 0, s: 0, l: 55 };
       children.sort((left, right) => left.firstSeen - right.firstSeen);
-      const half = Math.max(1, Math.floor((children.length - 1) / 2));
+      const half = Math.max(1, Math.ceil(children.length / 2));
       const effectiveJitterScale = rankIndex >= jitterRankIndex ? jitterScale : 0;
       const hueStep = half > 0 ? (18 * effectiveJitterScale) / half : 0;
-      const positions: number[] = [0];
+      const positions: number[] = children.length === 1 ? [0] : [];
       for (let value = 1; positions.length < children.length; value += 1) {
         positions.push(value);
         if (positions.length < children.length) {
@@ -3430,6 +3437,24 @@ function detailBranchThicknessMultiplier(
   return 1 + ((DETAIL_BRANCH_THICKNESS_MAX_MULTIPLIER - 1) * progress);
 }
 
+function pointLabelBaseFontSize(isBootstrap: boolean, tipSpacingPx: number): number {
+  const minimum = isBootstrap ? 12.5 : 12;
+  const maximum = isBootstrap ? 16 : 16;
+  return Math.max(minimum, Math.min(maximum, tipSpacingPx * 0.42));
+}
+
+function pointLabelHasScreenRoom(
+  subtreeSpanPx: number,
+  branchSpanPx: number,
+  fontSize: number,
+  labelWidthPx: number,
+): boolean {
+  return (
+    subtreeSpanPx >= fontSize * 1.35
+    || branchSpanPx >= Math.min(labelWidthPx + 8, fontSize * 4.5)
+  );
+}
+
 function interpolateTipBandWidthPx(
   zoom: number,
   preRampStart: number,
@@ -4185,6 +4210,7 @@ export default function TreeCanvas({
   const lastCanvasPointerRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const genusLabelHistoryRef = useRef<{
     tree: TreeModel | null;
     viewMode: ViewMode;
@@ -4276,6 +4302,29 @@ export default function TreeCanvas({
       tutorialDemo?: boolean;
     }
   ) | null>(null);
+
+  useLayoutEffect(() => {
+    const menu = contextMenuRef.current;
+    const shell = wrapperRef.current;
+    if (!contextMenu || !menu || !shell) {
+      return;
+    }
+    const edgePadding = 8;
+    const availableWidth = shell.clientWidth;
+    const availableHeight = shell.clientHeight;
+    const nextX = Math.max(
+      edgePadding,
+      Math.min(contextMenu.x, Math.max(edgePadding, availableWidth - menu.offsetWidth - edgePadding)),
+    );
+    const nextY = Math.max(
+      edgePadding,
+      Math.min(contextMenu.y, Math.max(edgePadding, availableHeight - menu.offsetHeight - edgePadding)),
+    );
+    if (nextX === contextMenu.x && nextY === contextMenu.y) {
+      return;
+    }
+    setContextMenu((current) => current ? { ...current, x: nextX, y: nextY } : current);
+  }, [contextMenu, contextMenuCollapseMenuOpen, contextMenuColorMode, contextMenuRootMenuOpen, size.height, size.width]);
 
   const isBranchHoverEnabled = useCallback((camera: CameraState): boolean => {
     if (!tree) {
@@ -5984,15 +6033,11 @@ export default function TreeCanvas({
       return (
         Math.abs(camera.scaleX - fit.scaleX) <= (fit.scaleX * 0.03)
         && Math.abs(camera.scaleY - fit.scaleY) <= (fit.scaleY * 0.03)
-        && Math.abs(camera.translateX - fit.translateX) <= 4
-        && Math.abs(camera.translateY - fit.translateY) <= 4
       );
     }
     if (camera.kind === "circular" && fit.kind === "circular") {
       return (
         Math.abs(camera.scale - fit.scale) <= (fit.scale * 0.03)
-        && Math.abs(camera.translateX - fit.translateX) <= 4
-        && Math.abs(camera.translateY - fit.translateY) <= 4
         && Math.abs(camera.rotation - fit.rotation) <= 1e-6
       );
     }
@@ -9000,7 +9045,7 @@ export default function TreeCanvas({
         ctx.stroke();
       }
 
-      if ((showInternalNodeLabels || showBootstrapLabels) && camera.scaleX > 1.15) {
+      if (showInternalNodeLabels || showBootstrapLabels) {
         const labels: ScreenLabel[] = [];
         for (let node = 0; node < tree.nodeCount; node += 1) {
           if (hiddenNodes[node] || tree.buffers.firstChild[node] < 0) {
@@ -9015,17 +9060,24 @@ export default function TreeCanvas({
             continue;
           }
           const labelClass: LabelStyleClass = isBootstrap ? "bootstrap" : "internalNode";
-          const baseFontSize = isBootstrap
-            ? Math.max(7.5, Math.min(11, Math.min(camera.scaleY * 0.22, camera.scaleX * 0.18)))
-            : Math.max(8.5, Math.min(13, Math.min(camera.scaleY * 0.26, camera.scaleX * 0.2)));
+          const baseFontSize = pointLabelBaseFontSize(isBootstrap, effectiveTipSpacingPx);
           const fontSize = scaleLabelFontSize(labelClass, baseFontSize);
+          const labelWidth = estimateLabelWidth(fontSize, rawLabel.length);
           const screen = worldToScreenRect(camera, tree.buffers.depth[node], layout.center[node]);
-          const x = screen.x + 8 + figureStyles[labelClass].offsetXPx;
-          const y = screen.y + (isBootstrap ? 10 : -10) + figureStyles[labelClass].offsetYPx;
+          const x = screen.x + (isBootstrap ? -labelWidth - 5 : 8) + figureStyles[labelClass].offsetXPx;
+          const y = screen.y - (isBootstrap ? Math.max(5, fontSize * 0.6) : 10) + figureStyles[labelClass].offsetYPx;
           if (x < -40 || x > renderSize.width + 140 || y < -20 || y > renderSize.height + 20) {
             continue;
           }
-          if (!canPlaceLinearLabel(labels, x, y, fontSize * 1.3, estimateLabelWidth(fontSize, rawLabel.length))) {
+          const parent = tree.buffers.parent[node];
+          const subtreeSpanPx = Math.max(0, layout.max[node] - layout.min[node]) * camera.scaleY;
+          const branchSpanPx = parent >= 0
+            ? Math.max(0, tree.buffers.depth[node] - tree.buffers.depth[parent]) * camera.scaleX
+            : 0;
+          if (!pointLabelHasScreenRoom(subtreeSpanPx, branchSpanPx, fontSize, labelWidth)) {
+            continue;
+          }
+          if (!canPlaceLinearLabel(labels, x, y, fontSize * 1.3, labelWidth)) {
             continue;
           }
           labels.push({ x, y, text: rawLabel, alpha: 0.92, fontSize, color: isBootstrap ? "#475569" : "#1f2937" });
@@ -9518,6 +9570,14 @@ export default function TreeCanvas({
         visibleTaxonomyRanks.length,
         taxonomyBandThicknessScale,
       );
+      const spiralRenderedTaxonomyWidthPx = visibleTaxonomyRanks.length > 0
+        ? (
+          (visibleTaxonomyRanks.length * taxonomyMetrics.taxonomyRibbonWidth)
+          + (Math.max(0, visibleTaxonomyRanks.length - 1) * taxonomyMetrics.taxonomyRibbonGap)
+          + taxonomyMetrics.taxonomyLabelGap
+        ) * camera.scale
+        : 0;
+      const spiralNaturalTaxonomyWidthPx = spiralTaxonomyWidth * camera.scale;
       const hasSpiralTipLabelBand = spiralTipLabelBandWidthPx > 0.5;
       const spiralTaxonomyGapWorld = hasSpiralTipLabelBand
         ? (
@@ -10611,6 +10671,10 @@ export default function TreeCanvas({
         tipLabelBandWidthPx: spiralTipLabelBandWidthPx,
         tipLabelRequiredClearancePx: spiralRequiredTipClearancePx,
         placedTipLabelCount: spiralPlacedTipLabelCount,
+        taxonomyNaturalRibbonWidthPx: metrics.taxonomyRibbonWidth * camera.scale,
+        taxonomyRenderedRibbonWidthPx: taxonomyMetrics.taxonomyRibbonWidth * camera.scale,
+        taxonomyNaturalTotalWidthPx: spiralNaturalTaxonomyWidthPx,
+        taxonomyRenderedTotalWidthPx: spiralRenderedTaxonomyWidthPx,
         branchDetailProgress: spiralBranchDetailProgress,
         branchLineWidthPx: spiralBranchLineWidthPx,
         baseBranchOpacity: spiralBaseBranchOpacity,
@@ -13158,7 +13222,7 @@ export default function TreeCanvas({
         }
         ctx.stroke();
       }
-      if ((showInternalNodeLabels || showBootstrapLabels) && camera.scale > 6) {
+      if (showInternalNodeLabels || showBootstrapLabels) {
         const labels: ScreenLabel[] = [];
         for (let node = 0; node < tree.nodeCount; node += 1) {
           if (hiddenNodes[node] || tree.buffers.firstChild[node] < 0) {
@@ -13173,10 +13237,7 @@ export default function TreeCanvas({
             continue;
           }
           const labelClass: LabelStyleClass = isBootstrap ? "bootstrap" : "internalNode";
-          const fontSize = scaleLabelFontSize(
-            labelClass,
-            isBootstrap ? Math.max(7, Math.min(10, camera.scale * 0.035)) : Math.max(8, Math.min(12, camera.scale * 0.04)),
-          );
+          const fontSize = scaleLabelFontSize(labelClass, pointLabelBaseFontSize(isBootstrap, angularSpacingPx));
           const theta = polarThetaFor(layout.center, node);
           const renderedTheta = theta + rotationAngle;
           const radius = tree.buffers.depth[node] + (14 / camera.scale);
@@ -13195,7 +13256,16 @@ export default function TreeCanvas({
           if (labelX < -40 || labelX > renderSize.width + 40 || labelY < -40 || labelY > renderSize.height + 40) {
             continue;
           }
-          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.8, fontSize * 4.8)) {
+          const parent = tree.buffers.parent[node];
+          const subtreeSpanPx = Math.max(0, layout.max[node] - layout.min[node]) * angularSpacingPx;
+          const branchSpanPx = parent >= 0
+            ? Math.max(0, tree.buffers.depth[node] - tree.buffers.depth[parent]) * camera.scale
+            : 0;
+          const labelWidth = estimateLabelWidth(fontSize, rawLabel.length);
+          if (!pointLabelHasScreenRoom(subtreeSpanPx, branchSpanPx, fontSize, labelWidth)) {
+            continue;
+          }
+          if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 1.8, Math.max(labelWidth, fontSize * 4.8))) {
             continue;
           }
           const onRightSide = Math.cos(renderedTheta) >= 0;
@@ -15632,6 +15702,9 @@ export default function TreeCanvas({
       if (event.button !== 0) {
         return;
       }
+      if (event.pointerType === "touch") {
+        event.preventDefault();
+      }
       setContextMenu(null);
       clearLongPress();
       const rect = canvas.getBoundingClientRect();
@@ -15679,6 +15752,9 @@ export default function TreeCanvas({
             pointerDownRef.current = false;
             lastPointerRef.current = null;
             activePointersRef.current.delete(event.pointerId);
+            if (canvas.hasPointerCapture(event.pointerId)) {
+              canvas.releasePointerCapture(event.pointerId);
+            }
             showContextMenuAt(localX, localY);
           }, 550);
         }
@@ -15788,7 +15864,22 @@ export default function TreeCanvas({
         lastPointerRef.current = { x: remaining.clientX, y: remaining.clientY };
         pinchGestureRef.current = null;
       }
-      canvas.releasePointerCapture(event.pointerId);
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+    };
+
+    const handlePointerCancel = (event: PointerEvent): void => {
+      clearLongPress();
+      activePointersRef.current.delete(event.pointerId);
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+      if (activePointersRef.current.size === 0) {
+        pointerDownRef.current = false;
+        lastPointerRef.current = null;
+        pinchGestureRef.current = null;
+      }
     };
 
     const handlePointerLeave = (): void => {
@@ -15846,6 +15937,7 @@ export default function TreeCanvas({
     };
 
     const showContextMenuAt = (localX: number, localY: number): void => {
+      window.getSelection()?.removeAllRanges();
       setContextMenuColorMode(null);
       setContextMenuCollapseMenuOpen(false);
       const phylopicHitbox = findPhyloPicHitboxAt(localX, localY);
@@ -15979,6 +16071,7 @@ export default function TreeCanvas({
     canvas.addEventListener("pointerdown", handlePointerDown);
     canvas.addEventListener("pointermove", handlePointerMove);
     canvas.addEventListener("pointerup", handlePointerUp);
+    canvas.addEventListener("pointercancel", handlePointerCancel);
     canvas.addEventListener("pointerleave", handlePointerLeave);
     wheelElement.addEventListener("wheel", handleWheelEvent, { passive: false });
     canvas.addEventListener("contextmenu", handleContextMenu);
@@ -16042,6 +16135,7 @@ export default function TreeCanvas({
       canvas.removeEventListener("pointerdown", handlePointerDown);
       canvas.removeEventListener("pointermove", handlePointerMove);
       canvas.removeEventListener("pointerup", handlePointerUp);
+      canvas.removeEventListener("pointercancel", handlePointerCancel);
       canvas.removeEventListener("pointerleave", handlePointerLeave);
       wheelElement.removeEventListener("wheel", handleWheelEvent);
       canvas.removeEventListener("contextmenu", handleContextMenu);
@@ -16972,6 +17066,7 @@ export default function TreeCanvas({
       </div>
       {contextMenu ? (
         <div
+          ref={contextMenuRef}
           className={`tree-context-menu${contextMenu.tutorialDemo ? " tree-context-menu-tutorial-demo" : ""}`}
           data-tour={contextMenu.tutorialDemo ? "branch-menu-demo" : undefined}
           style={{

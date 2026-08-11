@@ -22,6 +22,22 @@ async function loadTreeFromPaste(page: Page, newick: string): Promise<void> {
   });
 }
 
+function buildSmallBootstrapTree(tipCount = 33): { newick: string; supportLabels: string[] } {
+  let support = 60;
+  const supportLabels: string[] = [];
+  const build = (start: number, end: number): string => {
+    if (end - start === 1) {
+      return `Tip_${start + 1}:1000`;
+    }
+    const middle = start + Math.floor((end - start) / 2);
+    const label = String(support);
+    support += 1;
+    supportLabels.push(label);
+    return `(${build(start, middle)},${build(middle, end)})${label}:1000`;
+  };
+  return { newick: `${build(0, tipCount)};`, supportLabels };
+}
+
 test("vector SVG export includes styled tip, internal, and bootstrap labels without raster embedding", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;");
@@ -49,6 +65,65 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
   expect(svg).toContain("Arial");
   expect(svg).toContain("Georgia");
   expect(svg).toContain("Courier New");
+});
+
+test("small trees show readable bootstrap labels at fit view regardless of branch-length units", async ({ page }) => {
+  await waitForViewer(page);
+  const fixture = buildSmallBootstrapTree();
+  await loadTreeFromPaste(page, fixture.newick);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes?.length === 33);
+
+  const result = await page.evaluate(async (supportLabels) => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!app || !canvas) {
+      throw new Error("Bootstrap fit-view test controls unavailable.");
+    }
+    const inspect = (): { count: number; minimumFontSize: number; camera: unknown } => {
+      const currentCanvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+      if (!currentCanvas) {
+        throw new Error("Current bootstrap canvas controls unavailable.");
+      }
+      const svg = currentCanvas.buildCurrentSvgForTest();
+      const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
+      const supportSet = new Set(supportLabels);
+      const labels = [...documentNode.querySelectorAll("text")].filter((element) => (
+        supportSet.has(element.textContent?.trim() ?? "")
+      ));
+      const fontSizes = labels
+        .map((element) => Number(element.getAttribute("font-size")))
+        .filter((value) => Number.isFinite(value));
+      return {
+        count: labels.length,
+        minimumFontSize: fontSizes.length > 0 ? Math.min(...fontSizes) : 0,
+        camera: currentCanvas.getCamera(),
+      };
+    };
+
+    app.setShowInternalNodeLabels(false);
+    app.setShowBootstrapLabels(true);
+    app.setViewMode("rectangular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    app.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const rectangular = inspect();
+
+    app.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    app.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const circular = inspect();
+    return { rectangular, circular };
+  }, fixture.supportLabels);
+
+  expect(result.rectangular.camera).toMatchObject({ kind: "rect" });
+  expect(result.circular.camera).toMatchObject({ kind: "circular" });
+  expect((result.rectangular.camera as { scaleX?: number }).scaleX).toBeLessThan(1.15);
+  expect((result.circular.camera as { scale?: number }).scale).toBeLessThan(6);
+  expect(result.rectangular.count).toBeGreaterThanOrEqual(24);
+  expect(result.circular.count).toBeGreaterThanOrEqual(18);
+  expect(result.rectangular.minimumFontSize).toBeGreaterThanOrEqual(10);
+  expect(result.circular.minimumFontSize).toBeGreaterThanOrEqual(10);
 });
 
 test("tip labels can export with bold and italic styling", async ({ page }) => {
@@ -527,6 +602,64 @@ test("zoomed spiral labels remain radial and wait for inter-turn clearance", asy
   );
   expect(result.radialAlignment.length).toBe(result.debug.placedTipLabelCount);
   expect(Math.min(...result.radialAlignment)).toBeGreaterThan(0.85);
+});
+
+test("large spiral taxonomy ribbons start compacting before tip labels appear", async ({ page }) => {
+  await waitForViewer(page);
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount ?? 0,
+  ) > 0);
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setViewMode("spiral");
+    app?.setShowTipLabels(true);
+    app?.setSpiralTurnsForTest(2.5);
+    for (const rank of ["class", "order", "family", "genus"] as const) {
+      app?.setTaxonomyRankVisibilityForTest(rank, true);
+    }
+    app?.requestFit();
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral"
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()?.kind === "circular"
+  ));
+
+  const debug = await page.evaluate(async () => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!canvas) {
+      throw new Error("Spiral taxonomy compression controls unavailable.");
+    }
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const camera = canvas.getCamera();
+      const current = canvas.getRenderDebug()?.spiral as { tipSpacingPx?: number } | undefined;
+      if (!camera || camera.kind !== "circular" || !(Number(current?.tipSpacingPx) > 0)) {
+        throw new Error("Spiral taxonomy compression state unavailable.");
+      }
+      canvas.setCircularCamera({
+        scale: Number(camera.scale) * (2.5 / Number(current?.tipSpacingPx)),
+      });
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return canvas.getRenderDebug()?.spiral as {
+      tipSpacingPx?: number;
+      tipLabelsVisible?: boolean;
+      taxonomyNaturalRibbonWidthPx?: number;
+      taxonomyRenderedRibbonWidthPx?: number;
+      taxonomyNaturalTotalWidthPx?: number;
+      taxonomyRenderedTotalWidthPx?: number;
+    } | undefined;
+  });
+
+  expect(Number(debug?.tipSpacingPx)).toBeCloseTo(2.5, 1);
+  expect(debug?.tipLabelsVisible).toBe(false);
+  expect(Number(debug?.taxonomyNaturalRibbonWidthPx)).toBeGreaterThan(0);
+  expect(Number(debug?.taxonomyRenderedRibbonWidthPx)).toBeLessThan(
+    Number(debug?.taxonomyNaturalRibbonWidthPx),
+  );
+  expect(Number(debug?.taxonomyRenderedTotalWidthPx)).toBeLessThan(
+    Number(debug?.taxonomyNaturalTotalWidthPx),
+  );
 });
 
 test("spiral genus guides converge to stable screen spacing and thickness at deep zoom", async ({ page }) => {
