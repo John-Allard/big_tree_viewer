@@ -67,6 +67,150 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
   expect(svg).toContain("Courier New");
 });
 
+test("ribbon gap closes at overview scale but preserves visible tip-label clearance", async ({ page }) => {
+  await waitForViewer(page);
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount ?? 0,
+  ) > 0);
+
+  const result = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!app || !canvas) {
+      throw new Error("Ribbon-gap test controls unavailable.");
+    }
+    const settle = async (): Promise<void> => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    };
+    const rectGap = (): { gap: number; tipBandWidth: number } => {
+      const debug = canvas.getRenderDebug()?.rect as {
+        taxonomyBandXs?: number[];
+        tipSideX?: number;
+        tipBandWidthPx?: number;
+      } | undefined;
+      return {
+        gap: Number(debug?.taxonomyBandXs?.[0]) - Number(debug?.tipSideX),
+        tipBandWidth: Number(debug?.tipBandWidthPx),
+      };
+    };
+
+    app.setViewMode("rectangular");
+    app.setShowTipLabels(true);
+    app.requestFit();
+    await settle();
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 1);
+    await settle();
+    const overviewDefault = rectGap();
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 0);
+    await settle();
+    const overviewClosed = rectGap();
+
+    const fitCamera = canvas.getCamera();
+    if (!fitCamera || fitCamera.kind !== "rect") {
+      throw new Error("Rectangular fit camera unavailable.");
+    }
+    canvas.setRectCamera({ scaleY: Math.max(5, Number(fitCamera.scaleY) * 80) });
+    await settle();
+    const labelsAtZero = rectGap();
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 1);
+    await settle();
+    const labelsAtDefault = rectGap();
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 2);
+    await settle();
+    const labelsWithExtra = rectGap();
+
+    app.setViewMode("circular");
+    app.requestFit();
+    await settle();
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 1);
+    await settle();
+    const circularDefaultDebug = canvas.getRenderDebug()?.circular as {
+      taxonomyFirstRingInnerRadiusPx?: number;
+      taxonomyTipBandOuterRadiusPx?: number;
+    } | undefined;
+    const circularDefaultGap = Number(circularDefaultDebug?.taxonomyFirstRingInnerRadiusPx)
+      - Number(circularDefaultDebug?.taxonomyTipBandOuterRadiusPx);
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 0);
+    await settle();
+    const circularClosedDebug = canvas.getRenderDebug()?.circular as {
+      taxonomyFirstRingInnerRadiusPx?: number;
+      taxonomyTipBandOuterRadiusPx?: number;
+    } | undefined;
+    const circularClosedGap = Number(circularClosedDebug?.taxonomyFirstRingInnerRadiusPx)
+      - Number(circularClosedDebug?.taxonomyTipBandOuterRadiusPx);
+
+    return {
+      overviewDefault,
+      overviewClosed,
+      labelsAtZero,
+      labelsAtDefault,
+      labelsWithExtra,
+      circularDefaultGap,
+      circularClosedGap,
+    };
+  });
+
+  expect(result.overviewDefault.tipBandWidth).toBe(0);
+  expect(result.overviewDefault.gap).toBeCloseTo(18, 1);
+  expect(result.overviewClosed.gap).toBeCloseTo(0, 1);
+  expect(result.labelsAtZero.tipBandWidth).toBeGreaterThan(0);
+  expect(result.labelsAtZero.gap).toBeCloseTo(result.labelsAtDefault.gap, 1);
+  expect(result.labelsWithExtra.gap - result.labelsAtDefault.gap).toBeCloseTo(1, 1);
+  expect(result.circularDefaultGap).toBeGreaterThan(18);
+  expect(result.circularClosedGap, JSON.stringify(result)).toBeCloseTo(0, 1);
+});
+
+test("ribbon gap controls spiral overview spacing before tip labels appear", async ({ page }) => {
+  await waitForViewer(page);
+  const tips = Array.from({ length: 1200 }, (_, index) => `Genus_${index}:1`);
+  await loadTreeFromPaste(page, `(${tips.join(",")})Root;`);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes?.length === 1200);
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    app?.setTaxonomyMapForTest({
+      version: 1,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class"],
+      tipRanks: leafNodes.map((node) => ({ node, ranks: { class: "Test class" } })),
+    });
+    app?.setTaxonomyRankVisibilityAutoForTest(false);
+    app?.setTaxonomyRankVisibilityForTest("class", true);
+  });
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount ?? 0,
+  ) > 0);
+  await page.getByRole("button", { name: "Spiral", exact: true }).click();
+  await page.waitForFunction(() => Boolean(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral"
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.spiral,
+  ));
+
+  const measureGap = async (value: number): Promise<number> => page.evaluate(async (nextValue) => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "taxonomyGap", nextValue);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const camera = canvas?.getCamera();
+    const debug = canvas?.getRenderDebug()?.spiral as {
+      taxonomyFirstRibbonInnerOffsetWorld?: number;
+      tipLabelsVisible?: boolean;
+    } | undefined;
+    if (debug?.tipLabelsVisible) {
+      throw new Error("Spiral overview unexpectedly rendered tip labels.");
+    }
+    return camera?.kind === "circular"
+      ? Number(debug?.taxonomyFirstRibbonInnerOffsetWorld) * Number(camera.scale)
+      : Number.NaN;
+  }, value);
+  const defaultGap = await measureGap(1);
+  const closedGap = await measureGap(0);
+  const extraGap = await measureGap(2);
+
+  expect(defaultGap - closedGap).toBeGreaterThan(1);
+  expect(extraGap - defaultGap).toBeCloseTo(1, 1);
+});
+
 test("small trees show readable bootstrap labels at fit view regardless of branch-length units", async ({ page }) => {
   await waitForViewer(page);
   const fixture = buildSmallBootstrapTree();

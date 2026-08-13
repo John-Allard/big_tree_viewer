@@ -127,7 +127,15 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
     current.offsetXPx = coerceFiniteNumber(source.offsetXPx, current.offsetXPx);
     current.offsetYPx = coerceFiniteNumber(source.offsetYPx, current.offsetYPx);
     current.bandThicknessScale = coerceFiniteNumber(source.bandThicknessScale, current.bandThicknessScale ?? 1);
-    current.taxonomyGapPx = coerceFiniteNumber(source.taxonomyGapPx, current.taxonomyGapPx ?? 0);
+    if (labelClass === "taxonomy") {
+      const sourceTaxonomyGap = typeof source.taxonomyGap === "number" && Number.isFinite(source.taxonomyGap)
+        ? source.taxonomyGap
+        : coerceFiniteNumber(source.taxonomyGapPx, 0) + 1;
+      current.taxonomyGap = sourceTaxonomyGap;
+      current.taxonomyGapPx = 0;
+    } else {
+      current.taxonomyGapPx = coerceFiniteNumber(source.taxonomyGapPx, current.taxonomyGapPx ?? 0);
+    }
     current.bold = coerceBoolean(source.bold, Boolean(current.bold));
     current.italic = coerceBoolean(source.italic, Boolean(current.italic));
   }

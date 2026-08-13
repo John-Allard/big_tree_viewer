@@ -1359,13 +1359,13 @@ function LabelStyleSection({
                 <input
                   type="range"
                   min={0}
-                  max={40}
-                  step={1}
-                  value={settings.taxonomyGapPx ?? 0}
-                  onChange={(event) => onUpdate(labelClass, "taxonomyGapPx", Number(event.target.value))}
+                  max={41}
+                  step={0.25}
+                  value={settings.taxonomyGap ?? 1}
+                  onChange={(event) => onUpdate(labelClass, "taxonomyGap", Number(event.target.value))}
                 />
               </label>
-              <div className="figure-style-value">{Math.max(0, settings.taxonomyGapPx ?? 0)}px</div>
+              <div className="figure-style-value">{Math.max(0, settings.taxonomyGap ?? 1).toFixed(2)}</div>
             </>
           ) : isScale ? null : supportsAxisOffsets ? (
             <>
@@ -2420,6 +2420,16 @@ export default function App() {
           const source = visual.figureStyles?.[labelClass];
           if (source && typeof source === "object") {
             next[labelClass] = { ...current[labelClass], ...source };
+            if (labelClass === "taxonomy") {
+              const sourceGap = source.taxonomyGap;
+              const legacyExtraGapPx = source.taxonomyGapPx;
+              next.taxonomy.taxonomyGap = typeof sourceGap === "number" && Number.isFinite(sourceGap)
+                ? sourceGap
+                : typeof legacyExtraGapPx === "number" && Number.isFinite(legacyExtraGapPx)
+                  ? legacyExtraGapPx + 1
+                  : current.taxonomy.taxonomyGap;
+              next.taxonomy.taxonomyGapPx = 0;
+            }
           }
         }
         return next;
@@ -4025,6 +4035,16 @@ export default function App() {
           const source = settings.figureStyles[labelClass];
           if (source && typeof source === "object") {
             next[labelClass] = { ...next[labelClass], ...source };
+            if (labelClass === "taxonomy") {
+              const sourceGap = source.taxonomyGap;
+              const legacyExtraGapPx = source.taxonomyGapPx;
+              next.taxonomy.taxonomyGap = typeof sourceGap === "number" && Number.isFinite(sourceGap)
+                ? sourceGap
+                : typeof legacyExtraGapPx === "number" && Number.isFinite(legacyExtraGapPx)
+                  ? legacyExtraGapPx + 1
+                  : next.taxonomy.taxonomyGap;
+              next.taxonomy.taxonomyGapPx = 0;
+            }
           }
         }
       }
@@ -6107,7 +6127,7 @@ export default function App() {
       setMetadataLabelMinSpacingPx,
       setMetadataLabelOffsetXPx,
       setMetadataLabelOffsetYPx,
-      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "taxonomyGapPx" | "bold" | "italic", value: string | number | boolean) => {
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic", value: string | number | boolean) => {
         updateFigureStyle(labelClass, field, value as FontFamilyKey | number | boolean);
       },
       runRealTaxonomyMappingForTest: async () => {
