@@ -51,7 +51,7 @@ export default function TreeStatisticsView({ statistics }: { statistics: TreeSta
         <StatisticRow
           label="Ultrametric"
           value={statistics.ultrametric ? "Yes" : "No"}
-          title="Root-to-tip distances are treated as equal within 0.5% of tree depth."
+          title="Root-to-tip distances are treated as equal within 0.1% of tree depth."
         />
         {!statistics.ultrametric ? (
           <>

@@ -149,7 +149,7 @@ export function computeTreeStatistics(tree: TreeModel, rootNode = tree.root): Tr
   const finiteMinimumRootToTipDistance = Number.isFinite(minimumRootToTipDistance) ? minimumRootToTipDistance : 0;
   const finiteMaximumRootToTipDistance = Number.isFinite(maximumRootToTipDistance) ? maximumRootToTipDistance : 0;
   const rootToTipDistanceRange = finiteMaximumRootToTipDistance - finiteMinimumRootToTipDistance;
-  const ultrametricTolerance = Math.max(1e-6, Math.abs(finiteMaximumRootToTipDistance) * 0.005);
+  const ultrametricTolerance = Math.max(1e-6, Math.abs(finiteMaximumRootToTipDistance) * 0.001);
 
   return {
     rootNode,
