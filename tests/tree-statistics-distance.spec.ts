@@ -78,11 +78,15 @@ test("whole-tree and subtree statistics use the same definitions", async ({ page
   await expect(await statisticValue(sidePanel, "Branches")).toHaveText("6");
   await expect(await statisticValue(sidePanel, "Cherries")).toHaveText("2");
   await expect(await statisticValue(sidePanel, "Total branch length")).toHaveText("6");
+  await expect(sidePanel.locator("dt", { hasText: "Total branch length" })).toHaveAttribute("title", /Faith's phylogenetic diversity/);
   await expect(await statisticValue(sidePanel, "Mean pairwise tip distance")).toHaveText("3.333333");
   await expect(await statisticValue(sidePanel, "Sackin index")).toHaveText("8");
   await expect(await statisticValue(sidePanel, "Normalized Sackin")).toHaveText("0");
   await expect(await statisticValue(sidePanel, "Colless index")).toHaveText("0");
   await expect(await statisticValue(sidePanel, "Ultrametric")).toHaveText("Yes");
+  await expect(sidePanel.locator("dt", { hasText: "Minimum root-to-tip" })).toHaveCount(0);
+  await expect(sidePanel.locator("dt", { hasText: "Internal branch length" })).toHaveCount(0);
+  await expect(sidePanel.locator("dt", { hasText: "Mean branch length" })).toHaveCount(0);
   await page.getByRole("button", { name: "Stats" }).click();
   await expect(page.getByRole("button", { name: "Stats" })).toHaveAttribute("aria-expanded", "false");
 
@@ -107,6 +111,16 @@ test("whole-tree and subtree statistics use the same definitions", async ({ page
   await page.getByRole("button", { name: "Close subtree statistics" }).click();
   await expect(subtreePanel).toBeHidden();
   await expect(await statisticValue(sidePanel, "Tips")).toHaveText("4");
+});
+
+test("non-ultrametric trees show the root-to-tip distribution", async ({ page }) => {
+  await loadTree(page, "((A:1,B:2)AB:1,(C:3,D:4)CD:1)Root;");
+  await page.getByRole("button", { name: "Stats" }).click();
+  const sidePanel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Stats" }) });
+  await expect(await statisticValue(sidePanel, "Ultrametric")).toHaveText("No");
+  await expect(await statisticValue(sidePanel, "Minimum root-to-tip")).toHaveText("2");
+  await expect(await statisticValue(sidePanel, "Maximum root-to-tip")).toHaveText("5");
+  await expect(await statisticValue(sidePanel, "Root-to-tip range")).toHaveText("3");
 });
 
 test("unlabeled subtree statistics identify the selection as an internal node", async ({ page }) => {

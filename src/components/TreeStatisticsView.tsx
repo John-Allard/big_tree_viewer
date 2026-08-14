@@ -43,19 +43,24 @@ export default function TreeStatisticsView({ statistics }: { statistics: TreeSta
       <h4>Branch Lengths</h4>
       <dl className="stats-list">
         <StatisticRow label="Tree depth" value={statistics.maximumRootToTipDistance} title="Maximum distance from this tree or subtree root to a tip." />
-        <StatisticRow label="Total branch length" value={statistics.totalBranchLength} />
-        <StatisticRow label="Internal branch length" value={statistics.internalBranchLength} />
-        <StatisticRow label="Terminal branch length" value={statistics.terminalBranchLength} />
-        <StatisticRow label="Mean branch length" value={statistics.meanBranchLength} />
-        <StatisticRow label="Minimum root-to-tip" value={statistics.minimumRootToTipDistance} />
-        <StatisticRow label="Mean root-to-tip" value={statistics.meanRootToTipDistance} />
-        <StatisticRow label="Maximum root-to-tip" value={statistics.maximumRootToTipDistance} />
-        <StatisticRow label="Root-to-tip range" value={statistics.rootToTipDistanceRange} />
+        <StatisticRow
+          label="Total branch length"
+          value={statistics.totalBranchLength}
+          title="Sum of all branch lengths. For the complete set of tips, this is Faith's phylogenetic diversity (Faith's PD)."
+        />
         <StatisticRow
           label="Ultrametric"
           value={statistics.ultrametric ? "Yes" : "No"}
           title="Root-to-tip distances are treated as equal within 0.5% of tree depth."
         />
+        {!statistics.ultrametric ? (
+          <>
+            <StatisticRow label="Minimum root-to-tip" value={statistics.minimumRootToTipDistance} />
+            <StatisticRow label="Mean root-to-tip" value={statistics.meanRootToTipDistance} />
+            <StatisticRow label="Maximum root-to-tip" value={statistics.maximumRootToTipDistance} />
+            <StatisticRow label="Root-to-tip range" value={statistics.rootToTipDistanceRange} />
+          </>
+        ) : null}
         <StatisticRow
           label="Mean pairwise tip distance"
           value={statistics.meanPairwiseTipDistance ?? "Not available"}
@@ -67,8 +72,8 @@ export default function TreeStatisticsView({ statistics }: { statistics: TreeSta
 
       <h4>Shape And Balance</h4>
       <dl className="stats-list">
-        <StatisticRow label="Mean tip depth" value={statistics.meanTopologicalTipDepth} title="Mean number of branches from the root to a tip." />
-        <StatisticRow label="Maximum tip depth" value={statistics.maximumTopologicalTipDepth} />
+        <StatisticRow label="Mean topological tip depth" value={statistics.meanTopologicalTipDepth} title="Mean number of branches (edges) in the root-to-tip path." />
+        <StatisticRow label="Maximum topological tip depth" value={statistics.maximumTopologicalTipDepth} title="Maximum number of branches (edges) in a root-to-tip path." />
         <StatisticRow label="Sackin index" value={statistics.sackinIndex} title="Sum of the topological depths of all tips." />
         <StatisticRow
           label="Normalized Sackin"
