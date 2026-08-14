@@ -1346,7 +1346,7 @@ function LabelStyleSection({
                 Band thickness
                 <input
                   type="range"
-                  min={viewMode === "spiral" ? 0.15 : 0.65}
+                  min={0.05}
                   max={viewMode === "spiral" ? 5 : 2}
                   step={0.05}
                   value={settings.bandThicknessScale ?? 1}
@@ -1354,6 +1354,16 @@ function LabelStyleSection({
                 />
               </label>
               <div className="figure-style-value">x{(settings.bandThicknessScale ?? 1).toFixed(2)}</div>
+              {viewMode !== "spiral" ? (
+                <label className="label-style-inline-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.thickenOutermostRibbon !== false}
+                    onChange={(event) => onUpdate(labelClass, "thickenOutermostRibbon", event.target.checked)}
+                  />
+                  Thicker outermost ribbon
+                </label>
+              ) : null}
               <label>
                 Ribbon gap
                 <input
@@ -6127,7 +6137,7 @@ export default function App() {
       setMetadataLabelMinSpacingPx,
       setMetadataLabelOffsetXPx,
       setMetadataLabelOffsetYPx,
-      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic", value: string | number | boolean) => {
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "thickenOutermostRibbon" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic", value: string | number | boolean) => {
         updateFigureStyle(labelClass, field, value as FontFamilyKey | number | boolean);
       },
       runRealTaxonomyMappingForTest: async () => {

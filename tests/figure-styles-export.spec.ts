@@ -187,28 +187,51 @@ test("ribbon gap controls spiral overview spacing before tip labels appear", asy
     && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.spiral,
   ));
 
-  const measureGap = async (value: number): Promise<number> => page.evaluate(async (nextValue) => {
+  const measureGap = async (value: number): Promise<{ firstRibbonOffsetPx: number; interTurnGapPx: number }> => page.evaluate(async (nextValue) => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "taxonomyGap", nextValue);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
     const camera = canvas?.getCamera();
     const debug = canvas?.getRenderDebug()?.spiral as {
       taxonomyFirstRibbonInnerOffsetWorld?: number;
+      interTurnGapPx?: number;
       tipLabelsVisible?: boolean;
     } | undefined;
     if (debug?.tipLabelsVisible) {
       throw new Error("Spiral overview unexpectedly rendered tip labels.");
     }
-    return camera?.kind === "circular"
-      ? Number(debug?.taxonomyFirstRibbonInnerOffsetWorld) * Number(camera.scale)
-      : Number.NaN;
+    return {
+      firstRibbonOffsetPx: camera?.kind === "circular"
+        ? Number(debug?.taxonomyFirstRibbonInnerOffsetWorld) * Number(camera.scale)
+        : Number.NaN,
+      interTurnGapPx: Number(debug?.interTurnGapPx ?? Number.NaN),
+    };
   }, value);
   const defaultGap = await measureGap(1);
   const closedGap = await measureGap(0);
-  const extraGap = await measureGap(2);
+  const extraGap = await measureGap(21);
 
-  expect(defaultGap - closedGap).toBeGreaterThan(1);
-  expect(extraGap - defaultGap).toBeCloseTo(1, 1);
+  expect(defaultGap.firstRibbonOffsetPx - closedGap.firstRibbonOffsetPx).toBeGreaterThan(1);
+  expect(extraGap.firstRibbonOffsetPx - defaultGap.firstRibbonOffsetPx).toBeCloseTo(20, 1);
+  expect(extraGap.interTurnGapPx - defaultGap.interTurnGapPx).toBeCloseTo(20, 1);
+
+  const measureThickness = async (value: number) => page.evaluate(async (nextValue) => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", nextValue);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const debug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.spiral as {
+      taxonomyNaturalRibbonWidthPx?: number;
+      taxonomyNaturalRibbonGapPx?: number;
+    } | undefined;
+    return {
+      width: Number(debug?.taxonomyNaturalRibbonWidthPx ?? 0),
+      gap: Number(debug?.taxonomyNaturalRibbonGapPx ?? 0),
+    };
+  }, value);
+  const defaultThickness = await measureThickness(1);
+  const lineLikeThickness = await measureThickness(0.05);
+
+  expect(lineLikeThickness.width).toBeCloseTo(defaultThickness.width * 0.05, 5);
+  expect(lineLikeThickness.gap).toBeCloseTo(defaultThickness.gap * 0.05, 5);
 });
 
 test("small trees show readable bootstrap labels at fit view regardless of branch-length units", async ({ page }) => {
@@ -564,6 +587,10 @@ test("circular vector SVG export preserves taxonomy and metadata annotations", a
       activeRanks: ["class", "phylum", "genus"],
       tipRanks,
     });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    for (const rank of ["class", "phylum", "genus"] as const) {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest(rank, true);
+    }
     window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(`name,group\n${names[leafNodes[0]]},Hot\n`, "small.csv");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
@@ -973,6 +1000,7 @@ test("taxonomy label size and band thickness controls are independent", async ({
 
   const readRect = async () => page.evaluate(() => {
     const rect = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyBandXs?: number[];
       taxonomyBandWidthsPx?: number[];
       taxonomyPlacedLabels?: Array<{ text?: string; fontSize?: number }>;
     } | undefined;
@@ -986,12 +1014,25 @@ test("taxonomy label size and band thickness controls are independent", async ({
     ));
     return {
       bandWidth: Number(rect?.taxonomyBandWidthsPx?.[0] ?? 0),
+      bandWidths: [...(rect?.taxonomyBandWidthsPx ?? [])],
+      bandGap: Number(rect?.taxonomyBandXs?.[1] ?? 0)
+        - Number(rect?.taxonomyBandXs?.[0] ?? 0)
+        - Number(rect?.taxonomyBandWidthsPx?.[0] ?? 0),
       fontSize: Number(label?.fontSize ?? 0),
     };
   });
 
   const base = await readRect();
   await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "thickenOutermostRibbon", false);
+  });
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const uniformBands = await readRect();
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "thickenOutermostRibbon", true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 0.8);
   });
   await page.evaluate(async () => {
@@ -1000,6 +1041,7 @@ test("taxonomy label size and band thickness controls are independent", async ({
   const smallerLabels = await readRect();
 
   await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 1);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1.4);
   });
   await page.evaluate(async () => {
@@ -1007,12 +1049,63 @@ test("taxonomy label size and band thickness controls are independent", async ({
   });
   const thickerBands = await readRect();
 
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "sizeScale", 0.8);
+  });
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const reducedLabelsInThickerBands = await readRect();
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 0.05);
+  });
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const lineLikeBands = await readRect();
+
   expect(base.fontSize).toBeGreaterThan(0);
   expect(base.bandWidth).toBeGreaterThan(0);
+  expect(base.bandWidths.length).toBeGreaterThan(1);
+  expect(base.bandWidths.at(-1)).toBeGreaterThan(base.bandWidths[0]);
+  expect(uniformBands.bandWidths.length).toBe(base.bandWidths.length);
+  for (const width of uniformBands.bandWidths) {
+    expect(width).toBeCloseTo(uniformBands.bandWidths[0], 5);
+  }
   expect(smallerLabels.fontSize).toBeLessThan(base.fontSize);
   expect(smallerLabels.bandWidth).toBeCloseTo(base.bandWidth, 5);
   expect(thickerBands.bandWidth).toBeGreaterThan(smallerLabels.bandWidth);
-  expect(thickerBands.fontSize).toBeCloseTo(smallerLabels.fontSize, 5);
+  expect(thickerBands.fontSize).toBeGreaterThan(base.fontSize);
+  expect(reducedLabelsInThickerBands.fontSize).toBeLessThan(thickerBands.fontSize);
+  expect(reducedLabelsInThickerBands.bandWidth).toBeCloseTo(thickerBands.bandWidth, 5);
+  expect(lineLikeBands.bandWidth).toBeGreaterThan(0);
+  expect(lineLikeBands.bandWidth).toBeLessThan(base.bandWidth * 0.12);
+  expect(lineLikeBands.bandGap).toBeGreaterThan(0);
+  expect(lineLikeBands.bandGap).toBeLessThan(base.bandGap * 0.12);
+
+  const circularWidths = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    app?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 1);
+    app?.setFigureStyleForTest("taxonomy", "thickenOutermostRibbon", true);
+    app?.setViewMode("circular");
+    app?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const readWidths = (): number[] => {
+      const debug = canvas?.getRenderDebug()?.circular as { taxonomyBandWidthsPx?: number[] } | undefined;
+      return [...(debug?.taxonomyBandWidthsPx ?? [])];
+    };
+    const weighted = readWidths();
+    app?.setFigureStyleForTest("taxonomy", "thickenOutermostRibbon", false);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return { weighted, uniform: readWidths() };
+  });
+  expect(circularWidths.weighted.length).toBeGreaterThan(1);
+  expect(circularWidths.weighted.at(-1)).toBeGreaterThan(circularWidths.weighted[0]);
+  for (const width of circularWidths.uniform) {
+    expect(width).toBeCloseTo(circularWidths.uniform[0], 5);
+  }
 });
 
 test("scale settings support explicit tick interval and disabling fading subdivision ticks", async ({ page }) => {
