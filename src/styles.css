@@ -2037,6 +2037,32 @@ button.secondary {
   cursor: grabbing;
 }
 
+.tree-comparison-shell canvas {
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.tree-comparison-shell canvas:active {
+  cursor: grabbing;
+}
+
+.tree-comparison-summary {
+  position: absolute;
+  left: 50%;
+  bottom: 0.75rem;
+  max-width: calc(100% - 2rem);
+  transform: translateX(-50%);
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #475569;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .hover-tooltip,
 .distance-measurement-tooltip {
   position: absolute;

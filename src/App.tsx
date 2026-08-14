@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react";
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import TreeCanvas from "./components/TreeCanvas";
+import TreeComparisonCanvas from "./components/TreeComparisonCanvas";
 import TreeStatisticsView from "./components/TreeStatisticsView";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
@@ -1710,9 +1711,37 @@ async function computeTreeSignature(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function parseComparisonTree(text: string): Promise<TreeModel> {
+  const normalizedText = normalizeImportedTreeText(text);
+  if (!looksLikeTreeText(normalizedText)) {
+    return Promise.reject(new Error("The comparison file does not look like a Newick or NEXUS tree."));
+  }
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./workers/treeWorker.ts", import.meta.url), { type: "module" });
+    const finish = () => worker.terminate();
+    worker.addEventListener("message", (event: MessageEvent<WorkerResponse>) => {
+      if (event.data.type === "parse-progress") {
+        return;
+      }
+      finish();
+      if (event.data.type === "parse-error") {
+        reject(new Error(event.data.message));
+      } else {
+        resolve(buildTreeModel(event.data.payload));
+      }
+    });
+    worker.addEventListener("error", (event) => {
+      finish();
+      reject(new Error(event.message || "The comparison tree worker failed."));
+    });
+    worker.postMessage({ type: "parse-tree", text: normalizedText });
+  });
+}
+
 export default function App() {
   const workerRef = useRef<Worker | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const comparisonFileInputRef = useRef<HTMLInputElement | null>(null);
   const metadataFileInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoloadRef = useRef(false);
   const dragCounterRef = useRef(0);
@@ -1807,6 +1836,7 @@ export default function App() {
   const [visualOpen, setVisualOpen] = useSessionDisclosure("section-visual", false);
   const [taxonomyOpen, setTaxonomyOpen] = useSessionDisclosure("section-taxonomy", false);
   const [searchOpen, setSearchOpen] = useSessionDisclosure("section-search", false);
+  const [comparisonOpen, setComparisonOpen] = useSessionDisclosure("section-comparison", false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useSessionDisclosure("section-diagnostics", false);
   const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
   const [subtreeStatisticsTarget, setSubtreeStatisticsTarget] = useState<{ node: number; name: string } | null>(null);
@@ -1814,6 +1844,13 @@ export default function App() {
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
   const [pastedTreeText, setPastedTreeText] = useState("");
   const [showPasteInput, setShowPasteInput] = useState(false);
+  const [comparisonTree, setComparisonTree] = useState<TreeModel | null>(null);
+  const [comparisonTreeLabel, setComparisonTreeLabel] = useState("comparison tree");
+  const [comparisonEnabled, setComparisonEnabled] = useState(false);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [showComparisonPasteInput, setShowComparisonPasteInput] = useState(false);
+  const [pastedComparisonText, setPastedComparisonText] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
@@ -5430,6 +5467,42 @@ export default function App() {
     setHideDownloadNewick(false);
   }, [parseText, pastedTreeText]);
 
+  const loadComparisonTreeText = useCallback(async (text: string, label: string): Promise<void> => {
+    setComparisonLoading(true);
+    setComparisonError(null);
+    try {
+      const parsed = await parseComparisonTree(text);
+      setComparisonTree(parsed);
+      setComparisonTreeLabel(label);
+      setComparisonEnabled(true);
+      setShowComparisonPasteInput(false);
+      setPastedComparisonText("");
+      setComparisonOpen(true);
+    } catch (error) {
+      setComparisonError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setComparisonLoading(false);
+    }
+  }, [setComparisonOpen]);
+
+  const onComparisonFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    await loadComparisonTreeText(await file.text(), file.name);
+  }, [loadComparisonTreeText]);
+
+  const loadPastedComparisonTree = useCallback(async (): Promise<void> => {
+    const text = pastedComparisonText.trim();
+    if (!text) {
+      setComparisonError("Paste a Newick or NEXUS comparison tree first.");
+      return;
+    }
+    await loadComparisonTreeText(text, "pasted comparison tree");
+  }, [loadComparisonTreeText, pastedComparisonText]);
+
   const handleDrop = useCallback(async (event: DragEvent<HTMLDivElement>): Promise<void> => {
     event.preventDefault();
     dragCounterRef.current = 0;
@@ -8229,6 +8302,95 @@ export default function App() {
           </div>
         </PanelSection>
 
+        <PanelSection title="Tree Comparison" isOpen={comparisonOpen} onToggle={() => setComparisonOpen(!comparisonOpen)}>
+          <div className="comparison-controls">
+            <p className="status-line">
+              Compare the loaded tree with a second tree. Shared tips are matched by label, and the right tree is reordered to reduce connector crossings.
+            </p>
+            <div className="button-row">
+              <button
+                type="button"
+                className="secondary"
+                disabled={!viewTree || comparisonLoading}
+                onClick={() => comparisonFileInputRef.current?.click()}
+              >
+                Open Comparison Tree
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={!viewTree || comparisonLoading}
+                onClick={() => setShowComparisonPasteInput((visible) => !visible)}
+              >
+                Paste Newick
+              </button>
+              <input
+                ref={comparisonFileInputRef}
+                type="file"
+                accept=".nwk,.newick,.tree,.tre,.txt,.nex,.nexus"
+                hidden
+                onChange={(event) => void onComparisonFileChange(event)}
+              />
+            </div>
+            {showComparisonPasteInput ? (
+              <div className="paste-tree">
+                <textarea
+                  value={pastedComparisonText}
+                  onChange={(event) => setPastedComparisonText(event.target.value)}
+                  placeholder="Paste the comparison tree in Newick or NEXUS format"
+                  spellCheck={false}
+                />
+                <div className="button-row">
+                  <button type="button" className="secondary" disabled={comparisonLoading} onClick={() => void loadPastedComparisonTree()}>
+                    Load Comparison
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      setShowComparisonPasteInput(false);
+                      setPastedComparisonText("");
+                      setComparisonError(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {comparisonTree ? (
+              <>
+                <p className="status-line">
+                  {comparisonTreeLabel}: {comparisonTree.leafCount.toLocaleString()} tips
+                </p>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className={comparisonEnabled ? "active" : "secondary"}
+                    disabled={!viewTree}
+                    onClick={() => setComparisonEnabled((enabled) => !enabled)}
+                  >
+                    {comparisonEnabled ? "Turn Off Comparison" : "Show Comparison"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      setComparisonTree(null);
+                      setComparisonEnabled(false);
+                      setComparisonError(null);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {comparisonLoading ? <p className="status-line">Parsing comparison tree...</p> : null}
+            {comparisonError ? <p className="status-error">{comparisonError}</p> : null}
+          </div>
+        </PanelSection>
+
         {showDiagnosticsPanel ? (
           <PanelSection title="Diagnostics" isOpen={diagnosticsOpen} onToggle={() => setDiagnosticsOpen(!diagnosticsOpen)}>
             <div className="search-controls">
@@ -8294,7 +8456,30 @@ export default function App() {
       </aside>
 
       <main className="viewer-panel">
-        <TreeCanvas
+        {comparisonEnabled && comparisonTree && viewTree ? (
+          <TreeComparisonCanvas
+            primaryTree={viewTree}
+            comparisonTree={comparisonTree}
+            order={order}
+            primaryLabel={loadedTreeLabel}
+            comparisonLabel={comparisonTreeLabel}
+            showTipLabels={showTipLabels}
+            branchThicknessScale={branchThicknessScale}
+            figureStyles={figureStyles}
+            taxonomyEnabled={taxonomyEnabled}
+            taxonomyMap={viewTaxonomyMap}
+            taxonomyColorJitter={taxonomyColorJitter}
+            taxonomyColorPalette={taxonomyColorPalette}
+            taxonomyCustomPaletteColors={customTaxonomyPaletteColors}
+            taxonomyColorRootRank={taxonomyColorRootRank}
+            taxonomyColorJitterRank={taxonomyColorJitterRank}
+            taxonomyRankDisplayModes={taxonomyRankDisplayModes}
+            taxonomyRankVisibility={taxonomyRankVisibility}
+            useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
+            fitRequest={fitRequest}
+          />
+        ) : (
+          <TreeCanvas
           tree={viewTree}
           order={order}
           viewMode={viewMode}
@@ -8392,7 +8577,8 @@ export default function App() {
           onPhyloPicRemoveSilhouette={removePhyloPicSilhouette}
           onPhyloPicTryAnotherSilhouette={tryAnotherPhyloPicSilhouette}
           hideDownloadNewick={hideDownloadNewick}
-        />
+          />
+        )}
         {metadataOverlayProcessing ? (
           <div className="viewer-loading-overlay" role="status" aria-live="polite">
             <div className="loading-progress" aria-hidden="true"><span /></div>

@@ -1956,7 +1956,7 @@ function majorTaxonColorOrderForPalette(paletteKey: TaxonomyColorPaletteKey, pal
   return order;
 }
 
-function buildTaxonomyColorMap(
+export function buildTaxonomyColorMap(
   taxonomyMap: TaxonomyMapPayload,
   topLevelOverrides: Map<string, string>,
   jitterScale: number,
