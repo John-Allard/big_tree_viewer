@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import path from "node:path";
 
 test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await page.goto("/");
@@ -40,4 +41,22 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await panel.getByRole("button", { name: "Turn Off Comparison" }).click();
   await expect(comparisonCanvas).toBeHidden();
   await expect(page.getByTestId("tree-canvas")).toBeVisible();
+});
+
+test("bundled example comparison fixture matches every example-tree tip", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Load Example" }).click();
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.treeLoaded) && !Boolean(state?.loading);
+  });
+
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.locator('input[type="file"]').setInputFiles(path.resolve("public/example_comparison_tree.nwk"));
+
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".tree-comparison-summary")).toHaveText("50,033 shared tips", { timeout: 30_000 });
+  await expect(panel).toContainText("example_comparison_tree.nwk: 50,033 tips");
 });
