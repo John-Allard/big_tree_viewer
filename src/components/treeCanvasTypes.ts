@@ -130,6 +130,7 @@ export interface TreeCanvasProps {
   visualResetRequest: number;
   tutorialBranchMenuDemoActive?: boolean;
   onHoverChange: (hover: HoverInfo | null) => void;
+  onSubtreeStatisticsRequest?: (target: { node: number; name: string }) => void;
   onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;
   onViewModeChange?: (mode: ViewMode) => void;
   onSessionStateSnapshot?: (state: TreeCanvasSessionState) => void;

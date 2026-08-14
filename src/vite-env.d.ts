@@ -128,6 +128,10 @@ declare global {
       getTaxonomyArcHitboxes: () => Array<Record<string, unknown>>;
       getPhyloPicHitboxes: () => Array<Record<string, unknown>>;
       probeHoverForTest: (localX: number, localY: number) => Record<string, unknown> | null;
+      startDistanceMeasurementForTest: (node: number, screenX?: number, screenY?: number) => void;
+      updateDistanceMeasurementForTest: (node: number, screenX?: number, screenY?: number) => void;
+      getDistanceMeasurementForTest: () => Record<string, unknown> | null;
+      clearDistanceMeasurementForTest: () => void;
       buildSharedSubtreePayloadForTest: (node: number) => Record<string, unknown> | null;
       zoomToSubtreeTarget: (node: number) => void;
       setManualBranchColor: (node: number, color: string) => void;

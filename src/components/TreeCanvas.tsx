@@ -118,6 +118,16 @@ const MAX_GLOBAL_COLORED_BRANCH_CACHE_COLORS = 512;
 // Large accelerated Canvas2D Path2Ds can silently fail to stroke in Chromium.
 const MAX_SPIRAL_BRANCH_PATH_COMMANDS = 200_000;
 const ROTATION_PREVIEW_SETTLE_DELAY_MS = 120;
+const DISTANCE_PATH_COLOR = "#dc2626";
+
+type DistanceMeasurement = {
+  startNode: number;
+  targetNode: number;
+  mrcaNode: number;
+  distance: number;
+  screenX: number;
+  screenY: number;
+};
 
 type PhyloPicHitbox = {
   silhouette: PhyloPicSilhouette;
@@ -4169,6 +4179,7 @@ export default function TreeCanvas({
   visualResetRequest,
   tutorialBranchMenuDemoActive = false,
   onHoverChange,
+  onSubtreeStatisticsRequest,
   onRerootRequest,
   onViewModeChange,
   onSessionStateSnapshot,
@@ -4193,6 +4204,13 @@ export default function TreeCanvas({
   const hoverTooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverTooltipLabelRef = useRef<HTMLDivElement | null>(null);
   const hoverTooltipBodyRef = useRef<HTMLDivElement | null>(null);
+  const distanceTooltipRef = useRef<HTMLDivElement | null>(null);
+  const distanceTooltipNodesRef = useRef<HTMLDivElement | null>(null);
+  const distanceTooltipValueRef = useRef<HTMLDivElement | null>(null);
+  const distanceTooltipMrcaRef = useRef<HTMLDivElement | null>(null);
+  const distanceStartNodeRef = useRef<number | null>(null);
+  const distanceStartAncestorsRef = useRef<Set<number>>(new Set());
+  const distanceMeasurementRef = useRef<DistanceMeasurement | null>(null);
   const labelHitsRef = useRef<LabelHitbox[]>([]);
   const collapsedTriangleHitsRef = useRef<CollapsedTriangleHitbox[]>([]);
   const phylopicHitsRef = useRef<PhyloPicHitbox[]>([]);
@@ -4463,7 +4481,16 @@ export default function TreeCanvas({
     setContextMenuRootMenuOpen(false);
     setContextMenuCollapseMenuOpen(false);
     hoverRef.current = null;
+    distanceStartNodeRef.current = null;
+    distanceStartAncestorsRef.current.clear();
+    distanceMeasurementRef.current = null;
     updateHoverTooltip(null);
+    if (distanceTooltipRef.current) {
+      distanceTooltipRef.current.hidden = true;
+    }
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = "";
+    }
     const hoverCanvas = hoverCanvasRef.current;
     const ctx = hoverCanvas?.getContext("2d");
     if (hoverCanvas && ctx) {
@@ -5259,6 +5286,28 @@ export default function TreeCanvas({
     }
     return displayNodeName(tree, node);
   }, [tree]);
+  const updateDistanceTooltip = useCallback((measurement: DistanceMeasurement | null): void => {
+    const tooltip = distanceTooltipRef.current;
+    const nodes = distanceTooltipNodesRef.current;
+    const value = distanceTooltipValueRef.current;
+    const mrca = distanceTooltipMrcaRef.current;
+    if (!tooltip || !nodes || !value || !mrca) {
+      return;
+    }
+    if (!measurement) {
+      tooltip.hidden = true;
+      return;
+    }
+    const formatDistance = (distance: number): string => distance.toLocaleString(undefined, {
+      maximumSignificantDigits: 8,
+    });
+    nodes.textContent = `${displayNodeNameForView(measurement.startNode)} to ${displayNodeNameForView(measurement.targetNode)}`;
+    value.textContent = `Distance: ${formatDistance(measurement.distance)}`;
+    mrca.textContent = `MRCA: ${displayNodeNameForView(measurement.mrcaNode)}`;
+    tooltip.style.left = `${Math.max(8, Math.min(size.width - 260, measurement.screenX + 16))}px`;
+    tooltip.style.top = `${Math.max(8, Math.min(size.height - 120, measurement.screenY + 16))}px`;
+    tooltip.hidden = false;
+  }, [displayNodeNameForView, size.height, size.width]);
   const descendantTipCountForView = useCallback((node: number): number => (
     tree?.buffers.leafCount[node] ?? 0
   ), [tree]);
@@ -5644,9 +5693,144 @@ export default function TreeCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
 
-    const hover = hoverRef.current;
     const camera = cameraRef.current;
-    if (!hover || !camera) {
+    if (!camera) {
+      return;
+    }
+    const layout = collapsedView?.layout ?? tree.layouts[order];
+    const measurement = distanceMeasurementRef.current;
+    if (measurement) {
+      const pathChildren: number[] = [];
+      for (let node = measurement.startNode; node !== measurement.mrcaNode && node >= 0; node = tree.buffers.parent[node]) {
+        pathChildren.push(node);
+      }
+      for (let node = measurement.targetNode; node !== measurement.mrcaNode && node >= 0; node = tree.buffers.parent[node]) {
+        pathChildren.push(node);
+      }
+
+      ctx.strokeStyle = DISTANCE_PATH_COLOR;
+      ctx.fillStyle = DISTANCE_PATH_COLOR;
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      if (viewMode === "spiral" && camera.kind === "circular") {
+        const visibleRankCount = spiralVisibleTaxonomyRanksForScale(camera.scale).length;
+        const metrics = spiralMetricsForScale(visibleRankCount, camera.scale);
+        const path = new Path2D();
+        for (let index = 0; index < pathChildren.length; index += 1) {
+          const child = pathChildren[index];
+          const parent = tree.buffers.parent[child];
+          if (parent < 0) {
+            continue;
+          }
+          const childTheta = spiralThetaForY(layout.center[child], tree.leafCount, metrics);
+          const parentTheta = spiralThetaForY(layout.center[parent], tree.leafCount, metrics);
+          if (Math.abs(childTheta - parentTheta) > 1e-9) {
+            appendSpiralCurve(
+              path,
+              Math.min(parentTheta, childTheta),
+              Math.max(parentTheta, childTheta),
+              spiralAgeForDepth(tree, tree.buffers.depth[parent], metrics),
+              metrics,
+              Math.max(camera.scale, 1e-6),
+            );
+          }
+          const stemStart = spiralPointAt(
+            childTheta,
+            spiralAgeForDepth(tree, tree.buffers.depth[parent], metrics),
+            metrics,
+          );
+          const stemEnd = spiralPointAt(
+            childTheta,
+            spiralAgeForDepth(tree, tree.buffers.depth[child], metrics),
+            metrics,
+          );
+          path.moveTo(stemStart.x, stemStart.y);
+          path.lineTo(stemEnd.x, stemEnd.y);
+        }
+        ctx.save();
+        ctx.translate(camera.translateX, camera.translateY);
+        ctx.scale(camera.scale, camera.scale);
+        ctx.rotate(camera.rotation);
+        ctx.lineWidth = 3 / Math.max(camera.scale, 1e-6);
+        ctx.stroke(path);
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        for (let index = 0; index < pathChildren.length; index += 1) {
+          const child = pathChildren[index];
+          const parent = tree.buffers.parent[child];
+          if (parent < 0) {
+            continue;
+          }
+          if (camera.kind === "rect") {
+            const parentY = layout.center[parent];
+            const childY = layout.center[child];
+            const connectorStart = worldToScreenRect(camera, axisDepth(tree.buffers.depth[parent]), parentY);
+            const connectorEnd = worldToScreenRect(camera, axisDepth(tree.buffers.depth[parent]), childY);
+            const stemEnd = worldToScreenRect(camera, axisDepth(tree.buffers.depth[child]), childY);
+            ctx.moveTo(connectorStart.x, connectorStart.y);
+            ctx.lineTo(connectorEnd.x, connectorEnd.y);
+            ctx.lineTo(stemEnd.x, stemEnd.y);
+          } else {
+            const parentTheta = polarThetaFor(layout.center, parent);
+            const childTheta = polarThetaFor(layout.center, child);
+            const arcStart = polarThetaFor(layout.min, parent);
+            const arcEnd = polarThetaFor(layout.max, parent);
+            const arcSpan = arcSubspanWithinSpan(parentTheta, childTheta, arcStart, Math.max(0, arcEnd - arcStart));
+            const radiusPx = axisDepth(tree.buffers.depth[parent]) * camera.scale;
+            if (arcSpan && radiusPx > 0) {
+              ctx.moveTo(
+                camera.translateX + Math.cos(arcSpan.start + camera.rotation) * radiusPx,
+                camera.translateY + Math.sin(arcSpan.start + camera.rotation) * radiusPx,
+              );
+              ctx.arc(
+                camera.translateX,
+                camera.translateY,
+                radiusPx,
+                arcSpan.start + camera.rotation,
+                arcSpan.end + camera.rotation,
+                false,
+              );
+            }
+            const stemStartWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), childTheta);
+            const stemEndWorld = polarToCartesian(axisDepth(tree.buffers.depth[child]), childTheta);
+            const stemStart = worldToScreenCircular(camera, stemStartWorld.x, stemStartWorld.y);
+            const stemEnd = worldToScreenCircular(camera, stemEndWorld.x, stemEndWorld.y);
+            ctx.moveTo(stemStart.x, stemStart.y);
+            ctx.lineTo(stemEnd.x, stemEnd.y);
+          }
+        }
+        ctx.stroke();
+      }
+
+      const screenPointForNode = (node: number): { x: number; y: number } => {
+        if (viewMode === "spiral" && camera.kind === "circular") {
+          const visibleRankCount = spiralVisibleTaxonomyRanksForScale(camera.scale).length;
+          const metrics = spiralMetricsForScale(visibleRankCount, camera.scale);
+          const theta = spiralThetaForY(layout.center[node], tree.leafCount, metrics);
+          const point = spiralPointAt(theta, spiralAgeForDepth(tree, tree.buffers.depth[node], metrics), metrics);
+          return worldToScreenCircular(camera, point.x, point.y);
+        }
+        if (camera.kind === "rect") {
+          return worldToScreenRect(camera, axisDepth(tree.buffers.depth[node]), layout.center[node]);
+        }
+        const theta = polarThetaFor(layout.center, node);
+        const point = polarToCartesian(axisDepth(tree.buffers.depth[node]), theta);
+        return worldToScreenCircular(camera, point.x, point.y);
+      };
+      const startPoint = screenPointForNode(measurement.startNode);
+      const targetPoint = screenPointForNode(measurement.targetNode);
+      ctx.beginPath();
+      ctx.arc(startPoint.x, startPoint.y, 4, 0, Math.PI * 2);
+      ctx.arc(targetPoint.x, targetPoint.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    const hover = hoverRef.current;
+    if (!hover) {
       return;
     }
     const hoveredTriangle = collapsedTriangleHitsRef.current.find((triangle) => (
@@ -5667,7 +5851,6 @@ export default function TreeCanvas({
       ctx.stroke();
       return;
     }
-    const layout = collapsedView?.layout ?? tree.layouts[order];
     const parent = tree.buffers.parent[hover.node];
     if (parent < 0) {
       return;
@@ -5794,7 +5977,74 @@ export default function TreeCanvas({
       ctx.lineTo(end.x, end.y);
     }
     ctx.stroke();
-  }, [collapsedView, order, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
+  }, [axisDepth, collapsedView, order, polarThetaFor, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
+
+  const clearDistanceMeasurement = useCallback((): void => {
+    distanceStartNodeRef.current = null;
+    distanceStartAncestorsRef.current.clear();
+    distanceMeasurementRef.current = null;
+    updateDistanceTooltip(null);
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = "";
+    }
+    drawHoverHighlightOverlay();
+  }, [drawHoverHighlightOverlay, updateDistanceTooltip]);
+
+  const beginDistanceMeasurement = useCallback((startNode: number, screenX: number, screenY: number): void => {
+    if (!tree || startNode < 0 || startNode >= tree.nodeCount) {
+      return;
+    }
+    const ancestors = new Set<number>();
+    for (let node = startNode; node >= 0; node = tree.buffers.parent[node]) {
+      ancestors.add(node);
+    }
+    distanceStartNodeRef.current = startNode;
+    distanceStartAncestorsRef.current = ancestors;
+    const measurement: DistanceMeasurement = {
+      startNode,
+      targetNode: startNode,
+      mrcaNode: startNode,
+      distance: 0,
+      screenX,
+      screenY,
+    };
+    distanceMeasurementRef.current = measurement;
+    hoverRef.current = null;
+    updateHoverTooltip(null);
+    onHoverChange(null);
+    updateDistanceTooltip(measurement);
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = "crosshair";
+    }
+    drawHoverHighlightOverlay();
+  }, [drawHoverHighlightOverlay, onHoverChange, tree, updateDistanceTooltip, updateHoverTooltip]);
+
+  const updateDistanceMeasurementTarget = useCallback((targetNode: number, screenX: number, screenY: number): void => {
+    const startNode = distanceStartNodeRef.current;
+    if (!tree || startNode === null || targetNode < 0 || targetNode >= tree.nodeCount) {
+      return;
+    }
+    let mrcaNode = targetNode;
+    while (mrcaNode >= 0 && !distanceStartAncestorsRef.current.has(mrcaNode)) {
+      mrcaNode = tree.buffers.parent[mrcaNode];
+    }
+    if (mrcaNode < 0) {
+      mrcaNode = tree.root;
+    }
+    const measurement: DistanceMeasurement = {
+      startNode,
+      targetNode,
+      mrcaNode,
+      distance: tree.buffers.depth[startNode]
+        + tree.buffers.depth[targetNode]
+        - (2 * tree.buffers.depth[mrcaNode]),
+      screenX,
+      screenY,
+    };
+    distanceMeasurementRef.current = measurement;
+    updateDistanceTooltip(measurement);
+    drawHoverHighlightOverlay();
+  }, [drawHoverHighlightOverlay, tree, updateDistanceTooltip]);
 
   const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
     const maxRadius = Math.max(tree ? (effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth) : 0, tree?.branchLengthMinPositive ?? 1);
@@ -15834,6 +16084,10 @@ export default function TreeCanvas({
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
       lastCanvasPointerRef.current = { x: localX, y: localY };
+      if (distanceStartNodeRef.current !== null) {
+        clearDistanceMeasurement();
+        return;
+      }
       for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
         const hitbox = labelHitsRef.current[index];
         if (hitbox.source !== "collapse") {
@@ -15970,6 +16224,21 @@ export default function TreeCanvas({
         scheduleDraw();
         return;
       }
+      const distanceStartNode = distanceStartNodeRef.current;
+      if (distanceStartNode !== null) {
+        const localX = event.clientX - rect.left;
+        const localY = event.clientY - rect.top;
+        const target = hitTestAt(localX, localY);
+        hoverRef.current = null;
+        if (!target) {
+          distanceMeasurementRef.current = null;
+          updateDistanceTooltip(null);
+          drawHoverHighlightOverlay();
+          return;
+        }
+        updateDistanceMeasurementTarget(target.node, localX, localY);
+        return;
+      }
       updateHover(event);
     };
 
@@ -16012,6 +16281,10 @@ export default function TreeCanvas({
       pointerDownRef.current = false;
       lastPointerRef.current = null;
       lastCanvasPointerRef.current = null;
+      if (distanceStartNodeRef.current !== null) {
+        distanceMeasurementRef.current = null;
+        updateDistanceTooltip(null);
+      }
       clearHoverState();
     };
 
@@ -16185,6 +16458,9 @@ export default function TreeCanvas({
 
     const handleContextMenu = (event: MouseEvent): void => {
       event.preventDefault();
+      if (distanceStartNodeRef.current !== null) {
+        clearDistanceMeasurement();
+      }
       const rect = canvas.getBoundingClientRect();
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
@@ -16274,6 +16550,7 @@ export default function TreeCanvas({
     collapsedNodes,
     collapsedSpatialCache,
     collapsedView,
+    clearDistanceMeasurement,
     descendantTipCountForView,
     draw,
     displayNodeNameForView,
@@ -16291,6 +16568,8 @@ export default function TreeCanvas({
     spiralVisibleTaxonomyRanksForScale,
     toggleCollapsedNode,
     tree,
+    updateDistanceTooltip,
+    updateDistanceMeasurementTarget,
     updateHoverTooltip,
     viewMode,
     zoomAtPoint,
@@ -16464,6 +16743,25 @@ export default function TreeCanvas({
     }
     return node !== null && tree.buffers.firstChild[node] >= 0 ? node : null;
   }, [contextMenu, resolveTaxonomySegmentNode, tree]);
+
+  const handleContextViewSubtreeStatistics = useCallback(() => {
+    if (!contextMenu || contextMenuCollapseTarget === null || !onSubtreeStatisticsRequest) {
+      return;
+    }
+    onSubtreeStatisticsRequest({
+      node: contextMenuCollapseTarget,
+      name: contextMenu.name,
+    });
+    setContextMenu(null);
+  }, [contextMenu, contextMenuCollapseTarget, onSubtreeStatisticsRequest]);
+
+  const handleContextMeasureDistance = useCallback(() => {
+    if (!contextMenu || contextMenu.kind !== "node" || !tree) {
+      return;
+    }
+    beginDistanceMeasurement(contextMenu.node, contextMenu.x, contextMenu.y);
+    setContextMenu(null);
+  }, [beginDistanceMeasurement, contextMenu, tree]);
 
   const handleContextCollapse = useCallback((mode: CollapsedNodeMode | null) => {
     if (contextMenuCollapseTarget === null) {
@@ -16903,6 +17201,16 @@ export default function TreeCanvas({
         const hover = hoverProbeRef.current?.(localX, localY) ?? null;
         return hover ? { ...hover } : null;
       },
+      startDistanceMeasurementForTest: (node: number, screenX = 100, screenY = 100) => {
+        beginDistanceMeasurement(node, screenX, screenY);
+      },
+      updateDistanceMeasurementForTest: (node: number, screenX = 120, screenY = 120) => {
+        updateDistanceMeasurementTarget(node, screenX, screenY);
+      },
+      getDistanceMeasurementForTest: () => (
+        distanceMeasurementRef.current ? { ...distanceMeasurementRef.current } : null
+      ),
+      clearDistanceMeasurementForTest: clearDistanceMeasurement,
       buildSharedSubtreePayloadForTest: (node: number) => {
         if (!tree) {
           return null;
@@ -16961,9 +17269,11 @@ export default function TreeCanvas({
     };
   }, [
     draw,
+    beginDistanceMeasurement,
     cache,
     clearManualBranchColor,
     clearManualSubtreeColor,
+    clearDistanceMeasurement,
     collapsedNodeModes,
     collapsedSpatialCache,
     buildCurrentSvgString,
@@ -17024,6 +17334,7 @@ export default function TreeCanvas({
     viewMode,
     zoomAxisMode,
     zoomToSubtreeTarget,
+    updateDistanceMeasurementTarget,
   ]);
 
   useEffect(() => {
@@ -17188,6 +17499,12 @@ export default function TreeCanvas({
         <div ref={hoverTooltipLabelRef} className="hover-tooltip-label" />
         <div ref={hoverTooltipBodyRef} />
       </div>
+      <div ref={distanceTooltipRef} className="distance-measurement-tooltip" hidden>
+        <div className="hover-tooltip-label">Measuring path</div>
+        <div ref={distanceTooltipNodesRef} />
+        <div ref={distanceTooltipValueRef} className="distance-measurement-value" />
+        <div ref={distanceTooltipMrcaRef} />
+      </div>
       {contextMenu ? (
         <div
           ref={contextMenuRef}
@@ -17259,6 +17576,14 @@ export default function TreeCanvas({
               </div>
               <button type="button" className="tree-context-menu-item" onClick={handleContextOpenSubtreeInNewTab}>
                 Open Subtree In New Tab
+              </button>
+              {contextMenuCollapseTarget !== null ? (
+                <button type="button" className="tree-context-menu-item" onClick={handleContextViewSubtreeStatistics}>
+                  View Subtree Statistics
+                </button>
+              ) : null}
+              <button type="button" className="tree-context-menu-item" onClick={handleContextMeasureDistance}>
+                Measure Distance
               </button>
               {contextMenuCollapseTarget !== null ? (
                 collapsedNodes.has(contextMenuCollapseTarget) ? (
@@ -17360,6 +17685,11 @@ export default function TreeCanvas({
               <button type="button" className="tree-context-menu-item" onClick={handleContextOpenTaxonomySubtreeInNewTab}>
                 Open Group Subtree In New Tab
               </button>
+              {contextMenuCollapseTarget !== null ? (
+                <button type="button" className="tree-context-menu-item" onClick={handleContextViewSubtreeStatistics}>
+                  View Subtree Statistics
+                </button>
+              ) : null}
               <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTaxonomyName}>
                 Copy Name
               </button>

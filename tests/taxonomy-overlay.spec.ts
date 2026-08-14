@@ -1072,8 +1072,13 @@ test("taxonomy label context menu exposes subtree, copy, and NCBI actions", asyn
   await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
   await expect(page.getByRole("button", { name: "Zoom To Group MRCA" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Group Subtree In New Tab" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "View Subtree Statistics" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy Name" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open In NCBI Taxonomy" })).toBeVisible();
+  await page.getByRole("button", { name: "View Subtree Statistics" }).click();
+  await expect(page.locator(".subtree-statistics-panel-header p")).toHaveText("Aves");
+  await page.getByRole("button", { name: "Close subtree statistics" }).click();
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
   await page.getByRole("button", { name: "Open In NCBI Taxonomy" }).click();
 
   const openedUrl = await page.evaluate(() => (window as typeof window & { __openedUrl?: string }).__openedUrl ?? null);

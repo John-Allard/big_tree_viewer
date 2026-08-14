@@ -1,9 +1,11 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react";
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import TreeCanvas from "./components/TreeCanvas";
+import TreeStatisticsView from "./components/TreeStatisticsView";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
+import { computeTreeStatistics } from "./lib/treeStatistics";
 import {
   cloneDefaultFigureStyles,
   FONT_FAMILY_OPTIONS,
@@ -980,16 +982,18 @@ function PanelSection({
   isOpen,
   onToggle,
   tourId,
+  sectionRef,
   children,
 }: {
   title: string;
   isOpen: boolean;
   onToggle: () => void;
   tourId?: string;
+  sectionRef?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }): ReactNode {
   return (
-    <section className="panel-section" data-tour={tourId}>
+    <section ref={sectionRef} className="panel-section" data-tour={tourId}>
       <button
         type="button"
         className="section-toggle"
@@ -1805,6 +1809,8 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useSessionDisclosure("section-search", false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useSessionDisclosure("section-diagnostics", false);
   const [statsOpen, setStatsOpen] = useSessionDisclosure("section-stats", false);
+  const [subtreeStatisticsTarget, setSubtreeStatisticsTarget] = useState<{ node: number; name: string } | null>(null);
+  const statsSectionRef = useRef<HTMLElement | null>(null);
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
   const [pastedTreeText, setPastedTreeText] = useState("");
   const [showPasteInput, setShowPasteInput] = useState(false);
@@ -2140,6 +2146,26 @@ export default function App() {
     };
   }, [order, taxonomyCollapseActiveRank, taxonomyMap, tree]);
   const viewTree = collapsedTaxonomyView?.tree ?? tree;
+  const viewTreeStatistics = useMemo(
+    () => viewTree ? computeTreeStatistics(viewTree) : null,
+    [viewTree],
+  );
+  const subtreeStatistics = useMemo(() => (
+    viewTree && subtreeStatisticsTarget
+      ? computeTreeStatistics(viewTree, subtreeStatisticsTarget.node)
+      : null
+  ), [subtreeStatisticsTarget, viewTree]);
+  useEffect(() => {
+    setSubtreeStatisticsTarget(null);
+  }, [viewTree]);
+  const handleSubtreeStatisticsRequest = useCallback((target: { node: number; name: string }) => {
+    setSubtreeStatisticsTarget(target);
+    setStatsOpen(true);
+    setSidebarVisible(true);
+    window.requestAnimationFrame(() => {
+      statsSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }, [setSidebarVisible, setStatsOpen]);
   const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
   const taxonomyCollapseIsSynthetic = collapsedTaxonomyView !== null;
   const taxonomyCollapseHasLowerRankFallbackLabels = Boolean(collapsedTaxonomyView?.hasLowerRankFallbackLabels);
@@ -8234,22 +8260,33 @@ export default function App() {
           </PanelSection>
         ) : null}
 
-        <PanelSection title="Stats" isOpen={statsOpen} onToggle={() => setStatsOpen(!statsOpen)}>
-          {viewTree ? (
-            <div>
-              <dl className="stats-list">
-                <dt>Tips</dt>
-                <dd>{viewTree.leafCount.toLocaleString()}</dd>
-                <dt>Nodes</dt>
-                <dd>{viewTree.nodeCount.toLocaleString()}</dd>
-                <dt>Tree depth</dt>
-                <dd>{formatNumber(viewTree.maxDepth)}</dd>
-                <dt>Root age</dt>
-                <dd>{formatNumber(viewTree.rootAge)}</dd>
-                <dt>Ultrametric</dt>
-                <dd>{viewTree.isUltrametric ? "Yes" : "No"}</dd>
-              </dl>
-            </div>
+        <PanelSection
+          title="Stats"
+          isOpen={statsOpen}
+          onToggle={() => setStatsOpen(!statsOpen)}
+          sectionRef={statsSectionRef}
+        >
+          {subtreeStatisticsTarget && subtreeStatistics ? (
+            <section className="subtree-statistics-panel" aria-labelledby="subtree-statistics-title">
+              <header className="subtree-statistics-panel-header">
+                <div>
+                  <h3 id="subtree-statistics-title">Subtree Statistics</h3>
+                  <p>{subtreeStatisticsTarget.name}</p>
+                </div>
+                <button
+                  type="button"
+                  className="subtree-statistics-panel-close"
+                  aria-label="Close subtree statistics"
+                  title="Show whole-tree statistics"
+                  onClick={() => setSubtreeStatisticsTarget(null)}
+                >
+                  ×
+                </button>
+              </header>
+              <TreeStatisticsView statistics={subtreeStatistics} />
+            </section>
+          ) : viewTreeStatistics ? (
+            <TreeStatisticsView statistics={viewTreeStatistics} />
           ) : (
             <p className="empty-note">No tree loaded.</p>
           )}
@@ -8346,6 +8383,7 @@ export default function App() {
           visualResetRequest={visualResetRequest}
           tutorialBranchMenuDemoActive={tutorialActive && TUTORIAL_STEPS[tutorialStepIndex]?.id === "branchMenu"}
           onHoverChange={handleHoverChange}
+          onSubtreeStatisticsRequest={handleSubtreeStatisticsRequest}
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={selectViewMode}
           onSessionStateSnapshot={handleSessionStateSnapshot}

@@ -1991,6 +1991,18 @@ button.secondary {
   font-weight: 600;
 }
 
+.tree-statistics h4 {
+  margin: 1rem 0 0.25rem;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.tree-statistics h4:first-child {
+  margin-top: 0.25rem;
+}
+
 .tree-canvas-shell {
   position: relative;
   width: 100%;
@@ -2025,8 +2037,10 @@ button.secondary {
   cursor: grabbing;
 }
 
-.hover-tooltip {
+.hover-tooltip,
+.distance-measurement-tooltip {
   position: absolute;
+  z-index: 20;
   pointer-events: none;
   min-width: 180px;
   padding: 0.7rem 0.8rem;
@@ -2036,6 +2050,68 @@ button.secondary {
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.25);
   font-size: 0.82rem;
   line-height: 1.45;
+}
+
+.distance-measurement-tooltip {
+  min-width: 220px;
+  border-left: 3px solid #ef4444;
+}
+
+.distance-measurement-value {
+  margin: 0.18rem 0;
+  color: #fecaca;
+  font-weight: 800;
+}
+
+.subtree-statistics-panel {
+  padding: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.subtree-statistics-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.subtree-statistics-panel-header h3,
+.subtree-statistics-panel-header p {
+  margin: 0;
+}
+
+.subtree-statistics-panel-header h3 {
+  font-size: 0.88rem;
+}
+
+.subtree-statistics-panel-header p {
+  margin-top: 0.2rem;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.subtree-statistics-panel-close {
+  width: 2rem;
+  height: 2rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #475569;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.subtree-statistics-panel-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  transform: none;
 }
 
 .hover-tooltip-label {
