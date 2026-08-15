@@ -504,6 +504,13 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       comparisonTipX,
       activeRankCount: activeRanks.length,
       taxonomyColorsAvailable: taxonomyColors !== null,
+      maximumDiscordance: comparison.commonPairs.reduce(
+        (maximum, pair) => Math.max(maximum, pair.discordance),
+        0,
+      ),
+      sharedTipCount: comparison.commonPairs.length,
+      primaryOnlyCount: comparison.primaryOnlyCount,
+      comparisonOnlyCount: comparison.comparisonOnlyCount,
     };
     const orderedPairs = comparison.commonPairs
       .filter((pair) => {

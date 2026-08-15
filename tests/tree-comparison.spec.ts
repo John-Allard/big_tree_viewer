@@ -35,6 +35,9 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await expect(comparisonCanvas).toBeVisible();
   await expect(page.locator(".tree-comparison-summary")).toContainText("4 shared tips");
   await expect(panel).toContainText("pasted comparison tree: 4 tips");
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().maximumDiscordance ?? 0,
+  ) > 0);
 
   const nonWhitePixels = await comparisonCanvas.evaluate((element) => {
     const canvas = element as HTMLCanvasElement;
@@ -102,6 +105,30 @@ test("comparison stats switch trees and search zoom highlights matching tips in 
 
   await zoomButton.click();
   await expect(zoomButton).toHaveAttribute("aria-pressed", "false");
+});
+
+test("unmatched tips do not create false connector discordance", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("((A:1,X:1,B:1):1,(C:1,Y:1,D:1):1)Primary;");
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill("((Z:1,A:1,B:1):1,(W:1,C:1,D:1,Q:1):1)Comparison;");
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+  await expect(page.locator(".tree-comparison-summary")).toHaveText(
+    "4 shared tips · 2 only in left tree · 3 only in right tree",
+  );
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().sharedTipCount === 4);
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  expect(Number(state?.maximumDiscordance)).toBe(0);
 });
 
 test("bundled example comparison fixture matches every example-tree tip", async ({ page }) => {

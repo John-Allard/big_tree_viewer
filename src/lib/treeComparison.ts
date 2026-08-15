@@ -49,12 +49,18 @@ export function buildComparisonLayout(
     (left, right) => primaryTree.layouts[order].center[left] - primaryTree.layouts[order].center[right],
   );
   const primaryByName = uniqueTipNodesByName(primaryTree, primaryLeaves);
-  const primaryRank = new Map<string, number>();
-  primaryLeaves.forEach((node, index) => {
+  const comparisonInputByName = uniqueTipNodesByName(comparisonTree, [...comparisonTree.leafNodes]);
+  const sharedKeys = new Set(
+    [...primaryByName.keys()].filter((key) => comparisonInputByName.has(key)),
+  );
+  const primarySharedLeaves = primaryLeaves.filter((node) => {
     const key = normalizeComparisonTipName(primaryTree.names[node] ?? "");
-    if (primaryByName.get(key) === node) {
-      primaryRank.set(key, index);
-    }
+    return sharedKeys.has(key) && primaryByName.get(key) === node;
+  });
+  const primaryRank = new Map<string, number>();
+  primarySharedLeaves.forEach((node, index) => {
+    const key = normalizeComparisonTipName(primaryTree.names[node] ?? "");
+    primaryRank.set(key, index);
   });
 
   const { firstChild, nextSibling } = comparisonTree.buffers;
@@ -133,31 +139,42 @@ export function buildComparisonLayout(
   }
 
   const comparisonByName = uniqueTipNodesByName(comparisonTree, comparisonLeaves);
+  const primaryIndexByNode = new Map<number, number>();
+  primaryLeaves.forEach((node, index) => primaryIndexByNode.set(node, index));
   const comparisonIndexByNode = new Map<number, number>();
   comparisonLeaves.forEach((node, index) => comparisonIndexByNode.set(node, index));
   const primaryDenominator = Math.max(1, primaryLeaves.length - 1);
   const comparisonDenominator = Math.max(1, comparisonLeaves.length - 1);
+  const comparisonSharedLeaves = comparisonLeaves.filter((node) => {
+    const key = normalizeComparisonTipName(comparisonTree.names[node] ?? "");
+    return sharedKeys.has(key) && comparisonByName.get(key) === node;
+  });
+  const comparisonSharedIndexByNode = new Map<number, number>();
+  comparisonSharedLeaves.forEach((node, index) => comparisonSharedIndexByNode.set(node, index));
+  const primarySharedDenominator = Math.max(1, primarySharedLeaves.length - 1);
+  const comparisonSharedDenominator = Math.max(1, comparisonSharedLeaves.length - 1);
   const commonPairs: ComparisonLayout["commonPairs"] = [];
-  primaryLeaves.forEach((primaryNode, primaryIndex) => {
+  primarySharedLeaves.forEach((primaryNode, primarySharedIndex) => {
     const name = primaryTree.names[primaryNode] ?? "";
     const key = normalizeComparisonTipName(name);
-    if (primaryByName.get(key) !== primaryNode) {
-      return;
-    }
     const comparisonNode = comparisonByName.get(key);
     if (comparisonNode === undefined) {
       return;
     }
+    const primaryIndex = primaryIndexByNode.get(primaryNode) ?? 0;
     const comparisonIndex = comparisonIndexByNode.get(comparisonNode) ?? 0;
+    const comparisonSharedIndex = comparisonSharedIndexByNode.get(comparisonNode) ?? 0;
     const primaryPosition = primaryIndex / primaryDenominator;
     const comparisonPosition = comparisonIndex / comparisonDenominator;
+    const primarySharedPosition = primarySharedIndex / primarySharedDenominator;
+    const comparisonSharedPosition = comparisonSharedIndex / comparisonSharedDenominator;
     commonPairs.push({
       name: name.replaceAll("_", " "),
       primaryNode,
       comparisonNode,
       primaryPosition,
       comparisonPosition,
-      discordance: Math.abs(primaryPosition - comparisonPosition),
+      discordance: Math.abs(primarySharedPosition - comparisonSharedPosition),
     });
   });
 
