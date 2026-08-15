@@ -581,6 +581,7 @@ button.secondary {
 
 .site-doc-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
   align-items: center;
   padding: 0.2rem 0 1rem;
@@ -882,6 +883,221 @@ button.secondary {
 
 .faq-page .about-page-frame {
   width: min(1060px, 100%);
+}
+
+.metadata-guide-page .about-page-frame {
+  width: min(1120px, 100%);
+}
+
+.metadata-guide-heading p,
+.metadata-guide-note,
+.metadata-guide-finish p {
+  max-width: 82ch;
+  margin: 0;
+  color: #334155;
+  font-size: 0.98rem;
+  line-height: 1.7;
+}
+
+.metadata-guide-link {
+  color: #1d4ed8;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.metadata-guide-link:hover {
+  text-decoration: underline;
+}
+
+.metadata-guide-section {
+  margin-top: 2rem;
+  padding-top: 1.6rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.metadata-guide-first-section {
+  margin-top: 1.5rem;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.metadata-guide-heading {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.metadata-guide-heading .metadata-guide-step {
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  color: #ffffff;
+  background: #1e40af;
+  border-radius: 50%;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.metadata-guide-heading h2,
+.metadata-guide-finish h2 {
+  margin: 0 0 0.45rem;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-size: clamp(1.65rem, 2.5vw, 2.2rem);
+  line-height: 1.12;
+}
+
+.metadata-guide-page code {
+  padding: 0.08rem 0.25rem;
+  border-radius: 3px;
+  background: #eef2f7;
+  color: #1e293b;
+  font-size: 0.9em;
+}
+
+.metadata-guide-figure,
+.metadata-guide-panel-figure {
+  margin: 0;
+}
+
+.metadata-guide-figure {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.metadata-guide-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #f8fafc;
+}
+
+.metadata-guide-table-figure {
+  margin-top: 1.2rem;
+}
+
+.metadata-guide-figure figcaption,
+.metadata-guide-panel-figure figcaption {
+  padding: 0.7rem 0.8rem 0.75rem;
+  color: #475569;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.metadata-guide-data-types {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.2rem;
+  margin: 1.1rem 0 0;
+}
+
+.metadata-guide-data-types div {
+  padding-top: 0.65rem;
+  border-top: 2px solid #cbd5e1;
+}
+
+.metadata-guide-data-types dt {
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.metadata-guide-data-types dd {
+  margin: 0.25rem 0 0;
+  color: #475569;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.metadata-guide-panel-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+  align-items: start;
+  margin-top: 1.2rem;
+}
+
+.metadata-guide-panel-figure img {
+  display: block;
+  width: min(100%, 328px);
+  height: auto;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.metadata-guide-panel-figure figcaption {
+  max-width: 44ch;
+  padding-left: 0;
+}
+
+.metadata-guide-note {
+  margin-top: 1rem;
+}
+
+.metadata-guide-option-table {
+  margin-top: 1.15rem;
+  border-top: 1px solid #cbd5e1;
+}
+
+.metadata-guide-option-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.7fr) minmax(12rem, 1fr) minmax(0, 1.6fr);
+  gap: 1rem;
+  padding: 0.72rem 0;
+  border-bottom: 1px solid #dbe1e8;
+  color: #475569;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.metadata-guide-option-row strong {
+  color: #0f172a;
+}
+
+.metadata-guide-option-header {
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.metadata-guide-example-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.2rem;
+}
+
+.metadata-guide-finish {
+  padding-bottom: 1rem;
+}
+
+.metadata-guide-link {
+  display: inline-block;
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 760px) {
+  .metadata-guide-data-types,
+  .metadata-guide-panel-steps,
+  .metadata-guide-example-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metadata-guide-option-header {
+    display: none;
+  }
+
+  .metadata-guide-option-row {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+    padding: 0.9rem 0;
+  }
 }
 
 .faq-list {

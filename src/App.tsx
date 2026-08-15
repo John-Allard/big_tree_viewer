@@ -7820,6 +7820,9 @@ export default function App() {
                 Clear Metadata
               </button>
             </div>
+            <a className="metadata-guide-link" href={`${import.meta.env.BASE_URL}#metadata`} target="_blank" rel="noreferrer">
+              Metadata guide
+            </a>
             {metadataTable ? (
               <>
                 <p className="status-line">

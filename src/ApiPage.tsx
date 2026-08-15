@@ -13,6 +13,7 @@ export default function ApiPage() {
           <a href={`${import.meta.env.BASE_URL}#`}>Viewer</a>
           <a href={`${import.meta.env.BASE_URL}#about`}>About</a>
           <a href={`${import.meta.env.BASE_URL}#faq`}>FAQ</a>
+          <a href={`${import.meta.env.BASE_URL}#metadata`}>Metadata</a>
           <a href={`${import.meta.env.BASE_URL}#share`}>Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`} aria-current="page">API</a>
           <a href={`${import.meta.env.BASE_URL}#agentic-ai`}>Agentic AI</a>

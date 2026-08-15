@@ -1,5 +1,34 @@
 import { expect, test } from "@playwright/test";
 
+test("metadata guide presents the workflow with responsive images", async ({ page }) => {
+  await page.goto("/#metadata");
+
+  await expect(page.getByRole("heading", { name: "Using metadata" })).toBeVisible();
+  await expect(page.getByText(/must match a tree label exactly/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Choose an overlay" })).toBeVisible();
+  await expect(page.getByText("Matched branches", { exact: true })).toBeVisible();
+  await expect(page.getByText("Matched subtrees", { exact: true })).toBeVisible();
+
+  const images = page.locator(".metadata-guide-page img");
+  await expect(images).toHaveCount(7);
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index);
+    await image.scrollIntoViewIfNeeded();
+    await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  }
+  const imageState = await images.evaluateAll((elements) => elements.map((image) => ({
+    complete: (image as HTMLImageElement).complete,
+    width: (image as HTMLImageElement).naturalWidth,
+    height: (image as HTMLImageElement).naturalHeight,
+  })));
+  expect(imageState.every((image) => image.complete && image.width > 0 && image.height > 0)).toBe(true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
 test("API documentation page is linked and documents launch parameters", async ({ page }) => {
   await page.goto("/#about");
   await expect(page.getByRole("link", { name: "API" })).toBeVisible();

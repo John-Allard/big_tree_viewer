@@ -4,9 +4,10 @@ import AboutPage from "./AboutPage";
 import AgenticAiPage from "./AgenticAiPage";
 import ApiPage from "./ApiPage";
 import FaqPage from "./FaqPage";
+import MetadataGuidePage from "./MetadataGuidePage";
 import SharePage from "./SharePage";
 
-type SitePage = "viewer" | "about" | "api" | "faq" | "share" | "agentic-ai";
+type SitePage = "viewer" | "about" | "api" | "faq" | "metadata" | "share" | "agentic-ai";
 
 function currentSitePage(): SitePage {
   if (typeof window === "undefined") {
@@ -24,6 +25,9 @@ function currentSitePage(): SitePage {
   }
   if (route === "faq" || route === "example-tree") {
     return "faq";
+  }
+  if (route === "metadata") {
+    return "metadata";
   }
   if (route === "share") {
     return "share";
@@ -49,7 +53,7 @@ export default function SiteRoot() {
   }, []);
 
   useEffect(() => {
-    const isDocumentPage = page === "about" || page === "api" || page === "faq" || page === "share" || page === "agentic-ai";
+    const isDocumentPage = page === "about" || page === "api" || page === "faq" || page === "metadata" || page === "share" || page === "agentic-ai";
     document.body.style.overflow = isDocumentPage ? "auto" : "hidden";
     document.body.style.overscrollBehavior = isDocumentPage ? "auto" : "none";
     document.title = page === "about"
@@ -58,11 +62,13 @@ export default function SiteRoot() {
         ? "Big Tree Viewer | API"
         : page === "faq"
           ? "Big Tree Viewer | FAQ"
-          : page === "share"
-            ? "Big Tree Viewer | Share sessions"
-            : page === "agentic-ai"
-              ? "Big Tree Viewer | Using BTV with agentic AI"
-              : "Big Tree Viewer";
+          : page === "metadata"
+            ? "Big Tree Viewer | Metadata guide"
+            : page === "share"
+              ? "Big Tree Viewer | Share sessions"
+              : page === "agentic-ai"
+                ? "Big Tree Viewer | Using BTV with agentic AI"
+                : "Big Tree Viewer";
     return () => {
       document.body.style.overflow = "";
       document.body.style.overscrollBehavior = "";
@@ -77,6 +83,9 @@ export default function SiteRoot() {
   }
   if (page === "faq") {
     return <FaqPage />;
+  }
+  if (page === "metadata") {
+    return <MetadataGuidePage />;
   }
   if (page === "share") {
     return <SharePage />;

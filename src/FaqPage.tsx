@@ -6,6 +6,7 @@ export default function FaqPage() {
           <a href={`${import.meta.env.BASE_URL}#`}>Viewer</a>
           <a href={`${import.meta.env.BASE_URL}#about`}>About</a>
           <a href={`${import.meta.env.BASE_URL}#faq`} aria-current="page">FAQ</a>
+          <a href={`${import.meta.env.BASE_URL}#metadata`}>Metadata</a>
           <a href={`${import.meta.env.BASE_URL}#share`}>Share sessions</a>
           <a href={`${import.meta.env.BASE_URL}#api`}>API</a>
           <a href={`${import.meta.env.BASE_URL}#agentic-ai`}>Agentic AI</a>
@@ -92,7 +93,9 @@ export default function FaqPage() {
                 column containing labels that match the labels in the tree
                 exactly, then choose that column under <strong>Match tree labels
                 by column</strong>. Other columns can be used for branch colors,
-                text labels, or markers.
+                text labels, markers, or pie charts. See the{" "}
+                <a href={`${import.meta.env.BASE_URL}#metadata`}>metadata guide</a>{" "}
+                for a complete example.
               </p>
             </div>
           </article>
