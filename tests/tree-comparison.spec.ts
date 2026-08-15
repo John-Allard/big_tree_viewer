@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { gunzipSync, strFromU8 } from "fflate";
 
 test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await page.goto("/");
@@ -35,6 +37,11 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await expect(comparisonCanvas).toBeVisible();
   await expect(page.locator(".tree-comparison-summary")).toContainText("4 shared tips");
   await expect(panel).toContainText("pasted comparison tree: 4 tips");
+  await expect(panel.getByLabel("Comparison statistics")).toContainText("Normalized RF");
+  await expect(panel.getByLabel("Comparison statistics").locator("dd").filter({ hasText: "1.0000" })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Circular" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Fan" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Spiral" })).toBeDisabled();
   await page.waitForFunction(() => Number(
     window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().maximumDiscordance ?? 0,
   ) > 0);
@@ -61,6 +68,55 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await expect(page.getByTestId("tree-canvas")).toBeVisible();
   const restoredCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
   expect(restoredCamera).toEqual(originalCamera);
+});
+
+test("comparison tree and linked camera survive a session round trip", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true });
+    Object.defineProperty(window, "showOpenFilePicker", { value: undefined, configurable: true });
+  });
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("((A:1,B:1):1,(C:1,D:1):1)Primary;");
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill("((A:1,C:1):1,(B:1,D:1):1)Comparison;");
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+  const canvas = page.getByLabel("Tree comparison view");
+  await canvas.hover({ position: { x: 500, y: 300 } });
+  await page.mouse.wheel(0, -600);
+  await page.waitForFunction(() => Number(
+    (window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { zoom?: number } | undefined)?.zoom ?? 0,
+  ) > 1.5);
+  const savedCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Save Session" }).click();
+  const download = await downloadPromise;
+  const savedPath = await download.path();
+  expect(savedPath).toBeTruthy();
+  const session = JSON.parse(strFromU8(gunzipSync(await readFile(savedPath as string))));
+  expect(session.comparison?.enabled).toBe(true);
+  expect(session.comparison?.newick).toContain("Comparison");
+  expect(session.comparison?.camera?.zoom).toBeGreaterThan(1.5);
+
+  await page.goto("/");
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showOpenFilePicker", { value: undefined, configurable: true });
+  });
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Load Session" }).click();
+  await (await chooserPromise).setFiles(savedPath as string);
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+  await page.waitForFunction(() => Number(
+    (window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { zoom?: number } | undefined)?.zoom ?? 0,
+  ) > 1.5);
+  const restoredCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera);
+  expect(restoredCamera).toEqual(savedCamera);
 });
 
 test("comparison stats switch trees and search zoom highlights matching tips in both", async ({ page }) => {
@@ -151,4 +207,11 @@ test("bundled example comparison fixture matches every example-tree tip", async 
   await expect(page.getByLabel("Tree comparison view")).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".tree-comparison-summary")).toHaveText("50,033 shared tips", { timeout: 30_000 });
   await expect(panel).toContainText("example_comparison_tree.nwk: 50,033 tips");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().activeRankCount === 2);
+  const initialRibbonState = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  expect(Number(initialRibbonState?.maximumTaxonomyLabelOverflow)).toBeLessThanOrEqual(0);
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 2));
+  await page.waitForFunction((initialWidth) => Number(
+    window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().ribbonsWidth ?? 0,
+  ) > Number(initialWidth), initialRibbonState?.ribbonsWidth);
 });

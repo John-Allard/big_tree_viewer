@@ -5,7 +5,7 @@ import { buildComparisonLayout, normalizeComparisonTipName } from "../lib/treeCo
 import { TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 import type { LayoutOrder, TreeModel } from "../types/tree";
 import type { TaxonomyRankDisplayMode } from "./treeCanvasTypes";
-import { buildTaxonomyColorMap } from "./TreeCanvas";
+import { buildTaxonomyColorMap, taxonomyVisibleRanksForZoom } from "./TreeCanvas";
 
 interface TreeComparisonCanvasProps {
   primaryTree: TreeModel;
@@ -32,6 +32,9 @@ interface TreeComparisonCanvasProps {
   searchResults: ComparisonSearchResult[];
   searchZoomLocked: boolean;
   searchFocusRequest: number;
+  cameraRestoreRequest: number;
+  cameraRestoreState: TreeComparisonCameraState | null;
+  onCameraChange: (camera: TreeComparisonCameraState) => void;
 }
 
 export interface ComparisonSearchResult {
@@ -41,7 +44,7 @@ export interface ComparisonSearchResult {
   tipNodes?: number[];
 }
 
-interface Camera {
+export interface TreeComparisonCameraState {
   zoom: number;
   panY: number;
 }
@@ -218,12 +221,15 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     searchResults,
     searchZoomLocked,
     searchFocusRequest,
+    cameraRestoreRequest,
+    cameraRestoreState,
+    onCameraChange,
   } = props;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
   const [size, setSize] = useState({ width: 1, height: 1 });
-  const [camera, setCamera] = useState<Camera>({ zoom: 1, panY: 0 });
+  const [camera, setCamera] = useState<TreeComparisonCameraState>({ zoom: 1, panY: 0 });
   const dragRef = useRef<{ pointerId: number; startY: number; startPanY: number } | null>(null);
 
   const comparison = useMemo(
@@ -233,7 +239,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
   const primaryLayout = primaryTree.layouts[order];
   const primaryDenominator = Math.max(1, comparison.primaryLeaves.length - 1);
   const comparisonDenominator = Math.max(1, comparison.comparisonLeaves.length - 1);
-  const activeRanks = useMemo(() => {
+  const availableRanks = useMemo(() => {
     if (!taxonomyEnabled || !taxonomyMap) {
       return [] as TaxonomyRank[];
     }
@@ -242,6 +248,14 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
         || (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) === "ribbon")
       .sort((left, right) => TAXONOMY_RANKS.indexOf(right) - TAXONOMY_RANKS.indexOf(left));
   }, [taxonomyEnabled, taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
+  const activeRanks = useMemo(() => {
+    if (!useAutomaticTaxonomyRankVisibility || availableRanks.length === 0) {
+      return availableRanks;
+    }
+    const fitRadiusPx = Math.min(size.width, size.height) * 0.44;
+    const fitPolarTipSpacingPx = (fitRadiusPx * Math.PI * 2) / Math.max(1, comparison.primaryLeaves.length);
+    return taxonomyVisibleRanksForZoom(fitPolarTipSpacingPx * camera.zoom, availableRanks);
+  }, [availableRanks, camera.zoom, comparison.primaryLeaves.length, size.height, size.width, useAutomaticTaxonomyRankVisibility]);
   const fallbackTaxonomyColors = useMemo<TaxonomyColorByRank | null>(() => taxonomyMap
     ? buildTaxonomyColorMap(
       taxonomyMap,
@@ -338,7 +352,20 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     observer.observe(wrapper);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => setCamera({ zoom: 1, panY: 0 }), [comparisonTree, fitRequest, primaryTree]);
+  useEffect(() => setCamera({ zoom: 1, panY: 0 }), [comparisonTree, primaryTree]);
+  useEffect(() => setCamera({ zoom: 1, panY: 0 }), [fitRequest]);
+  useEffect(() => {
+    if (cameraRestoreRequest <= 0 || !cameraRestoreState) {
+      return;
+    }
+    setCamera({
+      zoom: Math.max(1, Math.min(2_000, cameraRestoreState.zoom)),
+      panY: Number.isFinite(cameraRestoreState.panY) ? cameraRestoreState.panY : 0,
+    });
+  }, [cameraRestoreRequest, cameraRestoreState]);
+  useEffect(() => {
+    onCameraChange(camera);
+  }, [camera, onCameraChange]);
 
   const screenY = useCallback((position: number): number => {
     const usable = Math.max(1, size.height - TOP_MARGIN - BOTTOM_MARGIN);
@@ -386,8 +413,19 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, size.width, size.height);
 
-    const ribbonWidth = Math.max(4, 7 * (figureStyles.taxonomy.bandThicknessScale ?? 1));
-    const ribbonsWidth = activeRanks.length * ribbonWidth;
+    const ribbonWidth = Math.max(4, 9 * (figureStyles.taxonomy.bandThicknessScale ?? 1));
+    const ribbonGap = Math.max(0.5, Math.min(2, ribbonWidth * 0.08));
+    const rankWidths = activeRanks.map((_, index) => (
+      figureStyles.taxonomy.thickenOutermostRibbon !== false && index === activeRanks.length - 1
+        ? ribbonWidth * 1.45
+        : ribbonWidth
+    ));
+    const rankOffsets: number[] = [];
+    let ribbonsWidth = 0;
+    rankWidths.forEach((width, index) => {
+      rankOffsets.push(ribbonsWidth);
+      ribbonsWidth += width + (index < rankWidths.length - 1 ? ribbonGap : 0);
+    });
     const primaryTipX = size.width * 0.3;
     const primaryRibbonEndX = primaryTipX + ribbonsWidth;
     const comparisonTipX = size.width * 0.7;
@@ -450,7 +488,8 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
 
     if (taxonomyBlocks) {
       activeRanks.forEach((rank, rankIndex) => {
-        const x = primaryTipX + (rankIndex * ribbonWidth);
+        const rankWidth = rankWidths[rankIndex];
+        const x = primaryTipX + rankOffsets[rankIndex];
         for (const block of taxonomyBlocks[rank]) {
           const segments = block.segments ?? [{
             firstNode: block.firstNode,
@@ -465,16 +504,24 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
             if (bottom < 0 || top > size.height) {
               continue;
             }
-            context.fillRect(x, top, ribbonWidth - 1, Math.max(1, bottom - top));
-            if (bottom - top > 46 && ribbonWidth >= 7) {
+            const height = Math.max(1, bottom - top);
+            context.fillRect(x, top, rankWidth, height);
+            if (height > 28 && rankWidth >= 5) {
               context.save();
-              context.translate(x + (ribbonWidth / 2), (top + bottom) / 2);
+              context.beginPath();
+              context.rect(x, top, rankWidth, height);
+              context.clip();
+              context.translate(x + (rankWidth / 2), (top + bottom) / 2);
               context.rotate(Math.PI / 2);
               context.fillStyle = "#111827";
-              context.font = `${Math.max(8, 10 * figureStyles.taxonomy.sizeScale)}px ${fontFamilyCss(figureStyles.taxonomy.fontFamily)}`;
+              const labelFontSize = Math.max(3, Math.min(
+                10 * figureStyles.taxonomy.sizeScale,
+                rankWidth - 2,
+              ));
+              context.font = `${labelFontSize}px ${fontFamilyCss(figureStyles.taxonomy.fontFamily)}`;
               context.textAlign = "center";
               context.textBaseline = "middle";
-              context.fillText(block.label, 0, 0, Math.max(1, bottom - top - 8));
+              context.fillText(block.label, 0, 0, Math.max(1, height - 8));
               context.restore();
             }
           }
@@ -503,6 +550,14 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       comparisonLabelEndX,
       comparisonTipX,
       activeRankCount: activeRanks.length,
+      ribbonWidth,
+      ribbonsWidth,
+      maximumTaxonomyLabelFontSize: activeRanks.length > 0
+        ? Math.max(...rankWidths.map((width) => Math.max(3, Math.min(10 * figureStyles.taxonomy.sizeScale, width - 2))))
+        : 0,
+      maximumTaxonomyLabelOverflow: activeRanks.length > 0
+        ? Math.max(...rankWidths.map((width) => Math.max(3, Math.min(10 * figureStyles.taxonomy.sizeScale, width - 2)) - width))
+        : 0,
       taxonomyColorsAvailable: taxonomyColors !== null,
       maximumDiscordance: comparison.commonPairs.reduce(
         (maximum, pair) => Math.max(maximum, pair.discordance),

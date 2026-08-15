@@ -1797,7 +1797,7 @@ function sortTaxonomyRanksForDisplay(activeRanks: TaxonomyRank[]): TaxonomyRank[
   );
 }
 
-function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]): TaxonomyRank[] {
+export function taxonomyVisibleRanksForZoom(zoom: number, activeRanks: TaxonomyRank[]): TaxonomyRank[] {
   const outermostRankIndex = activeRanks.length - 1;
   const secondOutermostRankIndex = activeRanks.length - 2;
   const visible = activeRanks.filter((rank, index) => (

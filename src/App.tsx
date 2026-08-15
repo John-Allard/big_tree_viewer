@@ -1,12 +1,13 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react";
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import TreeCanvas from "./components/TreeCanvas";
-import TreeComparisonCanvas from "./components/TreeComparisonCanvas";
+import TreeComparisonCanvas, { type TreeComparisonCameraState } from "./components/TreeComparisonCanvas";
 import TreeStatisticsView from "./components/TreeStatisticsView";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import { computeTreeStatistics } from "./lib/treeStatistics";
+import { computeTreeComparisonStatistics } from "./lib/treeComparisonStatistics";
 import type { TaxonomyColorByRank } from "./lib/taxonomyBlocks";
 import {
   cloneDefaultFigureStyles,
@@ -379,6 +380,12 @@ type BigTreeViewerSessionFile = {
     silhouettes: PhyloPicSilhouette[];
   };
   canvas?: TreeCanvasSessionState | null;
+  comparison?: {
+    enabled: boolean;
+    label: string;
+    newick: string;
+    camera?: TreeComparisonCameraState | null;
+  };
 };
 
 const MAX_REMOTE_LAUNCH_BYTES = 150 * 1024 * 1024;
@@ -1856,6 +1863,9 @@ export default function App() {
   const [pastedComparisonText, setPastedComparisonText] = useState("");
   const [comparisonStatsTree, setComparisonStatsTree] = useState<"primary" | "comparison">("primary");
   const [comparisonTaxonomyColors, setComparisonTaxonomyColors] = useState<TaxonomyColorByRank | null>(null);
+  const [comparisonCamera, setComparisonCamera] = useState<TreeComparisonCameraState | null>(null);
+  const [comparisonCameraRestoreState, setComparisonCameraRestoreState] = useState<TreeComparisonCameraState | null>(null);
+  const [comparisonCameraRestoreRequest, setComparisonCameraRestoreRequest] = useState(0);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
@@ -2009,13 +2019,21 @@ export default function App() {
       setViewMode("circular");
     }
   }, [tree, viewMode]);
+  useEffect(() => {
+    if (comparisonEnabled && comparisonTree && viewMode !== "rectangular") {
+      setViewMode("rectangular");
+    }
+  }, [comparisonEnabled, comparisonTree, viewMode]);
   const selectViewMode = useCallback((nextMode: ViewMode): void => {
+    if (comparisonEnabled && comparisonTree && nextMode !== "rectangular") {
+      return;
+    }
     if (nextMode === "spiral" && tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT) {
       setViewMode("circular");
       return;
     }
     setViewMode(nextMode);
-  }, [tree]);
+  }, [comparisonEnabled, comparisonTree, tree]);
 
   const openSectionForTutorialStep = useCallback((stepIndex: number): void => {
     const step = TUTORIAL_STEPS[stepIndex];
@@ -2195,6 +2213,10 @@ export default function App() {
   const comparisonTreeStatistics = useMemo(
     () => comparisonTree ? computeTreeStatistics(comparisonTree) : null,
     [comparisonTree],
+  );
+  const treeComparisonStatistics = useMemo(
+    () => viewTree && comparisonTree ? computeTreeComparisonStatistics(viewTree, comparisonTree) : null,
+    [comparisonTree, viewTree],
   );
   const subtreeStatistics = useMemo(() => (
     viewTree && subtreeStatisticsTarget
@@ -4356,6 +4378,12 @@ export default function App() {
           silhouettes: phylopicSilhouettes,
         } : undefined,
         canvas,
+        comparison: comparisonTree ? {
+          enabled: comparisonEnabled,
+          label: comparisonTreeLabel,
+          newick: serializeSubtreeToNewick(comparisonTree, comparisonTree.root),
+          camera: comparisonCamera,
+        } : undefined,
       };
       const saved = await writeSessionFile(session, writer);
       setSessionStatus(saved ? "Session saved." : "");
@@ -4365,6 +4393,10 @@ export default function App() {
     }
   }, [
     captureSessionSettings,
+    comparisonCamera,
+    comparisonEnabled,
+    comparisonTree,
+    comparisonTreeLabel,
     createSessionFileWriter,
     loadedTreeLabel,
     hideDownloadNewick,
@@ -4612,6 +4644,25 @@ export default function App() {
           ? `Applying taxonomy mapping and saved view from ${label}...`
           : `Applying saved view from ${label}...`);
         await restoreApplied;
+        if (session.comparison?.newick) {
+          setSessionStatus(`Parsing comparison tree from ${label}...`);
+          const parsedComparison = await parseComparisonTree(session.comparison.newick);
+          setComparisonTree(parsedComparison);
+          setComparisonTreeLabel(session.comparison.label || "comparison tree");
+          setComparisonEnabled(session.comparison.enabled);
+          setComparisonCameraRestoreState(session.comparison.camera ?? null);
+          if (session.comparison.camera) {
+            setComparisonCameraRestoreRequest((current) => current + 1);
+          }
+          if (session.comparison.enabled) {
+            setViewMode("rectangular");
+          }
+        } else {
+          setComparisonTree(null);
+          setComparisonEnabled(false);
+          setComparisonCamera(null);
+          setComparisonCameraRestoreState(null);
+        }
       } catch (error) {
         pendingSessionRestoreResolverRef.current = null;
         throw error;
@@ -6608,9 +6659,11 @@ export default function App() {
             <button
               type="button"
               className="secondary"
-              disabled={!tree}
+              disabled={!tree || (comparisonEnabled && Boolean(comparisonTree))}
               onClick={openExportOptions}
-              title="Export the current visible view as a PNG or SVG figure."
+              title={comparisonEnabled && comparisonTree
+                ? "Comparison-view image export is not yet available. Save a session to share this comparison."
+                : "Export the current visible view as a PNG or SVG figure."}
             >
               Export View
             </button>
@@ -6746,7 +6799,7 @@ export default function App() {
             </div>
           ) : null}
           <div className="button-row" data-tour="sessions">
-            <button type="button" className="secondary" onClick={() => void saveSession()} title="Save the current tree, view, taxonomy, silhouettes, and display settings to a .btvsession file.">
+            <button type="button" className="secondary" onClick={() => void saveSession()} title="Save the current tree, comparison tree, view, taxonomy, silhouettes, and display settings to a .btvsession file.">
               Save Session
             </button>
             <button type="button" className="secondary" onClick={() => void loadSession("full")} title="Load a .btvsession file, including its tree when the session contains one.">
@@ -6777,7 +6830,8 @@ export default function App() {
               type="button"
               className={viewMode === "circular" ? "active" : ""}
               onClick={() => selectViewMode("circular")}
-              title="Draw the tree radially around a circle."
+              disabled={comparisonEnabled && Boolean(comparisonTree)}
+              title={comparisonEnabled && comparisonTree ? "Tree comparison is available only in rectangular mode." : "Draw the tree radially around a circle."}
             >
               Circular
             </button>
@@ -6785,7 +6839,8 @@ export default function App() {
               type="button"
               className={viewMode === "fan" ? "active" : ""}
               onClick={() => selectViewMode("fan")}
-              title="Draw the tree across a semicircular fan, oriented upward by default."
+              disabled={comparisonEnabled && Boolean(comparisonTree)}
+              title={comparisonEnabled && comparisonTree ? "Tree comparison is available only in rectangular mode." : "Draw the tree across a semicircular fan, oriented upward by default."}
             >
               Fan
             </button>
@@ -6793,9 +6848,11 @@ export default function App() {
               type="button"
               className={viewMode === "spiral" ? "active" : ""}
               onClick={() => selectViewMode("spiral")}
-              disabled={!tree || tree.leafCount < MIN_SPIRAL_TIP_COUNT}
+              disabled={comparisonEnabled && Boolean(comparisonTree) || !tree || tree.leafCount < MIN_SPIRAL_TIP_COUNT}
               title={
-                tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT
+                comparisonEnabled && comparisonTree
+                  ? "Tree comparison is available only in rectangular mode."
+                  : tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT
                   ? `Spiral mode requires at least ${MIN_SPIRAL_TIP_COUNT.toLocaleString()} tips.`
                   : "Draw time-calibrated trees as a spiral so deep time and recent tips can share the same figure."
               }
@@ -6821,8 +6878,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "both" ? "active" : ""}
               onClick={() => setZoomAxisMode("both")}
-              disabled={viewMode !== "rectangular"}
-              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom both time/depth and vertical spread together."}
+              disabled={viewMode !== "rectangular" || comparisonEnabled && Boolean(comparisonTree)}
+              title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Comparison mode uses linked vertical zoom." : viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom both time/depth and vertical spread together."}
             >
               Zoom Both
             </button>
@@ -6830,8 +6887,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "x" ? "active" : ""}
               onClick={() => setZoomAxisMode("x")}
-              disabled={viewMode !== "rectangular"}
-              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the horizontal time/depth axis in rectangular view."}
+              disabled={viewMode !== "rectangular" || comparisonEnabled && Boolean(comparisonTree)}
+              title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Comparison mode uses linked vertical zoom." : viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the horizontal time/depth axis in rectangular view."}
             >
               Zoom X
             </button>
@@ -6839,8 +6896,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "y" ? "active" : ""}
               onClick={() => setZoomAxisMode("y")}
-              disabled={viewMode !== "rectangular"}
-              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the vertical tip-spacing axis in rectangular view."}
+              disabled={viewMode !== "rectangular" || comparisonEnabled && Boolean(comparisonTree)}
+              title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Comparison mode uses linked vertical zoom." : viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the vertical tip-spacing axis in rectangular view."}
             >
               Zoom Y
             </button>
@@ -6933,12 +6990,14 @@ export default function App() {
                   extraControls={(
                     <label
                       className={`label-style-inline-toggle${
-                        viewMode === "spiral" || viewTree?.isUltrametric
+                        comparisonEnabled && comparisonTree || viewMode === "spiral" || viewTree?.isUltrametric
                           ? " label-style-disabled-control"
                           : ""
                       }`}
                       title={
-                        viewMode === "spiral"
+                        comparisonEnabled && comparisonTree
+                          ? "Comparison mode uses fixed opposing label columns."
+                          : viewMode === "spiral"
                           ? "This option applies to rectangular and circular trees."
                           : viewTree?.isUltrametric
                             ? "Tip labels are already aligned because this tree is ultrametric."
@@ -6948,7 +7007,7 @@ export default function App() {
                       <input
                         type="checkbox"
                         checked={alignTipLabels}
-                        disabled={viewMode === "spiral" || Boolean(viewTree?.isUltrametric)}
+                        disabled={comparisonEnabled && Boolean(comparisonTree) || viewMode === "spiral" || Boolean(viewTree?.isUltrametric)}
                         onChange={(event) => setAlignTipLabels(event.target.checked)}
                       />
                       Align labels at tree edge
@@ -6958,13 +7017,13 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title={disabledControlTitle(taxonomyEnabled ? "Turn off taxonomy overlays to show genus labels." : undefined)}>
+              <label className="visual-option-checkbox" title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Genus ribbons are not shown in comparison mode." : taxonomyEnabled ? "Turn off taxonomy overlays to show genus labels." : undefined)}>
                 <input
                   type="checkbox"
                   checked={showGenusLabels}
                   onChange={(event) => setShowGenusLabels(event.target.checked)}
-                  disabled={taxonomyEnabled}
-                  title={disabledControlTitle(taxonomyEnabled ? "Turn off taxonomy overlays to show genus labels." : undefined)}
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || taxonomyEnabled}
+                  title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Genus ribbons are not shown in comparison mode." : taxonomyEnabled ? "Turn off taxonomy overlays to show genus labels." : undefined)}
                 />
                 Show genus labels
               </label>
@@ -6974,8 +7033,8 @@ export default function App() {
                   settings={figureStyles.genus}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "genus"}
-                  disabled={taxonomyEnabled || !showGenusLabels}
-                  disabledReason={taxonomyEnabled ? "Turn off taxonomy overlays to edit genus labels." : "Enable genus labels first."}
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || taxonomyEnabled || !showGenusLabels}
+                  disabledReason={comparisonEnabled && comparisonTree ? "Genus ribbons are not shown in comparison mode." : taxonomyEnabled ? "Turn off taxonomy overlays to edit genus labels." : "Enable genus labels first."}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "genus" ? null : "genus")}
                   onUpdate={updateFigureStyle}
                 />
@@ -7002,10 +7061,11 @@ export default function App() {
                   disabledReason="Turn on taxonomy overlays first."
                   extraControls={(
                     <>
-                          <label title="Choose whether taxonomy groups are drawn as filled bands around clades or thin center lines.">
+                          <label title={comparisonEnabled && comparisonTree ? "Comparison mode draws taxonomy as ribbons." : "Choose whether taxonomy groups are drawn as filled bands around clades or thin center lines."}>
                             Overlay style
                             <select
                           value={taxonomyOverlayStyle}
+                          disabled={comparisonEnabled && Boolean(comparisonTree)}
                           onChange={(event) => setTaxonomyOverlayStyle(event.target.value === "strands" ? "strands" : "ribbons")}
                         >
                           <option value="ribbons">Filled ribbons</option>
@@ -7169,10 +7229,11 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined) ?? "Show labels attached to internal nodes, such as named clades or node IDs."}>
+              <label className="visual-option-checkbox" title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Internal node labels are not shown in comparison mode." : undefined) ?? "Show labels attached to internal nodes, such as named clades or node IDs."}>
                 <input
                   type="checkbox"
                   checked={showInternalNodeLabels}
+                  disabled={comparisonEnabled && Boolean(comparisonTree)}
                   onChange={(event) => setShowInternalNodeLabels(event.target.checked)}
                 />
                 Show internal node labels
@@ -7183,18 +7244,19 @@ export default function App() {
                   settings={figureStyles.internalNode}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "internalNode"}
-                  disabled={!showInternalNodeLabels}
-                  disabledReason="Enable internal node labels first."
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || !showInternalNodeLabels}
+                  disabledReason={comparisonEnabled && comparisonTree ? "Internal node labels are not shown in comparison mode." : "Enable internal node labels first."}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "internalNode" ? null : "internalNode")}
                   onUpdate={updateFigureStyle}
                 />
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title="Show numeric bootstrap or support values from internal node labels when available.">
+              <label className="visual-option-checkbox" title={comparisonEnabled && comparisonTree ? "Bootstrap labels are not shown in comparison mode." : "Show numeric bootstrap or support values from internal node labels when available."}>
                 <input
                   type="checkbox"
                   checked={showBootstrapLabels}
+                  disabled={comparisonEnabled && Boolean(comparisonTree)}
                   onChange={(event) => setShowBootstrapLabels(event.target.checked)}
                 />
                 Show bootstrap labels
@@ -7205,18 +7267,19 @@ export default function App() {
                   settings={figureStyles.bootstrap}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "bootstrap"}
-                  disabled={!showBootstrapLabels}
-                  disabledReason="Enable bootstrap labels first."
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || !showBootstrapLabels}
+                  disabledReason={comparisonEnabled && comparisonTree ? "Bootstrap labels are not shown in comparison mode." : "Enable bootstrap labels first."}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "bootstrap" ? null : "bootstrap")}
                   onUpdate={updateFigureStyle}
                 />
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title="Show node ages or heights when the tree contains branch length information.">
+              <label className="visual-option-checkbox" title={comparisonEnabled && comparisonTree ? "Node height labels are not shown in comparison mode." : "Show node ages or heights when the tree contains branch length information."}>
                 <input
                   type="checkbox"
                   checked={showNodeHeightLabels}
+                  disabled={comparisonEnabled && Boolean(comparisonTree)}
                   onChange={(event) => setShowNodeHeightLabels(event.target.checked)}
                 />
                 Show node height labels
@@ -7227,8 +7290,8 @@ export default function App() {
                   settings={figureStyles.nodeHeight}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "nodeHeight"}
-                  disabled={!showNodeHeightLabels}
-                  disabledReason="Enable node height labels first."
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || !showNodeHeightLabels}
+                  disabledReason={comparisonEnabled && comparisonTree ? "Node height labels are not shown in comparison mode." : "Enable node height labels first."}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "nodeHeight" ? null : "nodeHeight")}
                   onUpdate={updateFigureStyle}
                 />
@@ -7239,7 +7302,7 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={showNodeErrorBars}
-                  disabled={(tree?.nodeIntervalCount ?? 0) === 0}
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || (tree?.nodeIntervalCount ?? 0) === 0}
                   onChange={(event) => setShowNodeErrorBars(event.target.checked)}
                   title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined)}
                 />
@@ -7247,10 +7310,11 @@ export default function App() {
               </label>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title="Show time or branch-length scale bars for the current view.">
+              <label className="visual-option-checkbox" title={comparisonEnabled && comparisonTree ? "Scale bars are not shown in comparison mode." : "Show time or branch-length scale bars for the current view."}>
                 <input
                   type="checkbox"
                   checked={showScaleBars}
+                  disabled={comparisonEnabled && Boolean(comparisonTree)}
                   onChange={(event) => setShowScaleBars(event.target.checked)}
                 />
                 Show scale bars
@@ -7261,8 +7325,8 @@ export default function App() {
                   settings={figureStyles.scale}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "scale"}
-                  disabled={!showScaleBars}
-                  disabledReason="Enable scale bars first."
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || !showScaleBars}
+                  disabledReason={comparisonEnabled && comparisonTree ? "Scale bars are not shown in comparison mode." : "Enable scale bars first."}
                   extraControls={(
                     <>
                       <label title="Set a fixed scale-bar tick interval. Leave blank to choose ticks automatically from the visible range.">
@@ -7379,10 +7443,11 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title="Draw temporal guide bands or lines behind the tree.">
+              <label className="visual-option-checkbox" title={comparisonEnabled && comparisonTree ? "Time stripes are not shown in comparison mode." : "Draw temporal guide bands or lines behind the tree."}>
                 <input
                   type="checkbox"
                   checked={showTimeStripes}
+                  disabled={comparisonEnabled && Boolean(comparisonTree)}
                   onChange={(event) => setShowTimeStripes(event.target.checked)}
                 />
                 Show time stripes
@@ -7391,8 +7456,8 @@ export default function App() {
                 <SettingsPopoverButton
                   title="Time stripes"
                   isOpen={activeLabelStylePopover === "timeStripes"}
-                  disabled={!showTimeStripes}
-                  disabledReason="Enable time stripes first."
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || !showTimeStripes}
+                  disabledReason={comparisonEnabled && comparisonTree ? "Time stripes are not shown in comparison mode." : "Enable time stripes first."}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "timeStripes" ? null : "timeStripes")}
                 >
                     <label title="Choose whether time stripes are bands, a gradient, or dashed guide lines.">
@@ -7547,6 +7612,8 @@ export default function App() {
                   Collapse mapped tips to
                   <select
                     value={taxonomyCollapseRank}
+                    disabled={comparisonEnabled && Boolean(comparisonTree)}
+                    title={comparisonEnabled && comparisonTree ? "Taxonomy tip collapsing is unavailable while comparing trees." : undefined}
                     onChange={(event) => setTaxonomyCollapseRank(event.target.value as TaxonomyCollapseRank)}
                   >
                     <option value="species">Species</option>
@@ -7565,8 +7632,9 @@ export default function App() {
                     type="button"
                     className="section-toggle taxonomy-subsection-toggle"
                     aria-expanded={phylopicOpen}
+                    disabled={comparisonEnabled && Boolean(comparisonTree)}
                     onClick={() => setPhyloPicOpen(!phylopicOpen)}
-                    title="Show or hide controls for retrieving and placing PhyloPic silhouettes."
+                    title={comparisonEnabled && comparisonTree ? "Silhouettes are not shown in comparison mode." : "Show or hide controls for retrieving and placing PhyloPic silhouettes."}
                   >
                     <span className={`section-toggle-mark${phylopicOpen ? " open" : ""}`}>▸</span>
                     <span>Silhouettes</span>
@@ -8436,6 +8504,28 @@ export default function App() {
             {comparisonEnabled && (metadataEnabled || metadataLabelsEnabled || metadataMarkersEnabled || metadataPiesEnabled) ? (
               <p className="status-line">Metadata overlays are hidden while comparing trees.</p>
             ) : null}
+            {comparisonTree && treeComparisonStatistics ? (
+              <section className="comparison-statistics-box" aria-label="Comparison statistics">
+                <h3>Comparison Statistics</h3>
+                <dl className="stats-list compact">
+                  <div title="Unique tip labels present in both trees."><dt>Shared tips</dt><dd>{treeComparisonStatistics.sharedTipCount.toLocaleString()}</dd></div>
+                  <div title="Unique tip labels found only in the loaded left tree."><dt>Left only</dt><dd>{treeComparisonStatistics.primaryOnlyTipCount.toLocaleString()}</dd></div>
+                  <div title="Unique tip labels found only in the comparison tree."><dt>Right only</dt><dd>{treeComparisonStatistics.comparisonOnlyTipCount.toLocaleString()}</dd></div>
+                  <div title="Nontrivial rooted clades shared after both trees are pruned logically to their shared tips."><dt>Shared groups</dt><dd>{treeComparisonStatistics.sharedGroupCount.toLocaleString()}</dd></div>
+                  <div title="Rooted Robinson-Foulds distance after pruning both trees logically to unique shared tips. Lower values indicate more similar topology."><dt>RF distance</dt><dd>{treeComparisonStatistics.robinsonFouldsDistance.toLocaleString()}</dd></div>
+                  <div title="Rooted Robinson-Foulds distance divided by the total number of nontrivial clades in both pruned trees. Range: 0 to 1."><dt>Normalized RF</dt><dd>{treeComparisonStatistics.normalizedRobinsonFouldsDistance.toFixed(4)}</dd></div>
+                  {treeComparisonStatistics.matchingClusterInformationDistance !== null ? (
+                    <>
+                      <div title="Information-weighted distance from an optimal matching of rooted clusters after pruning to shared tips."><dt>Matching-cluster information</dt><dd>{formatNumber(treeComparisonStatistics.matchingClusterInformationDistance)}</dd></div>
+                      <div title="Matching-cluster information distance divided by the total cluster information. Range: 0 to 1."><dt>Normalized information</dt><dd>{treeComparisonStatistics.normalizedMatchingClusterInformationDistance!.toFixed(4)}</dd></div>
+                    </>
+                  ) : (
+                    <div title={treeComparisonStatistics.informationMetricReason ?? undefined}><dt>Matching-cluster information</dt><dd>Not calculated</dd></div>
+                  )}
+                </dl>
+                {treeComparisonStatistics.informationMetricReason ? <p className="status-line">{treeComparisonStatistics.informationMetricReason}</p> : null}
+              </section>
+            ) : null}
             {comparisonLoading ? <p className="status-line">Parsing comparison tree...</p> : null}
             {comparisonError ? <p className="status-error">{comparisonError}</p> : null}
           </div>
@@ -8662,6 +8752,9 @@ export default function App() {
             searchResults={visibleSearchResults}
             searchZoomLocked={searchZoomLocked}
             searchFocusRequest={focusNodeRequest}
+            cameraRestoreRequest={comparisonCameraRestoreRequest}
+            cameraRestoreState={comparisonCameraRestoreState}
+            onCameraChange={setComparisonCamera}
           />
           </div>
         ) : null}
