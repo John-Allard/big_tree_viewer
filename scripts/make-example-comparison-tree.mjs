@@ -1,9 +1,9 @@
 import { gunzipSync } from "node:zlib";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const sourcePath = resolve("public/example_tree.btvsession");
-const outputPath = resolve("public/example_comparison_tree.nwk");
+const outputPath = resolve("tmp/example_comparison_tree.nwk");
 const session = JSON.parse(gunzipSync(readFileSync(sourcePath)).toString("utf8"));
 const newick = session?.tree?.newick;
 if (typeof newick !== "string" || !newick.trim()) {
@@ -46,6 +46,7 @@ for (let tipIndex = 0; tipIndex < tips.length; tipIndex += 1) {
   cursor = tip.end;
 }
 pieces.push(newick.slice(cursor));
+mkdirSync(resolve("tmp"), { recursive: true });
 writeFileSync(outputPath, pieces.join(""), "utf8");
 
 console.log(`Wrote ${outputPath}`);

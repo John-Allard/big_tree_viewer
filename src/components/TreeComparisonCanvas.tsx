@@ -17,7 +17,9 @@ interface TreeComparisonCanvasProps {
   branchThicknessScale: number;
   figureStyles: FigureStyleSettings;
   taxonomyEnabled: boolean;
+  taxonomyBranchColoringEnabled: boolean;
   taxonomyMap: TaxonomyMapPayload | null;
+  taxonomyColors: TaxonomyColorByRank | null;
   taxonomyColorJitter: number;
   taxonomyColorPalette: Parameters<typeof buildTaxonomyColorMap>[3];
   taxonomyCustomPaletteColors: string[];
@@ -27,6 +29,16 @@ interface TreeComparisonCanvasProps {
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   useAutomaticTaxonomyRankVisibility: boolean;
   fitRequest: number;
+  searchResults: ComparisonSearchResult[];
+  searchZoomLocked: boolean;
+  searchFocusRequest: number;
+}
+
+export interface ComparisonSearchResult {
+  kind: "node" | "genus" | "taxonomy";
+  node: number;
+  displayName: string;
+  tipNodes?: number[];
 }
 
 interface Camera {
@@ -117,13 +129,67 @@ function nodeColorsFromTaxonomy(
   return colors;
 }
 
-function discordanceColor(discordance: number): string {
-  if (discordance < 0.015) {
-    return "rgba(100, 116, 139, 0.22)";
+function discordanceColor(discordance: number, opacityScale = 1): string {
+  const strength = Math.min(1, Math.max(0, discordance / 0.28));
+  const red = Math.round(100 + ((239 - 100) * strength));
+  const green = Math.round(116 + ((68 - 116) * strength));
+  const blue = Math.round(139 + ((68 - 139) * strength));
+  const alpha = (0.035 + (0.58 * (strength ** 0.8))) * opacityScale;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function lowestCommonAncestor(tree: TreeModel, nodes: number[]): number | null {
+  if (nodes.length === 0) {
+    return null;
   }
-  const strength = Math.min(1, (discordance - 0.015) / 0.28);
-  const hue = 215 - (215 * strength);
-  return `hsla(${hue}deg 78% ${48 + (strength * 4)}% / ${0.32 + (strength * 0.58)})`;
+  let ancestor = nodes[0];
+  for (let index = 1; index < nodes.length; index += 1) {
+    const ancestors = new Set<number>();
+    for (let node = ancestor; node >= 0; node = tree.buffers.parent[node]) {
+      ancestors.add(node);
+    }
+    let node = nodes[index];
+    while (node >= 0 && !ancestors.has(node)) {
+      node = tree.buffers.parent[node];
+    }
+    ancestor = node >= 0 ? node : tree.root;
+  }
+  return ancestor;
+}
+
+function pathNodesForTips(tree: TreeModel, tips: number[]): Set<number> {
+  const result = new Set<number>();
+  const ancestor = lowestCommonAncestor(tree, tips);
+  if (ancestor === null) {
+    return result;
+  }
+  result.add(ancestor);
+  for (const tip of tips) {
+    for (let node = tip; node >= 0; node = tree.buffers.parent[node]) {
+      result.add(node);
+      if (node === ancestor) {
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+function descendantTips(tree: TreeModel, root: number): number[] {
+  const tips: number[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const firstChild = tree.buffers.firstChild[node];
+    if (firstChild < 0) {
+      tips.push(node);
+      continue;
+    }
+    for (let child = firstChild; child >= 0; child = tree.buffers.nextSibling[child]) {
+      stack.push(child);
+    }
+  }
+  return tips;
 }
 
 export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
@@ -137,7 +203,9 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     branchThicknessScale,
     figureStyles,
     taxonomyEnabled,
+    taxonomyBranchColoringEnabled,
     taxonomyMap,
+    taxonomyColors: suppliedTaxonomyColors,
     taxonomyColorJitter,
     taxonomyColorPalette,
     taxonomyCustomPaletteColors,
@@ -147,9 +215,13 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     taxonomyRankVisibility,
     useAutomaticTaxonomyRankVisibility,
     fitRequest,
+    searchResults,
+    searchZoomLocked,
+    searchFocusRequest,
   } = props;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const renderDebugRef = useRef<Record<string, unknown> | null>(null);
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [camera, setCamera] = useState<Camera>({ zoom: 1, panY: 0 });
   const dragRef = useRef<{ pointerId: number; startY: number; startPanY: number } | null>(null);
@@ -170,7 +242,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
         || (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) === "ribbon")
       .sort((left, right) => TAXONOMY_RANKS.indexOf(right) - TAXONOMY_RANKS.indexOf(left));
   }, [taxonomyEnabled, taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
-  const taxonomyColors = useMemo<TaxonomyColorByRank | null>(() => taxonomyMap
+  const fallbackTaxonomyColors = useMemo<TaxonomyColorByRank | null>(() => taxonomyMap
     ? buildTaxonomyColorMap(
       taxonomyMap,
       new Map(),
@@ -188,6 +260,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     taxonomyCustomPaletteColors,
     taxonomyMap,
   ]);
+  const taxonomyColors = suppliedTaxonomyColors ?? fallbackTaxonomyColors;
   const taxonomyBlocks = useMemo(() => taxonomyMap
     ? buildTaxonomyBlocksForOrderedLeaves(comparison.primaryLeaves, taxonomyMap, taxonomyColors)
     : null, [comparison.primaryLeaves, taxonomyColors, taxonomyMap]);
@@ -215,6 +288,44 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     });
     return nodeColorsFromTaxonomy(comparisonTree, tipTaxonomy, taxonomyColors);
   }, [comparison.comparisonLeaves, comparison.primaryLeaves, comparisonTree, primaryTipTaxonomy, primaryTree.names, taxonomyColors]);
+  const primaryLeafPosition = useMemo(() => new Map(
+    comparison.primaryLeaves.map((node, index) => [node, index] as const),
+  ), [comparison.primaryLeaves]);
+  const comparisonLeafByName = useMemo(() => new Map(
+    comparison.comparisonLeaves.map((node) => [normalizeComparisonTipName(comparisonTree.names[node] ?? ""), node] as const),
+  ), [comparison.comparisonLeaves, comparisonTree.names]);
+  const highlightedTips = useMemo(() => {
+    const primaryTips = new Set<number>();
+    searchResults.forEach((result) => {
+      if (result.tipNodes?.length) {
+        result.tipNodes.forEach((node) => primaryTips.add(node));
+      } else if (primaryTree.buffers.firstChild[result.node] < 0) {
+        primaryTips.add(result.node);
+      } else {
+        descendantTips(primaryTree, result.node).forEach((node) => primaryTips.add(node));
+      }
+    });
+    const comparisonTips = new Set<number>();
+    const names = new Set<string>();
+    primaryTips.forEach((node) => {
+      const name = normalizeComparisonTipName(primaryTree.names[node] ?? "");
+      if (!name) {
+        return;
+      }
+      names.add(name);
+      const comparisonNode = comparisonLeafByName.get(name);
+      if (comparisonNode !== undefined) {
+        comparisonTips.add(comparisonNode);
+      }
+    });
+    return {
+      names,
+      primary: primaryTips,
+      comparison: comparisonTips,
+      primaryPath: pathNodesForTips(primaryTree, [...primaryTips]),
+      comparisonPath: pathNodesForTips(comparisonTree, [...comparisonTips]),
+    };
+  }, [comparisonLeafByName, comparisonTree, primaryTree, searchResults]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -233,6 +344,28 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const usable = Math.max(1, size.height - TOP_MARGIN - BOTTOM_MARGIN);
     return (size.height / 2) + ((position - 0.5) * usable * camera.zoom) + camera.panY;
   }, [camera.panY, camera.zoom, size.height]);
+
+  useEffect(() => {
+    if (!searchZoomLocked || searchResults.length === 0 || highlightedTips.primary.size === 0) {
+      return;
+    }
+    const positions = [...highlightedTips.primary]
+      .map((node) => primaryLeafPosition.get(node))
+      .filter((position): position is number => position !== undefined)
+      .map((position) => position / primaryDenominator);
+    if (positions.length === 0) {
+      return;
+    }
+    const minimum = Math.min(...positions);
+    const maximum = Math.max(...positions);
+    const span = Math.max(1 / primaryDenominator, maximum - minimum);
+    const zoom = Math.max(1, Math.min(2_000, 0.68 / span));
+    const usable = Math.max(1, size.height - TOP_MARGIN - BOTTOM_MARGIN);
+    const center = (minimum + maximum) / 2;
+    const panY = -((center - 0.5) * usable * zoom);
+    const maximumPan = Math.max(0, ((zoom - 1) * usable) / 2 + usable * 0.46);
+    setCamera({ zoom, panY: Math.max(-maximumPan, Math.min(maximumPan, panY)) });
+  }, [highlightedTips.primary, primaryDenominator, primaryLeafPosition, searchFocusRequest, searchResults.length, searchZoomLocked, size.height]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -255,9 +388,13 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
 
     const ribbonWidth = Math.max(4, 7 * (figureStyles.taxonomy.bandThicknessScale ?? 1));
     const ribbonsWidth = activeRanks.length * ribbonWidth;
-    const primaryLabelAnchorX = size.width * 0.43;
-    const primaryTipX = primaryLabelAnchorX - ribbonsWidth;
-    const comparisonTipX = size.width * 0.57;
+    const primaryTipX = size.width * 0.3;
+    const primaryRibbonEndX = primaryTipX + ribbonsWidth;
+    const comparisonTipX = size.width * 0.7;
+    const primaryLabelStartX = primaryRibbonEndX + 4;
+    const primaryLabelEndX = size.width * 0.465;
+    const comparisonLabelStartX = size.width * 0.535;
+    const comparisonLabelEndX = comparisonTipX - 4;
     const primaryRootX = 24;
     const comparisonRootX = size.width - 24;
     const branchWidth = Math.max(0.45, branchThicknessScale);
@@ -308,8 +445,8 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       });
     };
 
-    drawTree(primaryTree, primaryX, primaryY, primaryNodeColors);
-    drawTree(comparisonTree, comparisonX, secondaryY, comparisonNodeColors);
+    drawTree(primaryTree, primaryX, primaryY, taxonomyBranchColoringEnabled ? primaryNodeColors : []);
+    drawTree(comparisonTree, comparisonX, secondaryY, taxonomyBranchColoringEnabled ? comparisonNodeColors : []);
 
     if (taxonomyBlocks) {
       activeRanks.forEach((rank, rankIndex) => {
@@ -352,43 +489,129 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     context.font = `${figureStyles.tip.italic ? "italic " : ""}${figureStyles.tip.bold ? "700 " : ""}${tipFontSize}px ${fontFamilyCss(figureStyles.tip.fontFamily)}`;
     context.textBaseline = "middle";
 
-    for (const pair of comparison.commonPairs) {
+    const connectorStartX = labelsVisible ? primaryLabelEndX + 3 : primaryRibbonEndX + 3;
+    const connectorEndX = labelsVisible ? comparisonLabelStartX - 3 : comparisonTipX - 3;
+    renderDebugRef.current = {
+      labelsVisible,
+      primaryTipX,
+      primaryRibbonEndX,
+      primaryLabelStartX,
+      primaryLabelEndX,
+      connectorStartX,
+      connectorEndX,
+      comparisonLabelStartX,
+      comparisonLabelEndX,
+      comparisonTipX,
+      activeRankCount: activeRanks.length,
+      taxonomyColorsAvailable: taxonomyColors !== null,
+    };
+    const orderedPairs = comparison.commonPairs
+      .filter((pair) => {
+        const leftY = screenY(pair.primaryPosition);
+        const rightY = screenY(pair.comparisonPosition);
+        return visible(leftY) || visible(rightY) || (leftY < 0) !== (rightY < 0);
+      })
+      .sort((left, right) => left.discordance - right.discordance);
+    const connectorOpacityScale = Math.min(1, Math.sqrt(50 / Math.max(1, orderedPairs.length)));
+    for (const pair of orderedPairs) {
       const leftY = screenY(pair.primaryPosition);
       const rightY = screenY(pair.comparisonPosition);
       if (!visible(leftY) && !visible(rightY) && (leftY < 0) === (rightY < 0)) {
         continue;
       }
-      let startX = primaryLabelAnchorX + 3;
-      let endX = comparisonTipX - 3;
-      if (labelsVisible) {
-        const labelWidth = Math.min(size.width * 0.12, context.measureText(pair.name).width);
-        startX += labelWidth + 4;
-        endX -= labelWidth + 4;
-      }
       context.beginPath();
-      context.moveTo(Math.min(startX, size.width / 2 - 3), leftY);
-      context.lineTo(Math.max(endX, size.width / 2 + 3), rightY);
-      context.strokeStyle = discordanceColor(pair.discordance);
-      context.lineWidth = pair.discordance > 0.12 ? 1.35 : 0.8;
+      context.moveTo(Math.min(connectorStartX, size.width / 2 - 3), leftY);
+      context.lineTo(Math.max(connectorEndX, size.width / 2 + 3), rightY);
+      context.strokeStyle = discordanceColor(pair.discordance, connectorOpacityScale);
+      context.lineWidth = 0.7 + (Math.min(1, pair.discordance / 0.28) * 0.8);
       context.stroke();
     }
 
     if (labelsVisible) {
-      context.fillStyle = "#111827";
+      const drawLabel = (text: string, x: number, y: number, maxWidth: number, align: CanvasTextAlign, highlighted: boolean) => {
+        context.save();
+        context.beginPath();
+        context.rect(align === "left" ? x : x - maxWidth, y - (tipFontSize * 0.65), maxWidth, tipFontSize * 1.3);
+        context.clip();
+        let fontSize = tipFontSize;
+        const fontPrefix = `${figureStyles.tip.italic ? "italic " : ""}${highlighted || figureStyles.tip.bold ? "700 " : ""}`;
+        context.font = `${fontPrefix}${fontSize}px ${fontFamilyCss(figureStyles.tip.fontFamily)}`;
+        const measured = context.measureText(text).width;
+        if (measured > maxWidth) {
+          fontSize = Math.max(7, fontSize * (maxWidth / measured));
+          context.font = `${fontPrefix}${fontSize}px ${fontFamilyCss(figureStyles.tip.fontFamily)}`;
+        }
+        context.fillStyle = highlighted ? "#1d4ed8" : "#111827";
+        context.textAlign = align;
+        context.fillText(text, x, y);
+        context.restore();
+      };
       comparison.primaryLeaves.forEach((node) => {
         const y = primaryY(node);
         if (visible(y)) {
-          context.textAlign = "left";
-          context.fillText((primaryTree.names[node] || "Unnamed tip").replaceAll("_", " "), primaryLabelAnchorX + 3, y, size.width * 0.12);
+          drawLabel(
+            (primaryTree.names[node] || "Unnamed tip").replaceAll("_", " "),
+            primaryLabelStartX,
+            y,
+            Math.max(1, primaryLabelEndX - primaryLabelStartX),
+            "left",
+            highlightedTips.primary.has(node),
+          );
         }
       });
       comparison.comparisonLeaves.forEach((node) => {
         const y = secondaryY(node);
         if (visible(y)) {
-          context.textAlign = "right";
-          context.fillText((comparisonTree.names[node] || "Unnamed tip").replaceAll("_", " "), comparisonTipX - 3, y, size.width * 0.12);
+          drawLabel(
+            (comparisonTree.names[node] || "Unnamed tip").replaceAll("_", " "),
+            comparisonLabelEndX,
+            y,
+            Math.max(1, comparisonLabelEndX - comparisonLabelStartX),
+            "right",
+            highlightedTips.comparison.has(node),
+          );
         }
       });
+    }
+
+    const drawHighlightedPath = (
+      tree: TreeModel,
+      nodes: Set<number>,
+      xForNode: (node: number) => number,
+      yForNode: (node: number) => number,
+    ) => {
+      if (nodes.size === 0) {
+        return;
+      }
+      context.beginPath();
+      nodes.forEach((node) => {
+        const parent = tree.buffers.parent[node];
+        if (parent < 0 || !nodes.has(parent)) {
+          return;
+        }
+        const y = yForNode(node);
+        context.moveTo(xForNode(parent), yForNode(parent));
+        context.lineTo(xForNode(parent), y);
+        context.lineTo(xForNode(node), y);
+      });
+      context.strokeStyle = "rgba(29, 78, 216, 0.9)";
+      context.lineWidth = Math.max(2, branchWidth * 1.8);
+      context.stroke();
+    };
+    drawHighlightedPath(primaryTree, highlightedTips.primaryPath, primaryX, primaryY);
+    drawHighlightedPath(comparisonTree, highlightedTips.comparisonPath, comparisonX, secondaryY);
+    if (highlightedTips.names.size > 0) {
+      for (const pair of comparison.commonPairs) {
+        if (!highlightedTips.names.has(normalizeComparisonTipName(pair.name))) {
+          continue;
+        }
+        context.beginPath();
+        context.moveTo(Math.min(connectorStartX, size.width / 2 - 3), screenY(pair.primaryPosition));
+        context.lineTo(Math.max(connectorEndX, size.width / 2 + 3), screenY(pair.comparisonPosition));
+        context.strokeStyle = "rgba(29, 78, 216, 0.78)";
+        context.lineWidth = 1.8;
+        context.stroke();
+      }
     }
 
     context.font = "600 12px Arial, sans-serif";
@@ -408,6 +631,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     comparisonNodeColors,
     comparisonTree,
     figureStyles,
+    highlightedTips,
     primaryDenominator,
     primaryLabel,
     primaryLayout.center,
@@ -418,7 +642,24 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     size.height,
     size.width,
     taxonomyBlocks,
+    taxonomyBranchColoringEnabled,
+    taxonomyColors,
   ]);
+
+  useEffect(() => {
+    window.__BIG_TREE_VIEWER_COMPARISON_TEST__ = {
+      getState: () => ({
+        camera,
+        highlightedPrimaryTips: highlightedTips.primary.size,
+        highlightedComparisonTips: highlightedTips.comparison.size,
+        highlightedNames: highlightedTips.names.size,
+        ...renderDebugRef.current,
+      }),
+    };
+    return () => {
+      delete window.__BIG_TREE_VIEWER_COMPARISON_TEST__;
+    };
+  }, [camera, highlightedTips]);
 
   const clampPan = useCallback((zoom: number, panY: number) => {
     const usable = Math.max(1, size.height - TOP_MARGIN - BOTTOM_MARGIN);

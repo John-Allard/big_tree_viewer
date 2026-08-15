@@ -4179,6 +4179,7 @@ export default function TreeCanvas({
   visualResetRequest,
   tutorialBranchMenuDemoActive = false,
   onHoverChange,
+  onTaxonomyColorsChange,
   onSubtreeStatisticsRequest,
   onRerootRequest,
   onViewModeChange,
@@ -4637,6 +4638,9 @@ export default function TreeCanvas({
     taxonomyCustomPaletteColors,
     taxonomyRootColorAssignments,
   ]);
+  useEffect(() => {
+    onTaxonomyColorsChange?.(taxonomyColors);
+  }, [onTaxonomyColorsChange, taxonomyColors]);
   const getTaxonomyBlocks = useCallback((orderKey: LayoutOrder): Record<TaxonomyRank, TaxonomyBlock[]> | null => {
     if (!cache || !taxonomyMap) {
       return null;

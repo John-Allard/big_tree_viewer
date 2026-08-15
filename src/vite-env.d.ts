@@ -148,6 +148,9 @@ declare global {
       } | null;
       buildCurrentSvgForTest: () => string | null;
     };
+    __BIG_TREE_VIEWER_COMPARISON_TEST__?: {
+      getState: () => Record<string, unknown>;
+    };
   }
 }
 

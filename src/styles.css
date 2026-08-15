@@ -148,6 +148,33 @@ button.secondary {
   min-height: 0;
 }
 
+.normal-tree-layer,
+.comparison-tree-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.normal-tree-layer.comparison-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.comparison-tree-layer {
+  z-index: 2;
+}
+
+.comparison-stats-switch {
+  margin-bottom: 0.45rem;
+}
+
+.comparison-stats-label {
+  margin: 0 0 0.55rem;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .mobile-sidebar-toggle {
   display: none;
 }

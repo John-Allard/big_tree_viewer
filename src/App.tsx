@@ -7,6 +7,7 @@ import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanva
 import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import { computeTreeStatistics } from "./lib/treeStatistics";
+import type { TaxonomyColorByRank } from "./lib/taxonomyBlocks";
 import {
   cloneDefaultFigureStyles,
   FONT_FAMILY_OPTIONS,
@@ -1490,6 +1491,7 @@ interface SearchResult {
   displayName: string;
   rank?: TaxonomyRank;
   key?: string;
+  tipNodes?: number[];
 }
 
 interface MetadataUnmappedRowPreview {
@@ -1829,6 +1831,7 @@ export default function App() {
   const [branchThicknessScale, setBranchThicknessScale] = useState(DEFAULT_BRANCH_THICKNESS_SCALE);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
+  const [searchZoomLocked, setSearchZoomLocked] = useState(false);
   const [fitRequest, setFitRequest] = useState(0);
   const [focusNodeRequest, setFocusNodeRequest] = useState(0);
   const [dataOpen, setDataOpen] = useSessionDisclosure("section-data", true);
@@ -1851,6 +1854,8 @@ export default function App() {
   const [comparisonError, setComparisonError] = useState<string | null>(null);
   const [showComparisonPasteInput, setShowComparisonPasteInput] = useState(false);
   const [pastedComparisonText, setPastedComparisonText] = useState("");
+  const [comparisonStatsTree, setComparisonStatsTree] = useState<"primary" | "comparison">("primary");
+  const [comparisonTaxonomyColors, setComparisonTaxonomyColors] = useState<TaxonomyColorByRank | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
@@ -2186,6 +2191,10 @@ export default function App() {
   const viewTreeStatistics = useMemo(
     () => viewTree ? computeTreeStatistics(viewTree) : null,
     [viewTree],
+  );
+  const comparisonTreeStatistics = useMemo(
+    () => comparisonTree ? computeTreeStatistics(comparisonTree) : null,
+    [comparisonTree],
   );
   const subtreeStatistics = useMemo(() => (
     viewTree && subtreeStatisticsTarget
@@ -2753,19 +2762,19 @@ export default function App() {
       rank: TaxonomyRank,
       label: string,
       key: string,
-      firstNode: number,
-      lastNode: number,
+      tipNodes: number[],
       orderIndex: number,
     ): void => {
-      if (!matchesSearchQuery(label, query)) {
+      if (!matchesSearchQuery(label, query) || tipNodes.length === 0) {
         return;
       }
       const result = {
         kind: "taxonomy",
-        node: lowestCommonAncestor(viewTree, firstNode, lastNode),
+        node: tipNodes.reduce((ancestor, node) => lowestCommonAncestor(viewTree, ancestor, node)),
         displayName: label,
         rank,
         key,
+        tipNodes,
       } satisfies SearchResult;
       if (canonicalSearchKey(label) === queryKey) {
         exactTaxonomyResults.push(result);
@@ -2788,23 +2797,33 @@ export default function App() {
         ));
         for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
           const block = blocks[blockIndex];
-          const totalTipCount = (block.segments ?? []).reduce((total, segment) => {
-            const end = segment.endIndex >= segment.startIndex ? segment.endIndex : segment.endIndex + orderedLeaves.length;
-            return total + Math.max(0, end - segment.startIndex);
-          }, 0);
-          if (totalTipCount <= 1) {
+          const blockSegments = block.segments ?? [{
+            startIndex: block.startIndex ?? 0,
+            endIndex: block.endIndex ?? 0,
+          }];
+          const blockTipNodes: number[] = [];
+          const seenTipNodes = new Set<number>();
+          for (const segment of blockSegments) {
+            const end = segment.endIndex >= segment.startIndex
+              ? segment.endIndex
+              : segment.endIndex + orderedLeaves.length;
+            for (let leafIndex = segment.startIndex; leafIndex < end; leafIndex += 1) {
+              const node = orderedLeaves[leafIndex % orderedLeaves.length];
+              if (!seenTipNodes.has(node)) {
+                seenTipNodes.add(node);
+                blockTipNodes.push(node);
+              }
+            }
+          }
+          if (blockTipNodes.length <= 1) {
             continue;
           }
           const labelStartIndex = block.labelStartIndex ?? block.startIndex ?? block.segments?.[0]?.startIndex ?? 0;
-          const labelEndIndex = block.labelEndIndex ?? block.endIndex ?? block.segments?.[0]?.endIndex ?? (labelStartIndex + 1);
-          const labelFirstNode = orderedLeaves[labelStartIndex];
-          const labelLastNode = orderedLeaves[((labelEndIndex - 1 + orderedLeaves.length) % orderedLeaves.length)];
           pushTaxonomyResult(
             rank,
             block.label,
             `${rank}:${block.entityKey ?? taxonomyEntityKey(block.label, block.taxId ?? null)}:${block.centerNode}`,
-            labelFirstNode,
-            labelLastNode,
+            blockTipNodes,
             labelStartIndex,
           );
         }
@@ -2813,6 +2832,7 @@ export default function App() {
       const exactGenusResults: SearchResult[] = [];
       const partialGenusResults: Array<SearchResult & { rankOrder: number; orderIndex: number }> = [];
       const orderedLeaves = computeOrderedLeaves(viewTree, order);
+      const orderedLeafIndex = new Map(orderedLeaves.map((node, index) => [node, index] as const));
       const genusBlocks = computeGenusBlocks(viewTree, orderedLeaves, "linear");
       for (let index = 0; index < genusBlocks.length; index += 1) {
         const block = genusBlocks[index];
@@ -2823,6 +2843,10 @@ export default function App() {
           kind: "genus",
           node: block.centerNode,
           displayName: block.label,
+          tipNodes: orderedLeaves.slice(
+            orderedLeafIndex.get(block.firstNode) ?? 0,
+            (orderedLeafIndex.get(block.lastNode) ?? 0) + 1,
+          ),
         } satisfies SearchResult;
         if (canonicalSearchKey(block.label) === queryKey) {
           exactGenusResults.push(result);
@@ -2910,6 +2934,22 @@ export default function App() {
   const activeSearchGenusCenterNode = activeSearchResult?.kind === "genus" ? activeSearchResult.node : null;
   const activeSearchTaxonomyNode = activeSearchResult?.kind === "taxonomy" ? activeSearchResult.node : null;
   const activeSearchTaxonomyKey = activeSearchResult?.kind === "taxonomy" ? (activeSearchResult.key ?? null) : null;
+  const visibleSearchResults = searchZoomLocked && activeSearchResult ? [activeSearchResult] : searchResults;
+  const visibleSearchMatches = searchZoomLocked
+    ? activeSearchNode !== null ? [activeSearchNode] : []
+    : searchMatches;
+  const visibleSearchQuery = searchZoomLocked ? "" : searchQuery;
+  const toggleSearchZoom = useCallback(() => {
+    if (!activeSearchResult) {
+      return;
+    }
+    if (searchZoomLocked) {
+      setSearchZoomLocked(false);
+      return;
+    }
+    setSearchZoomLocked(true);
+    setFocusNodeRequest((value) => value + 1);
+  }, [activeSearchResult, searchZoomLocked]);
   const scaleTickInterval = useMemo(() => {
     const trimmed = scaleTickIntervalInput.trim();
     if (!trimmed) {
@@ -3374,6 +3414,7 @@ export default function App() {
   useEffect(() => {
     if (searchResults.length === 0) {
       setActiveSearchIndex(0);
+      setSearchZoomLocked(false);
       return;
     }
     setActiveSearchIndex((current) => Math.min(current, searchResults.length - 1));
@@ -5972,6 +6013,7 @@ export default function App() {
     if (searchResults.length === 0) {
       return;
     }
+    setSearchZoomLocked(false);
     setActiveSearchIndex((current) => {
       const next = current + direction;
       if (next < 0) {
@@ -8238,11 +8280,14 @@ export default function App() {
                 value={searchQuery}
                 placeholder="Search tip, node, genus, or taxonomy names"
                 disabled={!tree}
-                onChange={(event) => setSearchQuery(event.target.value)}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setSearchZoomLocked(false);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && activeSearchResult !== null) {
                     event.preventDefault();
-                    setFocusNodeRequest((value) => value + 1);
+                    toggleSearchZoom();
                   }
                 }}
               />
@@ -8254,12 +8299,27 @@ export default function App() {
                 onClick={() => {
                   setSearchQuery("");
                   setActiveSearchIndex(0);
+                  setSearchZoomLocked(false);
                 }}
               >
                 ×
               </button>
             </div>
-            <div className="button-row">
+            {searchQuery.trim() ? (
+              <>
+                <p className="status-line">
+                  {searchResults.length === 0
+                  ? "No matches."
+                  : `Showing ${activeSearchIndex + 1} of ${searchResults.length}`}
+                </p>
+                {activeSearchResult ? (
+                  <p className="search-match-name">
+                    {searchResultLabel(activeSearchResult)}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+            <div className="button-row search-result-actions">
               <button
                 type="button"
                 className="secondary"
@@ -8278,27 +8338,14 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className="secondary"
+                className={searchZoomLocked ? "active" : "secondary"}
+                aria-pressed={searchZoomLocked}
                 disabled={activeSearchResult === null}
-                onClick={() => setFocusNodeRequest((value) => value + 1)}
+                onClick={toggleSearchZoom}
               >
-                Focus
+                Zoom In
               </button>
             </div>
-            {searchQuery.trim() ? (
-              <>
-                <p className="status-line">
-                  {searchResults.length === 0
-                  ? "No matches."
-                  : `Showing ${activeSearchIndex + 1} of ${searchResults.length}`}
-                </p>
-                {activeSearchResult ? (
-                  <p className="search-match-name">
-                    {searchResultLabel(activeSearchResult)}
-                  </p>
-                ) : null}
-              </>
-            ) : null}
           </div>
         </PanelSection>
 
@@ -8386,6 +8433,9 @@ export default function App() {
                 </div>
               </>
             ) : null}
+            {comparisonEnabled && (metadataEnabled || metadataLabelsEnabled || metadataMarkersEnabled || metadataPiesEnabled) ? (
+              <p className="status-line">Metadata overlays are hidden while comparing trees.</p>
+            ) : null}
             {comparisonLoading ? <p className="status-line">Parsing comparison tree...</p> : null}
             {comparisonError ? <p className="status-error">{comparisonError}</p> : null}
           </div>
@@ -8428,7 +8478,34 @@ export default function App() {
           onToggle={() => setStatsOpen(!statsOpen)}
           sectionRef={statsSectionRef}
         >
-          {subtreeStatisticsTarget && subtreeStatistics ? (
+          {comparisonEnabled && comparisonTree ? (
+            <>
+              <div className="segmented comparison-stats-switch" aria-label="Statistics tree">
+                <button
+                  type="button"
+                  className={comparisonStatsTree === "primary" ? "active" : ""}
+                  onClick={() => setComparisonStatsTree("primary")}
+                >
+                  Left Tree
+                </button>
+                <button
+                  type="button"
+                  className={comparisonStatsTree === "comparison" ? "active" : ""}
+                  onClick={() => setComparisonStatsTree("comparison")}
+                >
+                  Right Tree
+                </button>
+              </div>
+              <p className="comparison-stats-label">
+                {comparisonStatsTree === "primary" ? loadedTreeLabel : comparisonTreeLabel}
+              </p>
+              <TreeStatisticsView
+                statistics={comparisonStatsTree === "primary"
+                  ? viewTreeStatistics!
+                  : comparisonTreeStatistics!}
+              />
+            </>
+          ) : subtreeStatisticsTarget && subtreeStatistics ? (
             <section className="subtree-statistics-panel" aria-labelledby="subtree-statistics-title">
               <header className="subtree-statistics-panel-header">
                 <div>
@@ -8456,29 +8533,7 @@ export default function App() {
       </aside>
 
       <main className="viewer-panel">
-        {comparisonEnabled && comparisonTree && viewTree ? (
-          <TreeComparisonCanvas
-            primaryTree={viewTree}
-            comparisonTree={comparisonTree}
-            order={order}
-            primaryLabel={loadedTreeLabel}
-            comparisonLabel={comparisonTreeLabel}
-            showTipLabels={showTipLabels}
-            branchThicknessScale={branchThicknessScale}
-            figureStyles={figureStyles}
-            taxonomyEnabled={taxonomyEnabled}
-            taxonomyMap={viewTaxonomyMap}
-            taxonomyColorJitter={taxonomyColorJitter}
-            taxonomyColorPalette={taxonomyColorPalette}
-            taxonomyCustomPaletteColors={customTaxonomyPaletteColors}
-            taxonomyColorRootRank={taxonomyColorRootRank}
-            taxonomyColorJitterRank={taxonomyColorJitterRank}
-            taxonomyRankDisplayModes={taxonomyRankDisplayModes}
-            taxonomyRankVisibility={taxonomyRankVisibility}
-            useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
-            fitRequest={fitRequest}
-          />
-        ) : (
+        <div className={`normal-tree-layer${comparisonEnabled && comparisonTree && viewTree ? " comparison-hidden" : ""}`}>
           <TreeCanvas
           tree={viewTree}
           order={order}
@@ -8547,8 +8602,8 @@ export default function App() {
           showNodeErrorBars={showNodeErrorBars}
           errorBarThicknessPx={errorBarThicknessPx}
           errorBarCapSizePx={errorBarCapSizePx}
-          searchQuery={searchQuery}
-          searchMatches={searchMatches}
+          searchQuery={visibleSearchQuery}
+          searchMatches={visibleSearchMatches}
           activeSearchNode={activeSearchNode}
           activeSearchGenusCenterNode={activeSearchGenusCenterNode}
           activeSearchTaxonomyNode={activeSearchTaxonomyNode}
@@ -8568,6 +8623,7 @@ export default function App() {
           visualResetRequest={visualResetRequest}
           tutorialBranchMenuDemoActive={tutorialActive && TUTORIAL_STEPS[tutorialStepIndex]?.id === "branchMenu"}
           onHoverChange={handleHoverChange}
+          onTaxonomyColorsChange={setComparisonTaxonomyColors}
           onSubtreeStatisticsRequest={handleSubtreeStatisticsRequest}
           onRerootRequest={taxonomyCollapseIsSynthetic ? undefined : rerootCurrentTree}
           onViewModeChange={selectViewMode}
@@ -8578,7 +8634,37 @@ export default function App() {
           onPhyloPicTryAnotherSilhouette={tryAnotherPhyloPicSilhouette}
           hideDownloadNewick={hideDownloadNewick}
           />
-        )}
+        </div>
+        {comparisonEnabled && comparisonTree && viewTree ? (
+          <div className="comparison-tree-layer">
+            <TreeComparisonCanvas
+            primaryTree={viewTree}
+            comparisonTree={comparisonTree}
+            order={order}
+            primaryLabel={loadedTreeLabel}
+            comparisonLabel={comparisonTreeLabel}
+            showTipLabels={showTipLabels}
+            branchThicknessScale={branchThicknessScale}
+            figureStyles={figureStyles}
+            taxonomyEnabled={taxonomyEnabled}
+            taxonomyMap={viewTaxonomyMap}
+            taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
+            taxonomyColors={comparisonTaxonomyColors}
+            taxonomyColorJitter={taxonomyColorJitter}
+            taxonomyColorPalette={taxonomyColorPalette}
+            taxonomyCustomPaletteColors={customTaxonomyPaletteColors}
+            taxonomyColorRootRank={taxonomyColorRootRank}
+            taxonomyColorJitterRank={taxonomyColorJitterRank}
+            taxonomyRankDisplayModes={taxonomyRankDisplayModes}
+            taxonomyRankVisibility={taxonomyRankVisibility}
+            useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
+            fitRequest={fitRequest}
+            searchResults={visibleSearchResults}
+            searchZoomLocked={searchZoomLocked}
+            searchFocusRequest={focusNodeRequest}
+          />
+          </div>
+        ) : null}
         {metadataOverlayProcessing ? (
           <div className="viewer-loading-overlay" role="status" aria-live="polite">
             <div className="loading-progress" aria-hidden="true"><span /></div>

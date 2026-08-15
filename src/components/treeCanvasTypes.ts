@@ -1,4 +1,5 @@
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
+import type { TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import type { FigureStyleSettings } from "../lib/figureStyles";
 import type { MetadataMarkerStyle, MetadataPieDatum } from "../lib/metadataColors";
 import type { PhyloPicSilhouette } from "../lib/phylopic";
@@ -130,6 +131,7 @@ export interface TreeCanvasProps {
   visualResetRequest: number;
   tutorialBranchMenuDemoActive?: boolean;
   onHoverChange: (hover: HoverInfo | null) => void;
+  onTaxonomyColorsChange?: (colors: TaxonomyColorByRank | null) => void;
   onSubtreeStatisticsRequest?: (target: { node: number; name: string }) => void;
   onRerootRequest?: (node: number, mode: "branch" | "child" | "parent") => void;
   onViewModeChange?: (mode: ViewMode) => void;
