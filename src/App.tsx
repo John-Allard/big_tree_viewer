@@ -8514,16 +8514,7 @@ export default function App() {
                   <div title="Nontrivial rooted clades shared after both trees are pruned logically to their shared tips."><dt>Shared groups</dt><dd>{treeComparisonStatistics.sharedGroupCount.toLocaleString()}</dd></div>
                   <div title="Rooted Robinson-Foulds distance after pruning both trees logically to unique shared tips. Lower values indicate more similar topology."><dt>RF distance</dt><dd>{treeComparisonStatistics.robinsonFouldsDistance.toLocaleString()}</dd></div>
                   <div title="Rooted Robinson-Foulds distance divided by the total number of nontrivial clades in both pruned trees. Range: 0 to 1."><dt>Normalized RF</dt><dd>{treeComparisonStatistics.normalizedRobinsonFouldsDistance.toFixed(4)}</dd></div>
-                  {treeComparisonStatistics.matchingClusterInformationDistance !== null ? (
-                    <>
-                      <div title="Information-weighted distance from an optimal matching of rooted clusters after pruning to shared tips."><dt>Matching-cluster information</dt><dd>{formatNumber(treeComparisonStatistics.matchingClusterInformationDistance)}</dd></div>
-                      <div title="Matching-cluster information distance divided by the total cluster information. Range: 0 to 1."><dt>Normalized information</dt><dd>{treeComparisonStatistics.normalizedMatchingClusterInformationDistance!.toFixed(4)}</dd></div>
-                    </>
-                  ) : (
-                    <div title={treeComparisonStatistics.informationMetricReason ?? undefined}><dt>Matching-cluster information</dt><dd>Not calculated</dd></div>
-                  )}
                 </dl>
-                {treeComparisonStatistics.informationMetricReason ? <p className="status-line">{treeComparisonStatistics.informationMetricReason}</p> : null}
               </section>
             ) : null}
             {comparisonLoading ? <p className="status-line">Parsing comparison tree...</p> : null}

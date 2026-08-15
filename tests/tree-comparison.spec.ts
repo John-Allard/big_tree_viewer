@@ -38,7 +38,8 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await expect(page.locator(".tree-comparison-summary")).toContainText("4 shared tips");
   await expect(panel).toContainText("pasted comparison tree: 4 tips");
   await expect(panel.getByLabel("Comparison statistics")).toContainText("Normalized RF");
-  await expect(panel.getByLabel("Comparison statistics").locator("dd").filter({ hasText: "1.0000" })).toHaveCount(2);
+  await expect(panel.getByLabel("Comparison statistics").locator("dd").filter({ hasText: "1.0000" })).toHaveCount(1);
+  await expect(panel.getByLabel("Comparison statistics")).not.toContainText("Matching-cluster");
   await expect(page.getByRole("button", { name: "Circular" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Fan" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Spiral" })).toBeDisabled();
