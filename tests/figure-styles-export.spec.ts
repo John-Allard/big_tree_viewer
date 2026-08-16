@@ -1406,14 +1406,99 @@ test("BEAST or MrBayes-style interval annotations render node error bars", async
     return {
       state: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
       debug: window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect ?? null,
+      svg: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "",
     };
   }) as {
-    state?: { nodeIntervalCount?: number };
+    state?: {
+      nodeIntervalCount?: number;
+      errorBarStyle?: string;
+      errorBarColor?: string;
+      errorBarOpacity?: number;
+      errorBarShowNodeDot?: boolean;
+      errorBarThicknessPx?: number;
+    };
     debug?: { errorBarCount?: number };
+    svg: string;
   };
 
   expect(result.state?.nodeIntervalCount).toBeGreaterThanOrEqual(2);
   expect(result.debug?.errorBarCount).toBeGreaterThanOrEqual(2);
+  expect(result.state).toMatchObject({
+    errorBarStyle: "rectangle",
+    errorBarColor: "#166534",
+    errorBarOpacity: 0.38,
+    errorBarShowNodeDot: false,
+    errorBarThicknessPx: 5,
+  });
+  expect(result.svg).toContain('fill="#166534" opacity="0.38"');
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Node error bars settings" }).click();
+  const settings = page.getByRole("dialog", { name: "Node error bars settings" });
+  await expect(settings.getByLabel("Style")).toHaveValue("rectangle");
+  await expect(settings.getByLabel("Node error bar color")).toHaveValue("#166534");
+  await expect(settings.getByText("38%")).toBeVisible();
+  await expect(settings.getByLabel("Show node dot")).not.toBeChecked();
+
+  const circularSvg = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setViewMode("circular");
+    app?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+  expect(circularSvg).toContain('fill="#166534" opacity="0.38"');
+
+  const fanSvg = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setViewMode("fan");
+    app?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+  expect(fanSvg).toContain('fill="#166534" opacity="0.38"');
+
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setErrorBarStyle("capped-line");
+    app?.setErrorBarColor("#7c2d12");
+    app?.setErrorBarOpacity(0.65);
+    app?.setErrorBarShowNodeDot(true);
+    app?.setErrorBarThicknessPx(2);
+    app?.setErrorBarCapSizePx(10);
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.errorBarStyle === "capped-line"
+      && state?.errorBarColor === "#7c2d12"
+      && state?.errorBarOpacity === 0.65
+      && state?.errorBarShowNodeDot === true;
+  });
+  const cappedSvg = await page.evaluate(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+  });
+  expect(cappedSvg).toContain('stroke="#7c2d12" stroke-width="2.000" opacity="0.65"');
+  expect(cappedSvg).toContain('fill="#7c2d12" opacity="0.95"');
+});
+
+test("spiral mode disables node error bars while preserving the enabled setting", async ({ page }) => {
+  await waitForViewer(page);
+  const tips = Array.from({ length: 1000 }, (_, index) => `Tip_${index + 1}:1`).join(",");
+  await loadTreeFromPaste(page, `(${tips})[&height_95%_HPD={0.8,1.0}];`);
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setShowNodeErrorBars(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+  });
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral");
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  const checkbox = page.getByLabel("Show node error bars");
+  await expect(checkbox).toBeChecked();
+  await expect(checkbox).toBeDisabled();
+  await expect(checkbox).toHaveAttribute("title", /not available in spiral mode/i);
+  await expect(page.getByRole("button", { name: "Node error bars settings" })).toBeDisabled();
 });
 
 test("branch hover clears when the pointer leaves or the view is panned", async ({ page }) => {

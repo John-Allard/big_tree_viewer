@@ -318,6 +318,9 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
   expect(state?.showTipLabels).toBe(false);
   expect(state?.showGenusLabels).toBe(false);
   expect(state?.branchThicknessScale).toBeCloseTo(2.1);
+  expect(state?.errorBarStyle).toBe("capped-line");
+  expect(state?.errorBarColor).toBe("#64748b");
+  expect(state?.errorBarOpacity).toBeCloseTo(0.82);
   expect(state?.taxonomyEnabled).toBe(true);
   expect(state?.taxonomyMappedCount).toBe(3);
   expect(state?.loadError).toBeNull();

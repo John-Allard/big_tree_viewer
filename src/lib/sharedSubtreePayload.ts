@@ -6,7 +6,7 @@ import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
 import type { LayoutOrder, ViewMode, ZoomAxisMode } from "../types/tree";
-import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "../components/treeCanvasTypes";
+import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "../components/treeCanvasTypes";
 
 export type SharedSubtreeTaxonomyEntry = {
   name: string;
@@ -59,6 +59,10 @@ export type SharedSubtreeVisualPayload = {
   showBootstrapLabels: boolean;
   showNodeHeightLabels: boolean;
   showNodeErrorBars: boolean;
+  errorBarStyle: NodeErrorBarStyle;
+  errorBarColor: string;
+  errorBarOpacity: number;
+  errorBarShowNodeDot: boolean;
   errorBarThicknessPx: number;
   errorBarCapSizePx: number;
   figureStyles: FigureStyleSettings;
@@ -171,6 +175,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
   if (legacyLabelOnlyRank !== "none" && !parsedTaxonomyRankDisplayModes[legacyLabelOnlyRank]) {
     parsedTaxonomyRankDisplayModes[legacyLabelOnlyRank] = "label-only";
   }
+  const hasErrorBarStyle = source.errorBarStyle === "rectangle" || source.errorBarStyle === "capped-line";
   return {
     viewMode: coerceEnum(source.viewMode, ["rectangular", "circular", "fan", "spiral"] as const, "rectangular"),
     order: coerceEnum(source.order, ["asc", "desc", "input"] as const, "asc"),
@@ -197,7 +202,11 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     showBootstrapLabels: coerceBoolean(source.showBootstrapLabels, false),
     showNodeHeightLabels: coerceBoolean(source.showNodeHeightLabels, false),
     showNodeErrorBars: coerceBoolean(source.showNodeErrorBars, false),
-    errorBarThicknessPx: coerceFiniteNumber(source.errorBarThicknessPx, 1.2),
+    errorBarStyle: coerceEnum(source.errorBarStyle, ["rectangle", "capped-line"] as const, "capped-line"),
+    errorBarColor: typeof source.errorBarColor === "string" ? source.errorBarColor : hasErrorBarStyle ? "#166534" : "#64748b",
+    errorBarOpacity: Math.max(0.05, Math.min(1, coerceFiniteNumber(source.errorBarOpacity, hasErrorBarStyle ? 0.38 : 0.82))),
+    errorBarShowNodeDot: coerceBoolean(source.errorBarShowNodeDot, false),
+    errorBarThicknessPx: coerceFiniteNumber(source.errorBarThicknessPx, hasErrorBarStyle ? 5 : 1.2),
     errorBarCapSizePx: coerceFiniteNumber(source.errorBarCapSizePx, 7),
     figureStyles: parseSharedFigureStyles(source.figureStyles),
     taxonomyEnabled: coerceBoolean(source.taxonomyEnabled, false),

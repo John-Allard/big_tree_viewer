@@ -79,7 +79,6 @@ import type { LayoutBuffers, LayoutOrder, TreeModel, ViewMode } from "../types/t
 
 const SOLID_SCALE_TICK_ALPHA_THRESHOLD = 0.6;
 const DASHED_STRIPE_DASH_ARRAY = "6 6";
-const ERROR_BAR_COLOR = "#64748b";
 const RECT_BRANCH_HOVER_MIN_SCALE_Y = 1.45;
 const CIRCULAR_BRANCH_HOVER_MIN_ANGULAR_SPACING_PX = 1.6;
 const CIRCULAR_NEAR_FIT_SCALE_MULTIPLIER = 1.35;
@@ -4156,6 +4155,10 @@ export default function TreeCanvas({
   branchThicknessScale,
   showNodeHeightLabels,
   showNodeErrorBars,
+  errorBarStyle,
+  errorBarColor,
+  errorBarOpacity,
+  errorBarShowNodeDot,
   errorBarThicknessPx,
   errorBarCapSizePx,
   searchQuery,
@@ -9739,9 +9742,8 @@ export default function TreeCanvas({
       let rectErrorBarCount = 0;
       if (showNodeErrorBars && tree.nodeIntervalCount > 0 && camera.scaleX > 1.1) {
         const placements: ScreenLabel[] = [];
-        ctx.strokeStyle = ERROR_BAR_COLOR;
-        ctx.lineWidth = errorBarThicknessPx;
         const halfCap = Math.max(0, errorBarCapSizePx * 0.5);
+        const halfThickness = Math.max(0.25, errorBarThicknessPx * 0.5);
         for (let node = 0; node < tree.nodeCount; node += 1) {
           if (tree.buffers.firstChild[node] < 0) {
             continue;
@@ -9768,21 +9770,47 @@ export default function TreeCanvas({
             continue;
           }
           placements.push({ x: midX, y: midY, text: "", alpha: 1 });
-          ctx.globalAlpha = 0.82;
-          ctx.beginPath();
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
-          if (halfCap > 0) {
-            ctx.moveTo(start.x, start.y - halfCap);
-            ctx.lineTo(start.x, start.y + halfCap);
-            ctx.moveTo(end.x, end.y - halfCap);
-            ctx.lineTo(end.x, end.y + halfCap);
+          ctx.globalAlpha = errorBarOpacity;
+          if (errorBarStyle === "rectangle") {
+            const left = Math.min(start.x, end.x);
+            const width = Math.max(0.5, Math.abs(end.x - start.x));
+            ctx.fillStyle = errorBarColor;
+            ctx.fillRect(left, midY - halfThickness, width, errorBarThicknessPx);
+            pushSceneRect(left, midY - halfThickness, width, errorBarThicknessPx, errorBarColor, errorBarOpacity);
+          } else {
+            ctx.strokeStyle = errorBarColor;
+            ctx.lineWidth = errorBarThicknessPx;
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            if (halfCap > 0) {
+              ctx.moveTo(start.x, start.y - halfCap);
+              ctx.lineTo(start.x, start.y + halfCap);
+              ctx.moveTo(end.x, end.y - halfCap);
+              ctx.lineTo(end.x, end.y + halfCap);
+            }
+            ctx.stroke();
+            pushSceneLine(start.x, start.y, end.x, end.y, errorBarColor, errorBarThicknessPx, errorBarOpacity);
+            if (halfCap > 0) {
+              pushSceneLine(start.x, start.y - halfCap, start.x, start.y + halfCap, errorBarColor, errorBarThicknessPx, errorBarOpacity);
+              pushSceneLine(end.x, end.y - halfCap, end.x, end.y + halfCap, errorBarColor, errorBarThicknessPx, errorBarOpacity);
+            }
           }
-          ctx.stroke();
-          pushSceneLine(start.x, start.y, end.x, end.y, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
-          if (halfCap > 0) {
-            pushSceneLine(start.x, start.y - halfCap, start.x, start.y + halfCap, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
-            pushSceneLine(end.x, end.y - halfCap, end.x, end.y + halfCap, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+          if (errorBarShowNodeDot) {
+            const nodeScreen = worldToScreenRect(camera, tree.buffers.depth[node], y);
+            const radius = Math.max(2, Math.min(5, errorBarThicknessPx * 0.65));
+            ctx.globalAlpha = Math.min(1, errorBarOpacity + 0.3);
+            ctx.fillStyle = errorBarColor;
+            ctx.beginPath();
+            ctx.arc(nodeScreen.x, nodeScreen.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            pushScenePath(
+              `M ${nodeScreen.x - radius} ${nodeScreen.y} a ${radius} ${radius} 0 1 0 ${radius * 2} 0 a ${radius} ${radius} 0 1 0 ${-radius * 2} 0`,
+              undefined,
+              undefined,
+              errorBarColor,
+              Math.min(1, errorBarOpacity + 0.3),
+            );
           }
           rectErrorBarCount += 1;
         }
@@ -14179,8 +14207,7 @@ export default function TreeCanvas({
       if (showNodeErrorBars && tree.nodeIntervalCount > 0 && camera.scale > 10) {
         const placements: ScreenLabel[] = [];
         const halfCap = Math.max(0, errorBarCapSizePx * 0.5);
-        ctx.strokeStyle = ERROR_BAR_COLOR;
-        ctx.lineWidth = errorBarThicknessPx;
+        const halfThickness = Math.max(0.25, errorBarThicknessPx * 0.5);
         for (let node = 0; node < tree.nodeCount; node += 1) {
           if (tree.buffers.firstChild[node] < 0) {
             continue;
@@ -14209,21 +14236,62 @@ export default function TreeCanvas({
           placements.push({ x: midX, y: midY, text: "", alpha: 1 });
           const tangentX = -Math.sin(theta + rotationAngle);
           const tangentY = Math.cos(theta + rotationAngle);
-          ctx.globalAlpha = 0.82;
-          ctx.beginPath();
-          ctx.moveTo(start.x, start.y);
-          ctx.lineTo(end.x, end.y);
-          if (halfCap > 0) {
-            ctx.moveTo(start.x - (tangentX * halfCap), start.y - (tangentY * halfCap));
-            ctx.lineTo(start.x + (tangentX * halfCap), start.y + (tangentY * halfCap));
-            ctx.moveTo(end.x - (tangentX * halfCap), end.y - (tangentY * halfCap));
-            ctx.lineTo(end.x + (tangentX * halfCap), end.y + (tangentY * halfCap));
+          ctx.globalAlpha = errorBarOpacity;
+          if (errorBarStyle === "rectangle") {
+            const startA = { x: start.x - (tangentX * halfThickness), y: start.y - (tangentY * halfThickness) };
+            const startB = { x: start.x + (tangentX * halfThickness), y: start.y + (tangentY * halfThickness) };
+            const endB = { x: end.x + (tangentX * halfThickness), y: end.y + (tangentY * halfThickness) };
+            const endA = { x: end.x - (tangentX * halfThickness), y: end.y - (tangentY * halfThickness) };
+            ctx.fillStyle = errorBarColor;
+            ctx.beginPath();
+            ctx.moveTo(startA.x, startA.y);
+            ctx.lineTo(startB.x, startB.y);
+            ctx.lineTo(endB.x, endB.y);
+            ctx.lineTo(endA.x, endA.y);
+            ctx.closePath();
+            ctx.fill();
+            pushScenePath(
+              `M ${startA.x} ${startA.y} L ${startB.x} ${startB.y} L ${endB.x} ${endB.y} L ${endA.x} ${endA.y} Z`,
+              undefined,
+              undefined,
+              errorBarColor,
+              errorBarOpacity,
+            );
+          } else {
+            ctx.strokeStyle = errorBarColor;
+            ctx.lineWidth = errorBarThicknessPx;
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            if (halfCap > 0) {
+              ctx.moveTo(start.x - (tangentX * halfCap), start.y - (tangentY * halfCap));
+              ctx.lineTo(start.x + (tangentX * halfCap), start.y + (tangentY * halfCap));
+              ctx.moveTo(end.x - (tangentX * halfCap), end.y - (tangentY * halfCap));
+              ctx.lineTo(end.x + (tangentX * halfCap), end.y + (tangentY * halfCap));
+            }
+            ctx.stroke();
+            pushSceneLine(start.x, start.y, end.x, end.y, errorBarColor, errorBarThicknessPx, errorBarOpacity);
+            if (halfCap > 0) {
+              pushSceneLine(start.x - (tangentX * halfCap), start.y - (tangentY * halfCap), start.x + (tangentX * halfCap), start.y + (tangentY * halfCap), errorBarColor, errorBarThicknessPx, errorBarOpacity);
+              pushSceneLine(end.x - (tangentX * halfCap), end.y - (tangentY * halfCap), end.x + (tangentX * halfCap), end.y + (tangentY * halfCap), errorBarColor, errorBarThicknessPx, errorBarOpacity);
+            }
           }
-          ctx.stroke();
-          pushSceneLine(start.x, start.y, end.x, end.y, ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
-          if (halfCap > 0) {
-            pushSceneLine(start.x - (tangentX * halfCap), start.y - (tangentY * halfCap), start.x + (tangentX * halfCap), start.y + (tangentY * halfCap), ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
-            pushSceneLine(end.x - (tangentX * halfCap), end.y - (tangentY * halfCap), end.x + (tangentX * halfCap), end.y + (tangentY * halfCap), ERROR_BAR_COLOR, errorBarThicknessPx, 0.82);
+          if (errorBarShowNodeDot) {
+            const nodeWorld = polarToCartesian(tree.buffers.depth[node], theta);
+            const nodeScreen = worldToScreenCircular(camera, nodeWorld.x, nodeWorld.y);
+            const radius = Math.max(2, Math.min(5, errorBarThicknessPx * 0.65));
+            ctx.globalAlpha = Math.min(1, errorBarOpacity + 0.3);
+            ctx.fillStyle = errorBarColor;
+            ctx.beginPath();
+            ctx.arc(nodeScreen.x, nodeScreen.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            pushScenePath(
+              `M ${nodeScreen.x - radius} ${nodeScreen.y} a ${radius} ${radius} 0 1 0 ${radius * 2} 0 a ${radius} ${radius} 0 1 0 ${-radius * 2} 0`,
+              undefined,
+              undefined,
+              errorBarColor,
+              Math.min(1, errorBarOpacity + 0.3),
+            );
           }
           circularErrorBarCount += 1;
         }
@@ -14555,6 +14623,10 @@ export default function TreeCanvas({
     searchMatches,
     searchMatchSet,
     errorBarCapSizePx,
+    errorBarColor,
+    errorBarOpacity,
+    errorBarShowNodeDot,
+    errorBarStyle,
     errorBarThicknessPx,
     circularCenterScaleAngleDegrees,
     extendRectScaleToTick,
@@ -16633,6 +16705,10 @@ export default function TreeCanvas({
       showBootstrapLabels,
       showNodeHeightLabels,
       showNodeErrorBars,
+      errorBarStyle,
+      errorBarColor,
+      errorBarOpacity,
+      errorBarShowNodeDot,
       errorBarThicknessPx,
       errorBarCapSizePx,
       figureStyles,
@@ -16667,7 +16743,11 @@ export default function TreeCanvas({
     branchThicknessScale,
     circularCenterScaleAngleDegrees,
     circularRotation,
+    errorBarColor,
     errorBarCapSizePx,
+    errorBarOpacity,
+    errorBarShowNodeDot,
+    errorBarStyle,
     errorBarThicknessPx,
     extendRectScaleToTick,
     figureStyles,
@@ -17248,6 +17328,10 @@ export default function TreeCanvas({
           showBootstrapLabels,
           showNodeHeightLabels,
           showNodeErrorBars,
+          errorBarStyle,
+          errorBarColor,
+          errorBarOpacity,
+          errorBarShowNodeDot,
           errorBarThicknessPx,
           errorBarCapSizePx,
           figureStyles,
@@ -17287,7 +17371,11 @@ export default function TreeCanvas({
     branchThicknessScale,
     circularCenterScaleAngleDegrees,
     circularRotation,
+    errorBarColor,
     errorBarCapSizePx,
+    errorBarOpacity,
+    errorBarShowNodeDot,
+    errorBarStyle,
     errorBarThicknessPx,
     extendRectScaleToTick,
     figureStyles,

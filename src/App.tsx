@@ -4,7 +4,7 @@ import TreeCanvas from "./components/TreeCanvas";
 import TreeComparisonCanvas, { type TreeComparisonCameraState } from "./components/TreeComparisonCanvas";
 import TreeStatisticsView from "./components/TreeStatisticsView";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
-import type { TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
+import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import { computeTreeStatistics } from "./lib/treeStatistics";
 import { computeTreeComparisonStatistics } from "./lib/treeComparisonStatistics";
@@ -301,6 +301,10 @@ type BigTreeViewerSessionSettings = {
   showBootstrapLabels: boolean;
   showNodeHeightLabels: boolean;
   showNodeErrorBars: boolean;
+  errorBarStyle?: NodeErrorBarStyle;
+  errorBarColor?: string;
+  errorBarOpacity?: number;
+  errorBarShowNodeDot?: boolean;
   errorBarThicknessPx: number;
   errorBarCapSizePx: number;
   figureStyles: FigureStyleSettings;
@@ -1031,7 +1035,11 @@ const DEFAULT_TIME_STRIPE_STYLE: TimeStripeStyle = "bands";
 const DEFAULT_TIME_STRIPE_LINE_WEIGHT = 1.1;
 const DEFAULT_TAXONOMY_OVERLAY_STYLE: TaxonomyOverlayStyle = "ribbons";
 const DEFAULT_SHOW_NODE_ERROR_BARS = false;
-const DEFAULT_ERROR_BAR_THICKNESS_PX = 1.2;
+const DEFAULT_ERROR_BAR_STYLE: NodeErrorBarStyle = "rectangle";
+const DEFAULT_ERROR_BAR_COLOR = "#166534";
+const DEFAULT_ERROR_BAR_OPACITY = 0.38;
+const DEFAULT_ERROR_BAR_SHOW_NODE_DOT = false;
+const DEFAULT_ERROR_BAR_THICKNESS_PX = 5;
 const DEFAULT_ERROR_BAR_CAP_SIZE_PX = 7;
 const DEFAULT_METADATA_LABEL_MAX_COUNT = 240;
 const DEFAULT_METADATA_LABEL_MIN_SPACING_PX = 10;
@@ -1145,6 +1153,7 @@ const TAXONOMY_ARCHIVE_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.z
 type VisualPopoverId =
   | LabelStyleClass
   | "timeStripes"
+  | "nodeErrorBars"
   | "phylopic"
   | "metadataBranchColors"
   | "metadataLabels"
@@ -1825,6 +1834,10 @@ export default function App() {
   const [showBootstrapLabels, setShowBootstrapLabels] = useState(false);
   const [showNodeHeightLabels, setShowNodeHeightLabels] = useState(false);
   const [showNodeErrorBars, setShowNodeErrorBars] = useState(DEFAULT_SHOW_NODE_ERROR_BARS);
+  const [errorBarStyle, setErrorBarStyle] = useState<NodeErrorBarStyle>(DEFAULT_ERROR_BAR_STYLE);
+  const [errorBarColor, setErrorBarColor] = useState(DEFAULT_ERROR_BAR_COLOR);
+  const [errorBarOpacity, setErrorBarOpacity] = useState(DEFAULT_ERROR_BAR_OPACITY);
+  const [errorBarShowNodeDot, setErrorBarShowNodeDot] = useState(DEFAULT_ERROR_BAR_SHOW_NODE_DOT);
   const [errorBarThicknessPx, setErrorBarThicknessPx] = useState(DEFAULT_ERROR_BAR_THICKNESS_PX);
   const [errorBarCapSizePx, setErrorBarCapSizePx] = useState(DEFAULT_ERROR_BAR_CAP_SIZE_PX);
   const [figureStyles, setFigureStyles] = useState<FigureStyleSettings>(() => cloneDefaultFigureStyles());
@@ -2404,6 +2417,10 @@ export default function App() {
     setShowBootstrapLabels(visual.showBootstrapLabels);
     setShowNodeHeightLabels(visual.showNodeHeightLabels);
     setShowNodeErrorBars(visual.showNodeErrorBars);
+    setErrorBarStyle(visual.errorBarStyle);
+    setErrorBarColor(visual.errorBarColor);
+    setErrorBarOpacity(visual.errorBarOpacity);
+    setErrorBarShowNodeDot(visual.errorBarShowNodeDot);
     setErrorBarThicknessPx(visual.errorBarThicknessPx);
     setErrorBarCapSizePx(visual.errorBarCapSizePx);
     setFigureStyles(visual.figureStyles);
@@ -2510,6 +2527,18 @@ export default function App() {
     }
     if (typeof visual.showNodeErrorBars === "boolean") {
       setShowNodeErrorBars(visual.showNodeErrorBars);
+    }
+    if (visual.errorBarStyle === "rectangle" || visual.errorBarStyle === "capped-line") {
+      setErrorBarStyle(visual.errorBarStyle);
+    }
+    if (typeof visual.errorBarColor === "string" && CSS.supports("color", visual.errorBarColor)) {
+      setErrorBarColor(visual.errorBarColor);
+    }
+    if (typeof visual.errorBarOpacity === "number" && Number.isFinite(visual.errorBarOpacity)) {
+      setErrorBarOpacity(Math.max(0.05, Math.min(1, visual.errorBarOpacity)));
+    }
+    if (typeof visual.errorBarShowNodeDot === "boolean") {
+      setErrorBarShowNodeDot(visual.errorBarShowNodeDot);
     }
     if (typeof visual.errorBarThicknessPx === "number" && Number.isFinite(visual.errorBarThicknessPx)) {
       setErrorBarThicknessPx(visual.errorBarThicknessPx);
@@ -4002,6 +4031,10 @@ export default function App() {
     showBootstrapLabels,
     showNodeHeightLabels,
     showNodeErrorBars,
+    errorBarStyle,
+    errorBarColor,
+    errorBarOpacity,
+    errorBarShowNodeDot,
     errorBarThicknessPx,
     errorBarCapSizePx,
     figureStyles,
@@ -4056,7 +4089,11 @@ export default function App() {
     branchThicknessScale,
     circularCenterScaleAngleDegrees,
     circularRotationDegrees,
+    errorBarColor,
     errorBarCapSizePx,
+    errorBarOpacity,
+    errorBarShowNodeDot,
+    errorBarStyle,
     errorBarThicknessPx,
     extendRectScaleToTick,
     figureStyles,
@@ -4162,8 +4199,13 @@ export default function App() {
     setShowBootstrapLabels(settings.showBootstrapLabels);
     setShowNodeHeightLabels(settings.showNodeHeightLabels);
     setShowNodeErrorBars(settings.showNodeErrorBars);
-    setErrorBarThicknessPx(settings.errorBarThicknessPx);
-    setErrorBarCapSizePx(settings.errorBarCapSizePx);
+    const isLegacyErrorBarSettings = settings.errorBarStyle === undefined;
+    setErrorBarStyle(settings.errorBarStyle ?? "capped-line");
+    setErrorBarColor(settings.errorBarColor ?? (isLegacyErrorBarSettings ? "#64748b" : DEFAULT_ERROR_BAR_COLOR));
+    setErrorBarOpacity(settings.errorBarOpacity ?? (isLegacyErrorBarSettings ? 0.82 : DEFAULT_ERROR_BAR_OPACITY));
+    setErrorBarShowNodeDot(settings.errorBarShowNodeDot ?? DEFAULT_ERROR_BAR_SHOW_NODE_DOT);
+    setErrorBarThicknessPx(settings.errorBarThicknessPx ?? DEFAULT_ERROR_BAR_THICKNESS_PX);
+    setErrorBarCapSizePx(settings.errorBarCapSizePx ?? DEFAULT_ERROR_BAR_CAP_SIZE_PX);
     setFigureStyles(() => {
       const next = cloneDefaultFigureStyles();
       if (settings.figureStyles && typeof settings.figureStyles === "object") {
@@ -6119,6 +6161,10 @@ export default function App() {
     setTimeStripeStyle(DEFAULT_TIME_STRIPE_STYLE);
     setTimeStripeLineWeight(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
     setShowNodeErrorBars(DEFAULT_SHOW_NODE_ERROR_BARS);
+    setErrorBarStyle(DEFAULT_ERROR_BAR_STYLE);
+    setErrorBarColor(DEFAULT_ERROR_BAR_COLOR);
+    setErrorBarOpacity(DEFAULT_ERROR_BAR_OPACITY);
+    setErrorBarShowNodeDot(DEFAULT_ERROR_BAR_SHOW_NODE_DOT);
     setErrorBarThicknessPx(DEFAULT_ERROR_BAR_THICKNESS_PX);
     setErrorBarCapSizePx(DEFAULT_ERROR_BAR_CAP_SIZE_PX);
     setAlignTipLabels(false);
@@ -6207,6 +6253,10 @@ export default function App() {
         timeStripeStyle,
         timeStripeLineWeight,
         showNodeErrorBars,
+        errorBarStyle,
+        errorBarColor,
+        errorBarOpacity,
+        errorBarShowNodeDot,
         errorBarThicknessPx,
         errorBarCapSizePx,
         nodeIntervalCount: viewTree?.nodeIntervalCount ?? 0,
@@ -6294,6 +6344,10 @@ export default function App() {
       setTimeAxisLogBase,
       setTimeStripeLineWeight,
       setShowNodeErrorBars,
+      setErrorBarStyle,
+      setErrorBarColor,
+      setErrorBarOpacity,
+      setErrorBarShowNodeDot,
       setErrorBarThicknessPx,
       setErrorBarCapSizePx,
       setMetadataEnabled,
@@ -6433,7 +6487,11 @@ export default function App() {
     metadataPieStartColumn,
     metadataPiesEnabled,
     extendRectScaleToTick,
+    errorBarColor,
     errorBarCapSizePx,
+    errorBarOpacity,
+    errorBarShowNodeDot,
+    errorBarStyle,
     errorBarThicknessPx,
     effectiveCircularCenterScaleAngleDegrees,
     scaleTickInterval,
@@ -7297,16 +7355,112 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined) ?? "Show confidence or credibility intervals around node heights when interval annotations are present."}>
+              <label className="visual-option-checkbox" title={disabledControlTitle(
+                viewMode === "spiral"
+                  ? "Node error bars are not available in spiral mode."
+                  : (tree?.nodeIntervalCount ?? 0) === 0
+                    ? "This tree does not contain node interval annotations."
+                    : undefined,
+              ) ?? "Show confidence or credibility intervals around node heights when interval annotations are present."}>
                 <input
                   type="checkbox"
                   checked={showNodeErrorBars}
-                  disabled={comparisonEnabled && Boolean(comparisonTree) || (tree?.nodeIntervalCount ?? 0) === 0}
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || viewMode === "spiral" || (tree?.nodeIntervalCount ?? 0) === 0}
                   onChange={(event) => setShowNodeErrorBars(event.target.checked)}
-                  title={disabledControlTitle((tree?.nodeIntervalCount ?? 0) === 0 ? "This tree does not contain node interval annotations." : undefined)}
+                  title={disabledControlTitle(
+                    viewMode === "spiral"
+                      ? "Node error bars are not available in spiral mode."
+                      : (tree?.nodeIntervalCount ?? 0) === 0
+                        ? "This tree does not contain node interval annotations."
+                        : undefined,
+                  )}
                 />
                 Show node error bars
               </label>
+              <div className="visual-option-actions">
+                <SettingsPopoverButton
+                  title="Node error bars"
+                  isOpen={activeLabelStylePopover === "nodeErrorBars"}
+                  disabled={comparisonEnabled && Boolean(comparisonTree) || viewMode === "spiral" || !showNodeErrorBars || (tree?.nodeIntervalCount ?? 0) === 0}
+                  disabledReason={comparisonEnabled && comparisonTree
+                    ? "Node error bars are not shown in comparison mode."
+                    : viewMode === "spiral"
+                      ? "Node error bars are not available in spiral mode."
+                    : !showNodeErrorBars
+                      ? "Enable node error bars first."
+                      : "This tree does not contain node interval annotations."}
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "nodeErrorBars" ? null : "nodeErrorBars")}
+                >
+                  <label title="Draw intervals as translucent filled bars or as the original line with end caps.">
+                    Style
+                    <select
+                      value={errorBarStyle}
+                      onChange={(event) => setErrorBarStyle(event.target.value as NodeErrorBarStyle)}
+                    >
+                      <option value="rectangle">Transparent rectangle</option>
+                      <option value="capped-line">Capped line</option>
+                    </select>
+                  </label>
+                  <label title="Set the interval bar color.">
+                    Color
+                    <input
+                      className="metadata-legend-swatch-input"
+                      type="color"
+                      aria-label="Node error bar color"
+                      value={errorBarColor}
+                      onChange={(event) => setErrorBarColor(event.target.value)}
+                    />
+                  </label>
+                  <label title="Adjust the height of rectangular bars or the stroke width of capped lines.">
+                    Thickness
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={16}
+                      step={0.5}
+                      value={errorBarThicknessPx}
+                      onChange={(event) => setErrorBarThicknessPx(Number(event.target.value))}
+                    />
+                  </label>
+                  <div className="figure-style-value">{errorBarThicknessPx.toFixed(1)}px</div>
+                  <label title="Adjust the opacity of interval bars and node dots.">
+                    Opacity
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      value={errorBarOpacity}
+                      onChange={(event) => setErrorBarOpacity(Number(event.target.value))}
+                    />
+                  </label>
+                  <div className="figure-style-value">{Math.round(errorBarOpacity * 100)}%</div>
+                  {errorBarStyle === "capped-line" ? (
+                    <>
+                      <label title="Adjust the width of the caps at the ends of node interval bars.">
+                        Cap size
+                        <input
+                          type="range"
+                          min={0}
+                          max={16}
+                          step={1}
+                          value={errorBarCapSizePx}
+                          onChange={(event) => setErrorBarCapSizePx(Number(event.target.value))}
+                        />
+                      </label>
+                      <div className="figure-style-value">{errorBarCapSizePx.toFixed(0)}px</div>
+                    </>
+                  ) : null}
+                  <label className="label-style-inline-toggle" title="Mark the node associated with each interval.">
+                    <input
+                      type="checkbox"
+                      checked={errorBarShowNodeDot}
+                      onChange={(event) => setErrorBarShowNodeDot(event.target.checked)}
+                    />
+                    Show node dot
+                  </label>
+                </SettingsPopoverButton>
+              </div>
             </div>
             <div className="visual-option-row">
               <label className="visual-option-checkbox" title={comparisonEnabled && comparisonTree ? "Scale bars are not shown in comparison mode." : "Show time or branch-length scale bars for the current view."}>
@@ -7488,34 +7642,6 @@ export default function App() {
             </div>
           </div>
           <div className="visual-options-controls">
-            {showNodeErrorBars ? (
-              <>
-                <label title="Adjust the stroke width for node height interval bars.">
-                  Error bar thickness
-                  <input
-                    type="range"
-                    min={0.5}
-                    max={4}
-                    step={0.1}
-                    value={errorBarThicknessPx}
-                    onChange={(event) => setErrorBarThicknessPx(Number(event.target.value))}
-                  />
-                </label>
-                <div className="figure-style-value">{errorBarThicknessPx.toFixed(1)}px</div>
-                <label title="Adjust the width of the caps at the ends of node interval bars.">
-                  Error bar cap size
-                  <input
-                    type="range"
-                    min={0}
-                    max={16}
-                    step={1}
-                    value={errorBarCapSizePx}
-                    onChange={(event) => setErrorBarCapSizePx(Number(event.target.value))}
-                  />
-                </label>
-                <div className="figure-style-value">{errorBarCapSizePx.toFixed(0)}px</div>
-              </>
-            ) : null}
             <label title="Scale all tree branch strokes thicker or thinner.">
               Branch thickness
               <input
@@ -8681,7 +8807,11 @@ export default function App() {
           figureStyles={figureStyles}
           branchThicknessScale={branchThicknessScale}
           showNodeHeightLabels={showNodeHeightLabels}
-          showNodeErrorBars={showNodeErrorBars}
+          showNodeErrorBars={showNodeErrorBars && viewMode !== "spiral"}
+          errorBarStyle={errorBarStyle}
+          errorBarColor={errorBarColor}
+          errorBarOpacity={errorBarOpacity}
+          errorBarShowNodeDot={errorBarShowNodeDot}
           errorBarThicknessPx={errorBarThicknessPx}
           errorBarCapSizePx={errorBarCapSizePx}
           searchQuery={visibleSearchQuery}

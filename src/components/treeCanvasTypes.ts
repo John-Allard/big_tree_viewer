@@ -10,6 +10,7 @@ import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "
 
 export type TimeStripeStyle = "bands" | "age-gradient" | "dashed";
 export type TaxonomyOverlayStyle = "ribbons" | "strands";
+export type NodeErrorBarStyle = "rectangle" | "capped-line";
 export type TaxonomyRankDisplayMode = "hidden" | "label-only" | "ribbon";
 export type AutomationExportFormat = "svg" | "png";
 export type AutomationExportDelivery = "download" | "postMessage";
@@ -108,6 +109,10 @@ export interface TreeCanvasProps {
   branchThicknessScale: number;
   showNodeHeightLabels: boolean;
   showNodeErrorBars: boolean;
+  errorBarStyle: NodeErrorBarStyle;
+  errorBarColor: string;
+  errorBarOpacity: number;
+  errorBarShowNodeDot: boolean;
   errorBarThicknessPx: number;
   errorBarCapSizePx: number;
   searchQuery: string;

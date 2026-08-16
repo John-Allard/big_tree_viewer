@@ -46,6 +46,10 @@ declare global {
       setTimeAxisLogBase: (value: number) => void;
       setTimeStripeLineWeight: (value: number) => void;
       setShowNodeErrorBars: (visible: boolean) => void;
+      setErrorBarStyle: (value: "rectangle" | "capped-line") => void;
+      setErrorBarColor: (value: string) => void;
+      setErrorBarOpacity: (value: number) => void;
+      setErrorBarShowNodeDot: (value: boolean) => void;
       setErrorBarThicknessPx: (value: number) => void;
       setErrorBarCapSizePx: (value: number) => void;
       setMetadataEnabled: (visible: boolean) => void;
