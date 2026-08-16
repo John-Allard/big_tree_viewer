@@ -191,6 +191,20 @@ function readNodeIntervals(comments: string[]): {
   return result;
 }
 
+function readNodeSupport(comments: string[]): string | null {
+  const supportKeys = ["posterior", "support", "bootstrap", "prob"];
+  for (let commentIndex = 0; commentIndex < comments.length; commentIndex += 1) {
+    const annotations = parseAnnotationMap(comments[commentIndex]);
+    for (let keyIndex = 0; keyIndex < supportKeys.length; keyIndex += 1) {
+      const value = annotations.get(supportKeys[keyIndex]);
+      if (value && Number.isFinite(Number.parseFloat(value))) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
 function parseNewick(text: string): { nodes: TempNode[]; root: number; maxDepth: number; hasBranchLengths: boolean } {
   const nodes: TempNode[] = [];
   const stack: number[] = [];
@@ -456,7 +470,8 @@ function buildTopology(nodes: TempNode[], root: number): {
     parent[nodeIndex] = source.parent;
     branchLength[nodeIndex] = source.branchLength;
     depth[nodeIndex] = source.depth;
-    names[nodeIndex] = source.name;
+    names[nodeIndex] = source.name
+      || (source.children.length > 0 ? readNodeSupport(source.comments) ?? "" : "");
     const children = source.children;
     if (children.length > 0) {
       firstChild[nodeIndex] = children[0];

@@ -6624,7 +6624,6 @@ export default function App() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".nwk,.newick,.tree,.tre,.txt,.nex,.nexus,.btvsession,.json"
               disabled={loadState.loading || sessionLoading}
               hidden
               onChange={(event) => void onFileChange(event)}
@@ -8445,7 +8444,6 @@ export default function App() {
               <input
                 ref={comparisonFileInputRef}
                 type="file"
-                accept=".nwk,.newick,.tree,.tre,.txt,.nex,.nexus"
                 hidden
                 onChange={(event) => void onComparisonFileChange(event)}
               />

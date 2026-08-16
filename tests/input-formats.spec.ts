@@ -98,3 +98,39 @@ end;`);
   expect(names).toContain("SecondRoot");
   expect(names).not.toContain("FirstRoot");
 });
+
+test("tree files are selected by content and BEAST NEXUS annotations are retained", async ({ page }) => {
+  await waitForViewer(page);
+  const treeInput = page.locator('input[type="file"]').first();
+  await expect(treeInput).not.toHaveAttribute("accept", /.+/);
+
+  await treeInput.setInputFiles({
+    name: "analysis.mcc",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from(`#NEXUS
+begin trees;
+  translate
+    1 'Alpha beta',
+    2 Gamma,
+    3 Delta,
+    4 Epsilon;
+  tree MCC = [&R] ((1:1,2:1)[&posterior=0.97,height_95%_HPD={0.6,0.8}]:1,(3:1,4:1)[&support=88,length_95%_HPD={0.2,0.4}]:1)[&posterior=1.0];
+end;`),
+  });
+
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    const names = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names ?? [];
+    return !state?.loading && names.includes("Alpha beta") && names.includes("0.97");
+  });
+
+  const result = await page.evaluate(() => ({
+    names: window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.names ?? [],
+    intervalCount: window.__BIG_TREE_VIEWER_APP_TEST__?.getState().nodeIntervalCount ?? 0,
+  }));
+  expect(result.names).toContain("Alpha beta");
+  expect(result.names).toContain("Gamma");
+  expect(result.names).toContain("0.97");
+  expect(result.names).toContain("88");
+  expect(result.intervalCount).toBeGreaterThanOrEqual(2);
+});
