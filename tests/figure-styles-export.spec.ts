@@ -380,6 +380,65 @@ test("bootstrap and node-height labels support decimal formatting and simultaneo
   expect(svg).toContain(">88.2<");
   expect(svg).toContain(">1.00<");
   expect(svg).toContain(">2.00<");
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.getByRole("button", { name: "Bootstrap labels settings" }).click();
+  await expect(page.getByRole("dialog", { name: "Bootstrap labels settings" }).getByLabel("Orientation"))
+    .toHaveValue("tangential");
+  await page.getByRole("button", { name: "Close Bootstrap labels settings" }).click();
+  await page.getByRole("button", { name: "Node height labels settings" }).click();
+  await expect(page.getByRole("dialog", { name: "Node height labels settings" }).getByLabel("Orientation"))
+    .toHaveValue("tangential");
+  await page.getByRole("button", { name: "Close Node height labels settings" }).click();
+
+  const inspectPolarPair = async () => page.evaluate(() => {
+    const svgText = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+    const documentNode = new DOMParser().parseFromString(svgText, "image/svg+xml");
+    const parse = (element: Element) => ({
+      text: element.textContent?.trim() ?? "",
+      x: Number(element.getAttribute("x")),
+      y: Number(element.getAttribute("y")),
+      fontSize: Number(element.getAttribute("font-size")),
+      rotation: Number(/rotate\(([-\d.]+)/.exec(element.getAttribute("transform") ?? "")?.[1] ?? 0),
+    });
+    const bootstrap = [...documentNode.querySelectorAll("text")]
+      .map(parse)
+      .find((label) => label.text === "95.7");
+    const nodeHeights = [...documentNode.querySelectorAll("text")]
+      .map(parse)
+      .filter((label) => label.text === "1.00");
+    if (!bootstrap || nodeHeights.length === 0) {
+      throw new Error("Polar bootstrap/node-height pair was not rendered.");
+    }
+    const nodeHeight = nodeHeights.reduce((closest, candidate) => (
+      Math.hypot(candidate.x - bootstrap.x, candidate.y - bootstrap.y)
+        < Math.hypot(closest.x - bootstrap.x, closest.y - bootstrap.y)
+        ? candidate
+        : closest
+    ));
+    return { bootstrap, nodeHeight };
+  });
+  const tangential = await inspectPolarPair();
+  expect(tangential.bootstrap.fontSize).toBeCloseTo(tangential.nodeHeight.fontSize, 4);
+  expect(tangential.bootstrap.rotation).toBeCloseTo(tangential.nodeHeight.rotation, 3);
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("nodeHeight", "polarOrientation", "radial");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const mixed = await inspectPolarPair();
+  expect(Math.abs(mixed.bootstrap.rotation - mixed.nodeHeight.rotation)).toBeCloseTo(90, 2);
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "polarOrientation", "radial");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const radial = await inspectPolarPair();
+  expect(radial.bootstrap.rotation).toBeCloseTo(radial.nodeHeight.rotation, 3);
 });
 
 test("tip labels can export with bold and italic styling", async ({ page }) => {

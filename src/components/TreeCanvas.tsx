@@ -3517,10 +3517,8 @@ function detailBranchThicknessMultiplier(
   return 1 + ((DETAIL_BRANCH_THICKNESS_MAX_MULTIPLIER - 1) * progress);
 }
 
-function pointLabelBaseFontSize(isBootstrap: boolean, tipSpacingPx: number): number {
-  const minimum = isBootstrap ? 12.5 : 12;
-  const maximum = isBootstrap ? 16 : 16;
-  return Math.max(minimum, Math.min(maximum, tipSpacingPx * 0.42));
+function pointLabelBaseFontSize(_isBootstrap: boolean, tipSpacingPx: number): number {
+  return Math.max(12, Math.min(16, tipSpacingPx * 0.42));
 }
 
 function pointLabelHasScreenRoom(
@@ -3543,6 +3541,18 @@ function formatLabelDecimals(value: number, decimalPlaces: number | undefined, a
     return automatic();
   }
   return value.toFixed(Math.max(0, Math.min(6, Math.round(decimalPlaces))));
+}
+
+function polarPointLabelRotation(
+  renderedTheta: number,
+  onRightSide: boolean,
+  orientation: "tangential" | "radial",
+): number {
+  const degrees = renderedTheta * 180 / Math.PI;
+  const orientationOffset = orientation === "tangential"
+    ? (onRightSide ? 90 : 270)
+    : (onRightSide ? 0 : 180);
+  return normalizeRotation(degrees + orientationOffset) * Math.PI / 180;
 }
 
 function interpolateTipBandWidthPx(
@@ -13901,7 +13911,11 @@ export default function TreeCanvas({
             continue;
           }
           const onRightSide = Math.cos(renderedTheta) >= 0;
-          const rotation = normalizeRotation((renderedTheta * 180 / Math.PI) + (onRightSide ? 90 : 270)) * Math.PI / 180;
+          const rotation = polarPointLabelRotation(
+            renderedTheta,
+            onRightSide,
+            isBootstrap ? figureStyles.bootstrap.polarOrientation ?? "tangential" : "tangential",
+          );
           labels.push({
             x: labelX,
             y: labelY,
@@ -14261,15 +14275,19 @@ export default function TreeCanvas({
           if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 2.1, Math.max(labelWidth, fontSize * 5.5))) {
             continue;
           }
-          const deg = (theta + rotationAngle) * 180 / Math.PI;
-          const onRightSide = Math.cos(theta + rotationAngle) >= 0;
+          const renderedTheta = theta + rotationAngle;
+          const onRightSide = Math.cos(renderedTheta) >= 0;
           labels.push({
             x: labelX,
             y: labelY,
             text,
             alpha: 0.76,
             fontSize,
-            rotation: normalizeRotation(onRightSide ? deg : deg + 180) * Math.PI / 180,
+            rotation: polarPointLabelRotation(
+              renderedTheta,
+              onRightSide,
+              figureStyles.nodeHeight.polarOrientation ?? "tangential",
+            ),
             align: onRightSide ? "left" : "right",
           });
         }

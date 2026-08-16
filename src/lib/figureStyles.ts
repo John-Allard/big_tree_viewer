@@ -18,6 +18,7 @@ export type LabelStyleClass =
   | "scale";
 
 export type TipLabelOverflowMode = "truncate" | "scale";
+export type PolarLabelOrientation = "tangential" | "radial";
 
 export interface LabelStyleSettings {
   fontFamily: FontFamilyKey;
@@ -35,6 +36,7 @@ export interface LabelStyleSettings {
   maxWidthPx?: number;
   overflowMode?: TipLabelOverflowMode;
   decimalPlaces?: number;
+  polarOrientation?: PolarLabelOrientation;
 }
 
 export interface FigureStyleSettings {
@@ -90,8 +92,8 @@ export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
   genus: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
   taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, thickenOutermostRibbon: true, taxonomyGap: 1, taxonomyGapPx: 0 },
   internalNode: { fontFamily: "georgia", sizeScale: 0.95, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
-  bootstrap: { fontFamily: "courierNew", sizeScale: 0.9, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1 },
-  nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1 },
+  bootstrap: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },
+  nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },
   scale: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
 };
 

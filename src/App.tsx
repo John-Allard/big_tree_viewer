@@ -18,6 +18,7 @@ import {
   type FigureStyleSettings,
   type FontFamilyKey,
   type LabelStyleClass,
+  type PolarLabelOrientation,
   type TipLabelOverflowMode,
 } from "./lib/figureStyles";
 import { HOME_DESCRIPTION } from "./siteCopy";
@@ -1300,7 +1301,7 @@ function LabelStyleSection({
   onUpdate: (
     labelClass: LabelStyleClass,
     field: keyof LabelStyleSettings,
-    value: FontFamilyKey | TipLabelOverflowMode | number | boolean,
+    value: FontFamilyKey | PolarLabelOrientation | TipLabelOverflowMode | number | boolean,
   ) => void;
 }): ReactNode {
   const isTaxonomy = labelClass === "taxonomy";
@@ -1361,18 +1362,36 @@ function LabelStyleSection({
           </label>
           <div className="figure-style-value">x{settings.sizeScale.toFixed(2)}</div>
           {labelClass === "bootstrap" || labelClass === "nodeHeight" ? (
-            <label>
-              Decimal places
-              <select
-                value={settings.decimalPlaces ?? -1}
-                onChange={(event) => onUpdate(labelClass, "decimalPlaces", Number(event.target.value))}
-              >
-                <option value={-1}>Automatic</option>
-                {Array.from({ length: 7 }, (_, decimalPlaces) => (
-                  <option key={decimalPlaces} value={decimalPlaces}>{decimalPlaces}</option>
-                ))}
-              </select>
-            </label>
+            <>
+              <label>
+                Decimal places
+                <select
+                  value={settings.decimalPlaces ?? -1}
+                  onChange={(event) => onUpdate(labelClass, "decimalPlaces", Number(event.target.value))}
+                >
+                  <option value={-1}>Automatic</option>
+                  {Array.from({ length: 7 }, (_, decimalPlaces) => (
+                    <option key={decimalPlaces} value={decimalPlaces}>{decimalPlaces}</option>
+                  ))}
+                </select>
+              </label>
+              {viewMode === "circular" || viewMode === "fan" ? (
+                <label>
+                  Orientation
+                  <select
+                    value={settings.polarOrientation ?? "tangential"}
+                    onChange={(event) => onUpdate(
+                      labelClass,
+                      "polarOrientation",
+                      event.target.value as PolarLabelOrientation,
+                    )}
+                  >
+                    <option value="tangential">Tangential</option>
+                    <option value="radial">Radial</option>
+                  </select>
+                </label>
+              ) : null}
+            </>
           ) : null}
           {labelClass === "tip" ? (
             <>
@@ -6298,7 +6317,7 @@ export default function App() {
   const updateFigureStyle = useCallback((
     labelClass: LabelStyleClass,
     field: keyof FigureStyleSettings[LabelStyleClass],
-    value: FontFamilyKey | TipLabelOverflowMode | number | boolean,
+    value: FontFamilyKey | PolarLabelOrientation | TipLabelOverflowMode | number | boolean,
   ): void => {
     setFigureStyles((current) => ({
       ...current,
@@ -6581,7 +6600,7 @@ export default function App() {
       setMetadataLabelOffsetXPx,
       setMetadataLabelOffsetYPx,
       setFigureStyleForTest: (labelClass: LabelStyleClass, field: keyof LabelStyleSettings, value: string | number | boolean) => {
-        updateFigureStyle(labelClass, field, value as FontFamilyKey | TipLabelOverflowMode | number | boolean);
+        updateFigureStyle(labelClass, field, value as FontFamilyKey | PolarLabelOrientation | TipLabelOverflowMode | number | boolean);
       },
       runRealTaxonomyMappingForTest: async () => {
         const archive = await getCachedTaxonomyArchive();

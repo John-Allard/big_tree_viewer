@@ -152,6 +152,11 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
         source.decimalPlaces,
         current.decimalPlaces ?? -1,
       ))));
+      current.polarOrientation = coerceEnum(
+        source.polarOrientation,
+        ["tangential", "radial"] as const,
+        "tangential",
+      );
     }
   }
   return defaults;

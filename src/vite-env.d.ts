@@ -84,7 +84,7 @@ declare global {
       setMetadataLabelOffsetYPx: (value: number) => void;
       setFigureStyleForTest: (
         labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
-        field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "thickenOutermostRibbon" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic" | "limitWidth" | "maxWidthPx" | "overflowMode" | "decimalPlaces",
+        field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "thickenOutermostRibbon" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic" | "limitWidth" | "maxWidthPx" | "overflowMode" | "decimalPlaces" | "polarOrientation",
         value: string | number | boolean,
       ) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;
