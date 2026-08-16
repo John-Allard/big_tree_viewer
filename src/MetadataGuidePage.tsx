@@ -24,7 +24,8 @@ export default function MetadataGuidePage() {
               branches in your tree. Load a CSV or TSV file that contains a
               column with labels that match internal node labels or TIP labels
               and then the other columns containing data can be used to display
-              markers, colored branches and pie charts.
+              markers, colored branches, pie charts, bars, heat maps, and
+              categorical tip tables.
             </p>
           </div>
           <a className="about-top-link" href={`${base}#`}>Back to viewer</a>
@@ -62,6 +63,7 @@ export default function MetadataGuidePage() {
             <div><dt>Categorical</dt><dd>Text values such as activity pattern or cohort.</dd></div>
             <div><dt>Continuous</dt><dd>Numeric measurements such as a trait value or expression level.</dd></div>
             <div><dt>Pie components</dt><dd>Adjacent numeric columns whose values define each node&apos;s slices.</dd></div>
+            <div><dt>Tip tables</dt><dd>Numeric or categorical columns aligned beside rectangular tip labels.</dd></div>
           </dl>
         </section>
 
@@ -145,6 +147,11 @@ export default function MetadataGuidePage() {
               <span role="cell">Contiguous numeric columns</span>
               <span role="cell">First and last column, slice palette, individual colors, and size.</span>
             </div>
+            <div className="metadata-guide-option-row" role="row">
+              <strong role="cell">Tip data table</strong>
+              <span role="cell">One or more tip-level columns</span>
+              <span role="cell">Horizontal bars, numeric heat maps, or categorical cells beside rectangular tip labels.</span>
+            </div>
           </div>
 
           <p className="metadata-guide-note">
@@ -199,6 +206,34 @@ export default function MetadataGuidePage() {
                 loading="lazy"
               />
               <figcaption>Pie charts: <code>A_pct</code> through <code>T_pct</code>.</figcaption>
+            </figure>
+          </div>
+
+          <h3 className="metadata-guide-subheading">Tip-aligned displays</h3>
+          <div className="metadata-guide-example-grid metadata-guide-example-grid-three">
+            <figure className="metadata-guide-figure">
+              <img
+                src={`${assetBase}metadata-tip-bars.png`}
+                alt="Rectangular synthetic tree with a horizontal quantitative bar aligned to every tip label."
+                loading="lazy"
+              />
+              <figcaption>Horizontal bars: <code>trait_value</code>.</figcaption>
+            </figure>
+            <figure className="metadata-guide-figure">
+              <img
+                src={`${assetBase}metadata-tip-heatmap.png`}
+                alt="Rectangular synthetic tree with five numeric heat-map columns aligned to the tip labels."
+                loading="lazy"
+              />
+              <figcaption>Heat map: five numeric columns.</figcaption>
+            </figure>
+            <figure className="metadata-guide-figure">
+              <img
+                src={`${assetBase}metadata-tip-categorical.png`}
+                alt="Rectangular synthetic tree with filled categorical cells for habitat and study cohort aligned to the tip labels."
+                loading="lazy"
+              />
+              <figcaption>Categorical cells: <code>habitat</code> and <code>study_cohort</code>.</figcaption>
             </figure>
           </div>
         </section>

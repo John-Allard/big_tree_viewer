@@ -186,7 +186,55 @@ async function captureViewer(browser, newick, csvText) {
   await waitForFrames(page, 5);
   await canvas.screenshot({ path: path.join(assetDirectory, "metadata-markers.png") });
 
-  await page.getByLabel("Show metadata markers").uncheck();
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setMetadataMarkersEnabled(false);
+    app?.setMetadataTipTableEnabled(true);
+    app?.setMetadataTipTableMode("bars");
+    app?.setMetadataTipTableColumns([{ column: "trait_value", label: "Trait value" }]);
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableMode === "bars"
+  ));
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit());
+  await waitForFrames(page, 6);
+  await canvas.screenshot({ path: path.join(assetDirectory, "metadata-tip-bars.png") });
+
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setMetadataTipTableMode("heatmap");
+    app?.setMetadataTipTableColumns([
+      { column: "trait_value", label: "Trait value" },
+      { column: "A_pct", label: "A %" },
+      { column: "C_pct", label: "C %" },
+      { column: "G_pct", label: "G %" },
+      { column: "T_pct", label: "T %" },
+    ]);
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableMode === "heatmap"
+  ));
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit());
+  await waitForFrames(page, 6);
+  await canvas.screenshot({ path: path.join(assetDirectory, "metadata-tip-heatmap.png") });
+
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setMetadataTipTableMode("categorical");
+    app?.setMetadataTipTableCellStyle("filled");
+    app?.setMetadataTipTableColumns([
+      { column: "habitat", label: "Habitat" },
+      { column: "study_cohort", label: "Study cohort" },
+    ]);
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableMode === "categorical"
+  ));
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit());
+  await waitForFrames(page, 6);
+  await canvas.screenshot({ path: path.join(assetDirectory, "metadata-tip-categorical.png") });
+
+  await page.getByLabel("Show tip data table").uncheck();
   await page.getByLabel("Show metadata pie charts").check();
   await page.getByRole("button", { name: "Metadata pie charts settings" }).click();
   const pieDialog = page.getByRole("dialog", { name: "Metadata pie charts settings" });

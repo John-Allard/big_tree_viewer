@@ -18,6 +18,7 @@ import {
   type FigureStyleSettings,
   type FontFamilyKey,
   type LabelStyleClass,
+  type TipLabelOverflowMode,
 } from "./lib/figureStyles";
 import { HOME_DESCRIPTION } from "./siteCopy";
 import {
@@ -40,6 +41,13 @@ import {
   type MetadataPiePalette,
   type ParsedMetadataTable,
 } from "./lib/metadataColors";
+import {
+  buildMetadataTipTableData,
+  metadataTipTableDisplayLabel,
+  type MetadataTipTableCellStyle,
+  type MetadataTipTableColumn,
+  type MetadataTipTableMode,
+} from "./lib/metadataTipTable";
 import {
   buildPhyloPicAttributionCaption,
   buildPhyloPicLicenseDetails,
@@ -349,6 +357,13 @@ type BigTreeViewerSessionSettings = {
   metadataPiePalette?: MetadataPiePalette;
   metadataPieColorOverrides?: Record<string, string>;
   metadataPieSizePx?: number;
+  metadataTipTableEnabled?: boolean;
+  metadataTipTableMode?: MetadataTipTableMode;
+  metadataTipTableCellStyle?: MetadataTipTableCellStyle;
+  metadataTipTableColumns?: MetadataTipTableColumn[];
+  metadataTipTablePalette?: MetadataContinuousPalette;
+  metadataTipTableBarWidthPx?: number;
+  metadataTipTableCellWidthPx?: number;
   metadataCategoryColorOverrides: Record<string, string>;
   metadataMarkerStyleOverrides: Record<string, { color?: string; shape?: MetadataMarkerShape }>;
   metadataMarkerSizePx: number;
@@ -1158,7 +1173,8 @@ type VisualPopoverId =
   | "metadataBranchColors"
   | "metadataLabels"
   | "metadataMarkers"
-  | "metadataPies";
+  | "metadataPies"
+  | "metadataTipTable";
 
 function disabledControlTitle(reason?: string): string | undefined {
   return reason ? `Disabled: ${reason}` : undefined;
@@ -1267,6 +1283,7 @@ function LabelStyleSection({
   isOpen,
   disabled,
   disabledReason,
+  tipWidthControlsDisabledReason,
   extraControls,
   onToggle,
   onUpdate,
@@ -1277,12 +1294,13 @@ function LabelStyleSection({
   isOpen: boolean;
   disabled: boolean;
   disabledReason?: string;
+  tipWidthControlsDisabledReason?: string;
   extraControls?: ReactNode;
   onToggle: () => void;
   onUpdate: (
     labelClass: LabelStyleClass,
     field: keyof LabelStyleSettings,
-    value: FontFamilyKey | number | boolean,
+    value: FontFamilyKey | TipLabelOverflowMode | number | boolean,
   ) => void;
 }): ReactNode {
   const isTaxonomy = labelClass === "taxonomy";
@@ -1342,6 +1360,20 @@ function LabelStyleSection({
             />
           </label>
           <div className="figure-style-value">x{settings.sizeScale.toFixed(2)}</div>
+          {labelClass === "bootstrap" || labelClass === "nodeHeight" ? (
+            <label>
+              Decimal places
+              <select
+                value={settings.decimalPlaces ?? -1}
+                onChange={(event) => onUpdate(labelClass, "decimalPlaces", Number(event.target.value))}
+              >
+                <option value={-1}>Automatic</option>
+                {Array.from({ length: 7 }, (_, decimalPlaces) => (
+                  <option key={decimalPlaces} value={decimalPlaces}>{decimalPlaces}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {labelClass === "tip" ? (
             <>
               <label className="label-style-inline-toggle">
@@ -1442,6 +1474,56 @@ function LabelStyleSection({
               <div className="figure-style-value">{settings.offsetPx}px</div>
             </>
           )}
+          {labelClass === "tip" && viewMode === "rectangular" ? (
+            <>
+              <label
+                className={`label-style-inline-toggle${tipWidthControlsDisabledReason ? " label-style-disabled-control" : ""}`}
+                title={tipWidthControlsDisabledReason}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.limitWidth)}
+                  disabled={Boolean(tipWidthControlsDisabledReason)}
+                  onChange={(event) => onUpdate(labelClass, "limitWidth", event.target.checked)}
+                />
+                Limit label section width
+              </label>
+              {settings.limitWidth && !tipWidthControlsDisabledReason ? (
+                <>
+                  <label>
+                    Maximum width
+                    <input
+                      type="number"
+                      min={40}
+                      max={1200}
+                      step={10}
+                      value={settings.maxWidthPx ?? 240}
+                      onChange={(event) => onUpdate(
+                        labelClass,
+                        "maxWidthPx",
+                        Math.max(40, Math.min(1200, Number(event.target.value) || 40)),
+                      )}
+                    />
+                  </label>
+                  <div className="figure-style-value">{Math.round(settings.maxWidthPx ?? 240)}px</div>
+                  <label>
+                    Labels that exceed limit
+                    <select
+                      value={settings.overflowMode ?? "truncate"}
+                      onChange={(event) => onUpdate(
+                        labelClass,
+                        "overflowMode",
+                        event.target.value as TipLabelOverflowMode,
+                      )}
+                    >
+                      <option value="truncate">Truncate</option>
+                      <option value="scale">Scale down</option>
+                    </select>
+                  </label>
+                </>
+              ) : null}
+            </>
+          ) : null}
           {extraControls}
         </div>
         </div>
@@ -1929,6 +2011,13 @@ export default function App() {
   const [metadataPiePalette, setMetadataPiePalette] = useState<MetadataPiePalette>("categorical");
   const [metadataPieColorOverrides, setMetadataPieColorOverrides] = useState<Record<string, string>>({});
   const [metadataPieSizePx, setMetadataPieSizePx] = useState(DEFAULT_METADATA_PIE_SIZE_PX);
+  const [metadataTipTableEnabled, setMetadataTipTableEnabled] = useState(false);
+  const [metadataTipTableMode, setMetadataTipTableMode] = useState<MetadataTipTableMode>("heatmap");
+  const [metadataTipTableCellStyle, setMetadataTipTableCellStyle] = useState<MetadataTipTableCellStyle>("filled");
+  const [metadataTipTableColumns, setMetadataTipTableColumns] = useState<MetadataTipTableColumn[]>([]);
+  const [metadataTipTablePalette, setMetadataTipTablePalette] = useState<MetadataContinuousPalette>("viridis");
+  const [metadataTipTableBarWidthPx, setMetadataTipTableBarWidthPx] = useState(180);
+  const [metadataTipTableCellWidthPx, setMetadataTipTableCellWidthPx] = useState(24);
   const [metadataCategoryColorOverrides, setMetadataCategoryColorOverrides] = useState<Record<string, string>>({});
   const [metadataMarkerStyleOverrides, setMetadataMarkerStyleOverrides] = useState<Record<string, { color?: string; shape?: MetadataMarkerShape }>>({});
   const [metadataMarkerSizePx, setMetadataMarkerSizePx] = useState(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -2705,6 +2794,38 @@ export default function App() {
     if (typeof visual.metadataPieSizePx === "number" && Number.isFinite(visual.metadataPieSizePx)) {
       setMetadataPieSizePx(clampMetadataGlyphSizePercent(visual.metadataPieSizePx));
     }
+    if (typeof visual.metadataTipTableEnabled === "boolean") {
+      setMetadataTipTableEnabled(visual.metadataTipTableEnabled);
+    }
+    if (visual.metadataTipTableMode === "bars" || visual.metadataTipTableMode === "heatmap" || visual.metadataTipTableMode === "categorical") {
+      setMetadataTipTableMode(visual.metadataTipTableMode);
+    }
+    if (
+      visual.metadataTipTableCellStyle === "filled"
+      || visual.metadataTipTableCellStyle === "circle"
+      || visual.metadataTipTableCellStyle === "square"
+      || visual.metadataTipTableCellStyle === "check"
+      || visual.metadataTipTableCellStyle === "text"
+    ) {
+      setMetadataTipTableCellStyle(visual.metadataTipTableCellStyle);
+    }
+    if (Array.isArray(visual.metadataTipTableColumns)) {
+      setMetadataTipTableColumns(visual.metadataTipTableColumns.filter((column) => (
+        column && typeof column.column === "string"
+      )).map((column) => ({
+        column: column.column,
+        label: typeof column.label === "string" ? column.label : column.column,
+      })));
+    }
+    if (visual.metadataTipTablePalette && METADATA_CONTINUOUS_PALETTES[visual.metadataTipTablePalette]) {
+      setMetadataTipTablePalette(visual.metadataTipTablePalette);
+    }
+    if (typeof visual.metadataTipTableBarWidthPx === "number" && Number.isFinite(visual.metadataTipTableBarWidthPx)) {
+      setMetadataTipTableBarWidthPx(Math.max(80, Math.min(480, visual.metadataTipTableBarWidthPx)));
+    }
+    if (typeof visual.metadataTipTableCellWidthPx === "number" && Number.isFinite(visual.metadataTipTableCellWidthPx)) {
+      setMetadataTipTableCellWidthPx(Math.max(12, Math.min(64, visual.metadataTipTableCellWidthPx)));
+    }
     const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
     if (categoryColorOverrides) {
       setMetadataCategoryColorOverrides(categoryColorOverrides);
@@ -3037,6 +3158,12 @@ export default function App() {
     () => (metadataTable && metadataValueColumn ? metadataColumnLooksContinuous(metadataTable.rows, metadataValueColumn) : false),
     [metadataTable, metadataValueColumn],
   );
+  const metadataTipTableData = useMemo(() => {
+    if (!tree || !metadataTable || !metadataKeyColumn || metadataTipTableColumns.length === 0) {
+      return null;
+    }
+    return buildMetadataTipTableData(tree, metadataTable.rows, metadataKeyColumn, metadataTipTableColumns);
+  }, [metadataKeyColumn, metadataTable, metadataTipTableColumns, tree]);
   const metadataContinuousMin = useMemo(() => {
     const trimmed = metadataContinuousMinInput.trim();
     if (!trimmed) {
@@ -4078,6 +4205,13 @@ export default function App() {
     metadataPiePalette,
     metadataPieColorOverrides,
     metadataPieSizePx,
+    metadataTipTableEnabled,
+    metadataTipTableMode,
+    metadataTipTableCellStyle,
+    metadataTipTableColumns,
+    metadataTipTablePalette,
+    metadataTipTableBarWidthPx,
+    metadataTipTableCellWidthPx,
     metadataCategoryColorOverrides,
     metadataMarkerStyleOverrides,
     metadataMarkerSizePx,
@@ -4120,6 +4254,13 @@ export default function App() {
     metadataPiesEnabled,
     metadataPieSizePx,
     metadataPieStartColumn,
+    metadataTipTableBarWidthPx,
+    metadataTipTableCellStyle,
+    metadataTipTableCellWidthPx,
+    metadataTipTableColumns,
+    metadataTipTableEnabled,
+    metadataTipTableMode,
+    metadataTipTablePalette,
     metadataMarkerSizePx,
     metadataMarkerStyleOverrides,
     metadataMarkersEnabled,
@@ -4287,6 +4428,27 @@ export default function App() {
     setMetadataPiePalette(settings.metadataPiePalette === "viridis" || settings.metadataPiePalette === "warm" ? settings.metadataPiePalette : "categorical");
     setMetadataPieColorOverrides(settings.metadataPieColorOverrides ?? {});
     setMetadataPieSizePx(clampMetadataGlyphSizePercent(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX));
+    setMetadataTipTableEnabled(settings.metadataTipTableEnabled === true);
+    setMetadataTipTableMode(settings.metadataTipTableMode === "bars" || settings.metadataTipTableMode === "categorical" ? settings.metadataTipTableMode : "heatmap");
+    setMetadataTipTableCellStyle(
+      settings.metadataTipTableCellStyle === "circle"
+      || settings.metadataTipTableCellStyle === "square"
+      || settings.metadataTipTableCellStyle === "check"
+      || settings.metadataTipTableCellStyle === "text"
+        ? settings.metadataTipTableCellStyle
+        : "filled",
+    );
+    setMetadataTipTableColumns(Array.isArray(settings.metadataTipTableColumns)
+      ? settings.metadataTipTableColumns.filter((column) => column && typeof column.column === "string").map((column) => ({
+        column: column.column,
+        label: typeof column.label === "string" ? column.label : column.column,
+      }))
+      : []);
+    setMetadataTipTablePalette(settings.metadataTipTablePalette && METADATA_CONTINUOUS_PALETTES[settings.metadataTipTablePalette]
+      ? settings.metadataTipTablePalette
+      : "viridis");
+    setMetadataTipTableBarWidthPx(typeof settings.metadataTipTableBarWidthPx === "number" ? Math.max(80, Math.min(480, settings.metadataTipTableBarWidthPx)) : 180);
+    setMetadataTipTableCellWidthPx(typeof settings.metadataTipTableCellWidthPx === "number" ? Math.max(12, Math.min(64, settings.metadataTipTableCellWidthPx)) : 24);
     setMetadataCategoryColorOverrides(settings.metadataCategoryColorOverrides);
     setMetadataMarkerStyleOverrides(settings.metadataMarkerStyleOverrides);
     setMetadataMarkerSizePx(clampMetadataGlyphSizePercent(settings.metadataMarkerSizePx));
@@ -4581,6 +4743,13 @@ export default function App() {
     setMetadataPiePalette("categorical");
     setMetadataPieColorOverrides({});
     setMetadataPieSizePx(DEFAULT_METADATA_PIE_SIZE_PX);
+    setMetadataTipTableEnabled(false);
+    setMetadataTipTableMode("heatmap");
+    setMetadataTipTableCellStyle("filled");
+    setMetadataTipTableColumns([]);
+    setMetadataTipTablePalette("viridis");
+    setMetadataTipTableBarWidthPx(180);
+    setMetadataTipTableCellWidthPx(24);
     setMetadataCategoryColorOverrides({});
     setMetadataMarkerStyleOverrides({});
     setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -4629,6 +4798,13 @@ export default function App() {
       setMetadataPiePalette("categorical");
       setMetadataPieColorOverrides({});
       setMetadataPieSizePx(DEFAULT_METADATA_PIE_SIZE_PX);
+      setMetadataTipTableEnabled(false);
+      setMetadataTipTableMode("heatmap");
+      setMetadataTipTableCellStyle("filled");
+      setMetadataTipTableColumns([{ column: defaultValueColumn, label: metadataTipTableDisplayLabel(defaultValueColumn) }]);
+      setMetadataTipTablePalette("viridis");
+      setMetadataTipTableBarWidthPx(180);
+      setMetadataTipTableCellWidthPx(24);
       setMetadataCategoryColorOverrides({});
       setMetadataMarkerStyleOverrides({});
       setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -6122,7 +6298,7 @@ export default function App() {
   const updateFigureStyle = useCallback((
     labelClass: LabelStyleClass,
     field: keyof FigureStyleSettings[LabelStyleClass],
-    value: FontFamilyKey | number | boolean,
+    value: FontFamilyKey | TipLabelOverflowMode | number | boolean,
   ): void => {
     setFigureStyles((current) => ({
       ...current,
@@ -6135,6 +6311,13 @@ export default function App() {
 
   const resetFigureStyles = useCallback((): void => {
     setFigureStyles(cloneDefaultFigureStyles());
+    setShowTipLabels(true);
+    setShowGenusLabels(!taxonomyEnabled);
+    setShowInternalNodeLabels(false);
+    setShowBootstrapLabels(false);
+    setShowNodeHeightLabels(false);
+    setShowScaleBars(true);
+    setShowTimeStripes(true);
     setTaxonomyColorJitter(DEFAULT_TAXONOMY_COLOR_JITTER);
     setTaxonomyColorPalette(DEFAULT_TAXONOMY_COLOR_PALETTE);
     setTaxonomyCustomPaletteInput("");
@@ -6170,7 +6353,7 @@ export default function App() {
     setAlignTipLabels(false);
     setActiveLabelStylePopover(null);
     setVisualResetRequest((current) => current + 1);
-  }, []);
+  }, [taxonomyEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -6227,6 +6410,14 @@ export default function App() {
         metadataPieEndColumn,
         metadataPiePalette,
         metadataPieSizePx,
+        metadataTipTableEnabled,
+        metadataTipTableMode,
+        metadataTipTableCellStyle,
+        metadataTipTableColumns,
+        metadataTipTablePalette,
+        metadataTipTableBarWidthPx,
+        metadataTipTableCellWidthPx,
+        metadataTipTableMatchedTipCount: metadataTipTableData?.matchedTipCount ?? 0,
         metadataLabelMaxCount,
         metadataLabelMinSpacingPx,
         metadataLabelOffsetXPx,
@@ -6238,6 +6429,7 @@ export default function App() {
         metadataMarkedNodeCount: metadataMarkerOverlay.markedNodeCount,
         showInternalNodeLabels,
         showBootstrapLabels,
+        showNodeHeightLabels,
         figureStyles,
         branchThicknessScale,
         showIntermediateScaleTicks,
@@ -6289,6 +6481,7 @@ export default function App() {
       setShowGenusLabels,
       setShowInternalNodeLabels,
       setShowBootstrapLabels,
+      setShowNodeHeightLabels,
       setTaxonomyEnabled,
       setTaxonomyBranchColoringEnabled,
       setTaxonomyRankVisibilityForTest: (rank: TaxonomyRank, visible: boolean) => {
@@ -6379,12 +6572,16 @@ export default function App() {
       setMetadataMarkersEnabled,
       setMetadataMarkerColumn,
       setMetadataMarkerSizePx,
+      setMetadataTipTableEnabled,
+      setMetadataTipTableMode,
+      setMetadataTipTableCellStyle,
+      setMetadataTipTableColumns,
       setMetadataLabelMaxCount,
       setMetadataLabelMinSpacingPx,
       setMetadataLabelOffsetXPx,
       setMetadataLabelOffsetYPx,
-      setFigureStyleForTest: (labelClass: LabelStyleClass, field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "thickenOutermostRibbon" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic", value: string | number | boolean) => {
-        updateFigureStyle(labelClass, field, value as FontFamilyKey | number | boolean);
+      setFigureStyleForTest: (labelClass: LabelStyleClass, field: keyof LabelStyleSettings, value: string | number | boolean) => {
+        updateFigureStyle(labelClass, field, value as FontFamilyKey | TipLabelOverflowMode | number | boolean);
       },
       runRealTaxonomyMappingForTest: async () => {
         const archive = await getCachedTaxonomyArchive();
@@ -6486,6 +6683,14 @@ export default function App() {
     metadataPieSizePx,
     metadataPieStartColumn,
     metadataPiesEnabled,
+    metadataTipTableBarWidthPx,
+    metadataTipTableCellStyle,
+    metadataTipTableCellWidthPx,
+    metadataTipTableColumns,
+    metadataTipTableData,
+    metadataTipTableEnabled,
+    metadataTipTableMode,
+    metadataTipTablePalette,
     extendRectScaleToTick,
     errorBarColor,
     errorBarCapSizePx,
@@ -7042,6 +7247,9 @@ export default function App() {
                   isOpen={activeLabelStylePopover === "tip"}
                   disabled={!showTipLabels}
                   disabledReason="Enable tip labels first."
+                  tipWidthControlsDisabledReason={comparisonEnabled && comparisonTree
+                    ? "Comparison mode uses fixed opposing label columns."
+                    : undefined}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "tip" ? null : "tip")}
                   onUpdate={updateFigureStyle}
                   extraControls={(
@@ -8377,6 +8585,156 @@ export default function App() {
                     ) : null}
                   </SettingsPopoverButton>
                 </div>
+                <div className="metadata-toggle-row">
+                  <label
+                    className="metadata-inline-toggle metadata-toggle-main"
+                    title={viewMode === "rectangular"
+                      ? "Draw selected metadata columns beside rectangular tip labels."
+                      : disabledControlTitle("Tip data tables are available in rectangular mode only.")}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={metadataTipTableEnabled}
+                      disabled={viewMode !== "rectangular"}
+                      onChange={(event) => setMetadataTipTableEnabled(event.target.checked)}
+                    />
+                    Show tip data table
+                  </label>
+                  <SettingsPopoverButton
+                    title="Tip data table"
+                    isOpen={activeLabelStylePopover === "metadataTipTable"}
+                    disabled={!metadataTipTableEnabled || viewMode !== "rectangular"}
+                    disabledReason={viewMode !== "rectangular"
+                      ? "Available in rectangular mode only."
+                      : "Enable the tip data table first."}
+                    onToggle={() => setActiveLabelStylePopover((current) => current === "metadataTipTable" ? null : "metadataTipTable")}
+                  >
+                    <label>
+                      Display
+                      <select value={metadataTipTableMode} onChange={(event) => setMetadataTipTableMode(event.target.value as MetadataTipTableMode)}>
+                        <option value="bars">Horizontal bars</option>
+                        <option value="heatmap">Heat map</option>
+                        <option value="categorical">Categorical table</option>
+                      </select>
+                    </label>
+                    {metadataTipTableMode === "heatmap" ? (
+                      <label>
+                        Palette
+                        <select value={metadataTipTablePalette} onChange={(event) => setMetadataTipTablePalette(event.target.value as MetadataContinuousPalette)}>
+                          {Object.entries(METADATA_CONTINUOUS_PALETTES).map(([key, palette]) => (
+                            <option key={key} value={key}>{palette.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {metadataTipTableMode === "categorical" ? (
+                      <label>
+                        Cell style
+                        <select value={metadataTipTableCellStyle} onChange={(event) => setMetadataTipTableCellStyle(event.target.value as MetadataTipTableCellStyle)}>
+                          <option value="filled">Filled cell</option>
+                          <option value="circle">Circle</option>
+                          <option value="square">Square</option>
+                          <option value="check">Check mark</option>
+                          <option value="text">Value text</option>
+                        </select>
+                      </label>
+                    ) : null}
+                    {metadataTipTableMode === "bars" ? (
+                      <label title="Width of the quantitative plotting area.">
+                        Bar width
+                        <input
+                          type="range"
+                          min={80}
+                          max={480}
+                          step={10}
+                          value={metadataTipTableBarWidthPx}
+                          onChange={(event) => setMetadataTipTableBarWidthPx(Number(event.target.value))}
+                        />
+                        <span className="figure-style-value">{metadataTipTableBarWidthPx} px</span>
+                      </label>
+                    ) : (
+                      <label title="Width allocated to each data column.">
+                        Cell width
+                        <input
+                          type="range"
+                          min={12}
+                          max={64}
+                          step={1}
+                          value={metadataTipTableCellWidthPx}
+                          onChange={(event) => setMetadataTipTableCellWidthPx(Number(event.target.value))}
+                        />
+                        <span className="figure-style-value">{metadataTipTableCellWidthPx} px</span>
+                      </label>
+                    )}
+                    <label title="Add a metadata column to the table.">
+                      Add column
+                      <select
+                        value=""
+                        onChange={(event) => {
+                          const column = event.target.value;
+                          if (!column) {
+                            return;
+                          }
+                          setMetadataTipTableColumns((current) => current.some((item) => item.column === column)
+                            ? current
+                            : [...current, { column, label: metadataTipTableDisplayLabel(column) }]);
+                        }}
+                      >
+                        <option value="">Select column...</option>
+                        {metadataColumns.filter((column) => column !== metadataKeyColumn && !metadataTipTableColumns.some((item) => item.column === column)).map((column) => (
+                          <option key={column} value={column}>{metadataTipTableDisplayLabel(column)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="metadata-tip-table-columns" data-testid="metadata-tip-table-columns">
+                      {metadataTipTableColumns.map((item, index) => (
+                        <div className="metadata-tip-table-column" key={item.column}>
+                          <input
+                            aria-label={`Display label for ${item.column}`}
+                            value={item.label}
+                            onChange={(event) => setMetadataTipTableColumns((current) => current.map((candidate) => (
+                              candidate.column === item.column ? { ...candidate, label: event.target.value } : candidate
+                            )))}
+                          />
+                          <button
+                            type="button"
+                            className="metadata-tip-table-column-button"
+                            title="Move column left"
+                            aria-label={`Move ${item.column} left`}
+                            disabled={index === 0}
+                            onClick={() => setMetadataTipTableColumns((current) => {
+                              const next = [...current];
+                              [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                              return next;
+                            })}
+                          >&#8592;</button>
+                          <button
+                            type="button"
+                            className="metadata-tip-table-column-button"
+                            title="Move column right"
+                            aria-label={`Move ${item.column} right`}
+                            disabled={index === metadataTipTableColumns.length - 1}
+                            onClick={() => setMetadataTipTableColumns((current) => {
+                              const next = [...current];
+                              [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                              return next;
+                            })}
+                          >&#8594;</button>
+                          <button
+                            type="button"
+                            className="metadata-tip-table-column-button"
+                            title="Remove column"
+                            aria-label={`Remove ${item.column}`}
+                            onClick={() => setMetadataTipTableColumns((current) => current.filter((candidate) => candidate.column !== item.column))}
+                          >&#215;</button>
+                        </div>
+                      ))}
+                    </div>
+                    {metadataTipTableData ? (
+                      <div className="figure-style-value">{metadataTipTableData.matchedTipCount.toLocaleString()} matched tips</div>
+                    ) : null}
+                  </SettingsPopoverButton>
+                </div>
                 <div className="metadata-summary">
                   <span>Matched rows: {metadataOverlay.matchedRowCount.toLocaleString()}</span>
                   {metadataOverlay.matchedNodeCount !== metadataOverlay.matchedRowCount ? (
@@ -8796,6 +9154,12 @@ export default function App() {
           metadataMarkerVersion={metadataMarkersEnabled ? metadataMarkerOverlay.version : ""}
           metadataPies={metadataPiesEnabled && !metadataOverlaysSuppressed && metadataPieOverlay.hasAny ? metadataPieOverlay.pies : null}
           metadataPieVersion={metadataPiesEnabled ? metadataPieOverlay.version : ""}
+          metadataTipTableData={metadataTipTableEnabled && viewMode === "rectangular" && !metadataOverlaysSuppressed ? metadataTipTableData : null}
+          metadataTipTableMode={metadataTipTableMode}
+          metadataTipTableCellStyle={metadataTipTableCellStyle}
+          metadataTipTablePalette={metadataTipTablePalette}
+          metadataTipTableBarWidthPx={metadataTipTableBarWidthPx}
+          metadataTipTableCellWidthPx={metadataTipTableCellWidthPx}
           metadataPieSizePx={metadataPieSizePx}
           metadataMarkerSizePx={metadataMarkerSizePx}
           metadataLabelMaxCount={metadataLabelMaxCount}

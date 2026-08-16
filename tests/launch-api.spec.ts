@@ -549,6 +549,10 @@ test("postMessage launch API can load a payload after opening an empty viewer", 
           showGenusLabels: false,
           timeAxisScale: "log",
           timeAxisLogBase: 4,
+          metadataTipTableEnabled: true,
+          metadataTipTableMode: "bars",
+          metadataTipTableColumns: [{ column: "score", label: "Trait score" }],
+          metadataTipTableBarWidthPx: 220,
         },
         metadata: {
           text: "name,score\nA_species,10.5\nB_species,20.75\n",
@@ -571,6 +575,10 @@ test("postMessage launch API can load a payload after opening an empty viewer", 
   expect(state?.timeAxisScale).toBe("log");
   expect(state?.metadataColorMode).toBe("continuous");
   expect(state?.metadataMatchedRowCount).toBe(2);
+  expect(state?.metadataTipTableEnabled).toBe(true);
+  expect(state?.metadataTipTableMode).toBe("bars");
+  expect(state?.metadataTipTableColumns).toEqual([{ column: "score", label: "Trait score" }]);
+  expect(state?.metadataTipTableBarWidthPx).toBe(220);
 });
 
 test("launch API announces readiness once per viewer document", async ({ page }) => {

@@ -118,6 +118,14 @@ test("ribbon gap closes at overview scale but preserves visible tip-label cleara
     app.setFigureStyleForTest("taxonomy", "taxonomyGap", 2);
     await settle();
     const labelsWithExtra = rectGap();
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 1);
+    app.setShowTipLabels(false);
+    await settle();
+    const hiddenLabelsDefault = rectGap();
+    app.setFigureStyleForTest("taxonomy", "taxonomyGap", 0);
+    await settle();
+    const hiddenLabelsClosed = rectGap();
+    app.setShowTipLabels(true);
 
     app.setViewMode("circular");
     app.requestFit();
@@ -145,6 +153,8 @@ test("ribbon gap closes at overview scale but preserves visible tip-label cleara
       labelsAtZero,
       labelsAtDefault,
       labelsWithExtra,
+      hiddenLabelsDefault,
+      hiddenLabelsClosed,
       circularDefaultGap,
       circularClosedGap,
     };
@@ -156,6 +166,9 @@ test("ribbon gap closes at overview scale but preserves visible tip-label cleara
   expect(result.labelsAtZero.tipBandWidth).toBeGreaterThan(0);
   expect(result.labelsAtZero.gap).toBeCloseTo(result.labelsAtDefault.gap, 1);
   expect(result.labelsWithExtra.gap - result.labelsAtDefault.gap).toBeCloseTo(1, 1);
+  expect(result.hiddenLabelsDefault.tipBandWidth).toBe(0);
+  expect(result.hiddenLabelsDefault.gap).toBeCloseTo(18, 1);
+  expect(result.hiddenLabelsClosed.gap).toBeCloseTo(0, 1);
   expect(result.circularDefaultGap).toBeGreaterThan(18);
   expect(result.circularClosedGap, JSON.stringify(result)).toBeCloseTo(0, 1);
 });
@@ -293,6 +306,82 @@ test("small trees show readable bootstrap labels at fit view regardless of branc
   expect(result.circular.minimumFontSize).toBeGreaterThanOrEqual(10);
 });
 
+test("small trees show readable node-height labels at fit view", async ({ page }) => {
+  await waitForViewer(page);
+  const fixture = buildSmallBootstrapTree();
+  await loadTreeFromPaste(page, fixture.newick);
+
+  const result = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    if (!app || !canvas) {
+      throw new Error("Node-height fit-view test controls unavailable.");
+    }
+    const inspect = () => {
+      const currentCanvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+      if (!currentCanvas) {
+        throw new Error("Current node-height canvas controls unavailable.");
+      }
+      const svg = currentCanvas.buildCurrentSvgForTest();
+      const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
+      const labels = [...documentNode.querySelectorAll("text")].filter((element) => (
+        element.getAttribute("font-family")?.includes("Courier New")
+        && /^\d+(?:\.\d+)?$/.test(element.textContent?.trim() ?? "")
+      ));
+      const fontSizes = labels.map((element) => Number(element.getAttribute("font-size")));
+      return {
+        count: labels.length,
+        minimumFontSize: fontSizes.length > 0 ? Math.min(...fontSizes) : 0,
+      };
+    };
+    app.setShowInternalNodeLabels(false);
+    app.setShowBootstrapLabels(false);
+    app.setShowNodeHeightLabels(true);
+    app.setViewMode("rectangular");
+    app.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const rectangular = inspect();
+    app.setViewMode("circular");
+    app.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const circular = inspect();
+    return { rectangular, circular };
+  });
+
+  expect(result.rectangular.count).toBeGreaterThanOrEqual(20);
+  expect(result.circular.count).toBeGreaterThanOrEqual(16);
+  expect(result.rectangular.minimumFontSize).toBeGreaterThanOrEqual(10);
+  expect(result.circular.minimumFontSize).toBeGreaterThanOrEqual(10);
+});
+
+test("bootstrap and node-height labels support decimal formatting and simultaneous display", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:1,B:1)95.678:1,(C:1,D:1)88.24:1)Root;");
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByLabel("Show bootstrap labels").check();
+  await page.getByRole("button", { name: "Bootstrap labels settings" }).click();
+  const bootstrapDialog = page.getByRole("dialog", { name: "Bootstrap labels settings" });
+  await bootstrapDialog.getByLabel("Decimal places").selectOption("1");
+  await bootstrapDialog.getByRole("button", { name: "Close Bootstrap labels settings" }).click();
+  await page.getByLabel("Show node height labels").check();
+  await page.getByRole("button", { name: "Node height labels settings" }).click();
+  const nodeHeightDialog = page.getByRole("dialog", { name: "Node height labels settings" });
+  await nodeHeightDialog.getByLabel("Decimal places").selectOption("2");
+  await nodeHeightDialog.getByRole("button", { name: "Close Node height labels settings" }).click();
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const svg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
+  expect(svg).toContain(">95.7<");
+  expect(svg).toContain(">88.2<");
+  expect(svg).toContain(">1.00<");
+  expect(svg).toContain(">2.00<");
+});
+
 test("tip labels can export with bold and italic styling", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;");
@@ -308,6 +397,78 @@ test("tip labels can export with bold and italic styling", async ({ page }) => {
 
   expect(svg).toContain("font-style=\"italic\"");
   expect(svg).toContain("font-weight=\"700\"");
+});
+
+test("rectangular tip labels are unlimited by default and support explicit overflow modes", async ({ page }) => {
+  await waitForViewer(page);
+  const longLabel = "This_is_an_exceptionally_long_BEAST_tip_label_with_collection_and_accession_details";
+  await loadTreeFromPaste(page, `(${longLabel}:1,Short_label:1,Another_label:1)Root;`);
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Tip labels settings" }).click();
+  await expect(page.getByLabel("Limit label section width")).not.toBeChecked();
+  const widthControlsFollowOffset = await page.getByRole("dialog", { name: "Tip labels settings" }).evaluate((dialog) => {
+    const offset = Array.from(dialog.querySelectorAll("label")).find((label) => label.textContent?.trim().startsWith("Offset"));
+    const limit = Array.from(dialog.querySelectorAll("label")).find((label) => label.textContent?.includes("Limit label section width"));
+    return Boolean(offset && limit && (offset.compareDocumentPosition(limit) & Node.DOCUMENT_POSITION_FOLLOWING));
+  });
+  expect(widthControlsFollowOffset).toBe(true);
+  await page.getByRole("button", { name: "Close Tip labels settings" }).click();
+
+  const inspect = async () => page.evaluate(() => {
+    const hitboxes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes()
+      .filter((hitbox) => hitbox.labelKind === "tip") ?? [];
+    return {
+      hitboxes: hitboxes.map((hitbox) => ({
+        text: String(hitbox.text),
+        width: Number(hitbox.width),
+        height: Number(hitbox.height),
+      })),
+      svg: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "",
+    };
+  });
+
+  await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setViewMode("rectangular");
+    app?.setShowGenusLabels(false);
+    app?.setFigureStyleForTest("tip", "limitWidth", false);
+    app?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const unlimited = await inspect();
+  const unlimitedLong = unlimited.hitboxes.find((label) => label.text.includes("exceptionally long"));
+  const unlimitedShort = unlimited.hitboxes.find((label) => label.text === "Short label");
+  expect(unlimitedLong).toBeDefined();
+  expect(unlimitedShort).toBeDefined();
+  expect(unlimitedLong!.width).toBeGreaterThan(240);
+  expect(unlimitedLong!.height).toBeCloseTo(unlimitedShort!.height, 4);
+  expect(unlimited.svg).toContain("This is an exceptionally long BEAST tip label with collection and accession details");
+
+  await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setFigureStyleForTest("tip", "limitWidth", true);
+    app?.setFigureStyleForTest("tip", "maxWidthPx", 120);
+    app?.setFigureStyleForTest("tip", "overflowMode", "truncate");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const truncated = await inspect();
+  const truncatedLong = truncated.hitboxes.find((label) => label.text.includes("exceptionally long"));
+  expect(truncatedLong!.width).toBeLessThanOrEqual(120.5);
+  expect(truncatedLong!.height).toBeCloseTo(unlimitedShort!.height, 4);
+  expect(truncated.svg).toContain("...");
+  expect(truncated.svg).not.toContain("collection and accession details");
+
+  await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setFigureStyleForTest("tip", "overflowMode", "scale");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const scaled = await inspect();
+  const scaledLong = scaled.hitboxes.find((label) => label.text.includes("exceptionally long"));
+  expect(scaledLong!.width).toBeLessThanOrEqual(120.5);
+  expect(scaledLong!.height).toBeLessThan(unlimitedShort!.height);
+  expect(scaled.svg).toContain("This is an exceptionally long BEAST tip label with collection and accession details");
 });
 
 test("non-ultrametric tip labels can align at rectangular and circular tree edges", async ({ page }) => {
@@ -1570,6 +1731,15 @@ test("visual options only mark hidden label sections when they are actually disa
   });
 
   await page.getByRole("button", { name: "Visual Options" }).click();
+  const taxonomyWasEnabled = await page.getByLabel("Show taxonomy overlays").isChecked();
+  await page.getByLabel("Show tip labels").uncheck();
+  if (await page.getByLabel("Show genus labels").isEnabled()) {
+    await page.getByLabel("Show genus labels").uncheck();
+  }
+  await page.getByLabel("Show internal node labels").check();
+  await page.getByLabel("Show node height labels").check();
+  await page.getByLabel("Show scale bars").uncheck();
+  await page.getByLabel("Show time stripes").uncheck();
   const bootstrapRow = page.locator(".visual-option-row").filter({ hasText: "Show bootstrap labels" });
   const nodeHeightRow = page.locator(".visual-option-row").filter({ hasText: "Show node height labels" });
   await expect(bootstrapRow).toBeVisible();
@@ -1577,6 +1747,15 @@ test("visual options only mark hidden label sections when they are actually disa
   await expect(nodeHeightRow).not.toContainText("Hidden");
 
   await page.getByRole("button", { name: "Reset Defaults" }).click();
+
+  await expect(page.getByLabel("Show tip labels")).toBeChecked();
+  expect(await page.getByLabel("Show genus labels").isChecked()).toBe(!taxonomyWasEnabled);
+  await expect(page.getByLabel("Show internal node labels")).not.toBeChecked();
+  await expect(page.getByLabel("Show bootstrap labels")).not.toBeChecked();
+  await expect(page.getByLabel("Show node height labels")).not.toBeChecked();
+  await expect(page.getByLabel("Show scale bars")).toBeChecked();
+  await expect(page.getByLabel("Show time stripes")).toBeChecked();
+  expect(await page.getByLabel("Show taxonomy overlays").isChecked()).toBe(taxonomyWasEnabled);
 
   const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null) as {
     figureStyles?: {

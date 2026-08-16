@@ -8,9 +8,11 @@ test("metadata guide presents the workflow with responsive images", async ({ pag
   await expect(page.getByRole("heading", { name: "Choose an overlay" })).toBeVisible();
   await expect(page.getByText("Matched branches", { exact: true })).toBeVisible();
   await expect(page.getByText("Matched subtrees", { exact: true })).toBeVisible();
+  await expect(page.getByText("Tip data table", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Horizontal bars:.*trait_value/)).toBeVisible();
 
   const images = page.locator(".metadata-guide-page img");
-  await expect(images).toHaveCount(7);
+  await expect(images).toHaveCount(10);
   for (let index = 0; index < await images.count(); index += 1) {
     const image = images.nth(index);
     await image.scrollIntoViewIfNeeded();

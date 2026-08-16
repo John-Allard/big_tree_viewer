@@ -15,6 +15,7 @@ declare global {
       setShowGenusLabels: (visible: boolean) => void;
       setShowInternalNodeLabels: (visible: boolean) => void;
       setShowBootstrapLabels: (visible: boolean) => void;
+      setShowNodeHeightLabels: (visible: boolean) => void;
       setTaxonomyEnabled: (visible: boolean) => void;
       setTaxonomyBranchColoringEnabled: (enabled: boolean) => void;
       setTaxonomyRankVisibilityForTest: (
@@ -73,13 +74,17 @@ declare global {
       setMetadataMarkersEnabled: (visible: boolean) => void;
       setMetadataMarkerColumn: (column: string) => void;
       setMetadataMarkerSizePx: (value: number) => void;
+      setMetadataTipTableEnabled: (visible: boolean) => void;
+      setMetadataTipTableMode: (mode: "bars" | "heatmap" | "categorical") => void;
+      setMetadataTipTableCellStyle: (style: "filled" | "circle" | "square" | "check" | "text") => void;
+      setMetadataTipTableColumns: (columns: Array<{ column: string; label: string }>) => void;
       setMetadataLabelMaxCount: (value: number) => void;
       setMetadataLabelMinSpacingPx: (value: number) => void;
       setMetadataLabelOffsetXPx: (value: number) => void;
       setMetadataLabelOffsetYPx: (value: number) => void;
       setFigureStyleForTest: (
         labelClass: "tip" | "genus" | "taxonomy" | "internalNode" | "bootstrap" | "nodeHeight" | "scale",
-        field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "thickenOutermostRibbon" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic",
+        field: "fontFamily" | "sizeScale" | "offsetPx" | "offsetXPx" | "offsetYPx" | "bandThicknessScale" | "thickenOutermostRibbon" | "taxonomyGap" | "taxonomyGapPx" | "bold" | "italic" | "limitWidth" | "maxWidthPx" | "overflowMode" | "decimalPlaces",
         value: string | number | boolean,
       ) => void;
       runRealTaxonomyMappingForTest: () => Promise<void>;

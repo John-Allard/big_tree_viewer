@@ -142,6 +142,17 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
     }
     current.bold = coerceBoolean(source.bold, Boolean(current.bold));
     current.italic = coerceBoolean(source.italic, Boolean(current.italic));
+    if (labelClass === "tip") {
+      current.limitWidth = coerceBoolean(source.limitWidth, Boolean(current.limitWidth));
+      current.maxWidthPx = Math.max(40, coerceFiniteNumber(source.maxWidthPx, current.maxWidthPx ?? 240));
+      current.overflowMode = coerceEnum(source.overflowMode, ["truncate", "scale"] as const, "truncate");
+    }
+    if (labelClass === "bootstrap" || labelClass === "nodeHeight") {
+      current.decimalPlaces = Math.max(-1, Math.min(6, Math.round(coerceFiniteNumber(
+        source.decimalPlaces,
+        current.decimalPlaces ?? -1,
+      ))));
+    }
   }
   return defaults;
 }

@@ -296,6 +296,13 @@ window.addEventListener("message", (event) => {
     taxonomyRankVisibility?: { genus?: boolean, family?: boolean, order?: boolean },
     figureStyles?: object,
     metadataMarkersEnabled?: boolean,
+    metadataTipTableEnabled?: boolean,
+    metadataTipTableMode?: "bars" | "heatmap" | "categorical",
+    metadataTipTableCellStyle?: "filled" | "circle" | "square" | "check" | "text",
+    metadataTipTableColumns?: Array<{ column: string, label: string }>,
+    metadataTipTablePalette?: "blueOrange" | "viridis" | "redBlue" | "tealRose",
+    metadataTipTableBarWidthPx?: number,
+    metadataTipTableCellWidthPx?: number,
     phylopicPlacement?: "after-label" | "outside-ribbon"
   },
   canvas?: {

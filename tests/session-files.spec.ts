@@ -61,6 +61,12 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
       throw new Error("Test controls unavailable.");
     }
     app.importMetadataTextForTest("name,group\nA_species,Alpha\nB_species,Beta\n", "groups.csv");
+    app.setMetadataTipTableEnabled(true);
+    app.setMetadataTipTableMode("categorical");
+    app.setMetadataTipTableCellStyle("text");
+    app.setMetadataTipTableColumns([{ column: "group", label: "Study group" }]);
+    app.setFigureStyleForTest("bootstrap", "decimalPlaces", 1);
+    app.setFigureStyleForTest("nodeHeight", "decimalPlaces", 3);
     app.setViewMode("circular");
     app.setShowTipLabels(false);
     app.setAlignTipLabels(true);
@@ -105,17 +111,17 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(session.settings?.viewMode).toBe("circular");
   expect(session.settings?.showTipLabels).toBe(false);
   expect(session.settings?.alignTipLabels).toBe(true);
+  expect(session.settings?.metadataTipTableEnabled).toBe(true);
+  expect(session.settings?.metadataTipTableMode).toBe("categorical");
+  expect(session.settings?.metadataTipTableCellStyle).toBe("text");
+  expect(session.settings?.metadataTipTableColumns).toEqual([{ column: "group", label: "Study group" }]);
+  expect(session.settings?.figureStyles?.bootstrap?.decimalPlaces).toBe(1);
+  expect(session.settings?.figureStyles?.nodeHeight?.decimalPlaces).toBe(3);
   expect(session.canvas?.camera?.kind).toBe("circular");
   expect(Number(session.canvas?.viewportWidth ?? 0)).toBeGreaterThan(0);
   expect(Number(session.canvas?.viewportHeight ?? 0)).toBeGreaterThan(0);
   expect(session.canvas?.manualBranchColors?.length).toBe(1);
 
-  await page.goto("/");
-  await page.evaluate(() => {
-    Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true });
-    Object.defineProperty(window, "showOpenFilePicker", { value: undefined, configurable: true });
-  });
-  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__ && window.__BIG_TREE_VIEWER_CANVAS_TEST__));
   const chooserPromise = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Load Session" }).click();
   const chooser = await chooserPromise;
@@ -138,6 +144,12 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(restored.app?.viewMode).toBe("circular");
   expect(restored.app?.showTipLabels).toBe(false);
   expect(restored.app?.alignTipLabels).toBe(true);
+  expect(restored.app?.metadataTipTableEnabled).toBe(true);
+  expect(restored.app?.metadataTipTableMode).toBe("categorical");
+  expect(restored.app?.metadataTipTableCellStyle).toBe("text");
+  expect(restored.app?.figureStyles?.bootstrap?.decimalPlaces).toBe(1);
+  expect(restored.app?.figureStyles?.nodeHeight?.decimalPlaces).toBe(3);
+  expect(restored.app?.metadataTipTableColumns).toEqual([{ column: "group", label: "Study group" }]);
   expect(restored.app?.metadataRowCount).toBe(2);
   expect(restored.camera?.kind).toBe("circular");
   expect(restored.branchColors).toContain("#ff0000");
