@@ -40,6 +40,132 @@ function uniqueTipNodesByName(tree: TreeModel, leaves: number[]): Map<string, nu
   return nodes;
 }
 
+function sharedRanksInDisplayOrder(
+  root: number,
+  childOrder: Map<number, number[]>,
+  rankByNode: Int32Array,
+): number[] {
+  const ranks: number[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const children = childOrder.get(node);
+    if (!children || children.length === 0) {
+      const rank = rankByNode[node];
+      if (rank >= 0) ranks.push(rank);
+      continue;
+    }
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
+  return ranks;
+}
+
+function crossingsWhenBefore(left: number[], right: number[]): number {
+  let rightIndex = 0;
+  let crossings = 0;
+  for (const rank of left) {
+    while (rightIndex < right.length && right[rightIndex] < rank) rightIndex += 1;
+    crossings += rightIndex;
+  }
+  return crossings;
+}
+
+function exactMinimumCrossingOrder(sequences: number[][]): number[] {
+  const count = sequences.length;
+  const pairCost = Array.from({ length: count }, () => new Float64Array(count));
+  for (let left = 0; left < count; left += 1) {
+    for (let right = left + 1; right < count; right += 1) {
+      pairCost[left][right] = crossingsWhenBefore(sequences[left], sequences[right]);
+      pairCost[right][left] = crossingsWhenBefore(sequences[right], sequences[left]);
+    }
+  }
+  const stateCount = 1 << count;
+  const cost = new Float64Array(stateCount);
+  cost.fill(Number.POSITIVE_INFINITY);
+  const previousMask = new Int32Array(stateCount);
+  const appendedChild = new Int16Array(stateCount);
+  previousMask.fill(-1);
+  appendedChild.fill(-1);
+  cost[0] = 0;
+  for (let mask = 0; mask < stateCount; mask += 1) {
+    if (!Number.isFinite(cost[mask])) continue;
+    for (let child = 0; child < count; child += 1) {
+      const bit = 1 << child;
+      if ((mask & bit) !== 0) continue;
+      let nextCost = cost[mask];
+      for (let earlier = 0; earlier < count; earlier += 1) {
+        if ((mask & (1 << earlier)) !== 0) nextCost += pairCost[earlier][child];
+      }
+      const nextMask = mask | bit;
+      if (nextCost < cost[nextMask]) {
+        cost[nextMask] = nextCost;
+        previousMask[nextMask] = mask;
+        appendedChild[nextMask] = child;
+      }
+    }
+  }
+  const result = new Array<number>(count);
+  let mask = stateCount - 1;
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const child = appendedChild[mask];
+    result[index] = child;
+    mask = previousMask[mask];
+  }
+  return result;
+}
+
+function improveLargeMultifurcationOrder(order: number[], sequences: number[][]): number[] {
+  const pairCost = (left: number, right: number) => crossingsWhenBefore(sequences[left], sequences[right]);
+  const result = [...order];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let index = 0; index + 1 < result.length; index += 1) {
+      const left = result[index];
+      const right = result[index + 1];
+      if (pairCost(right, left) < pairCost(left, right)) {
+        result[index] = right;
+        result[index + 1] = left;
+        changed = true;
+      }
+    }
+  }
+  return result;
+}
+
+function optimizeMultifurcationOrder(
+  children: number[],
+  childOrder: Map<number, number[]>,
+  rankByNode: Int32Array,
+  scoreTotal: Float64Array,
+  scoreCount: Uint32Array,
+): number[] {
+  const matched = children.filter((child) => scoreCount[child] > 0);
+  const unmatched = children.filter((child) => scoreCount[child] === 0);
+  if (matched.length <= 2) {
+    matched.sort((left, right) => (
+      (scoreTotal[left] / scoreCount[left]) - (scoreTotal[right] / scoreCount[right])
+    ));
+    return [...matched, ...unmatched];
+  }
+  const sequences = matched.map((child) => (
+    sharedRanksInDisplayOrder(child, childOrder, rankByNode).sort((left, right) => left - right)
+  ));
+  const barycenterOrder = matched.map((_, index) => index).sort((left, right) => {
+    const leftChild = matched[left];
+    const rightChild = matched[right];
+    return (scoreTotal[leftChild] / scoreCount[leftChild]) - (scoreTotal[rightChild] / scoreCount[rightChild]);
+  });
+  const optimizedIndices = matched.length <= 12
+    ? exactMinimumCrossingOrder(sequences)
+    : matched.length <= 128
+      ? improveLargeMultifurcationOrder(barycenterOrder, sequences)
+      : barycenterOrder;
+  return [...optimizedIndices.map((index) => matched[index]), ...unmatched];
+}
+
 export function buildComparisonLayout(
   primaryTree: TreeModel,
   comparisonTree: TreeModel,
@@ -67,6 +193,8 @@ export function buildComparisonLayout(
   const childOrder = new Map<number, number[]>();
   const scoreTotal = new Float64Array(comparisonTree.nodeCount);
   const scoreCount = new Uint32Array(comparisonTree.nodeCount);
+  const rankByNode = new Int32Array(comparisonTree.nodeCount);
+  rankByNode.fill(-1);
   const stack: Array<{ node: number; visited: boolean }> = [{ node: comparisonTree.root, visited: false }];
   while (stack.length > 0) {
     const item = stack.pop()!;
@@ -83,6 +211,7 @@ export function buildComparisonLayout(
       if (rank !== undefined) {
         scoreTotal[item.node] = rank;
         scoreCount[item.node] = 1;
+        rankByNode[item.node] = rank;
       }
       continue;
     }
@@ -92,15 +221,13 @@ export function buildComparisonLayout(
       scoreTotal[item.node] += scoreTotal[child];
       scoreCount[item.node] += scoreCount[child];
     }
-    children.sort((left, right) => {
-      const leftCount = scoreCount[left];
-      const rightCount = scoreCount[right];
-      if (leftCount === 0 || rightCount === 0) {
-        return leftCount === rightCount ? 0 : leftCount === 0 ? 1 : -1;
-      }
-      return (scoreTotal[left] / leftCount) - (scoreTotal[right] / rightCount);
-    });
-    childOrder.set(item.node, children);
+    childOrder.set(item.node, optimizeMultifurcationOrder(
+      children,
+      childOrder,
+      rankByNode,
+      scoreTotal,
+      scoreCount,
+    ));
   }
 
   const comparisonLeaves: number[] = [];

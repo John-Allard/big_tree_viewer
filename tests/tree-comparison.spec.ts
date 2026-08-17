@@ -87,6 +87,7 @@ test("comparison tree and linked camera survive a session round trip", async ({ 
   await panel.getByRole("button", { name: "Paste Newick" }).click();
   await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill("((A:1,C:1):1,(B:1,D:1):1)Comparison;");
   await panel.getByRole("button", { name: "Load Comparison" }).click();
+  await panel.getByRole("checkbox", { name: /Show red X marks/ }).check();
   const canvas = page.getByLabel("Tree comparison view");
   await canvas.hover({ position: { x: 500, y: 300 } });
   await page.mouse.wheel(0, -600);
@@ -104,15 +105,30 @@ test("comparison tree and linked camera survive a session round trip", async ({ 
   expect(session.comparison?.enabled).toBe(true);
   expect(session.comparison?.newick).toContain("Comparison");
   expect(session.comparison?.camera?.zoom).toBeGreaterThan(1.5);
+  expect(session.comparison?.showIncompatibleSplits).toBe(true);
 
+  const savedBytes = [...await readFile(savedPath as string)];
   await page.goto("/");
-  await page.evaluate(() => {
-    Object.defineProperty(window, "showOpenFilePicker", { value: undefined, configurable: true });
-  });
-  const chooserPromise = page.waitForEvent("filechooser");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+  await page.evaluate((bytes) => {
+    Object.defineProperty(window, "showOpenFilePicker", {
+      value: async () => [{
+        getFile: async () => {
+          await new Promise((resolve) => window.setTimeout(resolve, 25));
+          return new File([new Uint8Array(bytes)], "comparison-session.btvsession");
+        },
+      }],
+      configurable: true,
+    });
+  }, savedBytes);
   await page.getByRole("button", { name: "Load Session" }).click();
-  await (await chooserPromise).setFiles(savedPath as string);
+  await page.waitForFunction(
+    () => Boolean(window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState()),
+    undefined,
+    { timeout: 15_000 },
+  );
   await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+  await expect(panel.getByRole("checkbox", { name: /Show red X marks/ })).toBeChecked();
   await page.waitForFunction(() => Number(
     (window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { zoom?: number } | undefined)?.zoom ?? 0,
   ) > 1.5);
@@ -215,4 +231,58 @@ test("bundled example comparison fixture matches every example-tree tip", async 
   await page.waitForFunction((initialWidth) => Number(
     window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().ribbonsWidth ?? 0,
   ) > Number(initialWidth), initialRibbonState?.ribbonsWidth);
+});
+
+test("warns about a different root and reroots the comparison tree on an exact matching edge", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(
+    "(A:1,((B:1,C:1):1,(D:1,E:1):1):1)Primary;",
+  );
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill(
+    "((B:1,C:1):1,(A:1,(D:1,E:1):1):1)Comparison;",
+  );
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+
+  const warning = panel.getByRole("alert");
+  await expect(warning).toContainText("do not appear to have the same root");
+  await expect(warning).toContainText("exactly matches");
+  await warning.getByRole("button", { name: "Re-root to Match Original" }).click();
+  await expect(warning).toBeHidden();
+  await expect(panel).toContainText("(rerooted to match)");
+  await expect(panel.getByLabel("Comparison statistics").locator("dd").filter({ hasText: "0.0000" })).toHaveCount(1);
+});
+
+test("marks left-tree branches whose unrooted splits are absent from the comparison tree", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(
+    "((A:1,B:1):1,(C:1,(D:1,E:1):1):1)Primary;",
+  );
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill(
+    "((A:1,C:1):1,(B:1,(D:1,E:1):1):1)Comparison;",
+  );
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+
+  const toggle = panel.getByRole("checkbox", { name: /Show red X marks/ });
+  await expect(toggle).toBeVisible();
+  await expect(panel).toContainText("Show red X marks on incompatible left-tree splits (1)");
+  await toggle.check();
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().incompatibleSplitMarkerCount ?? 0,
+  ) > 0);
 });

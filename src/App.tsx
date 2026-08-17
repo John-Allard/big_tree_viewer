@@ -8,6 +8,7 @@ import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, 
 import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import { computeTreeStatistics } from "./lib/treeStatistics";
 import { computeTreeComparisonStatistics } from "./lib/treeComparisonStatistics";
+import { analyzeTreeComparisonTopology } from "./lib/treeComparisonTopology";
 import type { TaxonomyColorByRank } from "./lib/taxonomyBlocks";
 import {
   cloneDefaultFigureStyles,
@@ -405,6 +406,7 @@ type BigTreeViewerSessionFile = {
     label: string;
     newick: string;
     camera?: TreeComparisonCameraState | null;
+    showIncompatibleSplits?: boolean;
   };
 };
 
@@ -1980,6 +1982,7 @@ export default function App() {
   const [comparisonCamera, setComparisonCamera] = useState<TreeComparisonCameraState | null>(null);
   const [comparisonCameraRestoreState, setComparisonCameraRestoreState] = useState<TreeComparisonCameraState | null>(null);
   const [comparisonCameraRestoreRequest, setComparisonCameraRestoreRequest] = useState(0);
+  const [showIncompatibleComparisonSplits, setShowIncompatibleComparisonSplits] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
@@ -2337,6 +2340,10 @@ export default function App() {
   );
   const treeComparisonStatistics = useMemo(
     () => viewTree && comparisonTree ? computeTreeComparisonStatistics(viewTree, comparisonTree) : null,
+    [comparisonTree, viewTree],
+  );
+  const treeComparisonTopology = useMemo(
+    () => viewTree && comparisonTree ? analyzeTreeComparisonTopology(viewTree, comparisonTree) : null,
     [comparisonTree, viewTree],
   );
   const subtreeStatistics = useMemo(() => (
@@ -2955,13 +2962,15 @@ export default function App() {
       key: string,
       tipNodes: number[],
       orderIndex: number,
+      focusTipNodes: number[] = tipNodes,
     ): void => {
       if (!matchesSearchQuery(label, query) || tipNodes.length === 0) {
         return;
       }
+      const focusNodes = focusTipNodes.length > 0 ? focusTipNodes : tipNodes;
       const result = {
         kind: "taxonomy",
-        node: tipNodes.reduce((ancestor, node) => lowestCommonAncestor(viewTree, ancestor, node)),
+        node: focusNodes.reduce((ancestor, node) => lowestCommonAncestor(viewTree, ancestor, node)),
         displayName: label,
         rank,
         key,
@@ -2981,6 +2990,7 @@ export default function App() {
     if (taxonomyEnabled && viewTaxonomyMap) {
       const orderedLeaves = computeOrderedLeaves(viewTree, order);
       const taxonomyBlocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, viewTaxonomyMap, null);
+      const taxonomyTipByNode = new Map(viewTaxonomyMap.tipRanks.map((tip) => [tip.node, tip] as const));
       for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
         const rank = SEARCH_TAXONOMY_RANK_ORDER[rankIndex];
         const blocks = [...(taxonomyBlocks[rank] ?? [])].sort((left, right) => (
@@ -2993,17 +3003,28 @@ export default function App() {
             endIndex: block.endIndex ?? 0,
           }];
           const blockTipNodes: number[] = [];
+          let dominantSegmentTipNodes: number[] = [];
           const seenTipNodes = new Set<number>();
           for (const segment of blockSegments) {
+            const segmentTipNodes: number[] = [];
             const end = segment.endIndex >= segment.startIndex
               ? segment.endIndex
               : segment.endIndex + orderedLeaves.length;
             for (let leafIndex = segment.startIndex; leafIndex < end; leafIndex += 1) {
               const node = orderedLeaves[leafIndex % orderedLeaves.length];
+              const tip = taxonomyTipByNode.get(node);
+              const tipEntityKey = taxonomyEntityKey(tip?.ranks[rank] ?? "", tip?.taxIds?.[rank] ?? null);
+              if (tipEntityKey !== block.entityKey) {
+                continue;
+              }
               if (!seenTipNodes.has(node)) {
                 seenTipNodes.add(node);
                 blockTipNodes.push(node);
+                segmentTipNodes.push(node);
               }
+            }
+            if (segmentTipNodes.length > dominantSegmentTipNodes.length) {
+              dominantSegmentTipNodes = segmentTipNodes;
             }
           }
           if (blockTipNodes.length <= 1) {
@@ -3016,6 +3037,7 @@ export default function App() {
             `${rank}:${block.entityKey ?? taxonomyEntityKey(block.label, block.taxId ?? null)}:${block.centerNode}`,
             blockTipNodes,
             labelStartIndex,
+            dominantSegmentTipNodes,
           );
         }
       }
@@ -4606,6 +4628,7 @@ export default function App() {
           label: comparisonTreeLabel,
           newick: serializeSubtreeToNewick(comparisonTree, comparisonTree.root),
           camera: comparisonCamera,
+          showIncompatibleSplits: showIncompatibleComparisonSplits,
         } : undefined,
       };
       const saved = await writeSessionFile(session, writer);
@@ -4628,6 +4651,7 @@ export default function App() {
     metadataRawText,
     phylopicEnabled,
     phylopicSilhouettes,
+    showIncompatibleComparisonSplits,
     requestCanvasSessionState,
     taxonomyMap,
     tree,
@@ -4887,6 +4911,7 @@ export default function App() {
           setComparisonTree(parsedComparison);
           setComparisonTreeLabel(session.comparison.label || "comparison tree");
           setComparisonEnabled(session.comparison.enabled);
+          setShowIncompatibleComparisonSplits(session.comparison.showIncompatibleSplits === true);
           setComparisonCameraRestoreState(session.comparison.camera ?? null);
           if (session.comparison.camera) {
             setComparisonCameraRestoreRequest((current) => current + 1);
@@ -4899,6 +4924,7 @@ export default function App() {
           setComparisonEnabled(false);
           setComparisonCamera(null);
           setComparisonCameraRestoreState(null);
+          setShowIncompatibleComparisonSplits(false);
         }
       } catch (error) {
         pendingSessionRestoreResolverRef.current = null;
@@ -5804,6 +5830,7 @@ export default function App() {
       setComparisonTree(parsed);
       setComparisonTreeLabel(label);
       setComparisonEnabled(true);
+      setShowIncompatibleComparisonSplits(false);
       setShowComparisonPasteInput(false);
       setPastedComparisonText("");
       setComparisonOpen(true);
@@ -5831,6 +5858,23 @@ export default function App() {
     }
     await loadComparisonTreeText(text, "pasted comparison tree");
   }, [loadComparisonTreeText, pastedComparisonText]);
+
+  const rerootComparisonToMatchPrimary = useCallback((): void => {
+    const candidateNode = treeComparisonTopology?.root.bestCandidateNode ?? null;
+    if (!comparisonTree || candidateNode === null) {
+      return;
+    }
+    const rerootedPayload = rerootTreePayload(comparisonTree, candidateNode, "branch");
+    if (!rerootedPayload) {
+      setComparisonError("The comparison tree could not be rerooted on the selected matching edge.");
+      return;
+    }
+    setComparisonTree(buildTreeModel(rerootedPayload));
+    setComparisonTreeLabel((current) => (
+      current.includes("(rerooted to match)") ? current : `${current} (rerooted to match)`
+    ));
+    setComparisonError(null);
+  }, [comparisonTree, treeComparisonTopology]);
 
   const handleDrop = useCallback(async (event: DragEvent<HTMLDivElement>): Promise<void> => {
     event.preventDefault();
@@ -8998,11 +9042,49 @@ export default function App() {
                       setComparisonTree(null);
                       setComparisonEnabled(false);
                       setComparisonError(null);
+                      setShowIncompatibleComparisonSplits(false);
                     }}
                   >
                     Remove
                   </button>
                 </div>
+                {treeComparisonTopology?.root.available && !treeComparisonTopology.root.rootsMatch ? (
+                  <div className="comparison-root-warning" role="alert">
+                    <strong>The trees do not appear to have the same root.</strong>
+                    <p>
+                      {treeComparisonTopology.root.exactMatchAvailable
+                        ? `The comparison tree contains an edge that exactly matches the original tree's two root partitions across ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips.`
+                        : `No comparison-tree edge exactly matches the original root partition. The closest edge places ${treeComparisonTopology.root.bestMismatchCount?.toLocaleString() ?? "an unknown number of"} of ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips on a different root side.`}
+                    </p>
+                    {treeComparisonTopology.root.canImprove ? (
+                      <button type="button" className="secondary" onClick={rerootComparisonToMatchPrimary}>
+                        {treeComparisonTopology.root.exactMatchAvailable
+                          ? "Re-root to Match Original"
+                          : "Re-root to Closest Match"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {treeComparisonTopology && !treeComparisonTopology.root.available ? (
+                  <p className="status-line">
+                    Root comparison is unavailable because the shared tips do not resolve into two daughter groups at the original tree's root.
+                  </p>
+                ) : null}
+                {treeComparisonTopology ? (
+                  <label className="visual-option-checkbox comparison-split-toggle">
+                    <input
+                      type="checkbox"
+                      checked={showIncompatibleComparisonSplits}
+                      onChange={(event) => setShowIncompatibleComparisonSplits(event.target.checked)}
+                    />
+                    <span>
+                      Show red X marks on incompatible left-tree splits
+                      {treeComparisonTopology.incompatiblePrimarySplitCount > 0
+                        ? ` (${treeComparisonTopology.incompatiblePrimarySplitCount.toLocaleString()})`
+                        : ""}
+                    </span>
+                  </label>
+                ) : null}
               </>
             ) : null}
             {comparisonEnabled && (metadataEnabled || metadataLabelsEnabled || metadataMarkersEnabled || metadataPiesEnabled) ? (
@@ -9238,6 +9320,8 @@ export default function App() {
             order={order}
             primaryLabel={loadedTreeLabel}
             comparisonLabel={comparisonTreeLabel}
+            incompatiblePrimaryNodes={treeComparisonTopology?.incompatiblePrimaryNodes ?? new Set<number>()}
+            showIncompatibleSplits={showIncompatibleComparisonSplits}
             showTipLabels={showTipLabels}
             branchThicknessScale={branchThicknessScale}
             figureStyles={figureStyles}

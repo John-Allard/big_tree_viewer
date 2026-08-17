@@ -13,6 +13,8 @@ interface TreeComparisonCanvasProps {
   order: LayoutOrder;
   primaryLabel: string;
   comparisonLabel: string;
+  incompatiblePrimaryNodes: Set<number>;
+  showIncompatibleSplits: boolean;
   showTipLabels: boolean;
   branchThicknessScale: number;
   figureStyles: FigureStyleSettings;
@@ -202,6 +204,8 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     order,
     primaryLabel,
     comparisonLabel,
+    incompatiblePrimaryNodes,
+    showIncompatibleSplits,
     showTipLabels,
     branchThicknessScale,
     figureStyles,
@@ -486,6 +490,27 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     drawTree(primaryTree, primaryX, primaryY, taxonomyBranchColoringEnabled ? primaryNodeColors : []);
     drawTree(comparisonTree, comparisonX, secondaryY, taxonomyBranchColoringEnabled ? comparisonNodeColors : []);
 
+    if (showIncompatibleSplits && incompatiblePrimaryNodes.size > 0) {
+      context.save();
+      context.strokeStyle = "rgba(220, 38, 38, 0.92)";
+      context.lineWidth = 1.6;
+      const markerRadius = 3.6;
+      incompatiblePrimaryNodes.forEach((node) => {
+        const parent = primaryTree.buffers.parent[node];
+        if (parent < 0) return;
+        const y = primaryY(node);
+        if (!visible(y)) return;
+        const x = (primaryX(parent) + primaryX(node)) / 2;
+        context.beginPath();
+        context.moveTo(x - markerRadius, y - markerRadius);
+        context.lineTo(x + markerRadius, y + markerRadius);
+        context.moveTo(x + markerRadius, y - markerRadius);
+        context.lineTo(x - markerRadius, y + markerRadius);
+        context.stroke();
+      });
+      context.restore();
+    }
+
     if (taxonomyBlocks) {
       activeRanks.forEach((rank, rankIndex) => {
         const rankWidth = rankWidths[rankIndex];
@@ -566,6 +591,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       sharedTipCount: comparison.commonPairs.length,
       primaryOnlyCount: comparison.primaryOnlyCount,
       comparisonOnlyCount: comparison.comparisonOnlyCount,
+      incompatibleSplitMarkerCount: showIncompatibleSplits ? incompatiblePrimaryNodes.size : 0,
     };
     const orderedPairs = comparison.commonPairs
       .filter((pair) => {
@@ -694,6 +720,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     comparisonTree,
     figureStyles,
     highlightedTips,
+    incompatiblePrimaryNodes,
     primaryDenominator,
     primaryLabel,
     primaryLayout.center,
@@ -701,6 +728,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     primaryTree,
     screenY,
     showTipLabels,
+    showIncompatibleSplits,
     size.height,
     size.width,
     taxonomyBlocks,
