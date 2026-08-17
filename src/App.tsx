@@ -99,7 +99,7 @@ import {
   useTaxonomyArchiveForSession,
   type TaxonomyArchiveFileHandle,
 } from "./lib/taxonomyCache";
-import { rerootTreePayload, type RerootMode } from "./lib/rerootTree";
+import { rerootTreePayload, rerootTreePayloadAtNode, type RerootMode } from "./lib/rerootTree";
 import { looksLikeTreeText, normalizeImportedTreeText } from "./lib/treeImport";
 import type { WorkerResponse } from "./types/messages";
 import {
@@ -124,6 +124,10 @@ import type {
 
 const WINDOW_LAUNCH_PREFIX = "big-tree-viewer-window-launch-v1:";
 const WINDOW_NAME_PROBE_PREFIX = "big-tree-viewer-window-name-probe-v1:";
+const TREE_FILE_ACCEPT = ".nwk,.newick,.tree,.tre,.trees,.treefile,.contree,.ufboot,.mcc,.mctree,.nex,.nexus,.nh,.nhx,.dnd,.txt";
+const PRIMARY_TREE_FILE_ACCEPT = `${TREE_FILE_ACCEPT},.btvsession,.json`;
+const DEFAULT_COMPARISON_CONNECTOR_SENSITIVITY = 1;
+const DEFAULT_COMPARISON_CENTER_WIDTH_SCALE = 0.5;
 
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) {
@@ -407,6 +411,8 @@ type BigTreeViewerSessionFile = {
     newick: string;
     camera?: TreeComparisonCameraState | null;
     showIncompatibleSplits?: boolean;
+    connectorSensitivity?: number;
+    centerWidthScale?: number;
   };
 };
 
@@ -1866,6 +1872,7 @@ export default function App() {
   const metadataFileInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoloadRef = useRef(false);
   const dragCounterRef = useRef(0);
+  const comparisonDragCounterRef = useRef(0);
   const pendingPasteHideRef = useRef(false);
   const pendingTreeSignatureRef = useRef<string | null>(null);
   const pendingTreeLabelRef = useRef("");
@@ -1975,6 +1982,7 @@ export default function App() {
   const [comparisonEnabled, setComparisonEnabled] = useState(false);
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [comparisonDragActive, setComparisonDragActive] = useState(false);
   const [showComparisonPasteInput, setShowComparisonPasteInput] = useState(false);
   const [pastedComparisonText, setPastedComparisonText] = useState("");
   const [comparisonStatsTree, setComparisonStatsTree] = useState<"primary" | "comparison">("primary");
@@ -1982,7 +1990,10 @@ export default function App() {
   const [comparisonCamera, setComparisonCamera] = useState<TreeComparisonCameraState | null>(null);
   const [comparisonCameraRestoreState, setComparisonCameraRestoreState] = useState<TreeComparisonCameraState | null>(null);
   const [comparisonCameraRestoreRequest, setComparisonCameraRestoreRequest] = useState(0);
+  const [comparisonFitRequest, setComparisonFitRequest] = useState(0);
   const [showIncompatibleComparisonSplits, setShowIncompatibleComparisonSplits] = useState(false);
+  const [comparisonConnectorSensitivity, setComparisonConnectorSensitivity] = useState(DEFAULT_COMPARISON_CONNECTOR_SENSITIVITY);
+  const [comparisonCenterWidthScale, setComparisonCenterWidthScale] = useState(DEFAULT_COMPARISON_CENTER_WIDTH_SCALE);
   const [dragActive, setDragActive] = useState(false);
   const [exportSvgRequest, setExportSvgRequest] = useState(0);
   const [exportSvgFilename, setExportSvgFilename] = useState("big-tree-view.svg");
@@ -4629,6 +4640,8 @@ export default function App() {
           newick: serializeSubtreeToNewick(comparisonTree, comparisonTree.root),
           camera: comparisonCamera,
           showIncompatibleSplits: showIncompatibleComparisonSplits,
+          connectorSensitivity: comparisonConnectorSensitivity,
+          centerWidthScale: comparisonCenterWidthScale,
         } : undefined,
       };
       const saved = await writeSessionFile(session, writer);
@@ -4640,6 +4653,8 @@ export default function App() {
   }, [
     captureSessionSettings,
     comparisonCamera,
+    comparisonCenterWidthScale,
+    comparisonConnectorSensitivity,
     comparisonEnabled,
     comparisonTree,
     comparisonTreeLabel,
@@ -4912,6 +4927,16 @@ export default function App() {
           setComparisonTreeLabel(session.comparison.label || "comparison tree");
           setComparisonEnabled(session.comparison.enabled);
           setShowIncompatibleComparisonSplits(session.comparison.showIncompatibleSplits === true);
+          setComparisonConnectorSensitivity(
+            typeof session.comparison.connectorSensitivity === "number"
+              ? Math.max(0.05, Math.min(10, session.comparison.connectorSensitivity))
+              : DEFAULT_COMPARISON_CONNECTOR_SENSITIVITY,
+          );
+          setComparisonCenterWidthScale(
+            typeof session.comparison.centerWidthScale === "number"
+              ? Math.max(0.25, Math.min(1, session.comparison.centerWidthScale))
+              : DEFAULT_COMPARISON_CENTER_WIDTH_SCALE,
+          );
           setComparisonCameraRestoreState(session.comparison.camera ?? null);
           if (session.comparison.camera) {
             setComparisonCameraRestoreRequest((current) => current + 1);
@@ -4925,6 +4950,8 @@ export default function App() {
           setComparisonCamera(null);
           setComparisonCameraRestoreState(null);
           setShowIncompatibleComparisonSplits(false);
+          setComparisonConnectorSensitivity(DEFAULT_COMPARISON_CONNECTOR_SENSITIVITY);
+          setComparisonCenterWidthScale(DEFAULT_COMPARISON_CENTER_WIDTH_SCALE);
         }
       } catch (error) {
         pendingSessionRestoreResolverRef.current = null;
@@ -5859,19 +5886,43 @@ export default function App() {
     await loadComparisonTreeText(text, "pasted comparison tree");
   }, [loadComparisonTreeText, pastedComparisonText]);
 
+  const handleComparisonDrop = useCallback(async (event: DragEvent<HTMLDivElement>): Promise<void> => {
+    event.preventDefault();
+    event.stopPropagation();
+    comparisonDragCounterRef.current = 0;
+    setComparisonDragActive(false);
+    if (comparisonLoading) {
+      return;
+    }
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      await loadComparisonTreeText(await file.text(), file.name);
+      return;
+    }
+    const text = event.dataTransfer.getData("text/plain").trim();
+    if (text) {
+      await loadComparisonTreeText(text, "dropped comparison tree text");
+    }
+  }, [comparisonLoading, loadComparisonTreeText]);
+
   const rerootComparisonToMatchPrimary = useCallback((): void => {
     const candidateNode = treeComparisonTopology?.root.bestCandidateNode ?? null;
     if (!comparisonTree || candidateNode === null) {
       return;
     }
-    const rerootedPayload = rerootTreePayload(comparisonTree, candidateNode, "branch");
+    const rerootedPayload = treeComparisonTopology?.root.bestCandidateKind === "node"
+      ? rerootTreePayloadAtNode(comparisonTree, candidateNode)
+      : rerootTreePayload(comparisonTree, candidateNode, "branch");
     if (!rerootedPayload) {
       setComparisonError("The comparison tree could not be rerooted on the selected matching edge.");
       return;
     }
     setComparisonTree(buildTreeModel(rerootedPayload));
+    const rerootSuffix = treeComparisonTopology?.root.exactMatchAvailable
+      ? "(rerooted to match)"
+      : "(rerooted to closest match)";
     setComparisonTreeLabel((current) => (
-      current.includes("(rerooted to match)") ? current : `${current} (rerooted to match)`
+      current.includes(rerootSuffix) ? current : `${current} ${rerootSuffix}`
     ));
     setComparisonError(null);
   }, [comparisonTree, treeComparisonTopology]);
@@ -6950,6 +7001,7 @@ export default function App() {
             <input
               ref={fileInputRef}
               type="file"
+              accept={PRIMARY_TREE_FILE_ACCEPT}
               disabled={loadState.loading || sessionLoading}
               hidden
               onChange={(event) => void onFileChange(event)}
@@ -7203,8 +7255,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "both" ? "active" : ""}
               onClick={() => setZoomAxisMode("both")}
-              disabled={viewMode !== "rectangular" || comparisonEnabled && Boolean(comparisonTree)}
-              title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Comparison mode uses linked vertical zoom." : viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom both time/depth and vertical spread together."}
+              disabled={viewMode !== "rectangular"}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom both time/depth and vertical spread together. In comparison mode, both trees remain linked."}
             >
               Zoom Both
             </button>
@@ -7212,8 +7264,8 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "x" ? "active" : ""}
               onClick={() => setZoomAxisMode("x")}
-              disabled={viewMode !== "rectangular" || comparisonEnabled && Boolean(comparisonTree)}
-              title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Comparison mode uses linked vertical zoom." : viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the horizontal time/depth axis in rectangular view."}
+              disabled={viewMode !== "rectangular"}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the horizontal time/depth axis. In comparison mode, both trees remain linked."}
             >
               Zoom X
             </button>
@@ -7221,14 +7273,25 @@ export default function App() {
               type="button"
               className={zoomAxisMode === "y" ? "active" : ""}
               onClick={() => setZoomAxisMode("y")}
-              disabled={viewMode !== "rectangular" || comparisonEnabled && Boolean(comparisonTree)}
-              title={disabledControlTitle(comparisonEnabled && comparisonTree ? "Comparison mode uses linked vertical zoom." : viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the vertical tip-spacing axis in rectangular view."}
+              disabled={viewMode !== "rectangular"}
+              title={disabledControlTitle(viewMode !== "rectangular" ? "Polar modes always zoom both axes together." : undefined) ?? "Zoom only the vertical tip-spacing axis. In comparison mode, both trees remain linked."}
             >
               Zoom Y
             </button>
           </div>
           <div className="button-row">
-            <button type="button" className="secondary" onClick={() => setFitRequest((value) => value + 1)} title="Reset pan and zoom so the full tree fits in the canvas.">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                if (comparisonEnabled && comparisonTree) {
+                  setComparisonFitRequest((value) => value + 1);
+                } else {
+                  setFitRequest((value) => value + 1);
+                }
+              }}
+              title="Reset pan and zoom so the full tree fits in the canvas."
+            >
               Fit View
             </button>
           </div>
@@ -8991,10 +9054,42 @@ export default function App() {
               <input
                 ref={comparisonFileInputRef}
                 type="file"
+                accept={TREE_FILE_ACCEPT}
                 hidden
                 onChange={(event) => void onComparisonFileChange(event)}
               />
             </div>
+            {viewTree ? (
+              <div
+                className={`comparison-drop-zone${comparisonDragActive ? " drag-active" : ""}`}
+                aria-label="Drop comparison tree"
+                aria-busy={comparisonLoading}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  comparisonDragCounterRef.current += 1;
+                  setComparisonDragActive(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = "copy";
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  comparisonDragCounterRef.current = Math.max(0, comparisonDragCounterRef.current - 1);
+                  if (comparisonDragCounterRef.current === 0) {
+                    setComparisonDragActive(false);
+                  }
+                }}
+                onDrop={(event) => void handleComparisonDrop(event)}
+              >
+                {comparisonLoading
+                  ? "Loading comparison tree..."
+                  : "Drop a comparison tree file or Newick / NEXUS text here"}
+              </div>
+            ) : null}
             {showComparisonPasteInput ? (
               <div className="paste-tree">
                 <textarea
@@ -9048,15 +9143,33 @@ export default function App() {
                     Remove
                   </button>
                 </div>
-                {treeComparisonTopology?.root.available && !treeComparisonTopology.root.rootsMatch ? (
+                {treeComparisonTopology?.root.available && (
+                  treeComparisonTopology.root.originalRootKind === "node"
+                  || !treeComparisonTopology.root.rootsMatch
+                ) ? (
                   <div className="comparison-root-warning" role="alert">
-                    <strong>The trees do not appear to have the same root.</strong>
-                    <p>
-                      {treeComparisonTopology.root.exactMatchAvailable
-                        ? `The comparison tree contains an edge that exactly matches the original tree's two root partitions across ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips.`
-                        : `No comparison-tree edge exactly matches the original root partition. The closest edge places ${treeComparisonTopology.root.bestMismatchCount?.toLocaleString() ?? "an unknown number of"} of ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips on a different root side.`}
-                    </p>
-                    {treeComparisonTopology.root.canImprove ? (
+                    <strong>
+                      {treeComparisonTopology.root.originalRootKind === "node"
+                        ? "The reference tree appears to be unrooted or has a root-level polytomy."
+                        : "The trees do not appear to have the same root."}
+                    </strong>
+                    {treeComparisonTopology.root.originalRootKind === "node" ? (
+                      <p>
+                        Its root contains {treeComparisonTopology.root.leftRootGroupSizes?.length ?? "multiple"} shared-tip groups rather than two daughter groups. Root-dependent ordering and comparison statistics may not be biologically meaningful. Root the reference tree using an appropriate outgroup before interpreting these results.
+                      </p>
+                    ) : null}
+                    {!treeComparisonTopology.root.rootsMatch ? (
+                      <p>
+                        {treeComparisonTopology.root.exactMatchAvailable
+                          ? treeComparisonTopology.root.originalRootKind === "node"
+                            ? `The comparison tree contains a node that exactly matches those root groups across ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips.`
+                            : `The comparison tree contains an edge that exactly matches the original tree's two root partitions across ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips.`
+                          : treeComparisonTopology.root.originalRootKind === "node"
+                            ? `No comparison-tree node exactly matches the original root groups. At the closest node, ${treeComparisonTopology.root.bestMismatchCount?.toLocaleString() ?? "an unknown number of"} of ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips belong to a different root group.`
+                            : `No comparison-tree edge exactly matches the original root partition. The closest edge places ${treeComparisonTopology.root.bestMismatchCount?.toLocaleString() ?? "an unknown number of"} of ${treeComparisonTopology.root.sharedTipCount.toLocaleString()} shared tips on a different root side.`}
+                      </p>
+                    ) : null}
+                    {!treeComparisonTopology.root.rootsMatch && treeComparisonTopology.root.canImprove ? (
                       <button type="button" className="secondary" onClick={rerootComparisonToMatchPrimary}>
                         {treeComparisonTopology.root.exactMatchAvailable
                           ? "Re-root to Match Original"
@@ -9067,7 +9180,11 @@ export default function App() {
                 ) : null}
                 {treeComparisonTopology && !treeComparisonTopology.root.available ? (
                   <p className="status-line">
-                    Root comparison is unavailable because the shared tips do not resolve into two daughter groups at the original tree's root.
+                    {treeComparisonTopology.root.unavailableReason === "too-few-shared-tips"
+                      ? "Root comparison requires at least three uniquely shared tips."
+                      : treeComparisonTopology.root.unavailableReason === "high-degree-root"
+                        ? "Root comparison is unavailable because the original tree has too many shared-tip groups directly at its root."
+                        : "Root comparison is unavailable because the shared tips do not resolve into distinct groups at the original tree's root."}
                   </p>
                 ) : null}
                 {treeComparisonTopology ? (
@@ -9085,6 +9202,32 @@ export default function App() {
                     </span>
                   </label>
                 ) : null}
+                <div className="comparison-display-controls">
+                  <label>
+                    Connector sensitivity
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={10}
+                      step={0.05}
+                      value={comparisonConnectorSensitivity}
+                      onChange={(event) => setComparisonConnectorSensitivity(Number(event.target.value))}
+                    />
+                    <span className="figure-style-value">x{comparisonConnectorSensitivity.toFixed(2)}</span>
+                  </label>
+                  <label>
+                    Center zone width
+                    <input
+                      type="range"
+                      min={0.25}
+                      max={1}
+                      step={0.05}
+                      value={comparisonCenterWidthScale}
+                      onChange={(event) => setComparisonCenterWidthScale(Number(event.target.value))}
+                    />
+                    <span className="figure-style-value">x{comparisonCenterWidthScale.toFixed(2)}</span>
+                  </label>
+                </div>
               </>
             ) : null}
             {comparisonEnabled && (metadataEnabled || metadataLabelsEnabled || metadataMarkersEnabled || metadataPiesEnabled) ? (
@@ -9322,6 +9465,9 @@ export default function App() {
             comparisonLabel={comparisonTreeLabel}
             incompatiblePrimaryNodes={treeComparisonTopology?.incompatiblePrimaryNodes ?? new Set<number>()}
             showIncompatibleSplits={showIncompatibleComparisonSplits}
+            connectorSensitivity={comparisonConnectorSensitivity}
+            centerWidthScale={comparisonCenterWidthScale}
+            zoomAxisMode={zoomAxisMode}
             showTipLabels={showTipLabels}
             branchThicknessScale={branchThicknessScale}
             figureStyles={figureStyles}
@@ -9337,7 +9483,7 @@ export default function App() {
             taxonomyRankDisplayModes={taxonomyRankDisplayModes}
             taxonomyRankVisibility={taxonomyRankVisibility}
             useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
-            fitRequest={fitRequest}
+            fitRequest={comparisonFitRequest}
             searchResults={visibleSearchResults}
             searchZoomLocked={searchZoomLocked}
             searchFocusRequest={focusNodeRequest}

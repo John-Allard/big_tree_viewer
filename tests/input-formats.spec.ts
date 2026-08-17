@@ -102,7 +102,7 @@ end;`);
 test("tree files are selected by content and BEAST NEXUS annotations are retained", async ({ page }) => {
   await waitForViewer(page);
   const treeInput = page.locator('input[type="file"]').first();
-  await expect(treeInput).not.toHaveAttribute("accept", /.+/);
+  await expect(treeInput).toHaveAttribute("accept", /\.mcc/);
 
   await treeInput.setInputFiles({
     name: "analysis.mcc",

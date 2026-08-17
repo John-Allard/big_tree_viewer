@@ -47,6 +47,85 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
     window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().maximumDiscordance ?? 0,
   ) > 0);
 
+  const hoverPoint = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().primaryBranchHoverPoint as { x: number; y: number } | undefined
+  ));
+  expect(hoverPoint).toBeTruthy();
+  await comparisonCanvas.hover({ position: hoverPoint });
+  const hoverTooltip = page.locator(".tree-comparison-shell .hover-tooltip");
+  await expect(hoverTooltip).toBeVisible();
+  await expect(hoverTooltip).toContainText("A");
+  await expect(hoverTooltip).toContainText("Branch length");
+
+  await page.getByRole("button", { name: "Zoom X" }).click();
+  await comparisonCanvas.hover({ position: { x: 180, y: 240 } });
+  await page.mouse.wheel(0, -500);
+  await page.waitForFunction(() => {
+    const camera = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { zoom?: number; zoomX?: number } | undefined;
+    return Number(camera?.zoomX ?? 0) > 1 && Number(camera?.zoom ?? 0) === 1;
+  });
+  const beforeHorizontalPan = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  const canvasBox = await comparisonCanvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  await page.mouse.move((canvasBox?.x ?? 0) + 160, (canvasBox?.y ?? 0) + 240);
+  await page.mouse.down();
+  await page.mouse.move((canvasBox?.x ?? 0) + 300, (canvasBox?.y ?? 0) + 240, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForFunction((startingPan) => Number(
+    (window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { panX?: number } | undefined)?.panX ?? 0,
+  ) > Number(startingPan), (beforeHorizontalPan?.camera as { panX?: number } | undefined)?.panX ?? 0);
+  const afterHorizontalPan = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  const primaryMovement = Number(afterHorizontalPan?.primaryTipX) - Number(beforeHorizontalPan?.primaryTipX);
+  const comparisonMovement = Number(afterHorizontalPan?.comparisonTipX) - Number(beforeHorizontalPan?.comparisonTipX);
+  const connectorMovement = Number(afterHorizontalPan?.connectorCenterX) - Number(beforeHorizontalPan?.connectorCenterX);
+  expect(primaryMovement).toBeGreaterThan(100);
+  expect(comparisonMovement).toBeCloseTo(primaryMovement, 5);
+  expect(connectorMovement).toBeCloseTo(primaryMovement, 5);
+  expect(
+    Number(afterHorizontalPan?.comparisonTipX) - Number(afterHorizontalPan?.primaryTipX),
+  ).toBeCloseTo(
+    Number(beforeHorizontalPan?.comparisonTipX) - Number(beforeHorizontalPan?.primaryTipX),
+    5,
+  );
+  await page.mouse.wheel(0, 700);
+  await page.waitForFunction(() => {
+    const camera = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { panX?: number; zoomX?: number } | undefined;
+    return Number(camera?.zoomX ?? 0) === 1 && Number(camera?.panX ?? Number.NaN) === 0;
+  });
+  const beforeFitScalePan = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  await page.mouse.move((canvasBox?.x ?? 0) + 500, (canvasBox?.y ?? 0) + 240);
+  await page.mouse.down();
+  await page.mouse.move((canvasBox?.x ?? 0) + 360, (canvasBox?.y ?? 0) + 240, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForFunction(() => Number(
+    (window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { panX?: number } | undefined)?.panX ?? 0,
+  ) < -100);
+  const afterFitScalePan = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  const fitPrimaryMovement = Number(afterFitScalePan?.primaryTipX) - Number(beforeFitScalePan?.primaryTipX);
+  const fitComparisonMovement = Number(afterFitScalePan?.comparisonTipX) - Number(beforeFitScalePan?.comparisonTipX);
+  expect(fitPrimaryMovement).toBeLessThan(-100);
+  expect(fitComparisonMovement).toBeCloseTo(fitPrimaryMovement, 5);
+  await page.getByRole("button", { name: "Fit View" }).click();
+  await page.waitForFunction(() => {
+    const camera = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { panX?: number; zoom?: number; zoomX?: number } | undefined;
+    return Number(camera?.zoomX ?? 0) === 1
+      && Number(camera?.zoom ?? 0) === 1
+      && Number(camera?.panX ?? -1) === 0;
+  });
+
+  const defaultCenterWidth = Number((await page.evaluate(
+    () => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().centerWidth,
+  )) ?? 0);
+  await expect(panel.getByLabel("Center zone width")).toHaveValue("0.5");
+  await expect(panel.getByLabel("Center zone width")).toHaveAttribute("max", "1");
+  await panel.getByLabel("Center zone width").fill("0.7");
+  await panel.getByLabel("Connector sensitivity").fill("2");
+  await page.waitForFunction(({ centerWidth, sensitivity }) => {
+    const state = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState();
+    return Number(state?.centerWidth ?? 0) > centerWidth
+      && Number(state?.connectorSensitivity ?? 0) === sensitivity;
+  }, { centerWidth: defaultCenterWidth, sensitivity: 2 });
+
   const nonWhitePixels = await comparisonCanvas.evaluate((element) => {
     const canvas = element as HTMLCanvasElement;
     const context = canvas.getContext("2d");
@@ -71,6 +150,57 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   expect(restoredCamera).toEqual(originalCamera);
 });
 
+test("comparison file picker filters tree formats and loads an uncommon tree extension", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("((A:1,B:1):1,(C:1,D:1):1)Primary;");
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  const input = panel.locator('input[type="file"]');
+  await expect(input).toHaveAttribute("accept", /\.mcc/);
+  await input.setInputFiles({
+    name: "comparison.mcc",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from("((A:1,C:1):1,(B:1,D:1):1)Comparison;"),
+  });
+
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+  await expect(panel).toContainText("comparison.mcc: 4 tips");
+});
+
+test("comparison tree can be dropped without opening the native file picker", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("((A:1,B:1):1,(C:1,D:1):1)Primary;");
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const dropZone = page.getByLabel("Drop comparison tree");
+  await dropZone.evaluate((element) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File(
+      ["((A:1,C:1):1,(B:1,D:1):1)DroppedComparison;"],
+      "dropped-comparison.nwk",
+      { type: "text/plain" },
+    ));
+    element.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    }));
+  });
+
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await expect(panel).toContainText("dropped-comparison.nwk: 4 tips");
+});
+
 test("comparison tree and linked camera survive a session round trip", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
@@ -88,6 +218,8 @@ test("comparison tree and linked camera survive a session round trip", async ({ 
   await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill("((A:1,C:1):1,(B:1,D:1):1)Comparison;");
   await panel.getByRole("button", { name: "Load Comparison" }).click();
   await panel.getByRole("checkbox", { name: /Show red X marks/ }).check();
+  await panel.getByLabel("Connector sensitivity").fill("2.5");
+  await panel.getByLabel("Center zone width").fill("0.75");
   const canvas = page.getByLabel("Tree comparison view");
   await canvas.hover({ position: { x: 500, y: 300 } });
   await page.mouse.wheel(0, -600);
@@ -106,6 +238,8 @@ test("comparison tree and linked camera survive a session round trip", async ({ 
   expect(session.comparison?.newick).toContain("Comparison");
   expect(session.comparison?.camera?.zoom).toBeGreaterThan(1.5);
   expect(session.comparison?.showIncompatibleSplits).toBe(true);
+  expect(session.comparison?.connectorSensitivity).toBe(2.5);
+  expect(session.comparison?.centerWidthScale).toBe(0.75);
 
   const savedBytes = [...await readFile(savedPath as string)];
   await page.goto("/");
@@ -129,6 +263,8 @@ test("comparison tree and linked camera survive a session round trip", async ({ 
   );
   await expect(page.getByLabel("Tree comparison view")).toBeVisible();
   await expect(panel.getByRole("checkbox", { name: /Show red X marks/ })).toBeChecked();
+  await expect(panel.getByLabel("Connector sensitivity")).toHaveValue("2.5");
+  await expect(panel.getByLabel("Center zone width")).toHaveValue("0.75");
   await page.waitForFunction(() => Number(
     (window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().camera as { zoom?: number } | undefined)?.zoom ?? 0,
   ) > 1.5);
@@ -227,10 +363,22 @@ test("bundled example comparison fixture matches every example-tree tip", async 
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().activeRankCount === 2);
   const initialRibbonState = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
   expect(Number(initialRibbonState?.maximumTaxonomyLabelOverflow)).toBeLessThanOrEqual(0);
+  const taxonomyHoverPoint = initialRibbonState?.taxonomyHoverPoint as { x: number; y: number } | undefined;
+  expect(taxonomyHoverPoint).toBeTruthy();
+  await page.getByLabel("Tree comparison view").hover({ position: taxonomyHoverPoint });
+  const taxonomyTooltip = page.locator(".tree-comparison-shell .hover-tooltip");
+  await expect(taxonomyTooltip).toBeVisible();
+  await expect(taxonomyTooltip).toContainText("Rank:");
+  await expect(taxonomyTooltip).toContainText("Descendant tips:");
   await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 2));
-  await page.waitForFunction((initialWidth) => Number(
-    window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().ribbonsWidth ?? 0,
-  ) > Number(initialWidth), initialRibbonState?.ribbonsWidth);
+  await page.waitForFunction(({ initialFontSize, initialWidth }) => {
+    const state = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState();
+    return Number(state?.ribbonsWidth ?? 0) > Number(initialWidth)
+      && Number(state?.maximumTaxonomyLabelFontSize ?? 0) > Number(initialFontSize);
+  }, {
+    initialFontSize: initialRibbonState?.maximumTaxonomyLabelFontSize,
+    initialWidth: initialRibbonState?.ribbonsWidth,
+  });
 });
 
 test("warns about a different root and reroots the comparison tree on an exact matching edge", async ({ page }) => {
@@ -260,6 +408,29 @@ test("warns about a different root and reroots the comparison tree on an exact m
   await expect(panel.getByLabel("Comparison statistics").locator("dd").filter({ hasText: "0.0000" })).toHaveCount(1);
 });
 
+test("matches and reroots a trifurcating original root at a comparison-tree node", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("((A:1,B:1):1,(C:1,D:1):1,(E:1,F:1):1)Primary;");
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill("(A:1,(B:1,((C:1,D:1):1,(E:1,F:1):1):1):1)Comparison;");
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+
+  const warning = panel.locator(".comparison-root-warning");
+  await expect(warning).toContainText("reference tree appears to be unrooted or has a root-level polytomy");
+  await expect(warning).toContainText("contains a node that exactly matches");
+  await warning.getByRole("button", { name: "Re-root to Match Original" }).click();
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText("may not be biologically meaningful");
+  await expect(warning.getByRole("button", { name: "Re-root to Match Original" })).toBeHidden();
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+});
+
 test("marks left-tree branches whose unrooted splits are absent from the comparison tree", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
@@ -285,4 +456,40 @@ test("marks left-tree branches whose unrooted splits are absent from the compari
   await page.waitForFunction(() => Number(
     window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().incompatibleSplitMarkerCount ?? 0,
   ) > 0);
+});
+
+test("renders every incompatible-split marker, including dense conflicts", async ({ page }) => {
+  const labels = Array.from({ length: 256 }, (_, index) => `T${index.toString().padStart(3, "0")}`);
+  const buildBalanced = (names: string[]): string => {
+    if (names.length === 1) return `${names[0]}:1`;
+    const midpoint = Math.floor(names.length / 2);
+    return `(${buildBalanced(names.slice(0, midpoint))},${buildBalanced(names.slice(midpoint))}):1`;
+  };
+  const reverseBits = (value: number): number => {
+    let result = 0;
+    for (let bit = 0; bit < 8; bit += 1) result = (result << 1) | ((value >> bit) & 1);
+    return result;
+  };
+  const comparisonLabels = labels.map((_, index) => labels[reverseBits(index)]);
+  const primaryNewick = `${buildBalanced(labels).slice(0, -2)}Primary;`;
+  const comparisonNewick = `${buildBalanced(comparisonLabels).slice(0, -2)}Comparison;`;
+
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(primaryNewick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill(comparisonNewick);
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+  await panel.getByRole("checkbox", { name: /Show red X marks/ }).check();
+
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState();
+    return Number(state?.incompatibleSplitCandidateCount ?? 0) > 0
+      && Number(state?.incompatibleSplitCandidateCount ?? 0) === Number(state?.incompatibleSplitMarkerCount ?? -1);
+  });
 });

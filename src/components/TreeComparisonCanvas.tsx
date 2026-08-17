@@ -3,7 +3,7 @@ import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyCol
 import { fontFamilyCss, type FigureStyleSettings } from "../lib/figureStyles";
 import { buildComparisonLayout, normalizeComparisonTipName } from "../lib/treeComparison";
 import { TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
-import type { LayoutOrder, TreeModel } from "../types/tree";
+import type { LayoutOrder, TreeModel, ZoomAxisMode } from "../types/tree";
 import type { TaxonomyRankDisplayMode } from "./treeCanvasTypes";
 import { buildTaxonomyColorMap, taxonomyVisibleRanksForZoom } from "./TreeCanvas";
 
@@ -15,6 +15,9 @@ interface TreeComparisonCanvasProps {
   comparisonLabel: string;
   incompatiblePrimaryNodes: Set<number>;
   showIncompatibleSplits: boolean;
+  connectorSensitivity: number;
+  centerWidthScale: number;
+  zoomAxisMode: ZoomAxisMode;
   showTipLabels: boolean;
   branchThicknessScale: number;
   figureStyles: FigureStyleSettings;
@@ -48,11 +51,76 @@ export interface ComparisonSearchResult {
 
 export interface TreeComparisonCameraState {
   zoom: number;
+  zoomX: number;
+  panX: number;
   panY: number;
 }
 
 const TOP_MARGIN = 24;
 const BOTTOM_MARGIN = 24;
+
+function comparisonCenterWidth(viewportWidth: number, scale: number): number {
+  const minimum = viewportWidth * 0.1;
+  const maximum = Math.max(minimum, Math.min(viewportWidth * 0.4, viewportWidth - 96));
+  return Math.max(minimum, Math.min(maximum, viewportWidth * 0.4 * Math.max(0.25, Math.min(1, scale))));
+}
+
+interface ComparisonTaxonomyHoverHitbox {
+  xStart: number;
+  xEnd: number;
+  yStart: number;
+  yEnd: number;
+  rank: TaxonomyRank;
+  label: string;
+  firstNode: number;
+  lastNode: number;
+  descendantTipCount: number;
+}
+
+interface ComparisonHoverGeometry {
+  primaryX: (node: number) => number;
+  primaryY: (node: number) => number;
+  primaryTreeStartX: number;
+  primaryTreeEndX: number;
+  taxonomyHitboxes: ComparisonTaxonomyHoverHitbox[];
+}
+
+interface ComparisonHoverInfo {
+  node: number;
+  name: string;
+  branchLength: number;
+  parentAge: number | null;
+  childAge: number | null;
+  descendantTipCount: number;
+  screenX: number;
+  screenY: number;
+  kind: "node" | "taxonomy";
+  taxonomyRank?: TaxonomyRank;
+  mrcaAge?: number | null;
+}
+
+function pointToSegmentDistance(
+  pointX: number,
+  pointY: number,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): number {
+  const deltaX = endX - startX;
+  const deltaY = endY - startY;
+  const lengthSquared = (deltaX * deltaX) + (deltaY * deltaY);
+  if (lengthSquared <= 1e-12) {
+    return Math.hypot(pointX - startX, pointY - startY);
+  }
+  const projection = Math.max(0, Math.min(1,
+    (((pointX - startX) * deltaX) + ((pointY - startY) * deltaY)) / lengthSquared,
+  ));
+  return Math.hypot(
+    pointX - (startX + (projection * deltaX)),
+    pointY - (startY + (projection * deltaY)),
+  );
+}
 
 type TaxonomyTip = TaxonomyMapPayload["tipRanks"][number];
 
@@ -134,8 +202,12 @@ function nodeColorsFromTaxonomy(
   return colors;
 }
 
-function discordanceColor(discordance: number, opacityScale = 1): string {
-  const strength = Math.min(1, Math.max(0, discordance / 0.28));
+function discordanceStrength(discordance: number, sensitivity: number): number {
+  return Math.min(1, Math.max(0, (discordance * sensitivity) / 0.28));
+}
+
+function discordanceColor(discordance: number, opacityScale: number, sensitivity: number): string {
+  const strength = discordanceStrength(discordance, sensitivity);
   const red = Math.round(100 + ((239 - 100) * strength));
   const green = Math.round(116 + ((68 - 116) * strength));
   const blue = Math.round(139 + ((68 - 139) * strength));
@@ -206,6 +278,9 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     comparisonLabel,
     incompatiblePrimaryNodes,
     showIncompatibleSplits,
+    connectorSensitivity,
+    centerWidthScale,
+    zoomAxisMode,
     showTipLabels,
     branchThicknessScale,
     figureStyles,
@@ -232,9 +307,19 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
+  const hoverGeometryRef = useRef<ComparisonHoverGeometry | null>(null);
+  const hoverTooltipRef = useRef<HTMLDivElement | null>(null);
+  const hoverTooltipLabelRef = useRef<HTMLDivElement | null>(null);
+  const hoverTooltipBodyRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 1, height: 1 });
-  const [camera, setCamera] = useState<TreeComparisonCameraState>({ zoom: 1, panY: 0 });
-  const dragRef = useRef<{ pointerId: number; startY: number; startPanY: number } | null>(null);
+  const [camera, setCamera] = useState<TreeComparisonCameraState>({ zoom: 1, zoomX: 1, panX: 0, panY: 0 });
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startPanX: number;
+    startPanY: number;
+  } | null>(null);
 
   const comparison = useMemo(
     () => buildComparisonLayout(primaryTree, comparisonTree, order),
@@ -356,14 +441,16 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     observer.observe(wrapper);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => setCamera({ zoom: 1, panY: 0 }), [comparisonTree, primaryTree]);
-  useEffect(() => setCamera({ zoom: 1, panY: 0 }), [fitRequest]);
+  useEffect(() => setCamera({ zoom: 1, zoomX: 1, panX: 0, panY: 0 }), [comparisonTree, primaryTree]);
+  useEffect(() => setCamera({ zoom: 1, zoomX: 1, panX: 0, panY: 0 }), [fitRequest]);
   useEffect(() => {
     if (cameraRestoreRequest <= 0 || !cameraRestoreState) {
       return;
     }
     setCamera({
       zoom: Math.max(1, Math.min(2_000, cameraRestoreState.zoom)),
+      zoomX: Math.max(1, Math.min(2_000, cameraRestoreState.zoomX ?? 1)),
+      panX: Number.isFinite(cameraRestoreState.panX) ? cameraRestoreState.panX : 0,
       panY: Number.isFinite(cameraRestoreState.panY) ? cameraRestoreState.panY : 0,
     });
   }, [cameraRestoreRequest, cameraRestoreState]);
@@ -395,7 +482,11 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const center = (minimum + maximum) / 2;
     const panY = -((center - 0.5) * usable * zoom);
     const maximumPan = Math.max(0, ((zoom - 1) * usable) / 2 + usable * 0.46);
-    setCamera({ zoom, panY: Math.max(-maximumPan, Math.min(maximumPan, panY)) });
+    setCamera((current) => ({
+      ...current,
+      zoom,
+      panY: Math.max(-maximumPan, Math.min(maximumPan, panY)),
+    }));
   }, [highlightedTips.primary, primaryDenominator, primaryLeafPosition, searchFocusRequest, searchResults.length, searchZoomLocked, size.height]);
 
   useEffect(() => {
@@ -430,22 +521,34 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       rankOffsets.push(ribbonsWidth);
       ribbonsWidth += width + (index < rankWidths.length - 1 ? ribbonGap : 0);
     });
-    const primaryTipX = size.width * 0.3;
+    const effectiveCenterWidthScale = Math.max(0.25, Math.min(1, centerWidthScale));
+    const centerWidth = comparisonCenterWidth(size.width, effectiveCenterWidthScale);
+    const fitPrimaryTipX = (size.width - centerWidth) / 2;
+    const fitComparisonTipX = size.width - fitPrimaryTipX;
+    const viewportCenterX = size.width / 2;
+    const transformX = (x: number) => viewportCenterX + ((x - viewportCenterX) * camera.zoomX) + camera.panX;
+    const primaryTipX = transformX(fitPrimaryTipX);
     const primaryRibbonEndX = primaryTipX + ribbonsWidth;
-    const comparisonTipX = size.width * 0.7;
+    const comparisonTipX = transformX(fitComparisonTipX);
     const primaryLabelStartX = primaryRibbonEndX + 4;
-    const primaryLabelEndX = size.width * 0.465;
-    const comparisonLabelStartX = size.width * 0.535;
+    const connectorCenterX = transformX(viewportCenterX);
+    const connectorCoreWidth = Math.max(8, centerWidth * 0.175 * camera.zoomX);
+    const primaryLabelEndX = connectorCenterX - (connectorCoreWidth / 2);
+    const comparisonLabelStartX = connectorCenterX + (connectorCoreWidth / 2);
     const comparisonLabelEndX = comparisonTipX - 4;
-    const primaryRootX = 24;
-    const comparisonRootX = size.width - 24;
+    const fitPrimaryRootX = 24;
+    const fitComparisonRootX = size.width - 24;
+    const primaryRootX = transformX(fitPrimaryRootX);
+    const comparisonRootX = transformX(fitComparisonRootX);
     const branchWidth = Math.max(0.45, branchThicknessScale);
     const primaryDepthSpan = Math.max(1e-12, primaryTree.maxDepth - primaryTree.buffers.depth[primaryTree.root]);
     const comparisonDepthSpan = Math.max(1e-12, comparisonTree.maxDepth - comparisonTree.buffers.depth[comparisonTree.root]);
-    const primaryX = (node: number) => primaryRootX
-      + ((primaryTree.buffers.depth[node] - primaryTree.buffers.depth[primaryTree.root]) / primaryDepthSpan) * (primaryTipX - primaryRootX);
-    const comparisonX = (node: number) => comparisonRootX
-      - ((comparisonTree.buffers.depth[node] - comparisonTree.buffers.depth[comparisonTree.root]) / comparisonDepthSpan) * (comparisonRootX - comparisonTipX);
+    const fitPrimaryX = (node: number) => fitPrimaryRootX
+      + ((primaryTree.buffers.depth[node] - primaryTree.buffers.depth[primaryTree.root]) / primaryDepthSpan) * (fitPrimaryTipX - fitPrimaryRootX);
+    const fitComparisonX = (node: number) => fitComparisonRootX
+      - ((comparisonTree.buffers.depth[node] - comparisonTree.buffers.depth[comparisonTree.root]) / comparisonDepthSpan) * (fitComparisonRootX - fitComparisonTipX);
+    const primaryX = (node: number) => transformX(fitPrimaryX(node));
+    const comparisonX = (node: number) => transformX(fitComparisonX(node));
     const primaryY = (node: number) => screenY(primaryLayout.center[node] / primaryDenominator);
     const secondaryY = (node: number) => screenY(comparison.comparisonCenter[node] / comparisonDenominator);
     const visible = (y: number) => y >= -8 && y <= size.height + 8;
@@ -490,27 +593,34 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     drawTree(primaryTree, primaryX, primaryY, taxonomyBranchColoringEnabled ? primaryNodeColors : []);
     drawTree(comparisonTree, comparisonX, secondaryY, taxonomyBranchColoringEnabled ? comparisonNodeColors : []);
 
+    let renderedIncompatibleSplitMarkerCount = 0;
     if (showIncompatibleSplits && incompatiblePrimaryNodes.size > 0) {
       context.save();
       context.strokeStyle = "rgba(220, 38, 38, 0.92)";
       context.lineWidth = 1.6;
       const markerRadius = 3.6;
-      incompatiblePrimaryNodes.forEach((node) => {
+      const candidates = [...incompatiblePrimaryNodes].flatMap((node) => {
         const parent = primaryTree.buffers.parent[node];
-        if (parent < 0) return;
+        if (parent < 0) return [];
         const y = primaryY(node);
-        if (!visible(y)) return;
+        if (!visible(y)) return [];
         const x = (primaryX(parent) + primaryX(node)) / 2;
+        if (x < 0 || x > size.width) return [];
+        return [{ x, y }];
+      });
+      for (const { x, y } of candidates) {
         context.beginPath();
         context.moveTo(x - markerRadius, y - markerRadius);
         context.lineTo(x + markerRadius, y + markerRadius);
         context.moveTo(x + markerRadius, y - markerRadius);
         context.lineTo(x - markerRadius, y + markerRadius);
         context.stroke();
-      });
+        renderedIncompatibleSplitMarkerCount += 1;
+      }
       context.restore();
     }
 
+    const taxonomyHoverHitboxes: ComparisonTaxonomyHoverHitbox[] = [];
     if (taxonomyBlocks) {
       activeRanks.forEach((rank, rankIndex) => {
         const rankWidth = rankWidths[rankIndex];
@@ -531,6 +641,17 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
             }
             const height = Math.max(1, bottom - top);
             context.fillRect(x, top, rankWidth, height);
+            taxonomyHoverHitboxes.push({
+              xStart: x,
+              xEnd: x + rankWidth,
+              yStart: top,
+              yEnd: bottom,
+              rank,
+              label: block.label,
+              firstNode: segment.firstNode,
+              lastNode: segment.lastNode,
+              descendantTipCount: Math.max(1, segment.endIndex - segment.startIndex + 1),
+            });
             if (height > 28 && rankWidth >= 5) {
               context.save();
               context.beginPath();
@@ -540,7 +661,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
               context.rotate(Math.PI / 2);
               context.fillStyle = "#111827";
               const labelFontSize = Math.max(3, Math.min(
-                10 * figureStyles.taxonomy.sizeScale,
+                32 * figureStyles.taxonomy.sizeScale,
                 rankWidth - 2,
               ));
               context.font = `${labelFontSize}px ${fontFamilyCss(figureStyles.taxonomy.fontFamily)}`;
@@ -554,34 +675,52 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       });
     }
 
+    hoverGeometryRef.current = {
+      primaryX,
+      primaryY,
+      primaryTreeStartX: primaryRootX,
+      primaryTreeEndX: primaryTipX,
+      taxonomyHitboxes: taxonomyHoverHitboxes,
+    };
+
     const maxLeafCount = Math.max(comparison.primaryLeaves.length, comparison.comparisonLeaves.length);
     const pixelsPerTip = ((size.height - TOP_MARGIN - BOTTOM_MARGIN) * camera.zoom) / Math.max(1, maxLeafCount - 1);
-    const labelsVisible = showTipLabels && pixelsPerTip >= 9;
+    const connectorEndpointsVisible = primaryRibbonEndX + 6 < comparisonTipX;
+    const labelsVisible = showTipLabels
+      && pixelsPerTip >= 9
+      && primaryLabelEndX - primaryLabelStartX >= 8
+      && comparisonLabelEndX - comparisonLabelStartX >= 8;
     const tipFontSize = Math.max(9, Math.min(15, 11 * figureStyles.tip.sizeScale));
     context.font = `${figureStyles.tip.italic ? "italic " : ""}${figureStyles.tip.bold ? "700 " : ""}${tipFontSize}px ${fontFamilyCss(figureStyles.tip.fontFamily)}`;
     context.textBaseline = "middle";
 
     const connectorStartX = labelsVisible ? primaryLabelEndX + 3 : primaryRibbonEndX + 3;
     const connectorEndX = labelsVisible ? comparisonLabelStartX - 3 : comparisonTipX - 3;
+    const firstPrimaryLeaf = comparison.primaryLeaves[0] ?? -1;
+    const firstPrimaryLeafParent = firstPrimaryLeaf >= 0 ? primaryTree.buffers.parent[firstPrimaryLeaf] : -1;
     renderDebugRef.current = {
       labelsVisible,
+      primaryRootX,
       primaryTipX,
       primaryRibbonEndX,
       primaryLabelStartX,
       primaryLabelEndX,
       connectorStartX,
       connectorEndX,
+      connectorEndpointsVisible,
       comparisonLabelStartX,
       comparisonLabelEndX,
       comparisonTipX,
+      comparisonRootX,
+      connectorCenterX,
       activeRankCount: activeRanks.length,
       ribbonWidth,
       ribbonsWidth,
       maximumTaxonomyLabelFontSize: activeRanks.length > 0
-        ? Math.max(...rankWidths.map((width) => Math.max(3, Math.min(10 * figureStyles.taxonomy.sizeScale, width - 2))))
+        ? Math.max(...rankWidths.map((width) => Math.max(3, Math.min(32 * figureStyles.taxonomy.sizeScale, width - 2))))
         : 0,
       maximumTaxonomyLabelOverflow: activeRanks.length > 0
-        ? Math.max(...rankWidths.map((width) => Math.max(3, Math.min(10 * figureStyles.taxonomy.sizeScale, width - 2)) - width))
+        ? Math.max(...rankWidths.map((width) => Math.max(3, Math.min(32 * figureStyles.taxonomy.sizeScale, width - 2)) - width))
         : 0,
       taxonomyColorsAvailable: taxonomyColors !== null,
       maximumDiscordance: comparison.commonPairs.reduce(
@@ -591,7 +730,22 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       sharedTipCount: comparison.commonPairs.length,
       primaryOnlyCount: comparison.primaryOnlyCount,
       comparisonOnlyCount: comparison.comparisonOnlyCount,
-      incompatibleSplitMarkerCount: showIncompatibleSplits ? incompatiblePrimaryNodes.size : 0,
+      incompatibleSplitMarkerCount: renderedIncompatibleSplitMarkerCount,
+      incompatibleSplitCandidateCount: showIncompatibleSplits ? incompatiblePrimaryNodes.size : 0,
+      centerWidth,
+      centerWidthScale: effectiveCenterWidthScale,
+      connectorSensitivity,
+      primaryBranchHoverPoint: firstPrimaryLeafParent >= 0 ? {
+        x: (primaryX(firstPrimaryLeafParent) + primaryX(firstPrimaryLeaf)) / 2,
+        y: primaryY(firstPrimaryLeaf),
+      } : null,
+      taxonomyHoverPoint: taxonomyHoverHitboxes.length > 0 ? {
+        x: (taxonomyHoverHitboxes[0].xStart + taxonomyHoverHitboxes[0].xEnd) / 2,
+        y: (
+          Math.max(0, taxonomyHoverHitboxes[0].yStart)
+          + Math.min(size.height, taxonomyHoverHitboxes[0].yEnd)
+        ) / 2,
+      } : null,
     };
     const orderedPairs = comparison.commonPairs
       .filter((pair) => {
@@ -601,17 +755,18 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       })
       .sort((left, right) => left.discordance - right.discordance);
     const connectorOpacityScale = Math.min(1, Math.sqrt(50 / Math.max(1, orderedPairs.length)));
-    for (const pair of orderedPairs) {
+    for (const pair of connectorEndpointsVisible ? orderedPairs : []) {
       const leftY = screenY(pair.primaryPosition);
       const rightY = screenY(pair.comparisonPosition);
       if (!visible(leftY) && !visible(rightY) && (leftY < 0) === (rightY < 0)) {
         continue;
       }
       context.beginPath();
-      context.moveTo(Math.min(connectorStartX, size.width / 2 - 3), leftY);
-      context.lineTo(Math.max(connectorEndX, size.width / 2 + 3), rightY);
-      context.strokeStyle = discordanceColor(pair.discordance, connectorOpacityScale);
-      context.lineWidth = 0.7 + (Math.min(1, pair.discordance / 0.28) * 0.8);
+      context.moveTo(connectorStartX, leftY);
+      context.lineTo(connectorEndX, rightY);
+      const strength = discordanceStrength(pair.discordance, connectorSensitivity);
+      context.strokeStyle = discordanceColor(pair.discordance, connectorOpacityScale, connectorSensitivity);
+      context.lineWidth = 0.7 + (strength * 0.8);
       context.stroke();
     }
 
@@ -688,14 +843,14 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     };
     drawHighlightedPath(primaryTree, highlightedTips.primaryPath, primaryX, primaryY);
     drawHighlightedPath(comparisonTree, highlightedTips.comparisonPath, comparisonX, secondaryY);
-    if (highlightedTips.names.size > 0) {
+    if (connectorEndpointsVisible && highlightedTips.names.size > 0) {
       for (const pair of comparison.commonPairs) {
         if (!highlightedTips.names.has(normalizeComparisonTipName(pair.name))) {
           continue;
         }
         context.beginPath();
-        context.moveTo(Math.min(connectorStartX, size.width / 2 - 3), screenY(pair.primaryPosition));
-        context.lineTo(Math.max(connectorEndX, size.width / 2 + 3), screenY(pair.comparisonPosition));
+        context.moveTo(connectorStartX, screenY(pair.primaryPosition));
+        context.lineTo(connectorEndX, screenY(pair.comparisonPosition));
         context.strokeStyle = "rgba(29, 78, 216, 0.78)";
         context.lineWidth = 1.8;
         context.stroke();
@@ -712,12 +867,16 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
   }, [
     activeRanks,
     branchThicknessScale,
+    camera.panX,
+    camera.zoomX,
     camera.zoom,
+    centerWidthScale,
     comparison,
     comparisonDenominator,
     comparisonLabel,
     comparisonNodeColors,
     comparisonTree,
+    connectorSensitivity,
     figureStyles,
     highlightedTips,
     incompatiblePrimaryNodes,
@@ -756,32 +915,222 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const maximum = Math.max(0, ((zoom - 1) * usable) / 2 + usable * 0.46);
     return Math.max(-maximum, Math.min(maximum, panY));
   }, [size.height]);
+  const clampHorizontalPan = useCallback((zoomX: number, panX: number): number => {
+    if (size.width <= 48) {
+      return panX;
+    }
+    const viewportCenter = size.width / 2;
+    const fitMargin = 24;
+    const transformedLeftEdge = viewportCenter + ((24 - viewportCenter) * zoomX);
+    const transformedRightEdge = viewportCenter + (((size.width - 24) - viewportCenter) * zoomX);
+    const minimum = fitMargin - transformedRightEdge;
+    const maximum = size.width - fitMargin - transformedLeftEdge;
+    return Math.max(minimum, Math.min(maximum, panX));
+  }, [size.width]);
+  useEffect(() => {
+    setCamera((current) => {
+      const panX = clampHorizontalPan(current.zoomX, current.panX);
+      return panX === current.panX ? current : { ...current, panX };
+    });
+  }, [clampHorizontalPan]);
+
+  const updateHoverTooltip = useCallback((hover: ComparisonHoverInfo | null): void => {
+    const tooltip = hoverTooltipRef.current;
+    const label = hoverTooltipLabelRef.current;
+    const body = hoverTooltipBodyRef.current;
+    if (!tooltip || !label || !body) {
+      return;
+    }
+    if (!hover) {
+      body.replaceChildren();
+      tooltip.hidden = true;
+      return;
+    }
+    const appendLine = (text: string): void => {
+      const line = document.createElement("div");
+      line.textContent = text;
+      body.appendChild(line);
+    };
+    label.textContent = hover.name;
+    body.replaceChildren();
+    if (hover.kind === "taxonomy") {
+      appendLine(`Rank: ${hover.taxonomyRank ?? "n/a"}`);
+      appendLine(`Descendant tips: ${hover.descendantTipCount.toLocaleString()}`);
+      appendLine(`MRCA age: ${hover.mrcaAge === null || hover.mrcaAge === undefined ? "n/a" : hover.mrcaAge.toPrecision(5)}`);
+    } else {
+      if (primaryTree.buffers.firstChild[hover.node] >= 0) {
+        appendLine(`Descendant tips: ${hover.descendantTipCount.toLocaleString()}`);
+      }
+      appendLine(`Branch length: ${hover.branchLength.toPrecision(5)}`);
+      appendLine(`Parent age: ${hover.parentAge === null ? "n/a" : hover.parentAge.toPrecision(5)}`);
+      appendLine(`Child age: ${hover.childAge === null ? "n/a" : hover.childAge.toPrecision(5)}`);
+    }
+    tooltip.style.left = `${Math.max(8, Math.min(size.width - 220, hover.screenX + 16))}px`;
+    tooltip.style.top = `${Math.max(8, Math.min(size.height - 90, hover.screenY + 16))}px`;
+    tooltip.hidden = false;
+  }, [primaryTree, size.height, size.width]);
+
+  const hitTestPrimaryTree = useCallback((localX: number, localY: number): ComparisonHoverInfo | null => {
+    const geometry = hoverGeometryRef.current;
+    if (!geometry || localX < 0 || localX > size.width) {
+      return null;
+    }
+    const taxonomyHitbox = geometry.taxonomyHitboxes.find((hitbox) => (
+      localX >= hitbox.xStart
+      && localX <= hitbox.xEnd
+      && localY >= hitbox.yStart
+      && localY <= hitbox.yEnd
+    ));
+    if (taxonomyHitbox) {
+      const node = lowestCommonAncestor(primaryTree, [taxonomyHitbox.firstNode, taxonomyHitbox.lastNode])
+        ?? taxonomyHitbox.firstNode;
+      const mrcaAge = primaryTree.isUltrametric
+        ? Math.max(0, primaryTree.rootAge - primaryTree.buffers.depth[node])
+        : null;
+      return {
+        node,
+        name: taxonomyHitbox.label,
+        branchLength: primaryTree.buffers.branchLength[node],
+        parentAge: null,
+        childAge: mrcaAge,
+        descendantTipCount: taxonomyHitbox.descendantTipCount,
+        screenX: localX,
+        screenY: localY,
+        kind: "taxonomy",
+        taxonomyRank: taxonomyHitbox.rank,
+        mrcaAge,
+      };
+    }
+    const primaryStartX = Math.min(geometry.primaryTreeStartX, geometry.primaryTreeEndX);
+    const primaryEndX = Math.max(geometry.primaryTreeStartX, geometry.primaryTreeEndX);
+    if (localX < primaryStartX - 6 || localX > primaryEndX + 6) {
+      return null;
+    }
+
+    const usable = Math.max(1, size.height - TOP_MARGIN - BOTTOM_MARGIN);
+    const normalizedPosition = 0.5 + ((localY - (size.height / 2) - camera.panY) / (usable * camera.zoom));
+    const targetIndex = normalizedPosition * primaryDenominator;
+    const nearbyNodes = new Set<number>();
+    const nearestIndex = Math.round(targetIndex);
+    for (let offset = -4; offset <= 4; offset += 1) {
+      const leafIndex = Math.max(0, Math.min(comparison.primaryLeaves.length - 1, nearestIndex + offset));
+      let node = comparison.primaryLeaves[leafIndex];
+      while (node >= 0 && !nearbyNodes.has(node)) {
+        nearbyNodes.add(node);
+        node = primaryTree.buffers.parent[node];
+      }
+    }
+
+    let bestNode = -1;
+    let bestDistance = Math.max(5, branchThicknessScale + 3);
+    for (const node of nearbyNodes) {
+      const parent = primaryTree.buffers.parent[node];
+      if (parent < 0) {
+        continue;
+      }
+      const parentX = geometry.primaryX(parent);
+      const parentY = geometry.primaryY(parent);
+      const nodeX = geometry.primaryX(node);
+      const nodeY = geometry.primaryY(node);
+      const distance = Math.min(
+        pointToSegmentDistance(localX, localY, parentX, parentY, parentX, nodeY),
+        pointToSegmentDistance(localX, localY, parentX, nodeY, nodeX, nodeY),
+      );
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        bestNode = node;
+      }
+    }
+    if (bestNode < 0) {
+      return null;
+    }
+    const parent = primaryTree.buffers.parent[bestNode];
+    const nodeName = primaryTree.names[bestNode]?.trim();
+    return {
+      node: bestNode,
+      name: nodeName ? nodeName.replaceAll("_", " ") : "Internal node",
+      branchLength: primaryTree.buffers.branchLength[bestNode],
+      parentAge: parent >= 0 && primaryTree.isUltrametric
+        ? Math.max(0, primaryTree.rootAge - primaryTree.buffers.depth[parent])
+        : null,
+      childAge: primaryTree.isUltrametric
+        ? Math.max(0, primaryTree.rootAge - primaryTree.buffers.depth[bestNode])
+        : null,
+      descendantTipCount: primaryTree.buffers.leafCount[bestNode],
+      screenX: localX,
+      screenY: localY,
+      kind: "node",
+    };
+  }, [branchThicknessScale, camera.panY, camera.zoom, comparison.primaryLeaves, primaryDenominator, primaryTree, size.height, size.width]);
+
   const handleWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
     event.preventDefault();
+    updateHoverTooltip(null);
     const rect = event.currentTarget.getBoundingClientRect();
+    const cursorX = event.clientX - rect.left;
     const cursorY = event.clientY - rect.top;
     setCamera((current) => {
-      const nextZoom = Math.max(1, Math.min(2_000, current.zoom * Math.exp(-event.deltaY * 0.0015)));
+      const factor = Math.exp(-event.deltaY * 0.0015);
+      const nextZoom = zoomAxisMode === "x"
+        ? current.zoom
+        : Math.max(1, Math.min(2_000, current.zoom * factor));
+      const nextZoomX = zoomAxisMode === "y"
+        ? current.zoomX
+        : Math.max(1, Math.min(2_000, current.zoomX * factor));
       const center = size.height / 2;
-      const nextPan = cursorY - center - ((cursorY - center - current.panY) * (nextZoom / current.zoom));
-      return { zoom: nextZoom, panY: clampPan(nextZoom, nextPan) };
+      const nextPan = zoomAxisMode === "x"
+        ? current.panY
+        : cursorY - center - ((cursorY - center - current.panY) * (nextZoom / current.zoom));
+      const centerX = size.width / 2;
+      const nextPanX = zoomAxisMode === "y"
+        ? current.panX
+        : nextZoomX === 1 && current.zoomX > 1
+          ? 0
+        : cursorX - centerX - ((cursorX - centerX - current.panX) * (nextZoomX / current.zoomX));
+      return {
+        zoom: nextZoom,
+        zoomX: nextZoomX,
+        panX: clampHorizontalPan(nextZoomX, nextPanX),
+        panY: clampPan(nextZoom, nextPan),
+      };
     });
   };
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    updateHoverTooltip(null);
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { pointerId: event.pointerId, startY: event.clientY, startPanY: camera.panY };
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startPanX: camera.panX,
+      startPanY: camera.panY,
+    };
   };
   const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
+    if (!drag) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      updateHoverTooltip(hitTestPrimaryTree(event.clientX - rect.left, event.clientY - rect.top));
       return;
     }
-    setCamera((current) => ({ ...current, panY: clampPan(current.zoom, drag.startPanY + event.clientY - drag.startY) }));
+    if (drag.pointerId !== event.pointerId) {
+      return;
+    }
+    setCamera((current) => ({
+      ...current,
+      panX: clampHorizontalPan(current.zoomX, drag.startPanX + event.clientX - drag.startX),
+      panY: clampPan(current.zoom, drag.startPanY + event.clientY - drag.startY),
+    }));
   };
   const stopDragging = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (dragRef.current?.pointerId === event.pointerId) {
       dragRef.current = null;
       event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+  const handlePointerLeave = () => {
+    if (!dragRef.current) {
+      updateHoverTooltip(null);
     }
   };
 
@@ -795,7 +1144,12 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
         onPointerMove={handlePointerMove}
         onPointerUp={stopDragging}
         onPointerCancel={stopDragging}
+        onPointerLeave={handlePointerLeave}
       />
+      <div ref={hoverTooltipRef} className="hover-tooltip" hidden>
+        <div ref={hoverTooltipLabelRef} className="hover-tooltip-label" />
+        <div ref={hoverTooltipBodyRef} />
+      </div>
       <div className="tree-comparison-summary">
         {comparison.commonPairs.length.toLocaleString()} shared tips
         {comparison.primaryOnlyCount > 0 ? ` · ${comparison.primaryOnlyCount.toLocaleString()} only in left tree` : ""}

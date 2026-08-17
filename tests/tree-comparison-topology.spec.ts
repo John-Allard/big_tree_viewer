@@ -138,3 +138,17 @@ test("root analysis distinguishes a closest approximate root from an exact match
   expect(analysis.incompatiblePrimarySplitCount).toBe(1);
   expect(analysis.incompatiblePrimaryNodes.size).toBe(1);
 });
+
+test("root analysis matches a trifurcating unrooted root to the corresponding comparison node", () => {
+  const primary = treeFromNested([["A", "B"], ["C", "D"], ["E", "F"]]);
+  const comparison = treeFromNested(["A", ["B", [["C", "D"], ["E", "F"]]]]);
+  const analysis = analyzeTreeComparisonTopology(primary, comparison);
+  expect(analysis.root.available).toBe(true);
+  expect(analysis.root.originalRootKind).toBe("node");
+  expect(analysis.root.leftRootGroupSizes).toEqual([2, 2, 2]);
+  expect(analysis.root.rootsMatch).toBe(false);
+  expect(analysis.root.exactMatchAvailable).toBe(true);
+  expect(analysis.root.bestCandidateKind).toBe("node");
+  expect(analysis.root.bestMismatchCount).toBe(0);
+  expect(analysis.root.canImprove).toBe(true);
+});

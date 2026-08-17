@@ -4,7 +4,10 @@ import { normalizeComparisonTipName } from "./treeComparison";
 export interface ComparisonRootDiagnostic {
   available: boolean;
   sharedTipCount: number;
-  leftRootDaughterSizes: [number, number] | null;
+  leftRootGroupSizes: number[] | null;
+  originalRootKind: "edge" | "node" | null;
+  bestCandidateKind: "edge" | "node" | null;
+  unavailableReason: "too-few-shared-tips" | "unresolved-shared-root" | "high-degree-root" | null;
   currentMismatchCount: number | null;
   bestMismatchCount: number | null;
   bestCandidateNode: number | null;
@@ -87,7 +90,7 @@ function descendantCounts(
   return counts;
 }
 
-function effectiveRootChildren(tree: TreeModel, sharedCounts: Uint32Array): number[] {
+function effectiveRootLocation(tree: TreeModel, sharedCounts: Uint32Array): { node: number; children: number[] } {
   let node = tree.root;
   while (node >= 0) {
     const children: number[] = [];
@@ -97,11 +100,11 @@ function effectiveRootChildren(tree: TreeModel, sharedCounts: Uint32Array): numb
       }
     }
     if (children.length !== 1) {
-      return children;
+      return { node, children };
     }
     node = children[0];
   }
-  return [];
+  return { node: -1, children: [] };
 }
 
 function descendantSharedNames(
@@ -125,6 +128,137 @@ function descendantSharedNames(
   return result;
 }
 
+const MAX_COMPARABLE_ROOT_DEGREE = 8;
+
+function maximumPartitionOverlap(components: number[][], groupCount: number): number {
+  const stateCount = 1 << groupCount;
+  let scores = new Int32Array(stateCount);
+  scores.fill(-1);
+  scores[0] = 0;
+  for (const component of components) {
+    const next = scores.slice();
+    for (let mask = 0; mask < stateCount; mask += 1) {
+      if (scores[mask] < 0) continue;
+      for (let group = 0; group < groupCount; group += 1) {
+        const bit = 1 << group;
+        if ((mask & bit) !== 0) continue;
+        const nextMask = mask | bit;
+        next[nextMask] = Math.max(next[nextMask], scores[mask] + component[group]);
+      }
+    }
+    scores = next;
+  }
+  let best = 0;
+  for (let mask = 0; mask < stateCount; mask += 1) best = Math.max(best, scores[mask]);
+  return best;
+}
+
+function multifurcatingRootDiagnostic(
+  primaryTree: TreeModel,
+  comparisonTree: TreeModel,
+  comparisonSharedByNode: Map<number, string>,
+  sharedNames: string[],
+  primaryRootChildren: number[],
+  primarySharedByNode: Map<number, string>,
+): ComparisonRootDiagnostic {
+  const groupCount = primaryRootChildren.length;
+  if (groupCount > MAX_COMPARABLE_ROOT_DEGREE) {
+    return {
+      available: false,
+      sharedTipCount: sharedNames.length,
+      leftRootGroupSizes: null,
+      originalRootKind: null,
+      bestCandidateKind: null,
+      unavailableReason: "high-degree-root",
+      currentMismatchCount: null,
+      bestMismatchCount: null,
+      bestCandidateNode: null,
+      exactMatchAvailable: false,
+      rootsMatch: false,
+      canImprove: false,
+    };
+  }
+
+  const targetGroupByName = new Map<string, number>();
+  const targetGroupSizes = new Array<number>(groupCount).fill(0);
+  for (let group = 0; group < groupCount; group += 1) {
+    const names = descendantSharedNames(primaryTree, primaryRootChildren[group], primarySharedByNode);
+    names.forEach((name) => targetGroupByName.set(name, group));
+    targetGroupSizes[group] = names.size;
+  }
+
+  const counts = new Uint32Array(comparisonTree.nodeCount * groupCount);
+  const comparisonPostorder = postorder(comparisonTree);
+  for (const node of comparisonPostorder) {
+    const offset = node * groupCount;
+    if (comparisonTree.buffers.firstChild[node] < 0) {
+      const name = comparisonSharedByNode.get(node);
+      const group = name === undefined ? undefined : targetGroupByName.get(name);
+      if (group !== undefined) counts[offset + group] = 1;
+      continue;
+    }
+    for (let child = comparisonTree.buffers.firstChild[node]; child >= 0; child = comparisonTree.buffers.nextSibling[child]) {
+      const childOffset = child * groupCount;
+      for (let group = 0; group < groupCount; group += 1) {
+        counts[offset + group] += counts[childOffset + group];
+      }
+    }
+  }
+
+  const componentsAtNode = (node: number): number[][] => {
+    const components: number[][] = [];
+    for (let child = comparisonTree.buffers.firstChild[node]; child >= 0; child = comparisonTree.buffers.nextSibling[child]) {
+      const childOffset = child * groupCount;
+      const component = targetGroupSizes.map((_, group) => counts[childOffset + group]);
+      if (component.some((count) => count > 0)) components.push(component);
+    }
+    if (comparisonTree.buffers.parent[node] >= 0) {
+      const offset = node * groupCount;
+      const complement = targetGroupSizes.map((size, group) => size - counts[offset + group]);
+      if (complement.some((count) => count > 0)) components.push(complement);
+    }
+    return components;
+  };
+  const mismatchAtNode = (node: number): number | null => {
+    const components = componentsAtNode(node);
+    if (components.length !== groupCount) return null;
+    return sharedNames.length - maximumPartitionOverlap(components, groupCount);
+  };
+
+  let bestCandidateNode: number | null = null;
+  let bestMismatchCount = Number.POSITIVE_INFINITY;
+  for (let node = 0; node < comparisonTree.nodeCount; node += 1) {
+    if (comparisonTree.buffers.firstChild[node] < 0) continue;
+    const mismatch = mismatchAtNode(node);
+    if (mismatch !== null && mismatch < bestMismatchCount) {
+      bestMismatchCount = mismatch;
+      bestCandidateNode = node;
+    }
+  }
+  const comparisonSharedCounts = descendantCounts(comparisonTree, comparisonSharedByNode);
+  const comparisonRootLocation = effectiveRootLocation(comparisonTree, comparisonSharedCounts);
+  const currentMismatchCount = comparisonRootLocation.node >= 0
+    ? mismatchAtNode(comparisonRootLocation.node)
+    : null;
+  const finiteBest = Number.isFinite(bestMismatchCount) ? bestMismatchCount : null;
+  return {
+    available: finiteBest !== null,
+    sharedTipCount: sharedNames.length,
+    leftRootGroupSizes: targetGroupSizes,
+    originalRootKind: "node",
+    bestCandidateKind: finiteBest === null ? null : "node",
+    unavailableReason: finiteBest === null ? "unresolved-shared-root" : null,
+    currentMismatchCount,
+    bestMismatchCount: finiteBest,
+    bestCandidateNode,
+    exactMatchAvailable: finiteBest === 0,
+    rootsMatch: currentMismatchCount === 0,
+    canImprove: bestCandidateNode !== null && (
+      currentMismatchCount === null || (finiteBest !== null && finiteBest < currentMismatchCount)
+    ),
+  };
+}
+
 function rootDiagnostic(
   primaryTree: TreeModel,
   comparisonTree: TreeModel,
@@ -135,7 +269,10 @@ function rootDiagnostic(
   const unavailable = (sharedTipCount: number): ComparisonRootDiagnostic => ({
     available: false,
     sharedTipCount,
-    leftRootDaughterSizes: null,
+    leftRootGroupSizes: null,
+    originalRootKind: null,
+    bestCandidateKind: null,
+    unavailableReason: sharedTipCount < 3 ? "too-few-shared-tips" : "unresolved-shared-root",
     currentMismatchCount: null,
     bestMismatchCount: null,
     bestCandidateNode: null,
@@ -157,9 +294,20 @@ function rootDiagnostic(
     if (sharedSet.has(name)) comparisonSharedByNode.set(node, name);
   });
   const primaryCounts = descendantCounts(primaryTree, primarySharedByNode);
-  const primaryRootChildren = effectiveRootChildren(primaryTree, primaryCounts);
-  if (primaryRootChildren.length !== 2) {
+  const primaryRootLocation = effectiveRootLocation(primaryTree, primaryCounts);
+  const primaryRootChildren = primaryRootLocation.children;
+  if (primaryRootChildren.length < 2) {
     return unavailable(sharedNames.length);
+  }
+  if (primaryRootChildren.length > 2) {
+    return multifurcatingRootDiagnostic(
+      primaryTree,
+      comparisonTree,
+      comparisonSharedByNode,
+      sharedNames,
+      primaryRootChildren,
+      primarySharedByNode,
+    );
   }
   const targetSide = descendantSharedNames(primaryTree, primaryRootChildren[0], primarySharedByNode);
   const targetSize = targetSide.size;
@@ -211,7 +359,7 @@ function rootDiagnostic(
     }
   }
 
-  const comparisonRootChildren = effectiveRootChildren(comparisonTree, comparisonCounts);
+  const comparisonRootChildren = effectiveRootLocation(comparisonTree, comparisonCounts).children;
   const currentMismatchCount = comparisonRootChildren.length === 2
     ? mismatchForNode(comparisonRootChildren[0])
     : null;
@@ -223,7 +371,10 @@ function rootDiagnostic(
   return {
     available: true,
     sharedTipCount: sharedNames.length,
-    leftRootDaughterSizes: [targetSize, otherSize],
+    leftRootGroupSizes: [targetSize, otherSize],
+    originalRootKind: "edge",
+    bestCandidateKind: "edge",
+    unavailableReason: null,
     currentMismatchCount,
     bestMismatchCount: finiteBest,
     bestCandidateNode,

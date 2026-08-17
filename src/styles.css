@@ -1458,6 +1458,28 @@ button.secondary {
   gap: 0.55rem;
 }
 
+.comparison-drop-zone {
+  margin-top: 0.6rem;
+  min-height: 3.25rem;
+  display: grid;
+  place-items: center;
+  padding: 0.65rem;
+  border: 1px dashed rgba(71, 85, 105, 0.55);
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.72);
+  color: #475569;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  text-align: center;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.comparison-drop-zone.drag-active {
+  border-color: #1d4ed8;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
 .button-row,
 .segmented {
   display: grid;
@@ -2311,6 +2333,30 @@ button.secondary {
 
 .comparison-split-toggle {
   margin-top: 0.7rem;
+}
+
+.comparison-display-controls {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.comparison-display-controls label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.65rem;
+  color: #334155;
+  font-size: 0.84rem;
+}
+
+.comparison-display-controls input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.comparison-display-controls .figure-style-value {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .tree-statistics h4 {

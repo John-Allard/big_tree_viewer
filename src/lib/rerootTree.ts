@@ -307,4 +307,18 @@ export function rerootTreePayload(
   return buildPayloadFromOutput(tree, output);
 }
 
+export function rerootTreePayloadAtNode(
+  tree: TreeModel,
+  rootNode: number,
+): WorkerTreePayload | null {
+  if (!Number.isInteger(rootNode) || rootNode < 0 || rootNode >= tree.nodeCount) {
+    return null;
+  }
+  const adjacency = buildAdjacency(tree);
+  const orientedChildren = Array.from({ length: adjacency.length }, () => [] as Array<{ node: number; length: number }>);
+  appendOrientedChildren(adjacency, orientedChildren, rootNode, -1);
+  const output = buildOutputTree(tree, orientedChildren, rootNode);
+  return buildPayloadFromOutput(tree, output);
+}
+
 export type { RerootMode };
