@@ -2309,7 +2309,22 @@ button.secondary {
 }
 
 .comparison-statistics-box .stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
   font-size: 0.78rem;
+}
+
+.comparison-statistics-box .stats-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 0.9rem;
+}
+
+.comparison-statistics-box .stats-list dt {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .comparison-root-warning {

@@ -527,19 +527,54 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const fitComparisonTipX = size.width - fitPrimaryTipX;
     const viewportCenterX = size.width / 2;
     const transformX = (x: number) => viewportCenterX + ((x - viewportCenterX) * camera.zoomX) + camera.panX;
-    const primaryTipX = transformX(fitPrimaryTipX);
+    const unshiftedPrimaryTipX = transformX(fitPrimaryTipX);
+    const unshiftedComparisonTipX = transformX(fitComparisonTipX);
+    const primaryY = (node: number) => screenY(primaryLayout.center[node] / primaryDenominator);
+    const secondaryY = (node: number) => screenY(comparison.comparisonCenter[node] / comparisonDenominator);
+    const visible = (y: number) => y >= -8 && y <= size.height + 8;
+    const maxLeafCount = Math.max(comparison.primaryLeaves.length, comparison.comparisonLeaves.length);
+    const pixelsPerTip = ((size.height - TOP_MARGIN - BOTTOM_MARGIN) * camera.zoom) / Math.max(1, maxLeafCount - 1);
+    const labelsVisible = showTipLabels && pixelsPerTip >= 9;
+    const labelSpaceProgress = showTipLabels ? Math.max(0, Math.min(1, (pixelsPerTip - 7) / 2)) : 0;
+    const tipFontSize = Math.max(9, Math.min(15, 11 * figureStyles.tip.sizeScale));
+    context.font = `${figureStyles.tip.italic ? "italic " : ""}${figureStyles.tip.bold ? "700 " : ""}${tipFontSize}px ${fontFamilyCss(figureStyles.tip.fontFamily)}`;
+    context.textBaseline = "middle";
+    const maximumLabelWidth = (tree: TreeModel, leaves: number[], yForNode: (node: number) => number): number => {
+      let maximum = 8;
+      for (const node of leaves) {
+        if (!visible(yForNode(node))) {
+          continue;
+        }
+        maximum = Math.max(maximum, context.measureText(
+          (tree.names[node] || "Unnamed tip").replaceAll("_", " "),
+        ).width);
+      }
+      return figureStyles.tip.limitWidth
+        ? Math.min(maximum, Math.max(40, figureStyles.tip.maxWidthPx ?? 240))
+        : maximum;
+    };
+    const primaryLabelWidth = labelSpaceProgress > 0
+      ? maximumLabelWidth(primaryTree, comparison.primaryLeaves, primaryY)
+      : 0;
+    const comparisonLabelWidth = labelSpaceProgress > 0
+      ? maximumLabelWidth(comparisonTree, comparison.comparisonLeaves, secondaryY)
+      : 0;
+    const primaryTreeDisplacement = ribbonsWidth + ((primaryLabelWidth + 4) * labelSpaceProgress);
+    const comparisonTreeDisplacement = (comparisonLabelWidth + 4) * labelSpaceProgress;
+    const primaryTipX = unshiftedPrimaryTipX - primaryTreeDisplacement;
     const primaryRibbonEndX = primaryTipX + ribbonsWidth;
-    const comparisonTipX = transformX(fitComparisonTipX);
-    const primaryLabelStartX = primaryRibbonEndX + 4;
-    const connectorCenterX = transformX(viewportCenterX);
-    const connectorCoreWidth = Math.max(8, centerWidth * 0.175 * camera.zoomX);
-    const primaryLabelEndX = connectorCenterX - (connectorCoreWidth / 2);
-    const comparisonLabelStartX = connectorCenterX + (connectorCoreWidth / 2);
-    const comparisonLabelEndX = comparisonTipX - 4;
+    const comparisonTipX = unshiftedComparisonTipX + comparisonTreeDisplacement;
+    const connectorStartX = unshiftedPrimaryTipX + 3;
+    const connectorEndX = unshiftedComparisonTipX - 3;
+    const connectorCenterX = (connectorStartX + connectorEndX) / 2;
+    const primaryLabelEndX = connectorStartX - 3;
+    const primaryLabelStartX = primaryLabelEndX - primaryLabelWidth;
+    const comparisonLabelStartX = connectorEndX + 3;
+    const comparisonLabelEndX = comparisonLabelStartX + comparisonLabelWidth;
     const fitPrimaryRootX = 24;
     const fitComparisonRootX = size.width - 24;
-    const primaryRootX = transformX(fitPrimaryRootX);
-    const comparisonRootX = transformX(fitComparisonRootX);
+    const primaryRootX = transformX(fitPrimaryRootX) - primaryTreeDisplacement;
+    const comparisonRootX = transformX(fitComparisonRootX) + comparisonTreeDisplacement;
     const branchWidth = Math.max(0.45, branchThicknessScale);
     const primaryDepthSpan = Math.max(1e-12, primaryTree.maxDepth - primaryTree.buffers.depth[primaryTree.root]);
     const comparisonDepthSpan = Math.max(1e-12, comparisonTree.maxDepth - comparisonTree.buffers.depth[comparisonTree.root]);
@@ -547,11 +582,8 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       + ((primaryTree.buffers.depth[node] - primaryTree.buffers.depth[primaryTree.root]) / primaryDepthSpan) * (fitPrimaryTipX - fitPrimaryRootX);
     const fitComparisonX = (node: number) => fitComparisonRootX
       - ((comparisonTree.buffers.depth[node] - comparisonTree.buffers.depth[comparisonTree.root]) / comparisonDepthSpan) * (fitComparisonRootX - fitComparisonTipX);
-    const primaryX = (node: number) => transformX(fitPrimaryX(node));
-    const comparisonX = (node: number) => transformX(fitComparisonX(node));
-    const primaryY = (node: number) => screenY(primaryLayout.center[node] / primaryDenominator);
-    const secondaryY = (node: number) => screenY(comparison.comparisonCenter[node] / comparisonDenominator);
-    const visible = (y: number) => y >= -8 && y <= size.height + 8;
+    const primaryX = (node: number) => transformX(fitPrimaryX(node)) - primaryTreeDisplacement;
+    const comparisonX = (node: number) => transformX(fitComparisonX(node)) + comparisonTreeDisplacement;
 
     const drawTree = (
       tree: TreeModel,
@@ -683,19 +715,9 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       taxonomyHitboxes: taxonomyHoverHitboxes,
     };
 
-    const maxLeafCount = Math.max(comparison.primaryLeaves.length, comparison.comparisonLeaves.length);
-    const pixelsPerTip = ((size.height - TOP_MARGIN - BOTTOM_MARGIN) * camera.zoom) / Math.max(1, maxLeafCount - 1);
-    const connectorEndpointsVisible = primaryRibbonEndX + 6 < comparisonTipX;
-    const labelsVisible = showTipLabels
-      && pixelsPerTip >= 9
-      && primaryLabelEndX - primaryLabelStartX >= 8
-      && comparisonLabelEndX - comparisonLabelStartX >= 8;
-    const tipFontSize = Math.max(9, Math.min(15, 11 * figureStyles.tip.sizeScale));
+    const connectorEndpointsVisible = connectorStartX + 6 < connectorEndX;
     context.font = `${figureStyles.tip.italic ? "italic " : ""}${figureStyles.tip.bold ? "700 " : ""}${tipFontSize}px ${fontFamilyCss(figureStyles.tip.fontFamily)}`;
     context.textBaseline = "middle";
-
-    const connectorStartX = labelsVisible ? primaryLabelEndX + 3 : primaryRibbonEndX + 3;
-    const connectorEndX = labelsVisible ? comparisonLabelStartX - 3 : comparisonTipX - 3;
     const firstPrimaryLeaf = comparison.primaryLeaves[0] ?? -1;
     const firstPrimaryLeafParent = firstPrimaryLeaf >= 0 ? primaryTree.buffers.parent[firstPrimaryLeaf] : -1;
     renderDebugRef.current = {
@@ -735,6 +757,10 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       centerWidth,
       centerWidthScale: effectiveCenterWidthScale,
       connectorSensitivity,
+      pixelsPerTip,
+      labelSpaceProgress,
+      primaryTreeDisplacement,
+      comparisonTreeDisplacement,
       primaryBranchHoverPoint: firstPrimaryLeafParent >= 0 ? {
         x: (primaryX(firstPrimaryLeafParent) + primaryX(firstPrimaryLeaf)) / 2,
         y: primaryY(firstPrimaryLeaf),

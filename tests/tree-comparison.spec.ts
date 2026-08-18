@@ -40,6 +40,23 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await expect(panel.getByLabel("Comparison statistics")).toContainText("Normalized RF");
   await expect(panel.getByLabel("Comparison statistics").locator("dd").filter({ hasText: "1.0000" })).toHaveCount(1);
   await expect(panel.getByLabel("Comparison statistics")).not.toContainText("Matching-cluster");
+  const comparisonStatisticRows = await panel.getByLabel("Comparison statistics").locator("dl > div").evaluateAll((rows) => (
+    rows.map((row) => {
+      const label = row.querySelector("dt")?.getBoundingClientRect();
+      const value = row.querySelector("dd")?.getBoundingClientRect();
+      return label && value ? {
+        labelCenterY: label.top + (label.height / 2),
+        valueCenterY: value.top + (value.height / 2),
+        valueRight: value.right,
+      } : null;
+    })
+  ));
+  expect(comparisonStatisticRows).not.toContain(null);
+  for (const row of comparisonStatisticRows) {
+    expect(Math.abs(row!.labelCenterY - row!.valueCenterY)).toBeLessThan(1);
+  }
+  const valueRightEdges = comparisonStatisticRows.map((row) => row!.valueRight);
+  expect(Math.max(...valueRightEdges) - Math.min(...valueRightEdges)).toBeLessThan(1);
   await expect(page.getByRole("button", { name: "Circular" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Fan" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Spiral" })).toBeDisabled();
@@ -170,6 +187,40 @@ test("comparison file picker filters tree formats and loads an uncommon tree ext
 
   await expect(page.getByLabel("Tree comparison view")).toBeVisible();
   await expect(panel).toContainText("comparison.mcc: 4 tips");
+});
+
+test("Y-only zoom preserves connector width while tip labels displace both trees", async ({ page }) => {
+  const labels = Array.from({ length: 128 }, (_, index) => `Species_${index.toString().padStart(3, "0")}_long_name`);
+  const primaryNewick = `(${labels.map((label) => `${label}:1`).join(",")})Primary;`;
+  const comparisonNewick = `(${[...labels].reverse().map((label) => `${label}:1`).join(",")})Comparison;`;
+
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(primaryNewick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill(comparisonNewick);
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+
+  const canvas = page.getByLabel("Tree comparison view");
+  await expect(canvas).toBeVisible();
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().labelsVisible === false);
+  const before = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  await page.getByRole("button", { name: "Zoom Y" }).click();
+  await canvas.hover({ position: { x: 500, y: 300 } });
+  await page.mouse.wheel(0, -900);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().labelsVisible === true);
+  const after = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+
+  expect(Number((after?.camera as { zoomX?: number } | undefined)?.zoomX)).toBe(1);
+  expect(Number(after?.connectorStartX)).toBeCloseTo(Number(before?.connectorStartX), 5);
+  expect(Number(after?.connectorEndX)).toBeCloseTo(Number(before?.connectorEndX), 5);
+  expect(Number(after?.primaryTipX)).toBeLessThan(Number(before?.primaryTipX) - 50);
+  expect(Number(after?.comparisonTipX)).toBeGreaterThan(Number(before?.comparisonTipX) + 50);
 });
 
 test("comparison tree can be dropped without opening the native file picker", async ({ page }) => {
