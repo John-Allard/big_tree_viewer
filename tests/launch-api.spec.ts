@@ -946,6 +946,34 @@ test("postMessage launch API can run the standard taxonomy mapper", async ({ pag
   expect(result.taxonomy?.tipRanks[0]?.ranks.family).toBe("Testaceae");
 });
 
+test("standard taxonomy mapping recognizes leading species names in decorated tip labels", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species_HBB_isoform_2:1,'B species specimen 42':1)Root;",
+        label: "decorated-species-label-tree",
+        taxonomy: {
+          runMapping: true,
+          allowDownload: true,
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+
+  expect(taxonomy?.version).toBe(9);
+  expect(taxonomy?.mappedCount).toBe(2);
+  expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
+});
+
 test("postMessage API can map taxonomy for the current loaded tree", async ({ page }) => {
   await routeTinyTaxdump(page);
   await page.goto("/?btv_api=1");

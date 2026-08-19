@@ -296,8 +296,15 @@ function collectCandidatesForTip(
   lineageMemo: Map<number, CandidateLineage | null>,
   enableCollapseFallbacks: boolean,
 ): CandidateLineage[] {
-  const speciesCandidates = candidateSpeciesNames(tip.name)
-    .flatMap((candidate) => taxonomy.speciesIndex.get(candidate) ?? []);
+  const speciesNameCandidates = candidateSpeciesNames(tip.name);
+  let speciesCandidates: number[] = [];
+  for (let candidateIndex = 0; candidateIndex < speciesNameCandidates.length; candidateIndex += 1) {
+    const indexedCandidates = taxonomy.speciesIndex.get(speciesNameCandidates[candidateIndex]) ?? [];
+    if (indexedCandidates.length > 0) {
+      speciesCandidates = indexedCandidates;
+      break;
+    }
+  }
   const exactTaxonName = speciesCandidates.length > 0 ? null : candidateExactTaxonName(tip.name);
   const exactTaxonCandidates = exactTaxonName
     ? [...(taxonomy.namedTaxonIndex.get(exactTaxonName) ?? [])]

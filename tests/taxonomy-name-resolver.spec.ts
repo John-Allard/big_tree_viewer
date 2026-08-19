@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   addTaxonomyIndexEntry,
+  candidateSpeciesNames,
   mapTipsWithContext,
   normalizeTaxonomyName,
   type ParsedTaxonomyForMapping,
@@ -65,6 +66,49 @@ function buildParsedTaxonomy(): ParsedTaxonomyForMapping {
 
   return { nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex };
 }
+
+test("species-name candidates support leading binomials with trailing identifiers", async () => {
+  expect(candidateSpeciesNames("Homo_sapiens_HBB_isoform_2")).toEqual([
+    "homo sapiens hbb isoform 2",
+    "homo sapiens",
+  ]);
+  expect(candidateSpeciesNames("'Homo sapiens voucher 17'")).toEqual([
+    "homo sapiens voucher 17",
+    "homo sapiens",
+  ]);
+  expect(candidateSpeciesNames('"Homo_sapiens_sample-A"')).toEqual([
+    "homo sapiens sample-a",
+    "homo sapiens",
+  ]);
+});
+
+test("resolver maps leading species names before gene or specimen identifiers", async () => {
+  const taxonomy = buildParsedTaxonomy();
+  const payload = mapTipsWithContext([
+    { node: 600, name: "Panthera_leo_HBB_isoform_2" },
+    { node: 601, name: "'Malus domestica voucher 17'" },
+    { node: 602, name: '"Panthera_leo_sample-A"' },
+  ], taxonomy, TARGET_RANKS, 99);
+
+  const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
+  expect(payload.mappedCount).toBe(3);
+  expect(byNode.get(600)?.ranks.genus).toBe("Panthera");
+  expect(byNode.get(601)?.ranks.genus).toBe("Malus");
+  expect(byNode.get(602)?.ranks.family).toBe("Felidae");
+});
+
+test("an exact full species label takes precedence over its leading binomial fallback", async () => {
+  const taxonomy = buildParsedTaxonomy();
+  addTaxonomyIndexEntry(taxonomy.speciesIndex, "panthera leo persica", 27);
+
+  const payload = mapTipsWithContext([
+    { node: 700, name: "Panthera leo persica" },
+  ], taxonomy, TARGET_RANKS, 99);
+
+  expect(payload.mappedCount).toBe(1);
+  expect(payload.tipRanks[0]?.ranks.genus).toBe("Malus");
+  expect(payload.tipRanks[0]?.ranks.family).toBe("Rosaceae");
+});
 
 test("context-aware taxonomy resolver disambiguates reused species names by nearby mapped clades", async () => {
   const taxonomy = buildParsedTaxonomy();

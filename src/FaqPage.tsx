@@ -106,7 +106,9 @@ export default function FaqPage() {
               <p>
                 The Taxonomy panel downloads the NCBI taxonomy dump and caches it
                 locally in the browser. Big Tree Viewer maps binomial species
-                names and exact single-token{" "}
+                names and labels that begin with <code>Genus_species</code> or
+                <code>Genus species</code> followed by gene, specimen, or other
+                identifiers. It also maps exact single-token{" "}
                 <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi" target="_blank" rel="noreferrer">
                   NCBI Taxonomy Browser
                 </a>{" "}
@@ -130,7 +132,9 @@ export default function FaqPage() {
                   NCBI Taxonomy Browser
                 </a>
                 . Single-token labels only map when they exactly match a
-                supported NCBI taxon name.
+                supported NCBI taxon name. For labels containing sequence,
+                gene, or specimen identifiers, put the genus and species in
+                the first two underscore- or space-separated positions.
               </p>
             </div>
           </article>

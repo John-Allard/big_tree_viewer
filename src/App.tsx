@@ -669,14 +669,14 @@ function buildTaxonomyMappingWarning(tree: TreeModel | null, taxonomyMap: Taxono
       }
     }
   }
-  const base = `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips (${Math.round(unmappedFraction * 100).toLocaleString()}%) were not mapped to NCBI taxonomy. Big Tree Viewer maps binomial species names and exact single-token NCBI taxa, such as genus, family, or order names.`;
+  const base = `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips (${Math.round(unmappedFraction * 100).toLocaleString()}%) were not mapped to NCBI taxonomy. Big Tree Viewer maps binomial species names, including labels that begin with Genus_species or Genus species before additional identifiers, and exact single-token NCBI taxa such as genus, family, or order names.`;
   const singleTokenNote = singleTokenUnmappedCount > 0
     ? ` ${singleTokenUnmappedCount.toLocaleString()} unmapped single-token labels did not exactly match a supported NCBI taxon name.`
     : "";
   if (labelsOutsideSupportedShapeCount >= Math.max(25, unmappedCount * 0.25)) {
-    return `${base}${singleTokenNote} At least ${labelsOutsideSupportedShapeCount.toLocaleString()} unmapped labels do not look like either binomial species names or single-token taxon names${examples.length > 0 ? `, for example: ${examples.join(", ")}.` : "."} If your tips use accession numbers, sample IDs, strain labels, or other identifiers, replace or annotate them with species names or NCBI taxon names before mapping.`;
+    return `${base}${singleTokenNote} At least ${labelsOutsideSupportedShapeCount.toLocaleString()} unmapped labels do not look like either binomial species names or single-token taxon names${examples.length > 0 ? `, for example: ${examples.join(", ")}.` : "."} If your tips combine species names with accession numbers, sample IDs, strain labels, or other identifiers, place the genus and species first, separated by an underscore or space.`;
   }
-  return `${base}${singleTokenNote} If your tips use accession numbers, sample IDs, strain labels, or other identifiers instead of taxon names, replace or annotate them with species names or NCBI taxon names before mapping.`;
+  return `${base}${singleTokenNote} If your tips combine species names with accession numbers, sample IDs, strain labels, or other identifiers, place the genus and species first, separated by an underscore or space.`;
 }
 
 function readLaunchNumberParam(params: URLSearchParams, key: string): number | undefined {
@@ -1139,7 +1139,7 @@ const TUTORIAL_STEPS: Array<{
     id: "taxonomy",
     target: "taxonomy",
     title: "Map taxonomy",
-    body: "You can automatically map binomial species tip names to taxonomic groups and display colored taxonomy ribbons on your tree. Download the NCBI taxonomy data once, or choose a taxdmp.zip file you already have.",
+    body: "You can automatically map binomial species tip names to taxonomic groups and display colored taxonomy ribbons on your tree. Additional gene, specimen, or sequence identifiers are allowed after a leading Genus_species or Genus species name. Download the NCBI taxonomy data once, or choose a taxdmp.zip file you already have.",
   },
   {
     id: "branchMenu",
@@ -8209,7 +8209,7 @@ export default function App() {
                       : !tree
                         ? "Load a tree first."
                         : undefined,
-                  ) ?? "Match tree tips to NCBI taxonomy so taxonomy labels, coloring, and silhouettes can be used."}
+                  ) ?? "Match complete species names or leading Genus_species labels to NCBI taxonomy so taxonomy labels, coloring, and silhouettes can be used."}
                   onClick={() => void runTaxonomyMapping()}
                 >
                   Run Taxonomy Mapping

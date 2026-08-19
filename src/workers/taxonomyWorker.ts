@@ -24,7 +24,7 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-error"; message: string };
 
 const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
-const TAXONOMY_MAPPING_VERSION = 8;
+const TAXONOMY_MAPPING_VERSION = 9;
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };

@@ -8,7 +8,7 @@ const SUBTREE_STORE_NAME = "shared-subtrees";
 const ARCHIVE_KEY = "ncbi-taxdmp-zip";
 const ARCHIVE_FILE_HANDLE_KEY = "ncbi-taxdmp-file-handle";
 const LATEST_MAPPING_KEY = "latest-tree-mapping";
-const TAXONOMY_MAPPING_CACHE_VERSION = 6;
+const TAXONOMY_MAPPING_CACHE_VERSION = 7;
 let cachedArchiveInMemory: Blob | ArrayBuffer | null = null;
 let linkedArchiveHandleInMemory: TaxonomyArchiveFileHandle | null | undefined;
 
