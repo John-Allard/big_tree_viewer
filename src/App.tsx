@@ -1127,7 +1127,7 @@ const TUTORIAL_STEPS: Array<{
     id: "navigation",
     target: "view",
     title: "Navigate the tree",
-    body: "Switch between rectangular, radial, and spiral layouts, adjust the radial angular span and center opening, choose tip ordering, fit the view, and zoom with the wheel, trackpad pinch, +/-, or touch gestures. Rectangular mode can lock zoom to X, Y, or both axes.",
+    body: "Switch between rectangular, radial, and spiral layouts, adjust the radial angular span and inner radius, choose tip ordering, fit the view, and zoom with the wheel, trackpad pinch, +/-, or touch gestures. Rectangular mode can lock zoom to X, Y, or both axes.",
   },
   {
     id: "visual",
@@ -2180,7 +2180,7 @@ export default function App() {
       setViewMode("rectangular");
     }
   }, [comparisonEnabled, comparisonTree, viewMode]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (tree && (viewMode === "circular" || viewMode === "fan")) {
       setFitRequest((value) => value + 1);
     }
@@ -7276,7 +7276,7 @@ export default function App() {
               className={viewMode === "circular" || viewMode === "fan" ? "active" : ""}
               onClick={() => selectViewMode("circular")}
               disabled={comparisonEnabled && Boolean(comparisonTree)}
-              title={comparisonEnabled && comparisonTree ? "Tree comparison is available only in rectangular mode." : "Draw the tree radially with an adjustable angular span and center opening."}
+              title={comparisonEnabled && comparisonTree ? "Tree comparison is available only in rectangular mode." : "Draw the tree radially with an adjustable angular span and inner radius."}
             >
               Radial
             </button>
@@ -7360,42 +7360,44 @@ export default function App() {
           </p>
           {viewMode === "circular" || viewMode === "fan" || viewMode === "spiral" ? (
             <div className="rotation-controls">
-              <label htmlFor="circular-rotation" title="Rotate the radial or spiral tree around its center.">Rotation</label>
-              <input
-                id="circular-rotation"
-                type="range"
-                min={-180}
-                max={180}
-                step={1}
-                value={circularRotationDegrees}
-                onChange={(event) => setCircularRotationDegrees(Number(event.target.value))}
-              />
-              <div className="rotation-value-input">
+              <div className="view-parameter-group">
+                <label htmlFor="circular-rotation" title="Rotate the radial or spiral tree around its center.">Rotation</label>
                 <input
-                  type="number"
-                  aria-label="Rotation degrees"
-                  step={0.01}
+                  id="circular-rotation"
+                  type="range"
+                  min={-180}
+                  max={180}
+                  step={1}
                   value={circularRotationDegrees}
-                  onChange={(event) => {
-                    const nextValue = event.target.valueAsNumber;
-                    if (Number.isFinite(nextValue)) {
-                      setCircularRotationDegrees(nextValue);
-                    }
-                  }}
+                  onChange={(event) => setCircularRotationDegrees(Number(event.target.value))}
                 />
-                <span>deg</span>
-                <button
-                  type="button"
-                  className="secondary rotation-reset-button"
-                  onClick={() => setCircularRotationDegrees(0)}
-                  disabled={circularRotationDegrees === 0}
-                  title="Reset rotation to zero degrees."
-                >
-                  Reset
-                </button>
+                <div className="rotation-value-input">
+                  <input
+                    type="number"
+                    aria-label="Rotation degrees"
+                    step={0.01}
+                    value={circularRotationDegrees}
+                    onChange={(event) => {
+                      const nextValue = event.target.valueAsNumber;
+                      if (Number.isFinite(nextValue)) {
+                        setCircularRotationDegrees(nextValue);
+                      }
+                    }}
+                  />
+                  <span>deg</span>
+                  <button
+                    type="button"
+                    className="secondary rotation-reset-button"
+                    onClick={() => setCircularRotationDegrees(0)}
+                    disabled={circularRotationDegrees === 0}
+                    title="Reset rotation to zero degrees."
+                  >
+                    Reset
+                  </button>
+                </div>
               </div>
               {viewMode === "spiral" ? (
-                <>
+                <div className="view-parameter-group">
                   <label htmlFor="spiral-turns" title="Change how many rotations the spiral uses from root to tips.">Spiral turns</label>
                   <input
                     id="spiral-turns"
@@ -7407,101 +7409,105 @@ export default function App() {
                     onChange={(event) => setSpiralTurns(Number(event.target.value))}
                   />
                   <div className="figure-style-value">{spiralTurns.toFixed(1)}</div>
-                </>
+                </div>
               ) : (
                 <>
-                  <label htmlFor="radial-angular-span" title="Set how much of the circle the radial tree occupies. Use 180 degrees for a fan and 360 degrees for a full circle.">Angular span</label>
-                  <input
-                    id="radial-angular-span"
-                    type="range"
-                    min={MIN_RADIAL_ANGULAR_SPAN_DEGREES}
-                    max={MAX_RADIAL_ANGULAR_SPAN_DEGREES}
-                    step={1}
-                    value={radialAngularSpanDegrees}
-                    onChange={(event) => {
-                      setViewMode("circular");
-                      setRadialAngularSpanDegrees(Number(event.target.value));
-                    }}
-                  />
-                  <div className="rotation-value-input">
+                  <div className="view-parameter-group">
+                    <label htmlFor="radial-angular-span" title="Set how much of the circle the radial tree occupies. Use 180 degrees for a fan and 360 degrees for a full circle.">Angular span</label>
                     <input
-                      type="number"
-                      aria-label="Radial angular span degrees"
+                      id="radial-angular-span"
+                      type="range"
                       min={MIN_RADIAL_ANGULAR_SPAN_DEGREES}
                       max={MAX_RADIAL_ANGULAR_SPAN_DEGREES}
                       step={1}
-                      value={radialAngularSpanInput}
+                      value={radialAngularSpanDegrees}
                       onChange={(event) => {
-                        const input = event.target.value;
-                        setRadialAngularSpanInput(input);
-                        const value = Number(input);
-                        if (input.trim() && Number.isFinite(value) && value >= MIN_RADIAL_ANGULAR_SPAN_DEGREES && value <= MAX_RADIAL_ANGULAR_SPAN_DEGREES) {
-                          setViewMode("circular");
-                          setRadialAngularSpanDegrees(value);
-                        }
-                      }}
-                      onBlur={() => {
-                        const value = Number(radialAngularSpanInput);
-                        if (radialAngularSpanInput.trim() && Number.isFinite(value)) {
-                          const clamped = Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, value));
-                          setViewMode("circular");
-                          setRadialAngularSpanDegrees(clamped);
-                          setRadialAngularSpanInput(String(clamped));
-                        } else {
-                          setRadialAngularSpanInput(String(radialAngularSpanDegrees));
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.currentTarget.blur();
-                        } else if (event.key === "Escape") {
-                          setRadialAngularSpanInput(String(radialAngularSpanDegrees));
-                          event.currentTarget.blur();
-                        }
+                        setViewMode("circular");
+                        setRadialAngularSpanDegrees(Number(event.target.value));
                       }}
                     />
-                    <span>deg</span>
-                    <div className="radial-span-presets">
-                      <button
-                        type="button"
-                        className={radialAngularSpanDegrees === 180 ? "secondary active" : "secondary"}
-                        aria-pressed={radialAngularSpanDegrees === 180}
-                        onClick={() => {
-                          setViewMode("circular");
-                          setRadialAngularSpanDegrees(180);
+                    <div className="rotation-value-input">
+                      <input
+                        type="number"
+                        aria-label="Radial angular span degrees"
+                        min={MIN_RADIAL_ANGULAR_SPAN_DEGREES}
+                        max={MAX_RADIAL_ANGULAR_SPAN_DEGREES}
+                        step={1}
+                        value={radialAngularSpanInput}
+                        onChange={(event) => {
+                          const input = event.target.value;
+                          setRadialAngularSpanInput(input);
+                          const value = Number(input);
+                          if (input.trim() && Number.isFinite(value) && value >= MIN_RADIAL_ANGULAR_SPAN_DEGREES && value <= MAX_RADIAL_ANGULAR_SPAN_DEGREES) {
+                            setViewMode("circular");
+                            setRadialAngularSpanDegrees(value);
+                          }
                         }}
-                        title="Set the radial tree to a 180 degree fan."
-                      >
-                        Fan
-                      </button>
-                      <button
-                        type="button"
-                        className={radialAngularSpanDegrees === 360 ? "secondary active" : "secondary"}
-                        aria-pressed={radialAngularSpanDegrees === 360}
-                        onClick={() => {
-                          setViewMode("circular");
-                          setRadialAngularSpanDegrees(360);
+                        onBlur={() => {
+                          const value = Number(radialAngularSpanInput);
+                          if (radialAngularSpanInput.trim() && Number.isFinite(value)) {
+                            const clamped = Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, value));
+                            setViewMode("circular");
+                            setRadialAngularSpanDegrees(clamped);
+                            setRadialAngularSpanInput(String(clamped));
+                          } else {
+                            setRadialAngularSpanInput(String(radialAngularSpanDegrees));
+                          }
                         }}
-                        title="Set the radial tree to a full circle."
-                      >
-                        Circle
-                      </button>
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          } else if (event.key === "Escape") {
+                            setRadialAngularSpanInput(String(radialAngularSpanDegrees));
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                      <span>deg</span>
+                      <div className="radial-span-presets">
+                        <button
+                          type="button"
+                          className={radialAngularSpanDegrees === 180 ? "secondary active" : "secondary"}
+                          aria-pressed={radialAngularSpanDegrees === 180}
+                          onClick={() => {
+                            setViewMode("circular");
+                            setRadialAngularSpanDegrees(180);
+                          }}
+                          title="Set the radial tree to a 180 degree fan."
+                        >
+                          Fan
+                        </button>
+                        <button
+                          type="button"
+                          className={radialAngularSpanDegrees === 360 ? "secondary active" : "secondary"}
+                          aria-pressed={radialAngularSpanDegrees === 360}
+                          onClick={() => {
+                            setViewMode("circular");
+                            setRadialAngularSpanDegrees(360);
+                          }}
+                          title="Set the radial tree to a full circle."
+                        >
+                          Circle
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <label htmlFor="radial-center-opening" title="Increase the empty center while preserving the radial tree's branch-depth scale.">Center opening</label>
-                  <input
-                    id="radial-center-opening"
-                    type="range"
-                    min={0}
-                    max={MAX_RADIAL_CENTER_OPENING_RATIO}
-                    step={0.01}
-                    value={radialCenterOpeningRatio}
-                    onChange={(event) => {
-                      setViewMode("circular");
-                      setRadialCenterOpeningRatio(Number(event.target.value));
-                    }}
-                  />
-                  <div className="figure-style-value">{Math.round(radialCenterOpeningRatio * 100)}%</div>
+                  <div className="view-parameter-group">
+                    <label htmlFor="radial-center-opening" title="Set the empty inner radius as a percentage of the full radial tree radius.">Inner radius</label>
+                    <input
+                      id="radial-center-opening"
+                      type="range"
+                      min={0}
+                      max={MAX_RADIAL_CENTER_OPENING_RATIO}
+                      step={0.01}
+                      value={radialCenterOpeningRatio}
+                      onChange={(event) => {
+                        setViewMode("circular");
+                        setRadialCenterOpeningRatio(Number(event.target.value));
+                      }}
+                    />
+                    <div className="figure-style-value">{Math.round(radialCenterOpeningRatio * 100)}%</div>
+                  </div>
                 </>
               )}
             </div>

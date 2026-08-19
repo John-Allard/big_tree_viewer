@@ -4281,6 +4281,7 @@ export default function TreeCanvas({
   const rotationPreviewRef = useRef<RotationPreviewCache | null>(null);
   const rotationPreviewCommitTimerRef = useRef<number | null>(null);
   const canvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
+  const atomicFrameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const hoverCanvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const detailedRenderDebugEnabledRef = useRef(
     typeof navigator !== "undefined" ? Boolean(navigator.webdriver) : false,
@@ -7526,7 +7527,24 @@ export default function TreeCanvas({
       }
     }
 
-    const ctx = canvas.getContext("2d");
+    const useAtomicFrame = !isOverrideRender
+      && taxonomyEnabled
+      && (viewMode === "circular" || viewMode === "fan");
+    let renderTargetCanvas = canvas;
+    if (useAtomicFrame) {
+      let atomicFrameCanvas = atomicFrameCanvasRef.current;
+      if (!atomicFrameCanvas) {
+        atomicFrameCanvas = document.createElement("canvas");
+        atomicFrameCanvasRef.current = atomicFrameCanvas;
+      }
+      if (atomicFrameCanvas.width !== backingWidth || atomicFrameCanvas.height !== backingHeight) {
+        atomicFrameCanvas.width = backingWidth;
+        atomicFrameCanvas.height = backingHeight;
+      }
+      renderTargetCanvas = atomicFrameCanvas;
+    }
+
+    const ctx = renderTargetCanvas.getContext("2d");
     if (!ctx) {
       return;
     }
@@ -11415,13 +11433,14 @@ export default function TreeCanvas({
         tree.isUltrametric ? axisDepth(tree.rootAge - value) : axisDepth(value)
       );
       const visibleRadius = Math.max(1e-9, Math.min(renderSize.width, renderSize.height) / (2 * camera.scale));
-      const stripeLevels = buildStripeLevels(visibleRadius, camera.scale, scaleTickInterval);
+      const visibleTimeSpan = Math.max(1e-9, Math.min(stripeExtent, visibleRadius));
+      const stripeLevels = buildStripeLevels(visibleTimeSpan, camera.scale, scaleTickInterval);
       const stripeBoundaries = buildStripeBoundaries(stripeExtent, stripeLevels);
       const visibleScaleBoundaries = showIntermediateScaleTicks
         ? stripeBoundaries
         : stripeBoundaries.filter((boundary) => boundary.alpha >= SOLID_SCALE_TICK_ALPHA_THRESHOLD);
       const circularCenterScaleLevels = buildStripeLevels(
-        visibleRadius,
+        visibleTimeSpan,
         camera.scale,
         scaleTickInterval,
       );
@@ -14855,6 +14874,16 @@ export default function TreeCanvas({
           height: maximumY - minimumY,
           neighborY,
         });
+      }
+    }
+    if (useAtomicFrame && renderTargetCanvas !== canvas) {
+      const displayContext = canvas.getContext("2d");
+      if (displayContext) {
+        displayContext.setTransform(1, 0, 0, 1, 0, 0);
+        displayContext.globalAlpha = 1;
+        displayContext.globalCompositeOperation = "copy";
+        displayContext.drawImage(renderTargetCanvas, 0, 0);
+        displayContext.globalCompositeOperation = "source-over";
       }
     }
     renderDebugRef.current = renderDebug;

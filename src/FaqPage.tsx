@@ -228,7 +228,7 @@ export default function FaqPage() {
                 Rectangular view is useful for local detail and independent x/y
                 zoom. Radial view is useful for compact whole-tree figures;
                 its angular span can range from an arc or semicircular fan to
-                a full circle, and its center opening is adjustable.
+                a full circle, and its inner radius is adjustable.
                 Spiral view is intended for time-calibrated trees where deep
                 time and recent tips need to share the same figure.
               </p>

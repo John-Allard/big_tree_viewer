@@ -1643,9 +1643,19 @@ button.secondary {
 }
 
 .rotation-controls {
-  margin-top: 0.8rem;
+  margin-top: 0.7rem;
   display: grid;
-  gap: 0.55rem;
+  gap: 0.5rem;
+}
+
+.view-parameter-group {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.view-parameter-group + .view-parameter-group {
+  padding-top: 0.48rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
 }
 
 .rotation-controls label {
@@ -1661,11 +1671,15 @@ button.secondary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.3rem;
 }
 
-.rotation-value-input input {
+.rotation-value-input input[type="number"] {
   min-width: 0;
+  min-height: 1.9rem;
+  padding: 0.24rem 0.48rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
 }
 
 .rotation-value-input span {
@@ -1675,12 +1689,14 @@ button.secondary {
 
 .radial-span-presets {
   display: flex;
-  gap: 0.35rem;
+  gap: 0.25rem;
 }
 
 .radial-span-presets button {
-  min-height: 2.35rem;
-  padding: 0.4rem 0.55rem;
+  min-height: 1.9rem;
+  padding: 0.24rem 0.48rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
 }
 
 .radial-span-presets button.active {
@@ -1690,8 +1706,10 @@ button.secondary {
 }
 
 .rotation-reset-button {
-  min-height: 2.35rem;
-  padding: 0.4rem 0.7rem;
+  min-height: 1.9rem;
+  padding: 0.24rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
 }
 
 .search-controls {

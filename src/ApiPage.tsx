@@ -137,7 +137,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
           <dl className="api-option-list">
             <div><dt>btv_view</dt><dd>`rectangular`, `radial`, or `spiral`. The legacy `circular` and `fan` values remain accepted. Spiral mode requires at least 1,000 tips.</dd></div>
             <div><dt>btv_radial_span</dt><dd>Radial angular span in degrees from 30 to 360. Use 180 for a fan and 360 for a full circle.</dd></div>
-            <div><dt>btv_radial_opening</dt><dd>Radial center opening as a fraction from 0 to 0.85.</dd></div>
+            <div><dt>btv_radial_opening</dt><dd>Radial inner radius as a fraction from 0 to 0.85.</dd></div>
             <div><dt>btv_order</dt><dd>`asc`, `desc`, or `input`.</dd></div>
             <div><dt>btv_tip_labels</dt><dd>`true` or `false`.</dd></div>
             <div><dt>btv_align_tip_labels</dt><dd>Align tip labels at the rectangular tree edge with dotted leaders or at the radial outer radius.</dd></div>
