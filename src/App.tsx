@@ -1940,6 +1940,7 @@ export default function App() {
   const [zoomAxisMode, setZoomAxisMode] = useState<ZoomAxisMode>("both");
   const [circularRotationDegrees, setCircularRotationDegrees] = useState(0);
   const [radialAngularSpanDegrees, setRadialAngularSpanDegrees] = useState(DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES);
+  const [radialAngularSpanInput, setRadialAngularSpanInput] = useState(String(DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES));
   const [radialCenterOpeningRatio, setRadialCenterOpeningRatio] = useState(DEFAULT_RADIAL_CENTER_OPENING_RATIO);
   const [showTimeStripes, setShowTimeStripes] = useState(true);
   const [timeAxisScale, setTimeAxisScale] = useState<TimeAxisScale>(DEFAULT_TIME_AXIS_SCALE);
@@ -2184,6 +2185,9 @@ export default function App() {
       setFitRequest((value) => value + 1);
     }
   }, [radialAngularSpanDegrees, radialCenterOpeningRatio]);
+  useEffect(() => {
+    setRadialAngularSpanInput(String(radialAngularSpanDegrees));
+  }, [radialAngularSpanDegrees]);
   const selectViewMode = useCallback((nextMode: ViewMode): void => {
     if (comparisonEnabled && comparisonTree && nextMode !== "rectangular") {
       return;
@@ -6568,6 +6572,7 @@ export default function App() {
         metadataMarkerColumn,
         metadataMarkerSizePx,
         metadataPiesEnabled,
+        metadataPieNodeCount: metadataPieOverlay.pieNodeCount,
         metadataPieStartColumn,
         metadataPieEndColumn,
         metadataPiePalette,
@@ -6744,6 +6749,9 @@ export default function App() {
       setMetadataMarkersEnabled,
       setMetadataMarkerColumn,
       setMetadataMarkerSizePx,
+      setMetadataPiesEnabled,
+      setMetadataPieStartColumn,
+      setMetadataPieEndColumn,
       setMetadataTipTableEnabled,
       setMetadataTipTableMode,
       setMetadataTipTableCellStyle,
@@ -7392,7 +7400,7 @@ export default function App() {
                   <input
                     id="spiral-turns"
                     type="range"
-                    min={3}
+                    min={1}
                     max={8}
                     step={0.1}
                     value={spiralTurns}
@@ -7422,16 +7430,63 @@ export default function App() {
                       min={MIN_RADIAL_ANGULAR_SPAN_DEGREES}
                       max={MAX_RADIAL_ANGULAR_SPAN_DEGREES}
                       step={1}
-                      value={radialAngularSpanDegrees}
+                      value={radialAngularSpanInput}
                       onChange={(event) => {
-                        const value = event.target.valueAsNumber;
-                        if (Number.isFinite(value)) {
+                        const input = event.target.value;
+                        setRadialAngularSpanInput(input);
+                        const value = Number(input);
+                        if (input.trim() && Number.isFinite(value) && value >= MIN_RADIAL_ANGULAR_SPAN_DEGREES && value <= MAX_RADIAL_ANGULAR_SPAN_DEGREES) {
                           setViewMode("circular");
-                          setRadialAngularSpanDegrees(Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, value)));
+                          setRadialAngularSpanDegrees(value);
+                        }
+                      }}
+                      onBlur={() => {
+                        const value = Number(radialAngularSpanInput);
+                        if (radialAngularSpanInput.trim() && Number.isFinite(value)) {
+                          const clamped = Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, value));
+                          setViewMode("circular");
+                          setRadialAngularSpanDegrees(clamped);
+                          setRadialAngularSpanInput(String(clamped));
+                        } else {
+                          setRadialAngularSpanInput(String(radialAngularSpanDegrees));
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        } else if (event.key === "Escape") {
+                          setRadialAngularSpanInput(String(radialAngularSpanDegrees));
+                          event.currentTarget.blur();
                         }
                       }}
                     />
                     <span>deg</span>
+                    <div className="radial-span-presets">
+                      <button
+                        type="button"
+                        className={radialAngularSpanDegrees === 180 ? "secondary active" : "secondary"}
+                        aria-pressed={radialAngularSpanDegrees === 180}
+                        onClick={() => {
+                          setViewMode("circular");
+                          setRadialAngularSpanDegrees(180);
+                        }}
+                        title="Set the radial tree to a 180 degree fan."
+                      >
+                        Fan
+                      </button>
+                      <button
+                        type="button"
+                        className={radialAngularSpanDegrees === 360 ? "secondary active" : "secondary"}
+                        aria-pressed={radialAngularSpanDegrees === 360}
+                        onClick={() => {
+                          setViewMode("circular");
+                          setRadialAngularSpanDegrees(360);
+                        }}
+                        title="Set the radial tree to a full circle."
+                      >
+                        Circle
+                      </button>
+                    </div>
                   </div>
                   <label htmlFor="radial-center-opening" title="Increase the empty center while preserving the radial tree's branch-depth scale.">Center opening</label>
                   <input

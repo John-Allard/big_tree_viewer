@@ -71,7 +71,31 @@ test("radial geometry supports custom spans and center openings", async ({ page 
     expect(bounds.bottom).toBeLessThanOrEqual(result.viewport.height + 2);
   }
   await expect(page.getByRole("button", { name: "Circular" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Fan", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Fan", exact: true })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("radial angular span accepts typed values and provides fan and circle presets", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
+  await page.getByRole("button", { name: "Radial", exact: true }).click();
+
+  const input = page.getByLabel("Radial angular span degrees");
+  await input.fill("");
+  await input.press("1");
+  await expect(input).toHaveValue("1");
+  await input.press("8");
+  await expect(input).toHaveValue("18");
+  await input.press("0");
+  await expect(input).toHaveValue("180");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().radialAngularSpanDegrees === 180);
+
+  await page.getByRole("button", { name: "Circle", exact: true }).click();
+  await expect(input).toHaveValue("360");
+  await expect(page.getByRole("button", { name: "Circle", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: "Fan", exact: true }).click();
+  await expect(input).toHaveValue("180");
+  await expect(page.getByRole("button", { name: "Fan", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("legacy fan mode remains an upper semicircle compatibility preset", async ({ page }) => {
@@ -127,4 +151,102 @@ test("custom radial arcs remain visible on a mobile viewport", async ({ page }) 
   expect(pixels.height).toBeGreaterThan(300);
   expect(pixels.nonBackgroundSamples).toBeGreaterThan(100);
   await expect(page.getByRole("button", { name: "Radial", exact: true })).toHaveClass(/active/);
+});
+
+test("large radial center openings can zoom out to a compact mobile view", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?btv_view=radial&btv_radial_span=360&btv_radial_opening=0.85");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit());
+  await page.waitForTimeout(100);
+  await page.evaluate(() => {
+    const shell = document.querySelector(".tree-canvas-shell");
+    if (!(shell instanceof HTMLElement)) {
+      throw new Error("Tree canvas shell unavailable.");
+    }
+    const bounds = shell.getBoundingClientRect();
+    for (let index = 0; index < 20; index += 1) {
+      shell.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: bounds.left + (bounds.width * 0.5),
+        clientY: bounds.top + (bounds.height * 0.5),
+        deltaY: 800,
+        deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      }));
+    }
+  });
+  await page.waitForTimeout(100);
+  const outerRadiusPx = await page.evaluate(() => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const radial = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.radial as Record<string, unknown> | undefined;
+    if (!camera || camera.kind !== "circular" || !radial) {
+      throw new Error("Radial camera unavailable.");
+    }
+    return camera.scale * Number(radial.outerRadiusWorld);
+  });
+  expect(outerRadiusPx).toBeLessThanOrEqual(60);
+});
+
+test("metadata overlays render in circle, fan, and open-center arc configurations", async ({ page }) => {
+  await page.goto("/?btv_newick=((A:1,B:1)CladeOne:1,(C:1,D:1)CladeTwo:1)Root;");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.importMetadataTextForTest(
+      "label,group,marker,note,slice_a,slice_b\nA,Hot,Important,Alpha note,2,1\nB,Cold,Reference,Beta note,1,2\n",
+      "radial-metadata.csv",
+    );
+    app?.setMetadataValueColumn("group");
+    app?.setMetadataLabelsEnabled(true);
+    app?.setMetadataLabelColumn("note");
+    app?.setMetadataMarkersEnabled(true);
+    app?.setMetadataMarkerColumn("marker");
+    app?.setMetadataPiesEnabled(true);
+    app?.setMetadataPieStartColumn("slice_a");
+    app?.setMetadataPieEndColumn("slice_b");
+    app?.setViewMode("circular");
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.metadataColoredNodeCount === 2
+      && state?.metadataLabeledNodeCount === 2
+      && state?.metadataMarkedNodeCount === 2
+      && state?.metadataPieNodeCount === 2;
+  });
+
+  for (const configuration of [
+    { span: 360, opening: 0 },
+    { span: 180, opening: 0 },
+    { span: 240, opening: 0.55 },
+  ]) {
+    const svg = await page.evaluate(async ({ span, opening }) => {
+      const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+      app?.setRadialAngularSpanDegreesForTest(span);
+      app?.setRadialCenterOpeningRatioForTest(opening);
+      app?.requestFit();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+    }, configuration);
+    expect(svg).toContain("Alpha note");
+    expect(svg).toContain("Beta note");
+    expect(svg).toContain('fill="#2563eb"');
+    expect(svg).toContain('fill="#16a34a"');
+    expect(svg).toMatch(/<path[^>]*d="M [^ ]+ [^ ]+ L [^"]+ A [^"]+"[^>]*fill=/);
+  }
+});
+
+test("spiral geometry supports one complete turn", async ({ page }) => {
+  const tips = Array.from({ length: 1000 }, (_, index) => `Tip_${index}:1`).join(",");
+  await page.goto(`/?btv_newick=(${encodeURIComponent(tips)})Root;`);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
+  await page.getByRole("button", { name: "Spiral", exact: true }).click();
+  await page.getByLabel("Spiral turns").fill("1");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().spiralTurns === 1);
+  const state = await page.evaluate(() => ({
+    app: window.__BIG_TREE_VIEWER_APP_TEST__?.getState(),
+    spiral: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.spiral as Record<string, unknown> | undefined,
+  }));
+  expect(state.app?.spiralTurns).toBe(1);
+  expect(Number(state.spiral?.effectiveTurns)).toBeCloseTo(1, 6);
 });

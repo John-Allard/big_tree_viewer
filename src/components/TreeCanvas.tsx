@@ -219,8 +219,8 @@ function minRectZoomScales(tree: TreeModel): { scaleX: number; scaleY: number } 
   };
 }
 
-function minCircularZoomScale(tree: TreeModel): number {
-  const radius = Math.max(tree.maxDepth, tree.branchLengthMinPositive, 1e-9);
+function minCircularZoomScale(tree: TreeModel, treeRadiusWorld = tree.maxDepth): number {
+  const radius = Math.max(treeRadiusWorld, tree.branchLengthMinPositive, 1e-9);
   return MIN_ZOOMED_CIRCULAR_TREE_RADIUS_PX / radius;
 }
 
@@ -354,7 +354,7 @@ function buildSpiralMetrics(
   taxonomyBandThicknessScale: number,
   timeAxisLogBase: number,
 ): SpiralMetrics {
-  const clampedTurns = Math.max(2.5, Math.min(10, turns));
+  const clampedTurns = Math.max(1, Math.min(10, turns));
   const bandWidth = 0.82;
   const clampedBandThicknessScale = Math.max(0.05, Math.min(5, taxonomyBandThicknessScale));
   const taxonomyRibbonWidth = 0.095 * clampedBandThicknessScale;
@@ -6666,7 +6666,10 @@ export default function TreeCanvas({
       clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
     } else {
       const world = screenToWorldCircular(camera, localX, localY);
-      const minScale = minCircularZoomScale(tree);
+      const minScale = minCircularZoomScale(
+        tree,
+        viewMode === "circular" ? polarOuterRadius : tree.maxDepth,
+      );
       const maxScale = maxCircularZoomScale(size.width, size.height, tree, camera.rotation);
       camera.scale = Math.max(minScale, Math.min(maxScale, camera.scale * zoom));
       const rotated = rotateCircularWorldPoint(camera, world.x, world.y);
@@ -6687,7 +6690,7 @@ export default function TreeCanvas({
         updateCollapsedLayout();
       }
     }
-  }, [collapsedNodeModes.size, collapsedView, finalizeCircularCamera, rectClampPadding, size.height, size.width, tree, zoomAxisMode]);
+  }, [collapsedNodeModes.size, collapsedView, finalizeCircularCamera, polarOuterRadius, rectClampPadding, size.height, size.width, tree, viewMode, zoomAxisMode]);
 
   const getTaxonomyBranchColors = useCallback((orderKey: LayoutOrder, colorRanks: TaxonomyRank[]): string[] | null => {
     if (!tree || !taxonomyConsensus || colorRanks.length === 0) {
@@ -11330,6 +11333,7 @@ export default function TreeCanvas({
 
       renderDebug.spiral = {
         turns: spiralTurns,
+        effectiveTurns: metrics.totalTheta / (Math.PI * 2),
         firstTipWorld: (() => {
           const firstTipNode = cache.orderedLeaves[order][0];
           const firstTipTheta = spiralThetaForY(layout.center[firstTipNode], tree.leafCount, metrics);

@@ -76,6 +76,9 @@ declare global {
       setMetadataMarkersEnabled: (visible: boolean) => void;
       setMetadataMarkerColumn: (column: string) => void;
       setMetadataMarkerSizePx: (value: number) => void;
+      setMetadataPiesEnabled: (visible: boolean) => void;
+      setMetadataPieStartColumn: (column: string) => void;
+      setMetadataPieEndColumn: (column: string) => void;
       setMetadataTipTableEnabled: (visible: boolean) => void;
       setMetadataTipTableMode: (mode: "bars" | "heatmap" | "categorical") => void;
       setMetadataTipTableCellStyle: (style: "filled" | "circle" | "square" | "check" | "text") => void;
