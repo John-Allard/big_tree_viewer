@@ -48,6 +48,8 @@ export interface TreeCanvasProps {
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;
   circularRotation: number;
+  radialAngularSpanDegrees: number;
+  radialCenterOpeningRatio: number;
   spiralTurns: number;
   showTimeStripes: boolean;
   timeStripeStyle: TimeStripeStyle;

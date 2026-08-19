@@ -113,6 +113,7 @@ export function buildCache(
   timeAxisLogBase = DEFAULT_TIME_AXIS_LOG_BASE,
   polarAngleStart = 0,
   polarAngleSpan = Math.PI * 2,
+  polarInnerRadius = 0,
 ): RenderCache {
   const orderedChildren = lazyOrderRecord((order) => computeOrderedChildren(tree, order));
   const orderedLeaves = lazyOrderRecord((order) => computeOrderedLeaves(tree, order));
@@ -121,13 +122,14 @@ export function buildCache(
 
   const axisExtent = timeAxisScale === "log" ? treeTimeAxisExtent(tree) : Math.max(tree.maxDepth, 1);
   const axisDepth = (node: number): number => depthToTimeAxisDepth(tree, tree.buffers.depth[node], timeAxisScale, timeAxisLogBase);
+  const polarDepth = (node: number): number => polarInnerRadius + axisDepth(node);
   const boundsRect = {
     minX: 0,
     minY: 0,
     maxX: Math.max(axisExtent, 1),
     maxY: Math.max(tree.leafCount - 1, 1),
   };
-  const radius = Math.max(axisExtent, 1);
+  const radius = Math.max(polarInnerRadius + axisExtent, 1);
   const boundsCircular = {
     minX: -radius,
     minY: -radius,
@@ -192,13 +194,13 @@ export function buildCache(
           const arcEnd = thetaFor(layout.max, node, tree.leafCount, polarAngleStart, polarAngleSpan);
           const arcLength = Math.max(0, arcEnd - arcStart);
           const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-          appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
+          appendCircularArcSegments(radial, node, polarDepth(node), arcAngles.start, arcAngles.end);
         }
         continue;
       }
       const theta = thetaFor(center, node, tree.leafCount, polarAngleStart, polarAngleSpan);
-      const start = polarToCartesian(axisDepth(parent), theta);
-      const end = polarToCartesian(axisDepth(node), theta);
+      const start = polarToCartesian(polarDepth(parent), theta);
+      const end = polarToCartesian(polarDepth(node), theta);
       radial.push({
         node,
         kind: "stem",
@@ -214,7 +216,7 @@ export function buildCache(
         const arcEnd = thetaFor(layout.max, node, tree.leafCount, polarAngleStart, polarAngleSpan);
         const arcLength = Math.max(0, arcEnd - arcStart);
         const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-        appendCircularArcSegments(radial, node, axisDepth(node), arcAngles.start, arcAngles.end);
+        appendCircularArcSegments(radial, node, polarDepth(node), arcAngles.start, arcAngles.end);
       }
     }
     return radial;

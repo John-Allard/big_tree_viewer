@@ -180,7 +180,7 @@ const DEFAULT_EXPORT_DPI = 200;
 const SVG_LARGE_TREE_TIP_WARNING_THRESHOLD = 100000;
 
 function defaultExportPixelSizeForMode(mode: ViewMode): { width: number; height: number } {
-  return mode === "rectangular" || mode === "fan"
+  return mode === "rectangular" || mode === "circular" || mode === "fan"
     ? { width: DEFAULT_EXPORT_RECT_WIDTH_PX, height: DEFAULT_EXPORT_RECT_HEIGHT_PX }
     : { width: DEFAULT_EXPORT_SQUARE_SIZE_PX, height: DEFAULT_EXPORT_SQUARE_SIZE_PX };
 }
@@ -199,7 +199,7 @@ function squarePngExportSizeForMode(
   width: number | undefined,
   height: number | undefined,
 ): { width: number | undefined; height: number | undefined } {
-  if (mode === "rectangular" || mode === "fan") {
+  if (mode !== "spiral") {
     return { width, height };
   }
   if (width === undefined && height === undefined) {
@@ -236,7 +236,9 @@ type BigTreeViewerLaunchPayload = {
   controls?: {
     hideDownloadNewick?: boolean;
   };
-  visual?: Partial<BigTreeViewerSessionSettings>;
+  visual?: Omit<Partial<BigTreeViewerSessionSettings>, "viewMode"> & {
+    viewMode?: ViewMode | "radial";
+  };
   canvas?: TreeCanvasSessionState | null;
   metadata?: {
     text?: string;
@@ -289,11 +291,22 @@ type LaunchLoadResult = {
   label: string;
 };
 
+function normalizeRequestedViewMode(value: unknown): ViewMode | null {
+  if (value === "radial") {
+    return "circular";
+  }
+  return value === "rectangular" || value === "circular" || value === "fan" || value === "spiral"
+    ? value
+    : null;
+}
+
 type BigTreeViewerSessionSettings = {
   viewMode: ViewMode;
   order: LayoutOrder;
   zoomAxisMode: ZoomAxisMode;
   circularRotationDegrees: number;
+  radialAngularSpanDegrees?: number;
+  radialCenterOpeningRatio?: number;
   spiralTurns: number;
   showTimeStripes: boolean;
   timeStripeStyle: TimeStripeStyle;
@@ -1053,6 +1066,11 @@ const DEFAULT_EXTEND_RECT_SCALE_TO_TICK = false;
 const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
 const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = -5;
 const DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR = false;
+const DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES = 360;
+const MIN_RADIAL_ANGULAR_SPAN_DEGREES = 30;
+const MAX_RADIAL_ANGULAR_SPAN_DEGREES = 360;
+const DEFAULT_RADIAL_CENTER_OPENING_RATIO = 0;
+const MAX_RADIAL_CENTER_OPENING_RATIO = 0.85;
 const DEFAULT_SPIRAL_TURNS = 5.5;
 const MIN_SPIRAL_TIP_COUNT = 1000;
 const DEFAULT_TIME_STRIPE_STYLE: TimeStripeStyle = "bands";
@@ -1109,7 +1127,7 @@ const TUTORIAL_STEPS: Array<{
     id: "navigation",
     target: "view",
     title: "Navigate the tree",
-    body: "Switch between rectangular, circular, and fan layouts, choose tip ordering, fit the view, and zoom with the wheel, trackpad pinch, +/-, or touch gestures. Rectangular mode can lock zoom to X, Y, or both axes.",
+    body: "Switch between rectangular, radial, and spiral layouts, adjust the radial angular span and center opening, choose tip ordering, fit the view, and zoom with the wheel, trackpad pinch, +/-, or touch gestures. Rectangular mode can lock zoom to X, Y, or both axes.",
   },
   {
     id: "visual",
@@ -1921,6 +1939,8 @@ export default function App() {
   const [order, setOrder] = useState<LayoutOrder>("asc");
   const [zoomAxisMode, setZoomAxisMode] = useState<ZoomAxisMode>("both");
   const [circularRotationDegrees, setCircularRotationDegrees] = useState(0);
+  const [radialAngularSpanDegrees, setRadialAngularSpanDegrees] = useState(DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES);
+  const [radialCenterOpeningRatio, setRadialCenterOpeningRatio] = useState(DEFAULT_RADIAL_CENTER_OPENING_RATIO);
   const [showTimeStripes, setShowTimeStripes] = useState(true);
   const [timeAxisScale, setTimeAxisScale] = useState<TimeAxisScale>(DEFAULT_TIME_AXIS_SCALE);
   const [timeAxisLogBase, setTimeAxisLogBase] = useState(DEFAULT_TIME_AXIS_LOG_BASE);
@@ -2159,6 +2179,11 @@ export default function App() {
       setViewMode("rectangular");
     }
   }, [comparisonEnabled, comparisonTree, viewMode]);
+  useEffect(() => {
+    if (tree && (viewMode === "circular" || viewMode === "fan")) {
+      setFitRequest((value) => value + 1);
+    }
+  }, [radialAngularSpanDegrees, radialCenterOpeningRatio]);
   const selectViewMode = useCallback((nextMode: ViewMode): void => {
     if (comparisonEnabled && comparisonTree && nextMode !== "rectangular") {
       return;
@@ -2522,6 +2547,8 @@ export default function App() {
     setOrder(visual.order);
     setZoomAxisMode(visual.zoomAxisMode);
     setCircularRotationDegrees(visual.circularRotationDegrees);
+    setRadialAngularSpanDegrees(visual.radialAngularSpanDegrees ?? (visual.viewMode === "fan" ? 180 : DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES));
+    setRadialCenterOpeningRatio(visual.radialCenterOpeningRatio ?? DEFAULT_RADIAL_CENTER_OPENING_RATIO);
     setSpiralTurns(visual.spiralTurns);
     setShowTimeStripes(visual.showTimeStripes);
     setTimeAxisScale(visual.timeAxisScale);
@@ -2576,8 +2603,9 @@ export default function App() {
     if (!visual) {
       return;
     }
-    if (visual.viewMode === "rectangular" || visual.viewMode === "circular" || visual.viewMode === "fan" || visual.viewMode === "spiral") {
-      setViewMode(visual.viewMode);
+    const requestedViewMode = normalizeRequestedViewMode(visual.viewMode);
+    if (requestedViewMode) {
+      setViewMode(requestedViewMode);
     }
     if (visual.order === "asc" || visual.order === "desc" || visual.order === "input") {
       setOrder(visual.order);
@@ -2587,6 +2615,14 @@ export default function App() {
     }
     if (typeof visual.circularRotationDegrees === "number" && Number.isFinite(visual.circularRotationDegrees)) {
       setCircularRotationDegrees(visual.circularRotationDegrees);
+    }
+    if (typeof visual.radialAngularSpanDegrees === "number" && Number.isFinite(visual.radialAngularSpanDegrees)) {
+      setRadialAngularSpanDegrees(Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, visual.radialAngularSpanDegrees)));
+    } else if (visual.viewMode === "fan") {
+      setRadialAngularSpanDegrees(180);
+    }
+    if (typeof visual.radialCenterOpeningRatio === "number" && Number.isFinite(visual.radialCenterOpeningRatio)) {
+      setRadialCenterOpeningRatio(Math.max(0, Math.min(MAX_RADIAL_CENTER_OPENING_RATIO, visual.radialCenterOpeningRatio)));
     }
     if (typeof visual.spiralTurns === "number" && Number.isFinite(visual.spiralTurns)) {
       setSpiralTurns(visual.spiralTurns);
@@ -4189,6 +4225,8 @@ export default function App() {
     order,
     zoomAxisMode,
     circularRotationDegrees,
+    radialAngularSpanDegrees,
+    radialCenterOpeningRatio,
     spiralTurns,
     showTimeStripes,
     timeStripeStyle,
@@ -4325,6 +4363,8 @@ export default function App() {
     phylopicRankSelection,
     phylopicPlacement,
     phylopicSizeScale,
+    radialAngularSpanDegrees,
+    radialCenterOpeningRatio,
     scaleTickIntervalInput,
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
@@ -4371,6 +4411,16 @@ export default function App() {
       setZoomAxisMode(settings.zoomAxisMode);
     }
     setCircularRotationDegrees(settings.circularRotationDegrees);
+    setRadialAngularSpanDegrees(
+      typeof settings.radialAngularSpanDegrees === "number" && Number.isFinite(settings.radialAngularSpanDegrees)
+        ? Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, settings.radialAngularSpanDegrees))
+        : settings.viewMode === "fan" ? 180 : DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES,
+    );
+    setRadialCenterOpeningRatio(
+      typeof settings.radialCenterOpeningRatio === "number" && Number.isFinite(settings.radialCenterOpeningRatio)
+        ? Math.max(0, Math.min(MAX_RADIAL_CENTER_OPENING_RATIO, settings.radialCenterOpeningRatio))
+        : DEFAULT_RADIAL_CENTER_OPENING_RATIO,
+    );
     setSpiralTurns(settings.spiralTurns);
     setShowTimeStripes(settings.showTimeStripes);
     setTimeStripeStyle(settings.timeStripeStyle === "age-gradient" || settings.timeStripeStyle === "dashed" ? settings.timeStripeStyle : "bands");
@@ -5246,12 +5296,7 @@ export default function App() {
     if (launchSession || sessionUrl) {
       const session = launchSession ?? await parseSessionBytes(await fetchRemoteLaunchBytes(sessionUrl, "session"));
       const label = payload.label?.trim() || (sessionUrl ? launchLabelFromUrl(sessionUrl, "remote session") : "launch session");
-      const effectiveViewMode = payload.visual?.viewMode === "rectangular"
-        || payload.visual?.viewMode === "circular"
-        || payload.visual?.viewMode === "fan"
-        || payload.visual?.viewMode === "spiral"
-        ? payload.visual.viewMode
-        : session.settings.viewMode;
+      const effectiveViewMode = normalizeRequestedViewMode(payload.visual?.viewMode) ?? session.settings.viewMode;
       if (!await loadFullSessionFromObject(session, label)) {
         return { loaded: false, viewMode: effectiveViewMode, label };
       }
@@ -5307,12 +5352,7 @@ export default function App() {
       || (typeof payload.newickUrl === "string" && payload.newickUrl.trim()
         ? launchLabelFromUrl(payload.newickUrl.trim(), "remote Newick")
         : sourceLabel);
-    const effectiveViewMode = payload.visual?.viewMode === "rectangular"
-      || payload.visual?.viewMode === "circular"
-      || payload.visual?.viewMode === "fan"
-      || payload.visual?.viewMode === "spiral"
-      ? payload.visual.viewMode
-      : viewMode;
+    const effectiveViewMode = normalizeRequestedViewMode(payload.visual?.viewMode) ?? viewMode;
     const canvas = normalizeLaunchCanvasState(payload.canvas);
     const taxonomyMappingDone = waitForLaunchTaxonomyMapping();
     const restoreApplied = canvas !== undefined || launchTaxonomyProvided || launchCompactTaxonomyProvided
@@ -5460,6 +5500,8 @@ export default function App() {
       || params.has("btv_taxonomy")
       || params.has("btv_taxonomy_branch_colors")
       || params.has("btv_rotation")
+      || params.has("btv_radial_span")
+      || params.has("btv_radial_opening")
       || params.has("btv_spiral_turns")
       || params.has("btv_branch_thickness")
       || params.has("btv_time_axis_log_base"),
@@ -5467,8 +5509,10 @@ export default function App() {
     if (visualParamsPresent) {
       payload.visual = {
         ...payload.visual,
-        viewMode: viewModeParam === "rectangular" || viewModeParam === "circular" || viewModeParam === "fan" || viewModeParam === "spiral"
-          ? viewModeParam
+        viewMode: viewModeParam === "radial"
+          ? "circular"
+          : viewModeParam === "rectangular" || viewModeParam === "circular" || viewModeParam === "fan" || viewModeParam === "spiral"
+            ? viewModeParam
           : payload.visual?.viewMode,
         order: orderParam === "asc" || orderParam === "desc" || orderParam === "input"
           ? orderParam
@@ -5477,6 +5521,8 @@ export default function App() {
           ? zoomAxisModeParam
           : payload.visual?.zoomAxisMode,
         circularRotationDegrees: readLaunchNumberParam(params, "btv_rotation") ?? payload.visual?.circularRotationDegrees,
+        radialAngularSpanDegrees: readLaunchNumberParam(params, "btv_radial_span") ?? payload.visual?.radialAngularSpanDegrees,
+        radialCenterOpeningRatio: readLaunchNumberParam(params, "btv_radial_opening") ?? payload.visual?.radialCenterOpeningRatio,
         spiralTurns: readLaunchNumberParam(params, "btv_spiral_turns") ?? payload.visual?.spiralTurns,
         showTipLabels: readLaunchBoolParam(params, "btv_tip_labels") ?? payload.visual?.showTipLabels,
         alignTipLabels: readLaunchBoolParam(params, "btv_align_tip_labels") ?? payload.visual?.alignTipLabels,
@@ -6454,6 +6500,8 @@ export default function App() {
     setUseAutoCircularCenterScaleAngle(true);
     setCircularCenterScaleAngleDegrees(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
     setShowCircularCenterRadialScaleBar(DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR);
+    setRadialAngularSpanDegrees(DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES);
+    setRadialCenterOpeningRatio(DEFAULT_RADIAL_CENTER_OPENING_RATIO);
     setSpiralTurns(DEFAULT_SPIRAL_TURNS);
     setTimeStripeStyle(DEFAULT_TIME_STRIPE_STYLE);
     setTimeStripeLineWeight(DEFAULT_TIME_STRIPE_LINE_WEIGHT);
@@ -6553,6 +6601,8 @@ export default function App() {
         circularCenterScaleAngleDegrees: effectiveCircularCenterScaleAngleDegrees,
         circularCenterScaleAngleAuto: useAutoCircularCenterScaleAngle,
         showCircularCenterRadialScaleBar,
+        radialAngularSpanDegrees,
+        radialCenterOpeningRatio,
         spiralTurns,
         taxonomyRankVisibilityAuto: useAutomaticTaxonomyRankVisibility,
         taxonomyRankDisplayModes,
@@ -6589,6 +6639,14 @@ export default function App() {
         })),
       }),
       setViewMode: selectViewMode,
+      setRadialAngularSpanDegreesForTest: (value: number) => {
+        setViewMode("circular");
+        setRadialAngularSpanDegrees(Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, value)));
+      },
+      setRadialCenterOpeningRatioForTest: (value: number) => {
+        setViewMode("circular");
+        setRadialCenterOpeningRatio(Math.max(0, Math.min(MAX_RADIAL_CENTER_OPENING_RATIO, value)));
+      },
       setOrder,
       setShowTipLabels,
       setAlignTipLabels,
@@ -6823,6 +6881,8 @@ export default function App() {
     metadataTable,
     metadataValueColumn,
     order,
+    radialAngularSpanDegrees,
+    radialCenterOpeningRatio,
     alignTipLabels,
     branchThicknessScale,
     downloadTaxonomy,
@@ -7150,7 +7210,7 @@ export default function App() {
                     Set pixels from print size
                   </button>
                   <p className="export-options-help">
-                    PNG exports the current viewport at the pixel dimensions above. Circular and spiral PNG exports are kept square; rectangular and fan views support independent width and height. Very large exports can take a few seconds.
+                    PNG exports the current viewport at the pixel dimensions above. Spiral PNG exports are kept square; rectangular and radial views support independent width and height. Very large exports can take a few seconds.
                   </p>
                 </>
               ) : (
@@ -7194,7 +7254,7 @@ export default function App() {
         </PanelSection>
 
         <PanelSection title="View" isOpen={viewOpen} onToggle={() => setViewOpen(!viewOpen)} tourId="view">
-          <div className="segmented view-mode-segmented has-spiral">
+          <div className="segmented view-mode-segmented">
             <button
               type="button"
               className={viewMode === "rectangular" ? "active" : ""}
@@ -7205,21 +7265,12 @@ export default function App() {
             </button>
             <button
               type="button"
-              className={viewMode === "circular" ? "active" : ""}
+              className={viewMode === "circular" || viewMode === "fan" ? "active" : ""}
               onClick={() => selectViewMode("circular")}
               disabled={comparisonEnabled && Boolean(comparisonTree)}
-              title={comparisonEnabled && comparisonTree ? "Tree comparison is available only in rectangular mode." : "Draw the tree radially around a circle."}
+              title={comparisonEnabled && comparisonTree ? "Tree comparison is available only in rectangular mode." : "Draw the tree radially with an adjustable angular span and center opening."}
             >
-              Circular
-            </button>
-            <button
-              type="button"
-              className={viewMode === "fan" ? "active" : ""}
-              onClick={() => selectViewMode("fan")}
-              disabled={comparisonEnabled && Boolean(comparisonTree)}
-              title={comparisonEnabled && comparisonTree ? "Tree comparison is available only in rectangular mode." : "Draw the tree across a semicircular fan, oriented upward by default."}
-            >
-              Fan
+              Radial
             </button>
             <button
               type="button"
@@ -7301,7 +7352,7 @@ export default function App() {
           </p>
           {viewMode === "circular" || viewMode === "fan" || viewMode === "spiral" ? (
             <div className="rotation-controls">
-              <label htmlFor="circular-rotation" title="Rotate the circular, fan, or spiral tree around its center.">Rotation</label>
+              <label htmlFor="circular-rotation" title="Rotate the radial or spiral tree around its center.">Rotation</label>
               <input
                 id="circular-rotation"
                 type="range"
@@ -7349,7 +7400,55 @@ export default function App() {
                   />
                   <div className="figure-style-value">{spiralTurns.toFixed(1)}</div>
                 </>
-              ) : null}
+              ) : (
+                <>
+                  <label htmlFor="radial-angular-span" title="Set how much of the circle the radial tree occupies. Use 180 degrees for a fan and 360 degrees for a full circle.">Angular span</label>
+                  <input
+                    id="radial-angular-span"
+                    type="range"
+                    min={MIN_RADIAL_ANGULAR_SPAN_DEGREES}
+                    max={MAX_RADIAL_ANGULAR_SPAN_DEGREES}
+                    step={1}
+                    value={radialAngularSpanDegrees}
+                    onChange={(event) => {
+                      setViewMode("circular");
+                      setRadialAngularSpanDegrees(Number(event.target.value));
+                    }}
+                  />
+                  <div className="rotation-value-input">
+                    <input
+                      type="number"
+                      aria-label="Radial angular span degrees"
+                      min={MIN_RADIAL_ANGULAR_SPAN_DEGREES}
+                      max={MAX_RADIAL_ANGULAR_SPAN_DEGREES}
+                      step={1}
+                      value={radialAngularSpanDegrees}
+                      onChange={(event) => {
+                        const value = event.target.valueAsNumber;
+                        if (Number.isFinite(value)) {
+                          setViewMode("circular");
+                          setRadialAngularSpanDegrees(Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, value)));
+                        }
+                      }}
+                    />
+                    <span>deg</span>
+                  </div>
+                  <label htmlFor="radial-center-opening" title="Increase the empty center while preserving the radial tree's branch-depth scale.">Center opening</label>
+                  <input
+                    id="radial-center-opening"
+                    type="range"
+                    min={0}
+                    max={MAX_RADIAL_CENTER_OPENING_RATIO}
+                    step={0.01}
+                    value={radialCenterOpeningRatio}
+                    onChange={(event) => {
+                      setViewMode("circular");
+                      setRadialCenterOpeningRatio(Number(event.target.value));
+                    }}
+                  />
+                  <div className="figure-style-value">{Math.round(radialCenterOpeningRatio * 100)}%</div>
+                </>
+              )}
             </div>
           ) : null}
         </PanelSection>
@@ -9350,6 +9449,8 @@ export default function App() {
           viewMode={viewMode}
           zoomAxisMode={viewMode !== "rectangular" ? "both" : zoomAxisMode}
           circularRotation={(circularRotationDegrees * Math.PI) / 180}
+          radialAngularSpanDegrees={radialAngularSpanDegrees}
+          radialCenterOpeningRatio={radialCenterOpeningRatio}
           spiralTurns={spiralTurns}
           showTimeStripes={showTimeStripes}
           timeStripeStyle={timeStripeStyle}

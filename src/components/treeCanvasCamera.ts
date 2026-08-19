@@ -93,6 +93,65 @@ function fanUnitBounds(rotation: number): { minX: number; maxX: number; minY: nu
   };
 }
 
+function radialBounds(
+  startTheta: number,
+  angleSpan: number,
+  innerRadius: number,
+  outerRadius: number,
+  rotation: number,
+): { minX: number; maxX: number; minY: number; maxY: number } {
+  const start = startTheta + rotation;
+  const end = start + angleSpan;
+  const angles = [start, end];
+  const firstQuarter = Math.ceil(start / (Math.PI * 0.5));
+  const lastQuarter = Math.floor(end / (Math.PI * 0.5));
+  for (let quarter = firstQuarter; quarter <= lastQuarter; quarter += 1) {
+    angles.push(quarter * Math.PI * 0.5);
+  }
+  const radii = innerRadius > 0 ? [innerRadius, outerRadius] : [0, outerRadius];
+  const xs = radii.flatMap((radius) => angles.map((angle) => radius * Math.cos(angle)));
+  const ys = radii.flatMap((radius) => angles.map((angle) => radius * Math.sin(angle)));
+  return {
+    minX: Math.min(...xs),
+    maxX: Math.max(...xs),
+    minY: Math.min(...ys),
+    maxY: Math.max(...ys),
+  };
+}
+
+export function fitRadialCamera(
+  width: number,
+  height: number,
+  tree: TreeModel,
+  startTheta: number,
+  angleSpan: number,
+  innerRadius: number,
+  outerRadius: number,
+  rotation = 0,
+  extraRadiusPx = 0,
+): CircularCamera {
+  const boundedOuterRadius = Math.max(outerRadius, innerRadius + tree.branchLengthMinPositive);
+  const bounds = radialBounds(startTheta, angleSpan, innerRadius, boundedOuterRadius, rotation);
+  const padding = 28 + Math.max(0, extraRadiusPx);
+  const usableWidth = Math.max(1, width - (padding * 2));
+  const usableHeight = Math.max(1, height - (padding * 2));
+  const scale = Math.min(
+    usableWidth / Math.max(1e-9, bounds.maxX - bounds.minX),
+    usableHeight / Math.max(1e-9, bounds.maxY - bounds.minY),
+  );
+  const camera: CircularCamera = {
+    kind: "circular",
+    scale,
+    translateX: (width * 0.5) - (((bounds.minX + bounds.maxX) * 0.5) * scale),
+    translateY: (height * 0.5) - (((bounds.minY + bounds.maxY) * 0.5) * scale),
+    rotation,
+    rotationCos: 1,
+    rotationSin: 0,
+  };
+  setCircularCameraRotation(camera, rotation);
+  return camera;
+}
+
 export function fitFanCamera(
   width: number,
   height: number,

@@ -1,9 +1,9 @@
 export default function ApiPage() {
   const origin = "https://bigtreeviewer.net/";
   const simpleNewick = `${origin}?btv_newick=%28A%3A1%2CB%3A1%29Root%3B`;
-  const remoteNewick = `${origin}?btv_newick_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.nwk&btv_view=circular`;
+  const remoteNewick = `${origin}?btv_newick_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.nwk&btv_view=radial`;
   const remoteSession = `${origin}?btv_session_url=https%3A%2F%2Fexample.org%2Ftrees%2Fmy-tree.btvsession`;
-  const exportSvg = `${origin}?btv_newick=%28A%3A1%2CB%3A1%29Root%3B&btv_view=circular&btv_export=svg&btv_export_filename=tree.svg`;
+  const exportSvg = `${origin}?btv_newick=%28A%3A1%2CB%3A1%29Root%3B&btv_view=radial&btv_export=svg&btv_export_filename=tree.svg`;
   const metadataExample = `${origin}?btv_newick=%28A%3A1%2C%28B%3A1%2CC%3A1%29Clade1%3A1%29Root%3B&btv_metadata=name%2Cgroup%0AA%2Cred_group%0AB%2Cblue_group%0AC%2Cblue_group%0A&btv_metadata_key=name&btv_metadata_value=group&btv_metadata_enabled=true`;
 
   return (
@@ -135,10 +135,12 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
         <section className="api-doc-section">
           <h2>Useful URL options</h2>
           <dl className="api-option-list">
-            <div><dt>btv_view</dt><dd>`rectangular`, `circular`, `fan`, or `spiral`. Fan draws an upper semicircle at zero rotation. Spiral mode requires at least 1,000 tips.</dd></div>
+            <div><dt>btv_view</dt><dd>`rectangular`, `radial`, or `spiral`. The legacy `circular` and `fan` values remain accepted. Spiral mode requires at least 1,000 tips.</dd></div>
+            <div><dt>btv_radial_span</dt><dd>Radial angular span in degrees from 30 to 360. Use 180 for a fan and 360 for a full circle.</dd></div>
+            <div><dt>btv_radial_opening</dt><dd>Radial center opening as a fraction from 0 to 0.85.</dd></div>
             <div><dt>btv_order</dt><dd>`asc`, `desc`, or `input`.</dd></div>
             <div><dt>btv_tip_labels</dt><dd>`true` or `false`.</dd></div>
-            <div><dt>btv_align_tip_labels</dt><dd>Align tip labels at the rectangular tree edge with dotted leaders or at the circular outer radius.</dd></div>
+            <div><dt>btv_align_tip_labels</dt><dd>Align tip labels at the rectangular tree edge with dotted leaders or at the radial outer radius.</dd></div>
             <div><dt>btv_genus_labels</dt><dd>`true` or `false`.</dd></div>
             <div><dt>btv_taxonomy</dt><dd>Show taxonomy overlays if taxonomy is loaded in the payload.</dd></div>
             <div><dt>btv_taxonomy_branch_colors</dt><dd>Color branches from taxonomy mapping.</dd></div>
@@ -153,7 +155,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
             <div><dt>btv_export</dt><dd>`svg` or `png`; exports after launch.</dd></div>
             <div><dt>btv_export_delivery</dt><dd>`download` or `postMessage`.</dd></div>
-            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Circular and spiral exports are always square; rectangular and fan exports may use independent dimensions.</dd></div>
+            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Spiral exports are square; rectangular and radial exports may use independent dimensions.</dd></div>
             <div><dt>btv_export_filename</dt><dd>Suggested filename for downloads and automation results.</dd></div>
           </dl>
         </section>
@@ -285,7 +287,9 @@ window.addEventListener("message", (event) => {
     height?: number
   },
   visual?: {
-    viewMode?: "rectangular" | "circular" | "fan" | "spiral",
+    viewMode?: "rectangular" | "radial" | "spiral",
+    radialAngularSpanDegrees?: number,
+    radialCenterOpeningRatio?: number,
     order?: "asc" | "desc" | "input",
     showTipLabels?: boolean,
     alignTipLabels?: boolean,

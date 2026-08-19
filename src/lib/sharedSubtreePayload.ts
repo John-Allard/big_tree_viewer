@@ -38,6 +38,8 @@ export type SharedSubtreeVisualPayload = {
   order: LayoutOrder;
   zoomAxisMode: ZoomAxisMode;
   circularRotationDegrees: number;
+  radialAngularSpanDegrees?: number;
+  radialCenterOpeningRatio?: number;
   spiralTurns: number;
   showTimeStripes: boolean;
   timeAxisScale: TimeAxisScale;
@@ -197,6 +199,8 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     order: coerceEnum(source.order, ["asc", "desc", "input"] as const, "asc"),
     zoomAxisMode: coerceEnum(source.zoomAxisMode, ["both", "x", "y"] as const, "both"),
     circularRotationDegrees: coerceFiniteNumber(source.circularRotationDegrees, 0),
+    radialAngularSpanDegrees: coerceFiniteNumber(source.radialAngularSpanDegrees, source.viewMode === "fan" ? 180 : 360),
+    radialCenterOpeningRatio: coerceFiniteNumber(source.radialCenterOpeningRatio, 0),
     spiralTurns: coerceFiniteNumber(source.spiralTurns, 5.5),
     showTimeStripes: coerceBoolean(source.showTimeStripes, true),
     timeAxisScale: coerceEnum(source.timeAxisScale, ["linear", "log"] as const, "linear"),

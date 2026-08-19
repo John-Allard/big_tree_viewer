@@ -21,7 +21,7 @@ import {
   clampCircularCamera,
   clampRectCamera,
   fitCircularCamera,
-  fitFanCamera,
+  fitRadialCamera,
   fitRectCamera,
   lineIntersectsRect,
   rotateCircularWorldPoint,
@@ -1231,21 +1231,6 @@ function polarViewDomain(mode: ViewMode, leafCount: number): PolarViewDomain {
   return mode === "fan"
     ? { start: Math.PI, span: Math.PI, leafDivisor: Math.max(1, leafCount - 1) }
     : { start: 0, span: Math.PI * 2, leafDivisor: Math.max(1, leafCount) };
-}
-
-function polarLayoutValueForTheta(theta: number, mode: ViewMode, leafCount: number): number {
-  const domain = polarViewDomain(mode, leafCount);
-  let adjustedTheta = wrapPositive(theta);
-  if (mode === "fan" && adjustedTheta < domain.start) {
-    adjustedTheta += Math.PI * 2;
-  }
-  const fraction = clamp01((adjustedTheta - domain.start) / domain.span);
-  return Math.min(Math.max(0, leafCount - 1), fraction * domain.leafDivisor);
-}
-
-function polarThetaForLayoutValue(layoutValue: number, mode: ViewMode, leafCount: number): number {
-  const domain = polarViewDomain(mode, leafCount);
-  return domain.start + ((Math.max(0, Math.min(leafCount - 1, layoutValue)) / domain.leafDivisor) * domain.span);
 }
 
 const MANUAL_BRANCH_SWATCHES = [
@@ -4138,6 +4123,8 @@ export default function TreeCanvas({
   viewMode,
   zoomAxisMode,
   circularRotation,
+  radialAngularSpanDegrees,
+  radialCenterOpeningRatio,
   spiralTurns,
   showTimeStripes,
   timeStripeStyle,
@@ -4509,24 +4496,82 @@ export default function TreeCanvas({
   const effectiveTimeAxisLogBase = viewMode === "spiral"
     ? timeAxisLogBase * SPIRAL_TIME_AXIS_LOG_BASE_MULTIPLIER
     : timeAxisLogBase;
-  const polarAngleStart = viewMode === "fan" ? Math.PI : 0;
-  const polarAngleSpan = viewMode === "fan" ? Math.PI : Math.PI * 2;
+  const configuredRadialSpanDegrees = viewMode === "fan"
+    ? 180
+    : Math.max(30, Math.min(360, radialAngularSpanDegrees));
+  const polarAngleSpan = viewMode === "spiral"
+    ? Math.PI * 2
+    : (configuredRadialSpanDegrees * Math.PI) / 180;
+  const polarAngleStart = viewMode === "spiral" ? 0 : (Math.PI * 2) - polarAngleSpan;
+  const isPartialRadial = polarAngleSpan < (Math.PI * 2) - 1e-9;
+  const polarLeafDivisor = Math.max(1, isPartialRadial ? (tree?.leafCount ?? 1) - 1 : tree?.leafCount ?? 1);
+  const polarDomainForMode = useCallback((mode: ViewMode): PolarViewDomain => {
+    if (mode === "fan") {
+      return { start: Math.PI, span: Math.PI, leafDivisor: Math.max(1, (tree?.leafCount ?? 1) - 1) };
+    }
+    if (mode === "circular") {
+      const span = (Math.max(30, Math.min(360, radialAngularSpanDegrees)) * Math.PI) / 180;
+      return {
+        start: (Math.PI * 2) - span,
+        span,
+        leafDivisor: Math.max(1, span < (Math.PI * 2) - 1e-9 ? (tree?.leafCount ?? 1) - 1 : tree?.leafCount ?? 1),
+      };
+    }
+    return polarViewDomain(mode, tree?.leafCount ?? 1);
+  }, [radialAngularSpanDegrees, tree?.leafCount]);
+  const polarLayoutValueForCurrentModeTheta = useCallback((theta: number, mode: ViewMode): number => {
+    const domain = polarDomainForMode(mode);
+    let adjustedTheta = wrapPositive(theta);
+    if (domain.span < (Math.PI * 2) - 1e-9 && adjustedTheta < domain.start) {
+      adjustedTheta += Math.PI * 2;
+    }
+    const fraction = clamp01((adjustedTheta - domain.start) / domain.span);
+    return Math.min(Math.max(0, (tree?.leafCount ?? 1) - 1), fraction * domain.leafDivisor);
+  }, [polarDomainForMode, tree?.leafCount]);
+  const polarThetaForCurrentModeLayoutValue = useCallback((layoutValue: number, mode: ViewMode): number => {
+    const domain = polarDomainForMode(mode);
+    return domain.start + ((Math.max(0, Math.min((tree?.leafCount ?? 1) - 1, layoutValue)) / domain.leafDivisor) * domain.span);
+  }, [polarDomainForMode, tree?.leafCount]);
   const taxonomyCustomPaletteSignature = taxonomyCustomPaletteColors.join(",");
+  const timeAxisExtent = useMemo(() => (tree ? treeTimeAxisExtent(tree) : 0), [tree]);
+  const polarBaseRadius = tree
+    ? Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive)
+    : 0;
+  const configuredRadialCenterOpeningRatio = Math.max(0, Math.min(0.85, radialCenterOpeningRatio));
+  const effectiveRadialCenterOpeningRatio = viewMode === "circular"
+    ? configuredRadialCenterOpeningRatio
+    : 0;
+  const polarInnerRadius = effectiveRadialCenterOpeningRatio > 0
+    ? (polarBaseRadius * effectiveRadialCenterOpeningRatio) / (1 - effectiveRadialCenterOpeningRatio)
+    : 0;
+  const polarOuterRadius = polarInnerRadius + polarBaseRadius;
+  const configuredRadialInnerRadius = configuredRadialCenterOpeningRatio > 0
+    ? (polarBaseRadius * configuredRadialCenterOpeningRatio) / (1 - configuredRadialCenterOpeningRatio)
+    : 0;
+  const innerRadiusForMode = useCallback((mode: ViewMode): number => (
+    mode === "circular" ? configuredRadialInnerRadius : 0
+  ), [configuredRadialInnerRadius]);
+  const axisDepthForMode = useCallback((depth: number, mode: ViewMode): number => (
+    tree
+      ? depthToTimeAxisDepth(tree, depth, effectiveTimeAxisScale, effectiveTimeAxisLogBase) + innerRadiusForMode(mode)
+      : depth
+  ), [effectiveTimeAxisLogBase, effectiveTimeAxisScale, innerRadiusForMode, tree]);
+  const rawDepthFromAxisForMode = useCallback((depth: number, mode: ViewMode): number => (
+    tree
+      ? timeAxisDepthToRawDepth(tree, depth - innerRadiusForMode(mode), effectiveTimeAxisScale, effectiveTimeAxisLogBase)
+      : depth
+  ), [effectiveTimeAxisLogBase, effectiveTimeAxisScale, innerRadiusForMode, tree]);
   const cache = useMemo(() => (
     tree
-      ? buildCache(tree, effectiveTimeAxisScale, effectiveTimeAxisLogBase, polarAngleStart, polarAngleSpan)
+      ? buildCache(tree, effectiveTimeAxisScale, effectiveTimeAxisLogBase, polarAngleStart, polarAngleSpan, polarInnerRadius)
       : null
-  ), [effectiveTimeAxisLogBase, effectiveTimeAxisScale, polarAngleSpan, polarAngleStart, tree]);
+  ), [effectiveTimeAxisLogBase, effectiveTimeAxisScale, polarAngleSpan, polarAngleStart, polarInnerRadius, tree]);
   const polarThetaFor = useCallback((values: Float64Array, node: number): number => (
     tree ? thetaFor(values, node, tree.leafCount, polarAngleStart, polarAngleSpan) : polarAngleStart
   ), [polarAngleSpan, polarAngleStart, tree]);
-  const timeAxisExtent = useMemo(() => (tree ? treeTimeAxisExtent(tree) : 0), [tree]);
   const axisDepth = useCallback((depth: number): number => (
-    tree ? depthToTimeAxisDepth(tree, depth, effectiveTimeAxisScale, effectiveTimeAxisLogBase) : depth
-  ), [effectiveTimeAxisLogBase, effectiveTimeAxisScale, tree]);
-  const rawDepthFromAxis = useCallback((depth: number): number => (
-    tree ? timeAxisDepthToRawDepth(tree, depth, effectiveTimeAxisScale, effectiveTimeAxisLogBase) : depth
-  ), [effectiveTimeAxisLogBase, effectiveTimeAxisScale, tree]);
+    axisDepthForMode(depth, viewMode)
+  ), [axisDepthForMode, viewMode]);
   useEffect(() => {
     setCollapsedNodeModes(new Map());
     setManualBranchColorAssignments(new Map());
@@ -6007,7 +6052,7 @@ export default function TreeCanvas({
       const ownerArcEnd = polarThetaFor(layout.max, hover.ownerNode);
       const ownerArcLength = Math.max(0, ownerArcEnd - ownerArcStart);
       const arcSpan = arcSubspanWithinSpan(ownerTheta, childTheta, ownerArcStart, ownerArcLength);
-      const radiusPx = tree.buffers.depth[hover.ownerNode] * camera.scale;
+      const radiusPx = axisDepth(tree.buffers.depth[hover.ownerNode]) * camera.scale;
       const connectorSpanPx = (arcSpan?.length ?? 0) * radiusPx;
       if (arcSpan && radiusPx >= 0.25 && connectorSpanPx >= 1) {
         ctx.moveTo(
@@ -6016,8 +6061,8 @@ export default function TreeCanvas({
         );
         ctx.arc(camera.translateX, camera.translateY, radiusPx, arcSpan.start + camera.rotation, arcSpan.end + camera.rotation, false);
       }
-      const startWorld = polarToCartesian(tree.buffers.depth[hover.ownerNode], childTheta);
-      const endWorld = polarToCartesian(tree.buffers.depth[hover.node], childTheta);
+      const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[hover.ownerNode]), childTheta);
+      const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[hover.node]), childTheta);
       const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
       const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
       ctx.moveTo(start.x, start.y);
@@ -6029,7 +6074,7 @@ export default function TreeCanvas({
         const arcEnd = polarThetaFor(layout.max, parent);
         const arcLength = Math.max(0, arcEnd - arcStart);
         const arcSpan = arcSubspanWithinSpan(parentTheta, childTheta, arcStart, arcLength);
-        const radiusPx = tree.buffers.depth[parent] * camera.scale;
+        const radiusPx = axisDepth(tree.buffers.depth[parent]) * camera.scale;
         const connectorSpanPx = (arcSpan?.length ?? 0) * radiusPx;
         if (arcSpan && radiusPx >= 0.25 && connectorSpanPx >= 1) {
           ctx.moveTo(
@@ -6039,8 +6084,8 @@ export default function TreeCanvas({
           ctx.arc(camera.translateX, camera.translateY, radiusPx, arcSpan.start + camera.rotation, arcSpan.end + camera.rotation, false);
         }
       }
-      const startWorld = polarToCartesian(tree.buffers.depth[parent], childTheta);
-      const endWorld = polarToCartesian(tree.buffers.depth[hover.node], childTheta);
+      const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), childTheta);
+      const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[hover.node]), childTheta);
       const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
       const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
       ctx.moveTo(start.x, start.y);
@@ -6117,11 +6162,11 @@ export default function TreeCanvas({
   }, [drawHoverHighlightOverlay, tree, updateDistanceTooltip]);
 
   const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
-    const maxRadius = Math.max(tree ? (effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth) : 0, tree?.branchLengthMinPositive ?? 1);
+    const maxRadius = Math.max(polarOuterRadius, tree?.branchLengthMinPositive ?? 1);
     const angularSpacingPx = (
       camera.scale
       * maxRadius
-      * (polarAngleSpan / Math.max(1, viewMode === "fan" ? (tree?.leafCount ?? 1) - 1 : tree?.leafCount ?? 1))
+      * (polarAngleSpan / polarLeafDivisor)
       * (collapsedView?.effectiveLeafScale ?? 1)
     );
     const microTipFontSize = scaleLabelFontSize("tip", Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3)));
@@ -6172,20 +6217,17 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [circularOverlayViewportScale, collapsedView?.effectiveLeafScale, effectiveTimeAxisScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, timeAxisExtent, tree, useAutomaticTaxonomyRankVisibility, viewMode]);
+  }, [circularOverlayViewportScale, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, tree, useAutomaticTaxonomyRankVisibility]);
 
   const circularFitLabelEnvelopePx = useCallback((camera: CircularCamera): number => {
     if (!tree || taxonomyEnabled) {
       return 0;
     }
-    const maxRadius = Math.max(
-      effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth,
-      tree.branchLengthMinPositive,
-    );
+    const maxRadius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
     const angularSpacingPx = (
       camera.scale
       * maxRadius
-      * (polarAngleSpan / Math.max(1, tree.leafCount))
+      * (polarAngleSpan / polarLeafDivisor)
       * (collapsedView?.effectiveLeafScale ?? 1)
     );
     const microTipFontSize = scaleLabelFontSize("tip", Math.max(4.2, Math.min(6.1, angularSpacingPx * 0.3)));
@@ -6247,7 +6289,7 @@ export default function TreeCanvas({
     }
 
     return envelopePx + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [cache, collapsedView?.effectiveLeafScale, collapsedView?.layout, effectiveTimeAxisScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, order, polarAngleSpan, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyEnabled, timeAxisExtent, tree]);
+  }, [cache, collapsedView?.effectiveLeafScale, collapsedView?.layout, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, order, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyEnabled, tree]);
 
   const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {
@@ -6258,24 +6300,38 @@ export default function TreeCanvas({
         spiralVisibleTaxonomyRanksForScale(camera.scale).length,
         camera.scale,
       ).outerRadius
-      : Math.max(tree.maxDepth, tree.branchLengthMinPositive);
+      : Math.max(polarOuterRadius, tree.branchLengthMinPositive);
     clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera), clampRadiusWorld);
     clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera), clampRadiusWorld);
-  }, [circularClampExtraRadiusPx, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
+  }, [circularClampExtraRadiusPx, polarOuterRadius, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
 
   const fitPolarCamera = useCallback((mode: ViewMode, extraRadiusPx = 0): CircularCamera | null => {
     if (!tree) {
       return null;
     }
-    const boundedFanOverlayMarginPx = Math.min(
+    const boundedRadialOverlayMarginPx = Math.min(
       Math.max(0, extraRadiusPx),
       size.width * (size.width < 600 ? 0.22 : 0.14),
       size.height * 0.3,
     );
-    return mode === "fan"
-      ? fitFanCamera(size.width, size.height, tree, circularRotation, boundedFanOverlayMarginPx)
-      : fitCircularCamera(size.width, size.height, tree, circularRotation);
-  }, [circularRotation, size.height, size.width, tree]);
+    if (mode === "spiral") {
+      return fitCircularCamera(size.width, size.height, tree, circularRotation);
+    }
+    if (!isPartialRadial && polarInnerRadius <= 1e-9 && boundedRadialOverlayMarginPx <= 0) {
+      return fitCircularCamera(size.width, size.height, tree, circularRotation);
+    }
+    return fitRadialCamera(
+      size.width,
+      size.height,
+      tree,
+      polarAngleStart,
+      polarAngleSpan,
+      polarInnerRadius,
+      polarOuterRadius,
+      circularRotation,
+      boundedRadialOverlayMarginPx,
+    );
+  }, [circularRotation, isPartialRadial, polarAngleSpan, polarAngleStart, polarInnerRadius, polarOuterRadius, size.height, size.width, tree]);
 
   const rectTaxonomyZoom = useCallback((scaleY: number): number => {
     if (!tree || !(scaleY > 0)) {
@@ -6285,10 +6341,10 @@ export default function TreeCanvas({
     const fitRectScaleY = Math.max(fitRect.scaleY, 1e-6);
     let fitCircular = fitPolarCamera(viewMode) ?? fitCircularCamera(size.width, size.height, tree, circularRotation);
     if (taxonomyEnabled && taxonomyBlocks) {
-      const radius = Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive);
+      const radius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
       for (let iteration = 0; iteration < 2; iteration += 1) {
         const extra = circularClampExtraRadiusPx(fitCircular);
-        if (viewMode === "fan") {
+        if (isPartialRadial || polarInnerRadius > 0) {
           fitCircular = fitPolarCamera(viewMode, extra) ?? fitCircular;
         } else {
           const availableRadiusPx = Math.max(circularFitMinTreeRadiusPx(size.width, size.height), (Math.min(size.width, size.height) * 0.44) - extra);
@@ -6297,9 +6353,9 @@ export default function TreeCanvas({
       }
       finalizeCircularCamera(fitCircular);
     }
-    const maxRadius = Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive);
+    const maxRadius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
     const fitCircularSpacing = fitCircular.scale * maxRadius * (
-      polarAngleSpan / Math.max(1, viewMode === "fan" ? tree.leafCount - 1 : tree.leafCount)
+      polarAngleSpan / polarLeafDivisor
     );
     if (!(fitCircularSpacing > 0)) {
       return scaleY;
@@ -6313,12 +6369,14 @@ export default function TreeCanvas({
     circularRotation,
     fitPolarCamera,
     finalizeCircularCamera,
-    effectiveTimeAxisScale,
+    isPartialRadial,
     size.height,
     size.width,
     taxonomyBlocks,
     taxonomyEnabled,
-    timeAxisExtent,
+    polarInnerRadius,
+    polarLeafDivisor,
+    polarOuterRadius,
     tree,
     viewMode,
     polarAngleSpan,
@@ -6436,21 +6494,27 @@ export default function TreeCanvas({
       nextCamera.translateY = Math.max(24, padding.top ?? 0);
       clampRectCamera(nextCamera, tree, size.width, size.height, padding);
     } else if (mode === "circular" && !taxonomyEnabled) {
-      const radius = Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive);
-      for (let iteration = 0; iteration < 3; iteration += 1) {
-        const labelEnvelopePx = circularFitLabelEnvelopePx(nextCamera);
-        const availableRadiusPx = Math.max(
-          circularFitMinTreeRadiusPx(size.width, size.height),
-          (Math.min(size.width, size.height) * 0.5) - 8 - labelEnvelopePx,
-        );
-        nextCamera.scale = Math.min(nextCamera.scale, availableRadiusPx / radius);
+      if (isPartialRadial || polarInnerRadius > 0) {
+        for (let iteration = 0; iteration < 3; iteration += 1) {
+          nextCamera = fitPolarCamera(mode, circularFitLabelEnvelopePx(nextCamera)) ?? nextCamera;
+        }
+      } else {
+        const radius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
+        for (let iteration = 0; iteration < 3; iteration += 1) {
+          const labelEnvelopePx = circularFitLabelEnvelopePx(nextCamera);
+          const availableRadiusPx = Math.max(
+            circularFitMinTreeRadiusPx(size.width, size.height),
+            (Math.min(size.width, size.height) * 0.5) - 8 - labelEnvelopePx,
+          );
+          nextCamera.scale = Math.min(nextCamera.scale, availableRadiusPx / radius);
+        }
       }
       finalizeCircularCamera(nextCamera);
     } else if (mode === "fan" || (taxonomyEnabled && taxonomyBlocks)) {
-      const radius = Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive);
+      const radius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
       for (let iteration = 0; iteration < 2; iteration += 1) {
         const extra = circularClampExtraRadiusPx(nextCamera);
-        if (mode === "fan") {
+        if (isPartialRadial || polarInnerRadius > 0) {
           nextCamera = fitPolarCamera(mode, extra) ?? nextCamera;
         } else {
           const availableRadiusPx = Math.max(circularFitMinTreeRadiusPx(size.width, size.height), (Math.min(size.width, size.height) * 0.44) - extra);
@@ -6460,7 +6524,7 @@ export default function TreeCanvas({
       finalizeCircularCamera(nextCamera);
     }
     return nextCamera;
-  }, [circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length]);
+  }, [circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, isPartialRadial, polarInnerRadius, polarOuterRadius, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length]);
 
   const cameraApproximatelyMatchesFit = useCallback((camera: CameraState, mode: ViewMode): boolean => {
     const fit = fitCameraForMode(camera.kind === "rect" ? "rectangular" : mode);
@@ -6689,7 +6753,7 @@ export default function TreeCanvas({
     if (!tree || !cache || !branchColors || !cacheKey) {
       return null;
     }
-    const key = `${orderKey}:${effectiveTimeAxisScale}:${polarAngleStart}:${polarAngleSpan}:${cacheKey}`;
+    const key = `${orderKey}:${effectiveTimeAxisScale}:${polarAngleStart}:${polarAngleSpan}:${polarInnerRadius}:${cacheKey}`;
     const cached = circularTaxonomyPathCacheRef.current.get(key);
     if (cached) {
       return cached;
@@ -6705,7 +6769,7 @@ export default function TreeCanvas({
     );
     circularTaxonomyPathCacheRef.current.set(key, built);
     return built;
-  }, [axisDepth, cache, effectiveTimeAxisScale, polarAngleSpan, polarAngleStart, tree]);
+  }, [axisDepth, cache, effectiveTimeAxisScale, polarAngleSpan, polarAngleStart, polarInnerRadius, tree]);
 
   const getCircularBasePath = useCallback((
     orderKey: LayoutOrder,
@@ -6714,7 +6778,7 @@ export default function TreeCanvas({
     if (!tree || !cache) {
       return null;
     }
-    const key = `${orderKey}:${effectiveTimeAxisScale}:${polarAngleStart}:${polarAngleSpan}`;
+    const key = `${orderKey}:${effectiveTimeAxisScale}:${polarAngleStart}:${polarAngleSpan}:${polarInnerRadius}`;
     const cached = circularBasePathCacheRef.current.get(key);
     if (cached) {
       return cached;
@@ -6729,7 +6793,7 @@ export default function TreeCanvas({
     );
     circularBasePathCacheRef.current.set(key, built);
     return built;
-  }, [axisDepth, cache, effectiveTimeAxisScale, polarAngleSpan, polarAngleStart, tree]);
+  }, [axisDepth, cache, effectiveTimeAxisScale, polarAngleSpan, polarAngleStart, polarInnerRadius, tree]);
 
   const getRectTaxonomyPaths = useCallback((
     orderKey: LayoutOrder,
@@ -6885,6 +6949,7 @@ export default function TreeCanvas({
       size.height,
       polarAngleStart,
       polarAngleSpan,
+      polarInnerRadius,
       camera.rotation.toFixed(6),
     ].join(":");
     const cached = circularTaxonomyBitmapCacheRef.current;
@@ -6898,7 +6963,7 @@ export default function TreeCanvas({
       }
     }
     // This cache only stores branch strokes, so label padding should not inflate the offscreen bitmap.
-    const maxRadiusPx = (Math.max(tree.maxDepth, tree.branchLengthMinPositive) * camera.scale) + 8;
+    const maxRadiusPx = (Math.max(polarOuterRadius, tree.branchLengthMinPositive) * camera.scale) + 8;
     const visibleMargin = 56;
     const minTranslateX = visibleMargin - maxRadiusPx;
     const maxTranslateX = size.width - visibleMargin + maxRadiusPx;
@@ -6941,7 +7006,7 @@ export default function TreeCanvas({
     disposeCanvasCache(circularTaxonomyBitmapCacheRef.current);
     circularTaxonomyBitmapCacheRef.current = built;
     return built;
-  }, [branchStrokeScale, polarAngleSpan, polarAngleStart, size.height, size.width, tree]);
+  }, [branchStrokeScale, polarAngleSpan, polarAngleStart, polarInnerRadius, polarOuterRadius, size.height, size.width, tree]);
 
   const getRectTaxonomyBitmapCache = useCallback((
     orderKey: LayoutOrder,
@@ -7196,12 +7261,12 @@ export default function TreeCanvas({
     if (fromCamera.kind === "circular" && sourceIsPolar && viewMode === "spiral") {
       const world = screenToWorldCircular(fromCamera, centerScreenX, centerScreenY);
       const sourceRadius = Math.sqrt((world.x * world.x) + (world.y * world.y));
-      const rawDepth = rawDepthFromAxis(sourceRadius);
-      const targetY = polarLayoutValueForTheta(Math.atan2(world.y, world.x), sourceMode, tree.leafCount);
+      const rawDepth = rawDepthFromAxisForMode(sourceRadius, sourceMode);
+      const targetY = polarLayoutValueForCurrentModeTheta(Math.atan2(world.y, world.x), sourceMode);
       const nextCamera = fitCameraForMode("spiral");
       if (nextCamera?.kind === "circular") {
         const initialMetrics = spiralMetricsForScale(visibleSpiralTaxonomyRanks.length, nextCamera.scale);
-        const sourceDomain = polarViewDomain(sourceMode, tree.leafCount);
+        const sourceDomain = polarDomainForMode(sourceMode);
         const sourcePixelsPerLeaf = Math.max(sourceRadius, tree.branchLengthMinPositive)
           * fromCamera.scale
           * (sourceDomain.span / sourceDomain.leafDivisor);
@@ -7240,11 +7305,11 @@ export default function TreeCanvas({
       const targetY = spiralArcFractionForTheta(sourceTheta, spiralMetrics) * Math.max(1, tree.leafCount - 1);
       const sourceAge = spiralAgeForPointAtTheta(world.x, world.y, sourceTheta, spiralMetrics);
       const rawDepth = Math.max(0, (tree.isUltrametric ? tree.rootAge : tree.maxDepth) - sourceAge);
-      const targetRadius = axisDepth(rawDepth);
-      const targetTheta = polarThetaForLayoutValue(targetY, viewMode, tree.leafCount);
+      const targetRadius = axisDepthForMode(rawDepth, viewMode);
+      const targetTheta = polarThetaForCurrentModeLayoutValue(targetY, viewMode);
       const targetPoint = polarToCartesian(targetRadius, targetTheta);
       const nextCamera = fitPolarCamera(viewMode) ?? fitCircularCamera(size.width, size.height, tree, circularRotation);
-      const destinationDomain = polarViewDomain(viewMode, tree.leafCount);
+      const destinationDomain = polarDomainForMode(viewMode);
       const sourcePixelsPerLeaf = fromCamera.scale
         * (spiralMetrics.totalArcLength / Math.max(1, tree.leafCount - 1));
       const destinationWorldPerLeaf = Math.max(targetRadius, tree.branchLengthMinPositive)
@@ -7265,11 +7330,11 @@ export default function TreeCanvas({
     if (fromCamera.kind === "circular" && sourceIsPolar && destinationIsPolar) {
       const world = screenToWorldCircular(fromCamera, centerScreenX, centerScreenY);
       const sourceRadius = Math.sqrt((world.x * world.x) + (world.y * world.y));
-      const targetY = polarLayoutValueForTheta(Math.atan2(world.y, world.x), sourceMode, tree.leafCount);
-      const targetTheta = polarThetaForLayoutValue(targetY, viewMode, tree.leafCount);
+      const targetY = polarLayoutValueForCurrentModeTheta(Math.atan2(world.y, world.x), sourceMode);
+      const targetTheta = polarThetaForCurrentModeLayoutValue(targetY, viewMode);
       const targetPoint = polarToCartesian(sourceRadius, targetTheta);
-      const sourceDomain = polarViewDomain(sourceMode, tree.leafCount);
-      const destinationDomain = polarViewDomain(viewMode, tree.leafCount);
+      const sourceDomain = polarDomainForMode(sourceMode);
+      const destinationDomain = polarDomainForMode(viewMode);
       const nextCamera = fitPolarCamera(viewMode) ?? fitCircularCamera(size.width, size.height, tree, circularRotation);
       const preservedSpacingScale = fromCamera.scale
         * (sourceDomain.span / sourceDomain.leafDivisor)
@@ -7305,18 +7370,18 @@ export default function TreeCanvas({
         : Math.atan2(world.y, world.x);
       const targetY = spiralMetrics
         ? spiralArcFractionForTheta(theta, spiralMetrics) * Math.max(1, tree.leafCount - 1)
-        : polarLayoutValueForTheta(theta, sourceMode, tree.leafCount);
+        : polarLayoutValueForCurrentModeTheta(theta, sourceMode);
       const radius = Math.sqrt((world.x * world.x) + (world.y * world.y));
       const targetX = spiralMetrics
-        ? axisDepth(Math.max(
+        ? axisDepthForMode(Math.max(
           0,
           (tree.isUltrametric ? tree.rootAge : tree.maxDepth)
             - spiralAgeForPointAtTheta(world.x, world.y, theta, spiralMetrics),
-        ))
-        : radius;
+        ), "rectangular")
+        : axisDepthForMode(rawDepthFromAxisForMode(radius, sourceMode), "rectangular");
       const nextCamera = fitRectCamera(size.width, size.height, tree);
       nextCamera.scaleX = Math.max(nextCamera.scaleX * 0.55, spiralMetrics ? nextCamera.scaleX : fromCamera.scale);
-      const sourceDomain = sourceIsPolar ? polarViewDomain(sourceMode, tree.leafCount) : null;
+      const sourceDomain = sourceIsPolar ? polarDomainForMode(sourceMode) : null;
       const pixelsPerLeaf = Math.max(
         nextCamera.scaleY * 0.55,
         spiralMetrics
@@ -7344,7 +7409,7 @@ export default function TreeCanvas({
     if (fromCamera.kind === "rect" && (viewMode === "circular" || viewMode === "fan" || viewMode === "spiral")) {
       const world = screenToWorldRect(fromCamera, centerScreenX, centerScreenY);
       if (viewMode === "spiral") {
-        const rawDepth = rawDepthFromAxis(world.x);
+        const rawDepth = rawDepthFromAxisForMode(world.x, "rectangular");
         const nextCamera = fitCameraForMode("spiral");
         if (nextCamera?.kind === "circular") {
           const initialMetrics = spiralMetricsForScale(visibleSpiralTaxonomyRanks.length, nextCamera.scale);
@@ -7372,12 +7437,12 @@ export default function TreeCanvas({
           return nextCamera;
         }
       }
-      const rawDepth = rawDepthFromAxis(world.x);
-      const theta = polarThetaForLayoutValue(world.y, viewMode, tree.leafCount);
-      const point = polarToCartesian(axisDepth(rawDepth), theta);
+      const rawDepth = rawDepthFromAxisForMode(world.x, "rectangular");
+      const theta = polarThetaForCurrentModeLayoutValue(world.y, viewMode);
+      const point = polarToCartesian(axisDepthForMode(rawDepth, viewMode), theta);
       const nextCamera = fitPolarCamera(viewMode) ?? fitCircularCamera(size.width, size.height, tree, circularRotation);
-      const axisRadius = axisDepth(rawDepth);
-      const destinationDomain = polarViewDomain(viewMode, tree.leafCount);
+      const axisRadius = axisDepthForMode(rawDepth, viewMode);
+      const destinationDomain = polarDomainForMode(viewMode);
       const destinationWorldPerLeaf = Math.max(axisRadius, tree.branchLengthMinPositive)
         * (destinationDomain.span / destinationDomain.leafDivisor);
       const angularScale = fromCamera.scaleY / Math.max(destinationWorldPerLeaf, 1e-9);
@@ -7395,7 +7460,7 @@ export default function TreeCanvas({
     }
 
     return fromCamera;
-  }, [axisDepth, cameraApproximatelyMatchesFit, circularClampExtraRadiusPx, circularRotation, finalizeCircularCamera, fitCameraForMode, fitPolarCamera, rawDepthFromAxis, size.height, size.width, spiralMetricsForScale, spiralScaleForViewContinuity, spiralTaxonomyEnvelopePx, spiralVisibleTaxonomyRanksForScale, taxonomyActiveRanks.length, taxonomyBlocks, taxonomyEnabled, taxonomyMap, transitionEnvelopeShiftPx, tree, viewMode, visibleSpiralTaxonomyRanks.length]);
+  }, [axisDepthForMode, cameraApproximatelyMatchesFit, circularClampExtraRadiusPx, circularRotation, finalizeCircularCamera, fitCameraForMode, fitPolarCamera, polarDomainForMode, polarLayoutValueForCurrentModeTheta, polarThetaForCurrentModeLayoutValue, rawDepthFromAxisForMode, size.height, size.width, spiralMetricsForScale, spiralScaleForViewContinuity, spiralTaxonomyEnvelopePx, spiralVisibleTaxonomyRanksForScale, taxonomyActiveRanks.length, taxonomyBlocks, taxonomyEnabled, taxonomyMap, transitionEnvelopeShiftPx, tree, viewMode, visibleSpiralTaxonomyRanks.length]);
 
   useEffect(() => {
     const element = wrapperRef.current;
@@ -7937,7 +8002,7 @@ export default function TreeCanvas({
       spiralThetaForLeafBoundary(taxonomyBoundaryValue(index) + 0.5, tree.leafCount, metrics)
     );
     const thetaSpanForTaxonomyRange = (startIndex: number, endIndex: number): { startTheta: number; endTheta: number } => {
-      if (viewMode === "fan") {
+      if (isPartialRadial) {
         const divisor = Math.max(1, tree.leafCount - 1);
         const startBoundary = Math.max(0, Math.min(divisor, taxonomyBoundaryValue(startIndex)));
         const endBoundary = Math.max(0, Math.min(divisor, taxonomyBoundaryValue(endIndex)));
@@ -11319,11 +11384,11 @@ export default function TreeCanvas({
       const children = cache.orderedChildren[order];
       const orderedLeaves = cache.orderedLeaves[order];
       const rotationAngle = camera.rotation;
-      const maxRadius = Math.max(effectiveTimeAxisScale === "log" ? timeAxisExtent : tree.maxDepth, tree.branchLengthMinPositive);
+      const maxRadius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
       const angularSpacingPx = (
         camera.scale
         * maxRadius
-        * (polarAngleSpan / Math.max(1, viewMode === "fan" ? tree.leafCount - 1 : tree.leafCount))
+        * (polarAngleSpan / polarLeafDivisor)
         * (collapsedView?.effectiveLeafScale ?? 1)
       );
       const circularBranchStrokeAutoMultiplier = detailBranchThicknessMultiplier(
@@ -11335,6 +11400,12 @@ export default function TreeCanvas({
       renderDebug.tipLabelsVisible = showTipLabels && angularSpacingPx > 4.5;
       renderDebug.branchStrokeAutoMultiplier = circularBranchStrokeAutoMultiplier;
       renderDebug.renderedBranchStrokeScale = circularBranchStrokeScale;
+      renderDebug.radial = {
+        angularSpanDegrees: configuredRadialSpanDegrees,
+        centerOpeningRatio: effectiveRadialCenterOpeningRatio,
+        innerRadiusWorld: polarInnerRadius,
+        outerRadiusWorld: polarOuterRadius,
+      };
       const stripeExtent = effectiveTimeAxisScale === "log" ? timeAxisExtent : (tree.isUltrametric ? tree.rootAge : tree.maxDepth);
       const circularRadiusForBoundary = (value: number): number => (
         tree.isUltrametric ? axisDepth(tree.rootAge - value) : axisDepth(value)
@@ -13882,7 +13953,7 @@ export default function TreeCanvas({
           const fontSize = scaleLabelFontSize(labelClass, pointLabelBaseFontSize(isBootstrap, angularSpacingPx));
           const theta = polarThetaFor(layout.center, node);
           const renderedTheta = theta + rotationAngle;
-          const radius = tree.buffers.depth[node] + (14 / camera.scale);
+          const radius = axisDepth(tree.buffers.depth[node]) + (14 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
           const offsetPoint = applyCircularPointLabelOffset(
@@ -13969,8 +14040,8 @@ export default function TreeCanvas({
           const endTheta = polarThetaFor(layout.max, node);
           const apex = worldToScreenCircular(
             camera,
-            Math.cos(apexTheta) * tree.buffers.depth[node],
-            Math.sin(apexTheta) * tree.buffers.depth[node],
+            Math.cos(apexTheta) * axisDepth(tree.buffers.depth[node]),
+            Math.sin(apexTheta) * axisDepth(tree.buffers.depth[node]),
           );
           const subtreeTipDepth = measureSubtreeMaxDepth(tree, node);
           const baseStart = worldToScreenCircular(
@@ -14061,8 +14132,8 @@ export default function TreeCanvas({
             const edgeTheta = polarThetaFor(layout.center, node);
             const edgeStart = worldToScreenCircular(
               camera,
-              Math.cos(edgeTheta) * tree.buffers.depth[parent],
-              Math.sin(edgeTheta) * tree.buffers.depth[parent],
+              Math.cos(edgeTheta) * axisDepth(tree.buffers.depth[parent]),
+              Math.sin(edgeTheta) * axisDepth(tree.buffers.depth[parent]),
             );
             const edgeMinX = Math.min(edgeStart.x, apex.x) - 8;
             const edgeMaxX = Math.max(edgeStart.x, apex.x) + 8;
@@ -14240,7 +14311,7 @@ export default function TreeCanvas({
           }
           const parent = tree.buffers.parent[node];
           const theta = polarThetaFor(layout.center, node);
-          const radius = Math.max(0, tree.buffers.depth[node] + ((showBootstrapLabels ? -8 : 10) / camera.scale));
+          const radius = Math.max(0, axisDepth(tree.buffers.depth[node]) + ((showBootstrapLabels ? -8 : 10) / camera.scale));
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
           const subtreeSpanPx = Math.max(0, (layout.max[node] - layout.min[node])) * angularSpacingPx;
@@ -14401,7 +14472,7 @@ export default function TreeCanvas({
             continue;
           }
           const theta = polarThetaFor(layout.center, node);
-          const radius = tree.buffers.depth[node] + (12 / camera.scale);
+          const radius = axisDepth(tree.buffers.depth[node]) + (12 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
           const labelX = screen.x + figureStyles.internalNode.offsetXPx + metadataLabelOffsetXPx;
@@ -14471,8 +14542,8 @@ export default function TreeCanvas({
             continue;
           }
           const theta = polarThetaFor(layout.center, node);
-          const startWorld = polarToCartesian(lower, theta);
-          const endWorld = polarToCartesian(upper, theta);
+          const startWorld = polarToCartesian(axisDepth(lower), theta);
+          const endWorld = polarToCartesian(axisDepth(upper), theta);
           const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
           const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
           const midX = (start.x + end.x) * 0.5;
@@ -14530,7 +14601,7 @@ export default function TreeCanvas({
             }
           }
           if (errorBarShowNodeDot) {
-            const nodeWorld = polarToCartesian(tree.buffers.depth[node], theta);
+            const nodeWorld = polarToCartesian(axisDepth(tree.buffers.depth[node]), theta);
             const nodeScreen = worldToScreenCircular(camera, nodeWorld.x, nodeWorld.y);
             const radius = Math.max(2, Math.min(5, errorBarThicknessPx * 0.65));
             ctx.globalAlpha = Math.min(1, errorBarOpacity + 0.3);
@@ -14624,7 +14695,8 @@ export default function TreeCanvas({
             );
           }
           if (showCircularCenterRadialScaleBar) {
-            const startPoint = worldToScreenCircular(camera, 0, 0);
+            const startWorld = polarToCartesian(polarInnerRadius, centerScaleBarTheta);
+            const startPoint = worldToScreenCircular(camera, startWorld.x, startWorld.y);
             const endWorld = polarToCartesian(
               tree.isUltrametric ? circularRadiusForBoundary(0) : circularRadiusForBoundary(stripeExtent),
               centerScaleBarTheta,
@@ -14874,8 +14946,13 @@ export default function TreeCanvas({
     phylopicPlacement,
     phylopicSilhouettes,
     phylopicSizeScale,
+    configuredRadialSpanDegrees,
+    effectiveRadialCenterOpeningRatio,
     polarAngleSpan,
     polarAngleStart,
+    polarInnerRadius,
+    polarLeafDivisor,
+    polarOuterRadius,
     polarThetaFor,
     reservedTipLabelCharacters,
     searchQuery,
@@ -15045,8 +15122,8 @@ export default function TreeCanvas({
       && Number.isFinite(viewportCssSize.height);
     const safeViewportCssSize = hasViewportOverride
       ? {
-          width: Math.max(320, Math.min(10000, Math.floor(viewportCssSize.width as number))),
-          height: Math.max(320, Math.min(10000, Math.floor(viewportCssSize.height as number))),
+          width: Math.max(1, Math.min(10000, Math.floor(viewportCssSize.width as number))),
+          height: Math.max(1, Math.min(10000, Math.floor(viewportCssSize.height as number))),
         }
       : null;
     const exportScale = safeViewportCssSize
@@ -15429,8 +15506,7 @@ export default function TreeCanvas({
       clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
     } else {
       const fit = fitPolarCamera(viewMode) ?? fitCircularCamera(size.width, size.height, tree, circularRotation);
-      const maxRadius = Math.max(tree.maxDepth, tree.branchLengthMinPositive);
-      const polarLeafDivisor = Math.max(1, viewMode === "fan" ? tree.leafCount - 1 : tree.leafCount);
+      const maxRadius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
       const tipScaleThreshold = (7.6 * polarLeafDivisor) / Math.max(1e-9, maxRadius * polarAngleSpan);
       const genusScaleThreshold = (3.4 * polarLeafDivisor) / Math.max(1e-9, maxRadius * polarAngleSpan);
       camera.scale = Math.max(
@@ -15442,7 +15518,7 @@ export default function TreeCanvas({
             : Math.max(fit.scale * 2.7, genusScaleThreshold),
       );
       const theta = polarThetaFor(layout.center, targetNode);
-      const point = polarToCartesian(tree.buffers.depth[targetNode], theta);
+      const point = polarToCartesian(axisDepth(tree.buffers.depth[targetNode]), theta);
       const screen = worldToScreenCircular(camera, point.x, point.y);
       camera.translateX += (size.width * 0.5) - screen.x;
       camera.translateY += (size.height * 0.5) - screen.y;
@@ -16194,17 +16270,17 @@ export default function TreeCanvas({
       if (camera.kind === "circular" && !branchHoverEnabled) {
         const world = screenToWorldCircular(camera, localX, localY);
         let hoverTheta = wrapPositive(Math.atan2(world.y, world.x));
-        if (viewMode === "fan" && hoverTheta < polarAngleStart) {
+        if (isPartialRadial && hoverTheta < polarAngleStart) {
           hoverTheta += Math.PI * 2;
         }
         const orderedLeaves = visibleTerminalNodes;
         const targetCenter = ((hoverTheta - polarAngleStart) / polarAngleSpan)
-          * Math.max(1, viewMode === "fan" ? tree.leafCount - 1 : tree.leafCount);
+          * polarLeafDivisor;
         const insertionIndex = lowerBoundLeaves(orderedLeaves, layout.center, targetCenter);
         let bestDistance = Number.POSITIVE_INFINITY;
         const threshold = 16;
         for (let offset = -1; offset <= 1; offset += 1) {
-          const candidateIndex = viewMode === "fan"
+          const candidateIndex = isPartialRadial
             ? Math.max(0, Math.min(orderedLeaves.length - 1, insertionIndex + offset))
             : (insertionIndex + offset + orderedLeaves.length) % orderedLeaves.length;
           const node = orderedLeaves[candidateIndex];
@@ -16216,8 +16292,8 @@ export default function TreeCanvas({
             continue;
           }
           const theta = polarThetaFor(layout.center, node);
-          const startWorld = polarToCartesian(tree.buffers.depth[parent], theta);
-          const endWorld = polarToCartesian(tree.buffers.depth[node], theta);
+          const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), theta);
+          const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[node]), theta);
           const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
           const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
           const distance = distanceToSegmentSquared(localX, localY, start.x, start.y, end.x, end.y);
@@ -16943,6 +17019,8 @@ export default function TreeCanvas({
       order,
       zoomAxisMode,
       circularRotationDegrees: circularRotation,
+      radialAngularSpanDegrees: configuredRadialSpanDegrees,
+      radialCenterOpeningRatio: effectiveRadialCenterOpeningRatio,
       spiralTurns,
       showTimeStripes,
       timeAxisScale,
@@ -17012,6 +17090,8 @@ export default function TreeCanvas({
     figureStyles,
     hideDownloadNewick,
     order,
+    configuredRadialSpanDegrees,
+    effectiveRadialCenterOpeningRatio,
     scaleTickInterval,
     showBootstrapLabels,
     showCircularCenterRadialScaleBar,
@@ -17566,6 +17646,8 @@ export default function TreeCanvas({
           order,
           zoomAxisMode,
           circularRotationDegrees: circularRotation,
+          radialAngularSpanDegrees: configuredRadialSpanDegrees,
+          radialCenterOpeningRatio: effectiveRadialCenterOpeningRatio,
           spiralTurns,
           showTimeStripes,
           timeAxisScale,
@@ -17639,6 +17721,8 @@ export default function TreeCanvas({
     extendRectScaleToTick,
     figureStyles,
     hideDownloadNewick,
+    configuredRadialSpanDegrees,
+    effectiveRadialCenterOpeningRatio,
     rectClampPadding,
     scaleTickInterval,
     showBootstrapLabels,

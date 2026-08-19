@@ -71,7 +71,7 @@ test("fan geometry fits an upper semicircle and supports precise rotation", asyn
     "(((A_species:1,B_species:1):1,(C_species:1,D_species:1):1):1,((E_species:1,F_species:1):1,(G_species:1,H_species:1):1):1)Root;",
   );
 
-  await page.getByRole("button", { name: "Fan", exact: true }).click();
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("fan"));
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "fan");
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
@@ -175,7 +175,7 @@ test("fan deep zoom keeps the same tip and spacing when switching to circular", 
   );
   const source = await centerFanTipAtDeepZoom(page, 3);
 
-  await page.getByRole("button", { name: "Circular", exact: true }).click();
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setRadialAngularSpanDegreesForTest(360));
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "circular");
   const result = await page.evaluate(async (node) => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -399,7 +399,7 @@ test("deep labeled views preserve the focal tip and taxonomy group across every 
 test("fan taxonomy ribbons and labels use the semicircular geometry", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "(((A:1,B:1):1,(C:1,D:1):1):1,((E:1,F:1):1,(G:1,H:1):1):1)Root;");
-  await page.getByRole("button", { name: "Fan", exact: true }).click();
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("fan"));
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "fan");
 
   await page.evaluate(() => {
@@ -456,9 +456,9 @@ test("all available geometry buttons fit their segmented control", async ({ page
   await expect(page.getByRole("button", { name: "Spiral", exact: true })).toBeVisible();
 
   const geometryButtons = page.getByRole("button", {
-    name: /^(Rectangular|Circular|Fan|Spiral)$/,
+    name: /^(Rectangular|Radial|Spiral)$/,
   });
-  await expect(geometryButtons).toHaveCount(4);
+  await expect(geometryButtons).toHaveCount(3);
   const fit = await geometryButtons.evaluateAll((buttons) => buttons.map((button) => ({
     text: button.textContent?.trim() ?? "",
     clientWidth: (button as HTMLElement).clientWidth,
@@ -507,7 +507,7 @@ test("URL launch accepts fan geometry", async ({ page }) => {
 test("fan mode minimizes clades with a usable triangle hit target", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "(((A:1,B:1):1,(C:1,D:1):1):1,((E:1,F:1):1,(G:1,H:1):1):1)Root;");
-  await page.getByRole("button", { name: "Fan", exact: true }).click();
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("fan"));
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "fan");
 
   const result = await page.evaluate(async () => {

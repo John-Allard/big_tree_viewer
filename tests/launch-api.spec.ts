@@ -240,17 +240,17 @@ test("export dialog defaults to browser-scale PNG dimensions", async ({ page }) 
   await expect(dialog.getByLabel("DPI")).toHaveValue("200");
 
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("button", { name: "Circular" }).click();
+  await page.getByRole("button", { name: "Radial" }).click();
   await page.getByRole("button", { name: "Export View" }).click();
   dialog = page.getByRole("dialog", { name: "Export view settings" });
-  await expect(dialog.getByLabel("Width px")).toHaveValue("1200");
-  await expect(dialog.getByLabel("Height px")).toHaveValue("1200");
-  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("6");
-  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("6");
+  await expect(dialog.getByLabel("Width px")).toHaveValue("1600");
+  await expect(dialog.getByLabel("Height px")).toHaveValue("1000");
+  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("8");
+  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("5");
   await expect(dialog.getByLabel("DPI")).toHaveValue("200");
 
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("button", { name: "Fan", exact: true }).click();
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setRadialAngularSpanDegreesForTest(180));
   await page.getByRole("button", { name: "Export View" }).click();
   dialog = page.getByRole("dialog", { name: "Export view settings" });
   await expect(dialog.getByLabel("Width px")).toHaveValue("1600");
@@ -1158,7 +1158,7 @@ test("postMessage PNG export can preserve viewport styling at higher pixel densi
   expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
 });
 
-test("postMessage circular PNG export coerces non-square dimensions to square", async ({ page }) => {
+test("postMessage radial PNG export preserves requested non-square dimensions", async ({ page }) => {
   await page.goto("/?btv_api=1");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
 
@@ -1231,11 +1231,11 @@ test("postMessage circular PNG export coerces non-square dimensions to square", 
   expect(message.ok).toBe(true);
   expect(message.format).toBe("png");
   expect(message.width).toBe(900);
-  expect(message.height).toBe(900);
+  expect(message.height).toBe(500);
   expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
 });
 
-test("one-shot circular load and PNG export normalizes dimensions using the payload view mode", async ({ page }) => {
+test("one-shot radial load and PNG export preserves requested dimensions", async ({ page }) => {
   await page.goto("/?btv_api=1");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
 
@@ -1286,7 +1286,7 @@ test("one-shot circular load and PNG export normalizes dimensions using the payl
   expect(message.ok).toBe(true);
   expect(message.format).toBe("png");
   expect(message.width).toBe(900);
-  expect(message.height).toBe(900);
+  expect(message.height).toBe(500);
   expect(String(message.dataUrl)).toMatch(/^data:image\/png;base64,/);
 });
 

@@ -9,6 +9,8 @@ declare global {
     __BIG_TREE_VIEWER_APP_TEST__?: {
       getState: () => Record<string, unknown>;
       setViewMode: (mode: "rectangular" | "circular" | "fan" | "spiral") => void;
+      setRadialAngularSpanDegreesForTest: (value: number) => void;
+      setRadialCenterOpeningRatioForTest: (value: number) => void;
       setOrder: (order: "input" | "desc" | "asc") => void;
       setShowTipLabels: (visible: boolean) => void;
       setAlignTipLabels: (aligned: boolean) => void;

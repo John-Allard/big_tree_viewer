@@ -57,8 +57,7 @@ test("loads, displays, and disables a comparison tree", async ({ page }) => {
   }
   const valueRightEdges = comparisonStatisticRows.map((row) => row!.valueRight);
   expect(Math.max(...valueRightEdges) - Math.min(...valueRightEdges)).toBeLessThan(1);
-  await expect(page.getByRole("button", { name: "Circular" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Fan" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Radial" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Spiral" })).toBeDisabled();
   await page.waitForFunction(() => Number(
     window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().maximumDiscordance ?? 0,
