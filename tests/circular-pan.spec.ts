@@ -15,6 +15,13 @@ async function waitForViewer(page: Page): Promise<void> {
       && !window.__BIG_TREE_VIEWER_APP_TEST__.getState().loading,
     );
   });
+  if (await page.getByRole("button", { name: "Export View" }).isDisabled()) {
+    await page.getByRole("button", { name: "Load Example" }).click();
+    await page.waitForFunction(() => {
+      const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+      return Boolean(state?.treeLoaded && !state.loading && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+    });
+  }
 }
 
 async function loadTreeFile(page: Page, treePath: string): Promise<void> {
@@ -407,6 +414,67 @@ test("a fully visible spiral above the near-fit threshold switches to radial fit
   expect(Number(result.switched?.scale)).toBeCloseTo(Number(result.fit?.scale), 6);
   expect(Math.abs(Number(result.switched?.translateX) - Number(result.fit?.translateX))).toBeLessThanOrEqual(1);
   expect(Math.abs(Number(result.switched?.translateY) - Number(result.fit?.translateY))).toBeLessThanOrEqual(1);
+});
+
+test("an ambiguous partially zoomed spiral switches other geometries to fit view", async ({ page }) => {
+  await waitForViewer(page);
+  const results = await page.evaluate(async () => {
+    const destinations = ["circular", "rectangular"] as const;
+    const comparisons: Array<{
+      mode: "circular" | "rectangular";
+      switched: Record<string, unknown>;
+      fit: Record<string, unknown>;
+    }> = [];
+    for (const mode of destinations) {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const spiralFit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+      if (!spiralFit || spiralFit.kind !== "circular") {
+        throw new Error("Spiral fit camera unavailable for ambiguous transition test.");
+      }
+      const canvas = document.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("Canvas unavailable for ambiguous transition test.");
+      }
+      const rect = canvas.getBoundingClientRect();
+      const sourceFocusX = rect.width * 0.72;
+      const sourceFocusY = rect.height * 0.28;
+      const zoomedScale = Number(spiralFit.scale) * 2.2;
+      const focusWorldX = (sourceFocusX - Number(spiralFit.translateX)) / Number(spiralFit.scale);
+      const focusWorldY = (sourceFocusY - Number(spiralFit.translateY)) / Number(spiralFit.scale);
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+        scale: zoomedScale,
+        translateX: (rect.width * 0.5) - (focusWorldX * zoomedScale),
+        translateY: (rect.height * 0.5) - (focusWorldY * zoomedScale),
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode(mode);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const switched = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const fit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+      if (!switched || !fit) {
+        throw new Error(`Camera unavailable for ambiguous ${mode} transition test.`);
+      }
+      comparisons.push({ mode, switched, fit });
+    }
+    return comparisons;
+  });
+
+  for (const result of results) {
+    expect(result.switched.kind).toBe(result.fit.kind);
+    if (result.mode === "rectangular") {
+      expect(Number(result.switched.scaleX)).toBeCloseTo(Number(result.fit.scaleX), 6);
+      expect(Number(result.switched.scaleY)).toBeCloseTo(Number(result.fit.scaleY), 6);
+    } else {
+      expect(Number(result.switched.scale)).toBeCloseTo(Number(result.fit.scale), 6);
+    }
+    expect(Number(result.switched.translateX)).toBeCloseTo(Number(result.fit.translateX), 6);
+    expect(Number(result.switched.translateY)).toBeCloseTo(Number(result.fit.translateY), 6);
+  }
 });
 
 test("rectangular vertical wheel input zooms instead of scrolling or panning", async ({ page }) => {

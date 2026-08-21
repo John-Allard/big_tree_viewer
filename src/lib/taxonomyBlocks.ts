@@ -28,11 +28,6 @@ export function colorForTaxonomy(
   return `hsl(${hue}deg ${saturation}% ${lightness}%)`;
 }
 
-function orderedLeafSpanThreshold(leafCount: number): number {
-  const minSpan = (Math.PI * 2) / Math.max(1, leafCount);
-  return Math.max(2.5, 0.01 / Math.max(minSpan, 1e-9));
-}
-
 function unwrapCircularIndices(indices: number[], leafCount: number): number[] {
   if (indices.length === 0) {
     return [];
@@ -112,7 +107,6 @@ export function buildTaxonomyBlocksForOrderedLeaves(
   }, {} as Record<TaxonomyRank, TaxonomyBlock[]>);
   for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
     const rank = TAXONOMY_RANKS[rankIndex];
-    const breakThreshold = orderedLeafSpanThreshold(orderedLeaves.length);
     const entries = [...labelsByRank[rank].entries()].sort((left, right) => left[1].indices[0] - right[1].indices[0]);
     for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
       const [entityKey, entry] = entries[entryIndex];
@@ -121,19 +115,11 @@ export function buildTaxonomyBlocksForOrderedLeaves(
       if (unwrapped.length === 0) {
         continue;
       }
-      const segments: Array<{ firstNode: number; lastNode: number; startIndex: number; endIndex: number }> = [];
       let segmentStart = unwrapped[0];
-      let currentSegmentSize = 1;
-      let bestSegmentStart = unwrapped[0];
-      let bestSegmentEnd = unwrapped[0] + 1;
-      let bestSegmentSize = 1;
-      let bestSpan = 1;
       for (let index = 1; index <= unwrapped.length; index += 1) {
         const previous = unwrapped[index - 1];
         const next = index < unwrapped.length ? unwrapped[index] : Number.POSITIVE_INFINITY;
-        const gap = next - previous;
-        if (index < unwrapped.length && gap <= breakThreshold) {
-          currentSegmentSize += 1;
+        if (index < unwrapped.length && next === previous + 1) {
           continue;
         }
         const segmentEnd = previous + 1;
@@ -149,57 +135,32 @@ export function buildTaxonomyBlocksForOrderedLeaves(
         const lastIndex = coversAllLeaves
           ? orderedLeaves.length - 1
           : (wrappedEndIndex - 1 + orderedLeaves.length) % orderedLeaves.length;
-        segments.push({
+        const centerIndex = Math.floor((segmentStart + segmentEnd - 1) * 0.5) % orderedLeaves.length;
+        const segment = {
           firstNode: orderedLeaves[wrappedStartIndex],
           lastNode: orderedLeaves[lastIndex],
           startIndex: wrappedStartIndex,
           endIndex: wrappedEndIndex,
+        };
+        blocks[rank].push({
+          rank,
+          label,
+          taxId,
+          entityKey,
+          firstNode: segment.firstNode,
+          lastNode: segment.lastNode,
+          centerNode: orderedLeaves[centerIndex],
+          startIndex: segment.startIndex,
+          endIndex: segment.endIndex,
+          labelStartIndex: segment.startIndex,
+          labelEndIndex: segment.endIndex,
+          color: colorForTaxonomy(rank, label, colorsByRank, taxId),
+          segments: [segment],
         });
-        const span = segmentEnd - segmentStart;
-        if (span > bestSpan || (span === bestSpan && currentSegmentSize > bestSegmentSize)) {
-          bestSpan = span;
-          bestSegmentSize = currentSegmentSize;
-          bestSegmentStart = segmentStart;
-          bestSegmentEnd = segmentEnd;
-        }
         segmentStart = next;
-        currentSegmentSize = 1;
       }
-      const overallStart = unwrapped[0];
-      const overallEnd = unwrapped[unwrapped.length - 1] + 1;
-      const overallSpan = overallEnd - overallStart;
-      const coversAllLeaves = overallSpan >= orderedLeaves.length;
-      const wrappedOverallStart = coversAllLeaves
-        ? 0
-        : ((overallStart % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
-      const wrappedOverallEndExclusive = coversAllLeaves
-        ? orderedLeaves.length
-        : ((overallEnd % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
-      const wrappedOverallEnd = wrappedOverallEndExclusive === 0 ? orderedLeaves.length : wrappedOverallEndExclusive;
-      const overallLastIndex = coversAllLeaves
-        ? orderedLeaves.length - 1
-        : (wrappedOverallEnd - 1 + orderedLeaves.length) % orderedLeaves.length;
-      const centerIndex = Math.floor((overallStart + overallEnd - 1) * 0.5) % orderedLeaves.length;
-      const labelSpan = bestSegmentEnd - bestSegmentStart;
-      const labelCoversAllLeaves = labelSpan >= orderedLeaves.length;
-      blocks[rank].push({
-        rank,
-        label,
-        taxId,
-        entityKey,
-        firstNode: orderedLeaves[wrappedOverallStart],
-        lastNode: orderedLeaves[overallLastIndex],
-        centerNode: orderedLeaves[centerIndex],
-        startIndex: wrappedOverallStart,
-        endIndex: wrappedOverallEnd,
-        labelStartIndex: labelCoversAllLeaves ? 0 : ((bestSegmentStart % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length,
-        labelEndIndex: labelCoversAllLeaves
-          ? orderedLeaves.length
-          : ((((bestSegmentEnd % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length) || orderedLeaves.length),
-        color: colorForTaxonomy(rank, label, colorsByRank, taxId),
-        segments,
-      });
     }
+    blocks[rank].sort((left, right) => (left.startIndex ?? 0) - (right.startIndex ?? 0));
   }
   return blocks;
 }

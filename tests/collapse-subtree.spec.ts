@@ -762,6 +762,21 @@ test("node and taxonomy context menus expose preserve-width and minimize actions
     throw new Error("No unambiguous node stem context-menu target found.");
   }, nodes.collapsedNode);
   await page.mouse.click(branchPoint.x, branchPoint.y, { button: "right" });
+  const nodeMenuItems = await page.locator(".tree-context-menu .tree-context-menu-item").allTextContents();
+  const nodeMenuOrder = [
+    "Zoom To Subtree",
+    "Open Subtree In New Tab",
+    "View Subtree Statistics",
+    "Collapse Subtree",
+    "Color Branch",
+    "Color Subtree",
+    "Measure Distance",
+    "Root",
+  ].map((label) => nodeMenuItems.findIndex((item) => item.trim() === label));
+  expect(nodeMenuOrder.every((index) => index >= 0)).toBe(true);
+  expect(nodeMenuOrder).toEqual([...nodeMenuOrder].sort((left, right) => left - right));
+  await expect(page.getByRole("button", { name: "Zoom To Parent Subtree" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Zoom To Subtree" })).toHaveAttribute("title", /viewport/i);
   await page.getByRole("button", { name: "Collapse Subtree" }).click();
   await expect(page.getByRole("button", { name: "Preserve Width" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Minimize" })).toBeVisible();

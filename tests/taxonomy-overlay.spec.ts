@@ -615,6 +615,9 @@ test("tip context menu exposes copy tip name action", async ({ page }) => {
 
   await page.mouse.click(tipPoint.x, tipPoint.y, { button: "right" });
   await expect(page.getByRole("button", { name: "Copy Tip Name" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Zoom To Subtree" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Zoom To Parent Subtree" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy Tip Name" })).toHaveAttribute("title", /clipboard/i);
   const menuTitle = await page.locator(".tree-context-menu-title").textContent();
   await page.getByRole("button", { name: "Copy Tip Name" }).click();
 
@@ -1075,6 +1078,19 @@ test("taxonomy label context menu exposes subtree, copy, and NCBI actions", asyn
   await expect(page.getByRole("button", { name: "View Subtree Statistics" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy Name" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open In NCBI Taxonomy" })).toBeVisible();
+  const taxonomyMenuItems = await page.locator(".tree-context-menu .tree-context-menu-item").allTextContents();
+  const taxonomyMenuOrder = [
+    "Zoom To Group MRCA",
+    "Open Group Subtree In New Tab",
+    "View Subtree Statistics",
+    "Copy Name",
+    "Open In NCBI Taxonomy",
+    "Collapse Group",
+    "Color Top-Level Group",
+  ].map((label) => taxonomyMenuItems.findIndex((item) => item.trim() === label));
+  expect(taxonomyMenuOrder.every((index) => index >= 0)).toBe(true);
+  expect(taxonomyMenuOrder).toEqual([...taxonomyMenuOrder].sort((left, right) => left - right));
+  await expect(page.getByRole("button", { name: "Copy Name" })).toHaveAttribute("title", /clipboard/i);
   await page.getByRole("button", { name: "View Subtree Statistics" }).click();
   await expect(page.locator(".subtree-statistics-panel-header p")).toHaveText("Aves");
   await page.getByRole("button", { name: "Close subtree statistics" }).click();
@@ -2527,7 +2543,9 @@ test("near-fit circular taxonomy labels return after an edge excursion", async (
   await waitForViewer(page);
   await page.evaluate(async () => {
     const app = window.__BIG_TREE_VIEWER_APP_TEST__;
-    const leaves = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes ?? [];
+    app?.setOrder("input");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const leaves = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getOrderedLeavesForTest() ?? [];
     const labels = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
     app?.setTaxonomyMapForTest({
       version: 3,
@@ -2609,10 +2627,12 @@ test("near-fit circular taxonomy labels return after an edge excursion", async (
   expect(returnedLabels).toEqual(initialLabels);
 });
 
-test("single unmapped interlopers do not split taxonomy continuity", async ({ page }) => {
+test("single unmapped interlopers split taxonomy ribbons into exact contiguous chunks", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
-    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const leafNodes = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getOrderedLeavesForTest();
     if (!leafNodes || leafNodes.length < 30) {
       throw new Error("Leaf nodes unavailable for taxonomy continuity test.");
     }
@@ -2644,13 +2664,28 @@ test("single unmapped interlopers do not split taxonomy continuity", async ({ pa
     taxonomyBlockCounts?: Record<string, number>;
   });
 
-  expect(Number(circularDebug.taxonomyBlockCounts?.class ?? 0)).toBe(2);
+  expect(Number(circularDebug.taxonomyBlockCounts?.class ?? 0)).toBe(3);
 });
 
 test("circular taxonomy labels move with their clades when the fit view is rotated", async ({ page }) => {
   await waitForViewer(page);
-  await enableMockTaxonomy(page);
   await page.evaluate(async () => {
+    const leaves = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getOrderedLeavesForTest() ?? [];
+    const labels = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 13,
+      mappedCount: leaves.length,
+      totalTips: leaves.length,
+      activeRanks: ["class"],
+      tipRanks: leaves.map((node, index) => ({
+        node,
+        ranks: {
+          class: labels[Math.min(labels.length - 1, Math.floor((index / leaves.length) * labels.length))],
+        },
+      })),
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankDisplayModeForTest("class", "ribbon");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -3280,7 +3315,7 @@ test("taxonomy rank collapse keeps lineages with no target rank by using the bes
   expect(collapseState.leafNames).toContain("Testudines*");
   expect(collapseState.leafNames.some((name) => name === "Chelonoidea*" || name.startsWith("Chelonoidea-"))).toBe(true);
   expect(collapseState.leafNames.some((name) => name === "Mammalia" || name.startsWith("Mammalia-"))).toBe(true);
-  expect(collapseState.bodyText).toContain("This taxon is a lower rank than Class because this lineage lacked a Class in the NCBI taxonomy.");
+  expect(collapseState.bodyText).toContain("This taxon is a lower rank than Class because this lineage lacked a Class in the selected taxonomy.");
 });
 
 test("taxonomy rank collapse list only includes ranks with real subdivision in the mapped tree", async ({ page }) => {

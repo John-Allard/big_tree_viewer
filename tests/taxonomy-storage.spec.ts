@@ -76,7 +76,7 @@ test("canceling the fallback picker does not block a subsequent taxonomy downloa
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
     return state?.taxonomyCached === true && state?.taxonomyLoading === false;
   });
-  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "NCBI Taxonomy Loaded" })).toBeDisabled();
 });
 
 test("canceling the native existing-file picker restores taxonomy controls", async ({ page }) => {
@@ -126,7 +126,7 @@ test("selecting an existing taxonomy file does not request another archive", asy
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyCached === true);
 
   await expect(page.getByText("Taxonomy data is ready.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "NCBI Taxonomy Loaded" })).toBeDisabled();
   expect(downloadRequested).toBe(false);
   expect(await browserCacheContainsArchive(page)).toBe(false);
 });
@@ -191,7 +191,7 @@ test("explicit fallback download saves a file without creating a hidden archive 
   expect(download.suggestedFilename()).toBe("taxdmp.zip");
   expect(downloadRequests).toBe(1);
   expect(await browserCacheContainsArchive(page)).toBe(false);
-  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "NCBI Taxonomy Loaded" })).toBeDisabled();
   await expect(page.getByText("Select that saved file next time", { exact: false })).toBeVisible();
 });
 
@@ -220,7 +220,7 @@ test("native taxonomy download enables mapping and retains the saved file", asyn
     return state?.taxonomyCached === true && state?.taxonomyLoading === false;
   });
 
-  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "NCBI Taxonomy Loaded" })).toBeDisabled();
   expect(await browserCacheContainsArchive(page)).toBe(false);
 });
 
@@ -252,7 +252,7 @@ test("an existing legacy browser archive is detected without a download prompt",
   await page.getByRole("button", { name: "Taxonomy" }).click();
 
   await expect(page.getByText("Taxonomy data is ready.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run Taxonomy Mapping" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "NCBI Taxonomy Loaded" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Download Taxonomy" })).toHaveCount(0);
   expect(await browserCacheContainsArchive(page)).toBe(true);
 });

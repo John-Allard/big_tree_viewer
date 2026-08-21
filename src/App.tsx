@@ -91,11 +91,13 @@ import {
   getCachedTaxonomyArchive,
   getCachedTaxonomyMapping,
   getLinkedTaxonomyArchiveStatus,
+  getMostRecentCachedTaxonomyMapping,
   getSharedSubtreePayload,
   linkTaxonomyArchiveFile,
   putCachedTaxonomyArchive,
   putCachedTaxonomyMapping,
   readLinkedTaxonomyArchive,
+  touchCachedTaxonomyMapping,
   useTaxonomyArchiveForSession,
   type TaxonomyArchiveFileHandle,
 } from "./lib/taxonomyCache";
@@ -1222,7 +1224,11 @@ const TAXONOMY_SOURCE_CONFIG: Record<TaxonomySource, {
 };
 
 function taxonomyMapSourceLabel(map: TaxonomyMapPayload): string {
-  return TAXONOMY_SOURCE_CONFIG[map.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi"].label;
+  return TAXONOMY_SOURCE_CONFIG[taxonomyMapSource(map)].label;
+}
+
+function taxonomyMapSource(map: TaxonomyMapPayload): TaxonomySource {
+  return map.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi";
 }
 
 type VisualPopoverId =
@@ -2133,6 +2139,8 @@ export default function App() {
   const [taxonomyRankVisibility, setTaxonomyRankVisibility] = useState<Partial<Record<TaxonomyRank, boolean>>>({});
   const [taxonomyCollapseRank, setTaxonomyCollapseRank] = useState<TaxonomyCollapseRank>(DEFAULT_TAXONOMY_COLLAPSE_RANK);
   const [taxonomyMap, setTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
+  const [selectedSourceCachedTaxonomyMap, setSelectedSourceCachedTaxonomyMap] = useState<TaxonomyMapPayload | null>(null);
+  const [selectedSourceMappingCacheChecked, setSelectedSourceMappingCacheChecked] = useState(false);
   const [phylopicEnabled, setPhyloPicEnabled] = useState(false);
   const [phylopicOpen, setPhyloPicOpen] = useSessionDisclosure("taxonomy-phylopic", false);
   const [phylopicRetrieving, setPhyloPicRetrieving] = useState(false);
@@ -3113,45 +3121,56 @@ export default function App() {
         const blocks = [...(taxonomyBlocks[rank] ?? [])].sort((left, right) => (
           (left.labelStartIndex ?? left.startIndex ?? 0) - (right.labelStartIndex ?? right.startIndex ?? 0)
         ));
-        for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
-          const block = blocks[blockIndex];
-          const blockSegments = block.segments ?? [{
-            startIndex: block.startIndex ?? 0,
-            endIndex: block.endIndex ?? 0,
-          }];
+        const blocksByEntity = new Map<string, typeof blocks>();
+        for (const block of blocks) {
+          const entityKey = block.entityKey ?? taxonomyEntityKey(block.label, block.taxId ?? null);
+          const entityBlocks = blocksByEntity.get(entityKey) ?? [];
+          entityBlocks.push(block);
+          blocksByEntity.set(entityKey, entityBlocks);
+        }
+        for (const [entityKey, entityBlocks] of blocksByEntity) {
+          const firstBlock = entityBlocks[0];
           const blockTipNodes: number[] = [];
           let dominantSegmentTipNodes: number[] = [];
+          let dominantBlock = firstBlock;
           const seenTipNodes = new Set<number>();
-          for (const segment of blockSegments) {
-            const segmentTipNodes: number[] = [];
-            const end = segment.endIndex >= segment.startIndex
-              ? segment.endIndex
-              : segment.endIndex + orderedLeaves.length;
-            for (let leafIndex = segment.startIndex; leafIndex < end; leafIndex += 1) {
-              const node = orderedLeaves[leafIndex % orderedLeaves.length];
-              const tip = taxonomyTipByNode.get(node);
-              const tipEntityKey = taxonomyEntityKey(tip?.ranks[rank] ?? "", tip?.taxIds?.[rank] ?? null);
-              if (tipEntityKey !== block.entityKey) {
-                continue;
+          for (const block of entityBlocks) {
+            const blockSegments = block.segments ?? [{
+              startIndex: block.startIndex ?? 0,
+              endIndex: block.endIndex ?? 0,
+            }];
+            for (const segment of blockSegments) {
+              const segmentTipNodes: number[] = [];
+              const end = segment.endIndex >= segment.startIndex
+                ? segment.endIndex
+                : segment.endIndex + orderedLeaves.length;
+              for (let leafIndex = segment.startIndex; leafIndex < end; leafIndex += 1) {
+                const node = orderedLeaves[leafIndex % orderedLeaves.length];
+                const tip = taxonomyTipByNode.get(node);
+                const tipEntityKey = taxonomyEntityKey(tip?.ranks[rank] ?? "", tip?.taxIds?.[rank] ?? null);
+                if (tipEntityKey !== entityKey) {
+                  continue;
+                }
+                if (!seenTipNodes.has(node)) {
+                  seenTipNodes.add(node);
+                  blockTipNodes.push(node);
+                  segmentTipNodes.push(node);
+                }
               }
-              if (!seenTipNodes.has(node)) {
-                seenTipNodes.add(node);
-                blockTipNodes.push(node);
-                segmentTipNodes.push(node);
+              if (segmentTipNodes.length > dominantSegmentTipNodes.length) {
+                dominantSegmentTipNodes = segmentTipNodes;
+                dominantBlock = block;
               }
-            }
-            if (segmentTipNodes.length > dominantSegmentTipNodes.length) {
-              dominantSegmentTipNodes = segmentTipNodes;
             }
           }
           if (blockTipNodes.length <= 1) {
             continue;
           }
-          const labelStartIndex = block.labelStartIndex ?? block.startIndex ?? block.segments?.[0]?.startIndex ?? 0;
+          const labelStartIndex = firstBlock.labelStartIndex ?? firstBlock.startIndex ?? firstBlock.segments?.[0]?.startIndex ?? 0;
           pushTaxonomyResult(
             rank,
-            block.label,
-            `${rank}:${block.entityKey ?? taxonomyEntityKey(block.label, block.taxId ?? null)}:${block.centerNode}`,
+            firstBlock.label,
+            `${rank}:${entityKey}:${dominantBlock.centerNode}`,
             blockTipNodes,
             labelStartIndex,
             dominantSegmentTipNodes,
@@ -4073,7 +4092,14 @@ export default function App() {
         throw new Error(response.message || "Taxonomy mapping did not complete.");
       }
       if (targetTreeSignature && !lowMemoryMode) {
-        await putCachedTaxonomyMapping(targetTreeSignature, response.payload, source);
+        try {
+          await putCachedTaxonomyMapping(targetTreeSignature, response.payload, source);
+        } catch (error) {
+          appendDiagnostic("taxonomy-mapping-cache-failed", {
+            message: error instanceof Error ? error.message : String(error),
+            source,
+          });
+        }
       }
       setTaxonomyMap(response.payload);
       setTaxonomyEnabled(true);
@@ -4849,7 +4875,11 @@ export default function App() {
       pendingSessionTaxonomySourceRef.current = "session";
       setTaxonomyMap(sessionTaxonomy ?? null);
       if (sessionTaxonomy) {
-        setTaxonomySource(sessionTaxonomy.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi");
+        const source = taxonomyMapSource(sessionTaxonomy);
+        setTaxonomySource(source);
+        void putCachedTaxonomyMapping(treeSignature, sessionTaxonomy, source).catch(() => {
+          // Session loading must still succeed if browser storage is unavailable or full.
+        });
       }
       setTaxonomyEnabled(sessionTaxonomy ? sessionTaxonomyEnabled ?? true : false);
       setTaxonomyStatus(sessionTaxonomy
@@ -4883,7 +4913,9 @@ export default function App() {
         setTaxonomyStatus(`Loaded shared ${taxonomyMapSourceLabel(rebuilt)} mapping for this subtree (${rebuilt.mappedCount.toLocaleString()} mapped tips).`);
         setTaxonomyError(null);
         setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, rebuilt));
-        void putCachedTaxonomyMapping(treeSignature, rebuilt);
+        void putCachedTaxonomyMapping(treeSignature, rebuilt).catch(() => {
+          // Shared subtree loading must still succeed if browser storage is unavailable or full.
+        });
         return;
       }
     }
@@ -4894,20 +4926,49 @@ export default function App() {
     setTaxonomyMappingWarning("");
     let cancelled = false;
     void (async () => {
-      const cached = await getCachedTaxonomyMapping(treeSignature, taxonomySource);
+      const cached = await getMostRecentCachedTaxonomyMapping(treeSignature);
       if (cancelled || !cached) {
         return;
       }
-      setTaxonomyMap(cached);
+      setTaxonomySource(cached.source);
+      setTaxonomyMap(cached.payload);
       setTaxonomyEnabled(inheritedTaxonomyEnabled ?? true);
-      setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(cached)} mapping for this tree (${cached.mappedCount.toLocaleString()} mapped tips).`);
+      setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(cached.payload)} mapping for this tree (${cached.payload.mappedCount.toLocaleString()} mapped tips).`);
       setTaxonomyError(null);
-      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, cached));
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, cached.payload));
+      void touchCachedTaxonomyMapping(treeSignature, cached.source).catch(() => {
+        // A failed recency update does not invalidate a readable cached mapping.
+      });
     })();
     return () => {
       cancelled = true;
     };
   }, [runStandardTaxonomyMappingForTree, tree, treeSignature]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedSourceCachedTaxonomyMap(null);
+    setSelectedSourceMappingCacheChecked(false);
+    if (!treeSignature) {
+      setSelectedSourceMappingCacheChecked(true);
+      return;
+    }
+    void getCachedTaxonomyMapping(treeSignature, taxonomySource)
+      .then((cached) => {
+        if (!cancelled) {
+          setSelectedSourceCachedTaxonomyMap(cached);
+          setSelectedSourceMappingCacheChecked(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedSourceMappingCacheChecked(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [taxonomyMap, taxonomySource, treeSignature]);
 
   const clearMetadata = useCallback((): void => {
     setMetadataTable(null);
@@ -6291,6 +6352,35 @@ export default function App() {
     return await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, taxonomySource);
   }, [runStandardTaxonomyMappingForTree, taxonomySource, tree, treeSignature, useLowMemoryTaxonomyMapping]);
 
+  const canLoadSelectedCachedTaxonomyMapping = Boolean(
+    tree
+    && selectedSourceCachedTaxonomyMap
+    && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource),
+  );
+  const selectedSourceTaxonomyLoaded = Boolean(
+    tree
+    && taxonomyMap
+    && taxonomyMapSource(taxonomyMap) === taxonomySource,
+  );
+
+  const loadOrRunTaxonomyMapping = useCallback(async (): Promise<TaxonomyMapPayload | null> => {
+    if (!tree || !treeSignature) {
+      return null;
+    }
+    if (selectedSourceCachedTaxonomyMap && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource)) {
+      setTaxonomyMap(selectedSourceCachedTaxonomyMap);
+      setTaxonomyEnabled(true);
+      setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(selectedSourceCachedTaxonomyMap)} mapping for this tree (${selectedSourceCachedTaxonomyMap.mappedCount.toLocaleString()} mapped tips).`);
+      setTaxonomyError(null);
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, selectedSourceCachedTaxonomyMap));
+      void touchCachedTaxonomyMapping(treeSignature, taxonomySource).catch(() => {
+        // A failed recency update does not invalidate a readable cached mapping.
+      });
+      return selectedSourceCachedTaxonomyMap;
+    }
+    return await runTaxonomyMapping();
+  }, [runTaxonomyMapping, selectedSourceCachedTaxonomyMap, taxonomyMap, taxonomySource, tree, treeSignature]);
+
   const selectTaxonomySource = useCallback((source: TaxonomySource): void => {
     if (source === taxonomySource) {
       return;
@@ -6653,6 +6743,9 @@ export default function App() {
         taxonomyStatus,
         taxonomyError,
         taxonomyCached,
+        selectedSourceMappingCacheChecked,
+        canLoadSelectedCachedTaxonomyMapping,
+        selectedSourceTaxonomyLoaded,
         taxonomyLoading,
         taxonomyLowMemoryMode: useLowMemoryTaxonomyMapping,
         taxonomyBranchColoringEnabled,
@@ -6902,6 +6995,12 @@ export default function App() {
         }
         await putCachedTaxonomyMapping(treeSignature, buildMockTaxonomyMap(tree));
       },
+      cacheCurrentTaxonomyForTest: async (source: TaxonomySource) => {
+        if (!taxonomyMap || !treeSignature) {
+          return;
+        }
+        await putCachedTaxonomyMapping(treeSignature, { ...taxonomyMap, source }, source);
+      },
       clearTaxonomy: () => {
         setTaxonomyMap(null);
         setTaxonomyEnabled(false);
@@ -7024,6 +7123,8 @@ export default function App() {
     timeStripeStyle,
     taxonomyBranchColoringEnabled,
     taxonomyCached,
+    canLoadSelectedCachedTaxonomyMapping,
+    selectedSourceTaxonomyLoaded,
     collapsibleTaxonomyRanks,
     taxonomyCollapseRank,
     taxonomyColorJitter,
@@ -7041,6 +7142,7 @@ export default function App() {
     taxonomyStatus,
     taxonomySource,
     taxonomyMap,
+    selectedSourceMappingCacheChecked,
     tree,
     viewTree,
     viewTaxonomyMap,
@@ -8297,7 +8399,11 @@ export default function App() {
                 <option value="catalogue-of-life">Catalogue of Life</option>
               </select>
             </label>
-            {taxonomyCached === null ? (
+            {!selectedSourceMappingCacheChecked && tree ? (
+              <p className="status-line">Checking for a saved mapping for this tree...</p>
+            ) : canLoadSelectedCachedTaxonomyMapping ? (
+              <p className="status-line">A saved {TAXONOMY_SOURCE_CONFIG[taxonomySource].label} mapping is available for this tree.</p>
+            ) : taxonomyCached === null ? (
               <p className="status-line">Checking {TAXONOMY_SOURCE_CONFIG[taxonomySource].label} data...</p>
             ) : taxonomyCached ? (
               <p className="status-line">
@@ -8346,22 +8452,30 @@ export default function App() {
                 )}
               </>
             )}
-            {taxonomyCached ? (
+            {selectedSourceTaxonomyLoaded || canLoadSelectedCachedTaxonomyMapping || taxonomyCached ? (
               <div className="button-row">
                 <button
                   type="button"
                   className="secondary"
-                  disabled={taxonomyLoading || !tree}
+                  disabled={taxonomyLoading || !tree || selectedSourceTaxonomyLoaded}
                   title={disabledControlTitle(
                     taxonomyLoading
                       ? "Taxonomy mapping is already running."
                       : !tree
                         ? "Load a tree first."
+                        : selectedSourceTaxonomyLoaded
+                          ? `The ${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} mapping is already loaded for this tree.`
                         : undefined,
-                  ) ?? `Match complete species names or leading Genus_species labels to ${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} so taxonomy labels, coloring, and silhouettes can be used.`}
-                  onClick={() => void runTaxonomyMapping()}
+                  ) ?? (canLoadSelectedCachedTaxonomyMapping
+                    ? `Restore the saved ${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} mapping for this exact tree.`
+                    : `Match complete species names or leading Genus_species labels to ${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} so taxonomy labels, coloring, and silhouettes can be used.`)}
+                  onClick={() => void loadOrRunTaxonomyMapping()}
                 >
-                  Run Taxonomy Mapping
+                  {selectedSourceTaxonomyLoaded
+                    ? `${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} Loaded`
+                    : canLoadSelectedCachedTaxonomyMapping
+                      ? "Load Taxonomy Mapping"
+                      : "Run Taxonomy Mapping"}
                 </button>
               </div>
             ) : null}
@@ -8393,7 +8507,7 @@ export default function App() {
             {taxonomyError ? <p className="status-error">{taxonomyError}</p> : null}
             {taxonomyMap ? (
               <>
-                <label title="Optionally replace mapped species tips with one representative tip per selected taxonomic group. Species keeps the original tree tips; higher ranks create a compact taxonomy-collapsed view.">
+                <label title="Optionally replace mapped species tips with one representative tip per selected higher taxonomic group.">
                   Collapse mapped tips to
                   <select
                     value={taxonomyCollapseRank}
@@ -8401,7 +8515,7 @@ export default function App() {
                     title={comparisonEnabled && comparisonTree ? "Taxonomy tip collapsing is unavailable while comparing trees." : undefined}
                     onChange={(event) => setTaxonomyCollapseRank(event.target.value as TaxonomyCollapseRank)}
                   >
-                    <option value="species">Species</option>
+                    <option value="species">Choose a taxonomic rank</option>
                     {collapsibleTaxonomyRanks.map((rank) => (
                       <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>
                     ))}

@@ -98,6 +98,7 @@ declare global {
       getTaxonomyMapForTest: () => TaxonomyMapPayload | null;
       setMockTaxonomy: () => void;
       cacheMockTaxonomy: () => Promise<void>;
+      cacheCurrentTaxonomyForTest: (source: "ncbi" | "catalogue-of-life") => Promise<void>;
       clearTaxonomy: () => void;
       rerootOnNodeForTest: (node: number, mode: "branch" | "child" | "parent") => void;
       requestSearchFocus: () => void;
@@ -120,6 +121,7 @@ declare global {
     __BIG_TREE_VIEWER_CANVAS_TEST__?: {
       getCamera: () => Record<string, unknown> | null;
       getRenderDebug: () => Record<string, unknown> | null;
+      getOrderedLeavesForTest: () => number[];
       getCurrentBranchColors: () => string[] | null;
       startPanBenchmark: (label?: string) => { label: string; startedAtMs: number };
       stopPanBenchmark: () => Record<string, unknown> | null;

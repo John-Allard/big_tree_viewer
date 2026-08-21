@@ -498,7 +498,7 @@ function closestSpiralThetaForPoint(x: number, y: number, metrics: SpiralMetrics
   return (low + high) * 0.5;
 }
 
-function visibleSpiralThetaForViewport(
+function unambiguousVisibleSpiralThetaForViewport(
   camera: CircularCamera,
   metrics: SpiralMetrics,
   viewportWidth: number,
@@ -506,7 +506,8 @@ function visibleSpiralThetaForViewport(
 ): number | null {
   const centerX = viewportWidth * 0.5;
   const centerY = viewportHeight * 0.5;
-  const margin = 12;
+  const focusHalfWidth = Math.max(24, viewportWidth * 0.24);
+  const focusHalfHeight = Math.max(24, viewportHeight * 0.24);
   const offsets = [
     metrics.spacingOffset,
     metrics.bandWidth * 0.08,
@@ -516,19 +517,23 @@ function visibleSpiralThetaForViewport(
   const samples = Math.max(720, Math.min(2400, Math.ceil(metrics.totalTheta * 96)));
   let bestTheta: number | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
+  let visibleSegmentCount = 0;
+  let lastVisibleSample = -3;
   for (let index = 0; index <= samples; index += 1) {
     const theta = metrics.startTheta + ((index / samples) * metrics.totalTheta);
+    let sampleVisible = false;
     for (let offsetIndex = 0; offsetIndex < offsets.length; offsetIndex += 1) {
       const point = spiralNormalOffsetPoint(theta, offsets[offsetIndex], metrics);
       const screen = worldToScreenCircular(camera, point.x, point.y);
       if (
-        screen.x < -margin
-        || screen.x > viewportWidth + margin
-        || screen.y < -margin
-        || screen.y > viewportHeight + margin
+        screen.x < centerX - focusHalfWidth
+        || screen.x > centerX + focusHalfWidth
+        || screen.y < centerY - focusHalfHeight
+        || screen.y > centerY + focusHalfHeight
       ) {
         continue;
       }
+      sampleVisible = true;
       const normalizedDx = (screen.x - centerX) / Math.max(viewportWidth, 1);
       const normalizedDy = (screen.y - centerY) / Math.max(viewportHeight, 1);
       const score = (normalizedDx * normalizedDx) + (normalizedDy * normalizedDy);
@@ -537,8 +542,14 @@ function visibleSpiralThetaForViewport(
         bestTheta = theta;
       }
     }
+    if (sampleVisible) {
+      if (index > lastVisibleSample + 2) {
+        visibleSegmentCount += 1;
+      }
+      lastVisibleSample = index;
+    }
   }
-  return bestTheta;
+  return visibleSegmentCount === 1 ? bestTheta : null;
 }
 
 function spiralBaseRadius(theta: number, metrics: SpiralMetrics): number {
@@ -2133,23 +2144,16 @@ export function buildTaxonomyColorMap(
       const parentColor = colorsByRank[parentRank]?.[parentEntityKey] ?? hslColor(0, 0, 55);
       const parsed = parseHslColor(parentColor) ?? { h: 0, s: 0, l: 55 };
       children.sort((left, right) => left.firstSeen - right.firstSeen);
-      const half = Math.max(1, Math.ceil(children.length / 2));
       const effectiveJitterScale = rankIndex >= jitterRankIndex ? jitterScale : 0;
-      const hueStep = half > 0 ? (18 * effectiveJitterScale) / half : 0;
-      const positions: number[] = children.length === 1 ? [0] : [];
-      for (let value = 1; positions.length < children.length; value += 1) {
-        positions.push(value);
-        if (positions.length < children.length) {
-          positions.push(-value);
-        }
-      }
       for (let childIndex = 0; childIndex < children.length; childIndex += 1) {
         if (effectiveJitterScale <= 0) {
           childColors[children[childIndex].childEntityKey] = parentColor;
           continue;
         }
-        const position = positions[childIndex] ?? 0;
-        const hue = parsed.h + (position * hueStep);
+        const position = children.length === 1
+          ? 0
+          : ((((childIndex + 1) * 0.618033988749895) % 1) * 2) - 1;
+        const hue = parsed.h + (position * 18 * effectiveJitterScale);
         const lightnessDelta = position > 0 ? 4 * effectiveJitterScale : position < 0 ? -4 * effectiveJitterScale : 0;
         const lightness = parsed.l + lightnessDelta;
         childColors[children[childIndex].childEntityKey] = hslColor(hue, parsed.s, Math.max(42, Math.min(76, lightness)));
@@ -7321,21 +7325,31 @@ export default function TreeCanvas({
       const world = screenToWorldCircular(fromCamera, centerScreenX, centerScreenY);
       const visibleRankCount = spiralVisibleTaxonomyRanksForScale(fromCamera.scale).length;
       const spiralMetrics = spiralMetricsForScale(visibleRankCount, fromCamera.scale);
-      const sourceTheta = visibleSpiralThetaForViewport(fromCamera, spiralMetrics, size.width, size.height)
-        ?? closestSpiralThetaForPoint(world.x, world.y, spiralMetrics);
+      const sourceTheta = unambiguousVisibleSpiralThetaForViewport(fromCamera, spiralMetrics, size.width, size.height);
+      if (sourceTheta === null) {
+        return fitCameraForMode(viewMode) ?? fromCamera;
+      }
       const targetY = spiralArcFractionForTheta(sourceTheta, spiralMetrics) * Math.max(1, tree.leafCount - 1);
       const sourceAge = spiralAgeForPointAtTheta(world.x, world.y, sourceTheta, spiralMetrics);
       const rawDepth = Math.max(0, (tree.isUltrametric ? tree.rootAge : tree.maxDepth) - sourceAge);
       const targetRadius = axisDepthForMode(rawDepth, viewMode);
       const targetTheta = polarThetaForCurrentModeLayoutValue(targetY, viewMode);
       const targetPoint = polarToCartesian(targetRadius, targetTheta);
-      const nextCamera = fitPolarCamera(viewMode) ?? fitCircularCamera(size.width, size.height, tree, circularRotation);
-      const destinationDomain = polarDomainForMode(viewMode);
+      const destinationFitCamera = fitCameraForMode(viewMode);
+      const nextCamera = destinationFitCamera?.kind === "circular"
+        ? destinationFitCamera
+        : fitPolarCamera(viewMode) ?? fitCircularCamera(size.width, size.height, tree, circularRotation);
+      const spiralFitCamera = fitCameraForMode("spiral");
+      const sourceZoomRatio = spiralFitCamera?.kind === "circular"
+        ? fromCamera.scale / Math.max(spiralFitCamera.scale, 1e-9)
+        : 1;
       const sourcePixelsPerLeaf = fromCamera.scale
         * (spiralMetrics.totalArcLength / Math.max(1, tree.leafCount - 1));
-      const destinationWorldPerLeaf = Math.max(targetRadius, tree.branchLengthMinPositive)
-        * (destinationDomain.span / destinationDomain.leafDivisor);
-      nextCamera.scale = Math.max(nextCamera.scale, sourcePixelsPerLeaf / Math.max(destinationWorldPerLeaf, 1e-9));
+      // A multi-turn spiral has much more total arc length than a radial tree's
+      // single circumference. Equating those lengths makes the radial camera
+      // jump as soon as the spiral is no longer at fit. Preserve each geometry's
+      // magnification relative to its own fit view instead.
+      nextCamera.scale *= Math.max(1, sourceZoomRatio);
       const rotatedNormal = rotateCircularWorldPoint(nextCamera, Math.cos(targetTheta), Math.sin(targetTheta));
       const envelopeShiftPx = hasCurrentTaxonomyOverlay
         && sourcePixelsPerLeaf > SPIRAL_TIP_LABEL_VISIBILITY_SPACING_PX
@@ -7385,10 +7399,13 @@ export default function TreeCanvas({
       const spiralMetrics = sourceMode === "spiral"
         ? spiralMetricsForScale(visibleRankCount, fromCamera.scale)
         : null;
-      const theta = spiralMetrics
-        ? visibleSpiralThetaForViewport(fromCamera, spiralMetrics, size.width, size.height)
-          ?? closestSpiralThetaForPoint(world.x, world.y, spiralMetrics)
-        : Math.atan2(world.y, world.x);
+      const visibleSpiralTheta = spiralMetrics
+        ? unambiguousVisibleSpiralThetaForViewport(fromCamera, spiralMetrics, size.width, size.height)
+        : null;
+      if (spiralMetrics && visibleSpiralTheta === null) {
+        return fitCameraForMode(viewMode) ?? fromCamera;
+      }
+      const theta = spiralMetrics ? visibleSpiralTheta as number : Math.atan2(world.y, world.x);
       const targetY = spiralMetrics
         ? spiralArcFractionForTheta(theta, spiralMetrics) * Math.max(1, tree.leafCount - 1)
         : polarLayoutValueForCurrentModeTheta(theta, sourceMode);
@@ -17063,18 +17080,6 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [contextMenu, zoomToSubtreeTarget]);
 
-  const handleContextZoomToParentSubtree = useCallback(() => {
-    if (!contextMenu || contextMenu.kind !== "node" || !tree) {
-      return;
-    }
-    const parent = tree.buffers.parent[contextMenu.node];
-    if (parent < 0) {
-      return;
-    }
-    zoomToSubtreeTarget(parent);
-    setContextMenu(null);
-  }, [contextMenu, tree, zoomToSubtreeTarget]);
-
   const openSubtreeInNewTab = useCallback(async (node: number) => {
     if (typeof window === "undefined" || !tree) {
       return;
@@ -17500,6 +17505,7 @@ export default function TreeCanvas({
       </div>
       <label
         className="tree-context-menu-custom-color tree-context-menu-color-picker-shell"
+        title={`Choose a custom ${scope.replace("taxonomy-root", "top-level group")} color.`}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <span>Custom color</span>
@@ -17552,6 +17558,7 @@ export default function TreeCanvas({
         return camera ? { ...camera } : null;
       },
       getRenderDebug: () => renderDebugRef.current,
+      getOrderedLeavesForTest: () => cache ? [...cache.orderedLeaves[order]] : [],
       getCurrentBranchColors: () => {
         if (!tree) {
           return null;
@@ -18027,71 +18034,52 @@ export default function TreeCanvas({
               <div className="tree-context-menu-meta">
                 Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}
               </div>
-              <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToSubtree}>
-                Zoom To Subtree
-              </button>
-              {tree && tree.buffers.parent[contextMenu.node] >= 0 ? (
-                <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToParentSubtree}>
-                  Zoom To Parent Subtree
-                </button>
-              ) : null}
-              {contextMenu.descendantTipCount === 1 ? (
-                <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTipName}>
-                  Copy Tip Name
-                </button>
-              ) : null}
-              <div className="tree-context-menu-section">
+              {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
                 <button
                   type="button"
                   className="tree-context-menu-item"
-                  disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
-                  onClick={() => setContextMenuRootMenuOpen((current) => !current)}
+                  title="Fit the selected subtree in the viewport."
+                  onClick={handleContextZoomToSubtree}
                 >
-                  Root
+                  Zoom To Subtree
                 </button>
-                {contextMenuRootMenuOpen ? (
-                  <div className="tree-context-menu-swatch-panel">
-                    <button
-                      type="button"
-                      className="tree-context-menu-item"
-                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
-                      onClick={() => handleContextReroot("branch")}
-                    >
-                      Root On Branch
-                    </button>
-                    <button
-                      type="button"
-                      className="tree-context-menu-item"
-                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
-                      onClick={() => handleContextReroot("child")}
-                    >
-                      Root On Child
-                    </button>
-                    <button
-                      type="button"
-                      className="tree-context-menu-item"
-                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
-                      onClick={() => handleContextReroot("parent")}
-                    >
-                      Root On Parent
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              <button type="button" className="tree-context-menu-item" onClick={handleContextOpenSubtreeInNewTab}>
+              ) : null}
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                title="Open the selected subtree in a separate Big Tree Viewer tab."
+                onClick={handleContextOpenSubtreeInNewTab}
+              >
                 Open Subtree In New Tab
               </button>
               {contextMenuCollapseTarget !== null ? (
-                <button type="button" className="tree-context-menu-item" onClick={handleContextViewSubtreeStatistics}>
+                <button
+                  type="button"
+                  className="tree-context-menu-item"
+                  title="Show statistics calculated for the selected subtree."
+                  onClick={handleContextViewSubtreeStatistics}
+                >
                   View Subtree Statistics
                 </button>
               ) : null}
-              <button type="button" className="tree-context-menu-item" onClick={handleContextMeasureDistance}>
-                Measure Distance
-              </button>
+              {contextMenu.descendantTipCount === 1 ? (
+                <button
+                  type="button"
+                  className="tree-context-menu-item"
+                  title="Copy this tip label to the clipboard."
+                  onClick={handleContextCopyTipName}
+                >
+                  Copy Tip Name
+                </button>
+              ) : null}
               {contextMenuCollapseTarget !== null ? (
                 collapsedNodes.has(contextMenuCollapseTarget) ? (
-                  <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse(null)}>
+                  <button
+                    type="button"
+                    className="tree-context-menu-item"
+                    title="Restore the branches and tips hidden by this collapsed subtree."
+                    onClick={() => handleContextCollapse(null)}
+                  >
                     Expand Subtree
                   </button>
                 ) : (
@@ -18099,6 +18087,7 @@ export default function TreeCanvas({
                     <button
                       type="button"
                       className="tree-context-menu-item"
+                      title="Choose how to replace this subtree with a collapsed triangle."
                       onClick={() => setContextMenuCollapseMenuOpen((current) => !current)}
                     >
                       Collapse Subtree
@@ -18110,13 +18099,18 @@ export default function TreeCanvas({
                             type="button"
                             className="tree-context-menu-item"
                             disabled={viewMode !== "rectangular"}
-                            title={viewMode === "rectangular" ? undefined : "Only available in rectangular mode."}
+                            title={viewMode === "rectangular" ? "Collapse the subtree while preserving its current vertical span." : "Only available in rectangular mode."}
                             onClick={() => handleContextCollapse("preserve-width")}
                           >
                             Preserve Width
                           </button>
                         </div>
-                        <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse("minimize")}>
+                        <button
+                          type="button"
+                          className="tree-context-menu-item"
+                          title="Collapse the subtree to a compact triangle."
+                          onClick={() => handleContextCollapse("minimize")}
+                        >
                           Minimize
                         </button>
                       </div>
@@ -18129,6 +18123,9 @@ export default function TreeCanvas({
                   type="button"
                   className="tree-context-menu-item"
                   disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                  title={!tree || tree.buffers.parent[contextMenu.node] < 0
+                    ? "The root has no incoming branch to color."
+                    : "Assign a color to only the selected branch."}
                   onClick={() => setContextMenuColorMode((current) => current === "branch" ? null : "branch")}
                 >
                   Color Branch
@@ -18144,6 +18141,7 @@ export default function TreeCanvas({
                       type="button"
                       className="tree-context-menu-clear"
                       disabled={!manualBranchColorAssignments.has(contextMenu.node)}
+                      title="Remove the manual color from this branch."
                       onClick={handleContextClearBranchColor}
                     >
                       Clear Branch Color
@@ -18155,6 +18153,7 @@ export default function TreeCanvas({
                 <button
                   type="button"
                   className="tree-context-menu-item"
+                  title="Assign one color to every branch in the selected subtree."
                   onClick={() => setContextMenuColorMode((current) => current === "subtree" ? null : "subtree")}
                 >
                   Color Subtree
@@ -18170,9 +18169,62 @@ export default function TreeCanvas({
                       type="button"
                       className="tree-context-menu-clear"
                       disabled={!manualSubtreeColorAssignments.has(contextMenu.node)}
+                      title="Remove the manual color from this subtree."
                       onClick={handleContextClearSubtreeColor}
                     >
                       Clear Subtree Color
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                title="Measure the branch-length path from this node to another node."
+                onClick={handleContextMeasureDistance}
+              >
+                Measure Distance
+              </button>
+              <div className="tree-context-menu-section">
+                <button
+                  type="button"
+                  className="tree-context-menu-item"
+                  disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                  title={!tree || tree.buffers.parent[contextMenu.node] < 0
+                    ? "The tree is already rooted at this node."
+                    : "Choose how to reroot the tree relative to this branch and node."}
+                  onClick={() => setContextMenuRootMenuOpen((current) => !current)}
+                >
+                  Root
+                </button>
+                {contextMenuRootMenuOpen ? (
+                  <div className="tree-context-menu-swatch-panel">
+                    <button
+                      type="button"
+                      className="tree-context-menu-item"
+                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                      title="Place the root at the midpoint of the selected branch."
+                      onClick={() => handleContextReroot("branch")}
+                    >
+                      Root On Branch
+                    </button>
+                    <button
+                      type="button"
+                      className="tree-context-menu-item"
+                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                      title="Place the root at the selected node."
+                      onClick={() => handleContextReroot("child")}
+                    >
+                      Root On Child
+                    </button>
+                    <button
+                      type="button"
+                      className="tree-context-menu-item"
+                      disabled={!tree || tree.buffers.parent[contextMenu.node] < 0}
+                      title="Place the root at the parent node of the selected branch."
+                      onClick={() => handleContextReroot("parent")}
+                    >
+                      Root On Parent
                     </button>
                   </div>
                 ) : null}
@@ -18183,18 +18235,38 @@ export default function TreeCanvas({
               <div className="tree-context-menu-meta">
                 Rank: {contextMenu.rank} · Tips: {contextMenu.descendantTipCount.toLocaleString()}
               </div>
-              <button type="button" className="tree-context-menu-item" onClick={handleContextZoomToTaxonomySubtree}>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                title="Fit the subtree spanning this visible taxonomic group in the viewport."
+                onClick={handleContextZoomToTaxonomySubtree}
+              >
                 Zoom To Group MRCA
               </button>
-              <button type="button" className="tree-context-menu-item" onClick={handleContextOpenTaxonomySubtreeInNewTab}>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                title="Open the subtree spanning this visible taxonomic group in a separate Big Tree Viewer tab."
+                onClick={handleContextOpenTaxonomySubtreeInNewTab}
+              >
                 Open Group Subtree In New Tab
               </button>
               {contextMenuCollapseTarget !== null ? (
-                <button type="button" className="tree-context-menu-item" onClick={handleContextViewSubtreeStatistics}>
+                <button
+                  type="button"
+                  className="tree-context-menu-item"
+                  title="Show statistics calculated for this taxonomic subtree."
+                  onClick={handleContextViewSubtreeStatistics}
+                >
                   View Subtree Statistics
                 </button>
               ) : null}
-              <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTaxonomyName}>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                title="Copy this taxonomic group name to the clipboard."
+                onClick={handleContextCopyTaxonomyName}
+              >
                 Copy Name
               </button>
               {taxonomyMap?.source !== "catalogue-of-life" ? (
@@ -18203,13 +18275,21 @@ export default function TreeCanvas({
                   className="tree-context-menu-item"
                   onClick={handleContextOpenTaxonomyInNcbi}
                   disabled={!contextMenu.taxId}
+                  title={contextMenu.taxId
+                    ? "Open this taxon in the NCBI Taxonomy Browser."
+                    : "No NCBI taxonomy identifier is available for this group."}
                 >
                   Open In NCBI Taxonomy
                 </button>
               ) : null}
               {contextMenuCollapseTarget !== null ? (
                 collapsedNodes.has(contextMenuCollapseTarget) ? (
-                  <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse(null)}>
+                  <button
+                    type="button"
+                    className="tree-context-menu-item"
+                    title="Restore the branches and tips hidden by this collapsed group."
+                    onClick={() => handleContextCollapse(null)}
+                  >
                     Expand Group
                   </button>
                 ) : (
@@ -18217,6 +18297,7 @@ export default function TreeCanvas({
                     <button
                       type="button"
                       className="tree-context-menu-item"
+                      title="Choose how to replace this taxonomic subtree with a collapsed triangle."
                       onClick={() => setContextMenuCollapseMenuOpen((current) => !current)}
                     >
                       Collapse Group
@@ -18228,13 +18309,18 @@ export default function TreeCanvas({
                             type="button"
                             className="tree-context-menu-item"
                             disabled={viewMode !== "rectangular"}
-                            title={viewMode === "rectangular" ? undefined : "Only available in rectangular mode."}
+                            title={viewMode === "rectangular" ? "Collapse the group while preserving its current vertical span." : "Only available in rectangular mode."}
                             onClick={() => handleContextCollapse("preserve-width")}
                           >
                             Preserve Width
                           </button>
                         </div>
-                        <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse("minimize")}>
+                        <button
+                          type="button"
+                          className="tree-context-menu-item"
+                          title="Collapse the group to a compact triangle."
+                          onClick={() => handleContextCollapse("minimize")}
+                        >
                           Minimize
                         </button>
                       </div>
@@ -18247,6 +18333,7 @@ export default function TreeCanvas({
                   <button
                     type="button"
                     className="tree-context-menu-item"
+                    title="Override the palette color for this top-level taxonomic group."
                     onClick={() => setContextMenuColorMode((current) => current === "taxonomy-root" ? null : "taxonomy-root")}
                   >
                     Color Top-Level Group
@@ -18262,6 +18349,7 @@ export default function TreeCanvas({
                         type="button"
                         className="tree-context-menu-clear"
                         disabled={!taxonomyRootColorAssignments.has(contextMenu.name)}
+                        title="Remove the manual color from this top-level group."
                         onClick={handleContextClearTaxonomyRootColor}
                       >
                         Clear Group Color
@@ -18281,6 +18369,7 @@ export default function TreeCanvas({
                 className="tree-context-menu-item"
                 onClick={handleContextTryAnotherPhyloPic}
                 disabled={!onPhyloPicTryAnotherSilhouette}
+                title="Replace this silhouette with another available PhyloPic image."
               >
                 Try Another Silhouette
               </button>
@@ -18289,10 +18378,16 @@ export default function TreeCanvas({
                 className="tree-context-menu-item"
                 onClick={handleContextRemovePhyloPic}
                 disabled={!onPhyloPicRemoveSilhouette}
+                title="Remove this silhouette from the tree."
               >
                 Remove Silhouette
               </button>
-              <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTaxonomyName}>
+              <button
+                type="button"
+                className="tree-context-menu-item"
+                title="Copy this taxonomic group name to the clipboard."
+                onClick={handleContextCopyTaxonomyName}
+              >
                 Copy Name
               </button>
               <button
@@ -18305,6 +18400,9 @@ export default function TreeCanvas({
                   setContextMenu(null);
                 }}
                 disabled={!contextMenu.taxId}
+                title={contextMenu.taxId
+                  ? "Open this taxon in the NCBI Taxonomy Browser."
+                  : "No NCBI taxonomy identifier is available for this silhouette."}
               >
                 Open In NCBI Taxonomy
               </button>

@@ -237,6 +237,68 @@ test("changing taxonomy source preserves the bundled example mapping until mappi
   await expect(page.getByText(/Loaded NCBI Taxonomy mapping from session/)).toBeVisible();
 });
 
+test("saved mappings can be switched by source without rerunning taxonomy mapping", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.treeLoaded) && Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount) > 0;
+  });
+  const closeTutorial = page.getByRole("button", { name: "Close tutorial prompt" });
+  if (await closeTutorial.isVisible()) {
+    await closeTutorial.click();
+  }
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.cacheCurrentTaxonomyForTest("catalogue-of-life");
+  });
+  await page.getByRole("button", { name: "Taxonomy" }).click();
+
+  await page.getByLabel("Taxonomy source").selectOption("catalogue-of-life");
+  await expect(page.getByRole("button", { name: "Load Taxonomy Mapping" })).toBeVisible();
+  await expect(page.getByText("A saved Catalogue of Life mapping is available for this tree.")).toBeVisible();
+  await page.getByRole("button", { name: "Load Taxonomy Mapping" }).click();
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest()?.source === "catalogue-of-life");
+  await expect(page.getByRole("button", { name: "Catalogue of Life Loaded" })).toBeDisabled();
+
+  await page.getByLabel("Taxonomy source").selectOption("ncbi");
+  await expect(page.getByRole("button", { name: "Load Taxonomy Mapping" })).toBeVisible();
+  await page.getByRole("button", { name: "Load Taxonomy Mapping" }).click();
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest()?.source !== "catalogue-of-life");
+  await expect(page.getByRole("button", { name: "NCBI Taxonomy Loaded" })).toBeDisabled();
+
+  const collapseRanks = page.getByLabel("Collapse mapped tips to");
+  await expect(collapseRanks.locator("option").first()).toHaveText("Choose a taxonomic rank");
+  await expect(collapseRanks.locator("option", { hasText: /^Species$/ })).toHaveCount(0);
+});
+
+test("loading the same plain tree restores its most recent saved mapping", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  const closeTutorial = page.getByRole("button", { name: "Close tutorial prompt" });
+  if (await closeTutorial.isVisible()) {
+    await closeTutorial.click();
+  }
+  const originalTree = "((Homo_sapiens:1,Pan_troglodytes:1):1,Mus_musculus:2)Root;";
+  await loadTree(page, originalTree);
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy());
+  await page.waitForFunction(() => Number(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount) > 0);
+  await page.evaluate(async () => {
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.cacheCurrentTaxonomyForTest("ncbi");
+    await new Promise((resolve) => window.setTimeout(resolve, 10));
+    await window.__BIG_TREE_VIEWER_APP_TEST__?.cacheCurrentTaxonomyForTest("catalogue-of-life");
+  });
+
+  await loadTree(page, "(Alpha:1,Beta:1)OtherRoot;");
+  await loadTree(page, originalTree);
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    const map = window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest();
+    return state?.taxonomySource === "catalogue-of-life" && map?.source === "catalogue-of-life";
+  });
+
+  await page.getByRole("button", { name: "Taxonomy" }).click();
+  await expect(page.getByText(/Loaded cached Catalogue of Life mapping for this tree/)).toBeVisible();
+});
+
 const fullArchivePath = process.env.COL_TEXTTREE_PATH;
 
 test("maps representative taxa from a complete Catalogue of Life TextTree release", async () => {
