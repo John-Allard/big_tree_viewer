@@ -376,6 +376,39 @@ test("a slightly panned spiral fit remains a fit view across geometry switches",
   }
 });
 
+test("a fully visible spiral above the near-fit threshold switches to radial fit", async ({ page }) => {
+  await waitForViewer(page);
+  const result = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const spiralFit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!spiralFit || spiralFit.kind !== "circular") {
+      throw new Error("Spiral fit camera unavailable for visible-tree transition test.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale: Number(spiralFit.scale) * 1.04,
+      translateX: Number(spiralFit.translateX) + 4,
+      translateY: Number(spiralFit.translateY) - 3,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const switched = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const fit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    return { switched, fit };
+  });
+
+  expect(result.switched?.kind).toBe("circular");
+  expect(result.fit?.kind).toBe("circular");
+  expect(Number(result.switched?.scale)).toBeCloseTo(Number(result.fit?.scale), 6);
+  expect(Math.abs(Number(result.switched?.translateX) - Number(result.fit?.translateX))).toBeLessThanOrEqual(1);
+  expect(Math.abs(Number(result.switched?.translateY) - Number(result.fit?.translateY))).toBeLessThanOrEqual(1);
+});
+
 test("rectangular vertical wheel input zooms instead of scrolling or panning", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

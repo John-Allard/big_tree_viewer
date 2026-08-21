@@ -80,13 +80,13 @@ Use `metadata` for CSV/TSV overlays. Set `enabled`, `keyColumn`, `valueColumn`, 
 For a rectangular tip-aligned data display, set `visual.metadataTipTableEnabled: true`, choose `metadataTipTableMode` as `bars`, `heatmap`, or `categorical`, and provide `metadataTipTableColumns` as ordered `{ "column": "source_column", "label": "Display label" }` objects. Heat maps accept `metadataTipTablePalette`; categorical tables accept `metadataTipTableCellStyle` values `filled`, `circle`, `square`, `check`, or `text`. Omit width settings unless the user requests them.
 Use `canvas` when the user needs session-style viewport state, collapsed clades, or manual branch/subtree colors. `canvas` accepts the same shape saved in `.btvsession` files: `camera`, `viewportWidth`, `viewportHeight`, `collapsedNodes`, `manualBranchColors`, and `manualSubtreeColors`.
 For rectangular camera control, use `canvas.camera` with `kind: "rect"`, `scaleX`, `scaleY`, `translateX`, and `translateY`.
-Use `taxonomy.runMapping: true` when an agent needs taxonomy ribbons or taxonomy branch colors. This runs the same NCBI taxonomy mapping code used by the Big Tree Viewer site after the tree has loaded. Automated mapping is cache-only by default: it uses the dedicated automation profile's cached NCBI taxdump archive and fails with `big-tree-viewer:taxonomy-error` if the archive is missing. Do not let an agent trigger a fresh NCBI taxdump download unless the user explicitly asks; only then set `taxonomy.allowDownload: true` or use `--allow-taxonomy-download`. An explicitly allowed download is retained in the dedicated profile for later runs.
+Use `taxonomy.runMapping: true` when an agent needs taxonomy ribbons or taxonomy branch colors. This runs the same mapping code used by the site after the tree has loaded. NCBI is the default; set `taxonomy.source: "catalogue-of-life"` or use `--taxonomy-source catalogue-of-life` to use Catalogue of Life. Automated mapping is cache-only by default and fails with `big-tree-viewer:taxonomy-error` if the selected archive is missing. Do not let an agent trigger a fresh taxonomy download unless the user explicitly asks; only then set `taxonomy.allowDownload: true` or use `--allow-taxonomy-download`.
 Agents should prefer standard BTV taxonomy mapping over building their own taxonomy map, because custom external maps can assign BTV node ids or taxonomic lineages incorrectly.
 Use `taxonomy.map` only to provide a precomputed Big Tree Viewer taxonomy map that was produced by Big Tree Viewer or otherwise already matches the loaded tree's BTV node ids.
 When an external system already has taxonomy but does not have BTV node ids, use `taxonomy.compact` with `format: "big-tree-viewer-compact-taxonomy"`, `version: 1`, a deduplicated `taxa` parent graph, and `tips` keyed by zero-based left-to-right Newick `tipIndex`. Include `tipLabel` as a validation check. BTV resolves the graph after parsing and does not download the NCBI taxdump.
 Use `export.delivery: "postMessage"` when an agent needs bytes back instead of a browser download. Big Tree Viewer replies with `big-tree-viewer:exported` or `big-tree-viewer:export-error`.
 For postMessage clients, BTV emits `big-tree-viewer:ready` once per viewer document. After a `big-tree-viewer:load` request, `big-tree-viewer:loaded` means the tree, requested canvas restoration, taxonomy mapping, and metadata overlays are ready; it is safe to request a current-view export immediately.
-The helper script exposes common API fields as flags: `--map-taxonomy`, `--allow-taxonomy-download`, `--taxonomy-low-memory`, `--rect-scale-x`, `--rect-scale-y`, `--rect-translate-x`, and `--rect-translate-y`.
+The helper script exposes common API fields as flags: `--map-taxonomy`, `--taxonomy-source`, `--allow-taxonomy-download`, `--taxonomy-low-memory`, `--rect-scale-x`, `--rect-scale-y`, `--rect-translate-x`, and `--rect-translate-y`.
 
 Example `settings.json`:
 
@@ -111,7 +111,8 @@ Example `settings.json`:
     "manualSubtreeColors": [[12, "#1f77b4"]]
   },
   "taxonomy": {
-    "runMapping": true
+    "runMapping": true,
+    "source": "ncbi"
   },
   "export": {
     "format": "png",
@@ -130,12 +131,12 @@ To map taxonomy for the current loaded tree without reloading it, send:
 ```js
 viewer.postMessage({
   type: "big-tree-viewer:map-taxonomy",
-  payload: {}
+  payload: { source: "ncbi" }
 }, "https://bigtreeviewer.net");
 ```
 
 Big Tree Viewer replies with `big-tree-viewer:taxonomy-mapped` and includes `taxonomy.map`, or `big-tree-viewer:taxonomy-error` if mapping failed. Use the returned map only with the same loaded tree/node ids.
-For URL launches, `btv_map_taxonomy=true` is equivalent to `taxonomy.runMapping: true` in a payload. It is cache-only unless `btv_taxonomy_allow_download=true` is also provided.
+For URL launches, `btv_map_taxonomy=true` is equivalent to `taxonomy.runMapping: true` in a payload. Set `btv_taxonomy_source=catalogue-of-life` to select Catalogue of Life. Mapping is cache-only unless `btv_taxonomy_allow_download=true` is also provided.
 
 ## Current View Export
 

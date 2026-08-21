@@ -1181,6 +1181,9 @@ function buildSharedSubtreeStoragePayload(
   }
   payload.taxonomy = {
     version: taxonomyMap.version,
+    source: taxonomyMap.source,
+    sourceVersion: taxonomyMap.sourceVersion,
+    sourceDoi: taxonomyMap.sourceDoi,
     mappedCount: tipEntries.length,
     totalTips: subtreeLeafSet.size,
     activeRanks: [...taxonomyMap.activeRanks],
@@ -4281,7 +4284,6 @@ export default function TreeCanvas({
   const rotationPreviewRef = useRef<RotationPreviewCache | null>(null);
   const rotationPreviewCommitTimerRef = useRef<number | null>(null);
   const canvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
-  const atomicFrameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const hoverCanvasBackingStoreRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const detailedRenderDebugEnabledRef = useRef(
     typeof navigator !== "undefined" ? Boolean(navigator.webdriver) : false,
@@ -7247,6 +7249,21 @@ export default function TreeCanvas({
       return fromCamera;
     }
     const sourceMode = previousMode ?? viewMode;
+    if (fromCamera.kind === "circular" && sourceMode === "spiral") {
+      const visibleRankCount = spiralVisibleTaxonomyRanksForScale(fromCamera.scale).length;
+      const sourceMetrics = spiralMetricsForScale(visibleRankCount, fromCamera.scale);
+      const renderedRadiusPx = sourceMetrics.outerRadius * fromCamera.scale;
+      const visibilityTolerancePx = 2;
+      const entireSpiralVisible = (
+        fromCamera.translateX - renderedRadiusPx >= -visibilityTolerancePx
+        && fromCamera.translateX + renderedRadiusPx <= size.width + visibilityTolerancePx
+        && fromCamera.translateY - renderedRadiusPx >= -visibilityTolerancePx
+        && fromCamera.translateY + renderedRadiusPx <= size.height + visibilityTolerancePx
+      );
+      if (entireSpiralVisible) {
+        return fitCameraForMode(viewMode) ?? fromCamera;
+      }
+    }
     if (cameraApproximatelyMatchesFit(fromCamera, sourceMode)) {
       return fitCameraForMode(viewMode) ?? fromCamera;
     }
@@ -7527,24 +7544,7 @@ export default function TreeCanvas({
       }
     }
 
-    const useAtomicFrame = !isOverrideRender
-      && taxonomyEnabled
-      && (viewMode === "circular" || viewMode === "fan");
-    let renderTargetCanvas = canvas;
-    if (useAtomicFrame) {
-      let atomicFrameCanvas = atomicFrameCanvasRef.current;
-      if (!atomicFrameCanvas) {
-        atomicFrameCanvas = document.createElement("canvas");
-        atomicFrameCanvasRef.current = atomicFrameCanvas;
-      }
-      if (atomicFrameCanvas.width !== backingWidth || atomicFrameCanvas.height !== backingHeight) {
-        atomicFrameCanvas.width = backingWidth;
-        atomicFrameCanvas.height = backingHeight;
-      }
-      renderTargetCanvas = atomicFrameCanvas;
-    }
-
-    const ctx = renderTargetCanvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) {
       return;
     }
@@ -7552,7 +7552,6 @@ export default function TreeCanvas({
       tree.isUltrametric ? `${formatAgeNumber(value)} mya` : formatScaleNumber(value)
     );
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, renderSize.width, renderSize.height);
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
     const svgExportCapture = exportCaptureRef.current !== null;
@@ -11473,7 +11472,7 @@ export default function TreeCanvas({
           ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
           : taxonomyActiveRanks)
         : [];
-      const visibleCircleFraction = fullyVisibleRadiusPx / Math.max(1e-9, stripeExtent * camera.scale);
+      const visibleCircleFraction = fullyVisibleRadiusPx / Math.max(1e-9, polarOuterRadius * camera.scale);
       const fitLikeCircular = fitCameraForMode(viewMode);
       const nearCircularFit = fitLikeCircular?.kind === "circular"
         ? camera.scale <= (fitLikeCircular.scale * CIRCULAR_NEAR_FIT_SCALE_MULTIPLIER)
@@ -11580,8 +11579,7 @@ export default function TreeCanvas({
           renderSize.width,
           renderSize.height,
           displayedCircularScaleBoundaries,
-          stripeExtent,
-          camera.scale,
+          (boundary) => circularRadiusForBoundary(boundary.value) * camera.scale,
         )
         : null;
       timing.circularCachePrepMs += performance.now() - circularCachePrepStartTime;
@@ -14685,7 +14683,46 @@ export default function TreeCanvas({
           const rotatedLabelDegrees = (centerScaleBarTheta + rotationAngle) * 180 / Math.PI;
           const rotatedLabelOnRightSide = Math.cos(centerScaleBarTheta + rotationAngle) >= 0;
           const rotatedLabelRadians = normalizeRotation(rotatedLabelOnRightSide ? rotatedLabelDegrees : rotatedLabelDegrees + 180) * Math.PI / 180;
-          ctx.textAlign = showCircularCenterRadialScaleBar
+          let centerScaleLabelRotation = showCircularCenterRadialScaleBar ? rotatedLabelRadians : 0;
+          if (polarInnerRadius > 1e-9 && displayedCircularCenterScaleBoundaries.length > 1) {
+            const sortedTickPositions = displayedCircularCenterScaleBoundaries
+              .map((boundary) => circularRadiusForBoundary(boundary.value) * camera.scale)
+              .sort((left, right) => left - right);
+            let minimumTickSpacingPx = Number.POSITIVE_INFINITY;
+            for (let index = 1; index < sortedTickPositions.length; index += 1) {
+              minimumTickSpacingPx = Math.min(
+                minimumTickSpacingPx,
+                sortedTickPositions[index] - sortedTickPositions[index - 1],
+              );
+            }
+            const maximumLabelWidthPx = displayedCircularCenterScaleBoundaries.reduce(
+              (maximum, boundary) => Math.max(maximum, ctx.measureText(scaleLabelText(boundary.value)).width),
+              0,
+            );
+            const screenAxisAngle = centerScaleTheta + rotationAngle;
+            const tangentLabelRotation = normalizeRotation(
+              ((screenAxisAngle * 180) / Math.PI) + 90,
+            ) * Math.PI / 180;
+            const projectedLabelExtent = (labelRotation: number): number => {
+              const relativeAngle = labelRotation - screenAxisAngle;
+              return (Math.abs(Math.cos(relativeAngle)) * maximumLabelWidthPx)
+                + (Math.abs(Math.sin(relativeAngle)) * scaleFontSize * 1.15);
+            };
+            const availableSpacingPx = Math.max(1, minimumTickSpacingPx - 3);
+            if (projectedLabelExtent(centerScaleLabelRotation) > availableSpacingPx) {
+              for (let step = 1; step <= 20; step += 1) {
+                const progress = step / 20;
+                const candidate = centerScaleLabelRotation
+                  + ((tangentLabelRotation - centerScaleLabelRotation) * progress);
+                centerScaleLabelRotation = candidate;
+                if (projectedLabelExtent(candidate) <= availableSpacingPx) {
+                  break;
+                }
+              }
+            }
+          }
+          const rotateCenterScaleLabels = Math.abs(centerScaleLabelRotation) > 1e-6;
+          ctx.textAlign = rotateCenterScaleLabels || showCircularCenterRadialScaleBar
             ? "center"
             : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "left" : "right";
           for (let index = 0; index < displayedCircularCenterScaleBoundaries.length; index += 1) {
@@ -14700,10 +14737,10 @@ export default function TreeCanvas({
               ? screen.y - (centerScaleBarTangentY * centerScaleLabelOffsetPx)
               : screen.y;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
-            if (showCircularCenterRadialScaleBar) {
+            if (rotateCenterScaleLabels || showCircularCenterRadialScaleBar) {
               ctx.save();
               ctx.translate(labelX, labelY);
-              ctx.rotate(rotatedLabelRadians);
+              ctx.rotate(centerScaleLabelRotation);
               ctx.fillText(scaleLabelText(boundary.value), 0, 0);
               ctx.restore();
             } else {
@@ -14716,8 +14753,8 @@ export default function TreeCanvas({
               "#6b7280",
               scaleFontSize,
               labelFontFamilies.scale,
-              showCircularCenterRadialScaleBar ? "middle" : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "start" : "end",
-              showCircularCenterRadialScaleBar ? rotatedLabelRadians : undefined,
+              rotateCenterScaleLabels || showCircularCenterRadialScaleBar ? "middle" : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "start" : "end",
+              rotateCenterScaleLabels || showCircularCenterRadialScaleBar ? centerScaleLabelRotation : undefined,
               labelFontStyles.scale,
             );
           }
@@ -14874,16 +14911,6 @@ export default function TreeCanvas({
           height: maximumY - minimumY,
           neighborY,
         });
-      }
-    }
-    if (useAtomicFrame && renderTargetCanvas !== canvas) {
-      const displayContext = canvas.getContext("2d");
-      if (displayContext) {
-        displayContext.setTransform(1, 0, 0, 1, 0, 0);
-        displayContext.globalAlpha = 1;
-        displayContext.globalCompositeOperation = "copy";
-        displayContext.drawImage(renderTargetCanvas, 0, 0);
-        displayContext.globalCompositeOperation = "source-over";
       }
     }
     renderDebugRef.current = renderDebug;
@@ -15245,7 +15272,12 @@ export default function TreeCanvas({
   }, [collapsedNodes.size, collapsedView, draw, rectClampPadding, size.height, size.width, tree]);
 
   const renderRotationPreview = useCallback((nextRotation: number): boolean => {
-    if (!tree || viewMode === "rectangular" || renderCanvasOverrideRef.current !== null || exportCaptureRef.current !== null) {
+    if (
+      !tree
+      || viewMode === "rectangular"
+      || renderCanvasOverrideRef.current !== null
+      || exportCaptureRef.current !== null
+    ) {
       return false;
     }
     const canvas = canvasRef.current;
@@ -15254,7 +15286,7 @@ export default function TreeCanvas({
     if (!canvas || !camera || camera.kind !== "circular" || !backingStore) {
       return false;
     }
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx || canvas.width <= 0 || canvas.height <= 0) {
       return false;
     }
@@ -18165,14 +18197,16 @@ export default function TreeCanvas({
               <button type="button" className="tree-context-menu-item" onClick={handleContextCopyTaxonomyName}>
                 Copy Name
               </button>
-              <button
-                type="button"
-                className="tree-context-menu-item"
-                onClick={handleContextOpenTaxonomyInNcbi}
-                disabled={!contextMenu.taxId}
-              >
-                Open In NCBI Taxonomy
-              </button>
+              {taxonomyMap?.source !== "catalogue-of-life" ? (
+                <button
+                  type="button"
+                  className="tree-context-menu-item"
+                  onClick={handleContextOpenTaxonomyInNcbi}
+                  disabled={!contextMenu.taxId}
+                >
+                  Open In NCBI Taxonomy
+                </button>
+              ) : null}
               {contextMenuCollapseTarget !== null ? (
                 collapsedNodes.has(contextMenuCollapseTarget) ? (
                   <button type="button" className="tree-context-menu-item" onClick={() => handleContextCollapse(null)}>

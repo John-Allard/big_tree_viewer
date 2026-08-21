@@ -1705,6 +1705,20 @@ button.secondary {
   color: #f8fafc;
 }
 
+.radial-inner-radius-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.radial-inner-radius-value button {
+  min-height: 1.9rem;
+  padding: 0.24rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
 .rotation-reset-button {
   min-height: 1.9rem;
   padding: 0.24rem 0.55rem;
@@ -2268,6 +2282,53 @@ button.secondary {
   border-radius: 10px;
   background: rgba(255, 251, 235, 0.86);
   color: #92400e;
+}
+
+.taxonomy-warning-expanded {
+  position: relative;
+  padding-right: 2.15rem;
+}
+
+.taxonomy-warning-expanded p {
+  margin: 0;
+}
+
+.taxonomy-warning-dismiss {
+  position: absolute;
+  top: 0.18rem;
+  right: 0.22rem;
+  width: 1.65rem;
+  height: 1.65rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #92400e;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+button.taxonomy-warning-dismiss:hover:not(:disabled) {
+  background: rgb(146 64 14 / 8%);
+  border-color: transparent;
+}
+
+.taxonomy-warning-summary {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #92400e;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+button.taxonomy-warning-summary:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: #78350f;
 }
 
 .view-zoom-hint {

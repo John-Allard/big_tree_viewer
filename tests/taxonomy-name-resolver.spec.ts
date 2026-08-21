@@ -138,6 +138,35 @@ test("context-aware taxonomy resolver leaves cross-domain name collisions unmapp
   expect(payload.tipRanks).toHaveLength(0);
 });
 
+test("optional broad-rank guard rejects a small phylum run embedded in another phylum", async () => {
+  const taxonomy = buildParsedTaxonomy();
+  addTaxonomyIndexEntry(taxonomy.speciesIndex, "felis catus", 15);
+  addTaxonomyIndexEntry(taxonomy.speciesIndex, "rosa canina", 25);
+
+  const payload = mapTipsWithContext([
+    { node: 210, name: "Panthera leo" },
+    { node: 211, name: "Rosa canina" },
+    { node: 212, name: "Felis catus" },
+  ], taxonomy, TARGET_RANKS, 99, { rejectEmbeddedBroadRankRuns: true });
+
+  expect(payload.tipRanks.map((tip) => tip.node)).toEqual([210, 212]);
+});
+
+test("broad-rank guard preserves ordinary adjacent phylum blocks", async () => {
+  const taxonomy = buildParsedTaxonomy();
+  addTaxonomyIndexEntry(taxonomy.speciesIndex, "felis catus", 15);
+  addTaxonomyIndexEntry(taxonomy.speciesIndex, "rosa canina", 25);
+
+  const payload = mapTipsWithContext([
+    { node: 220, name: "Panthera leo" },
+    { node: 221, name: "Felis catus" },
+    { node: 222, name: "Rosa canina" },
+    { node: 223, name: "Malus domestica" },
+  ], taxonomy, TARGET_RANKS, 99, { rejectEmbeddedBroadRankRuns: true });
+
+  expect(payload.mappedCount).toBe(4);
+});
+
 test("species synonym matches win before a conflicting genus fallback", async () => {
   const nodes = new Map<number, TaxonomyNodeInfo>();
   const rankNames = new Map<number, string>();

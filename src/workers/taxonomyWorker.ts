@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { DecodeUTF8, Unzip, UnzipInflate } from "fflate";
+import { createCatalogueOfLifeTextTreeParser } from "../lib/catalogueOfLifeTextTree";
 import {
   addTaxonomyIndexEntry,
   candidateExactTaxonName,
@@ -11,11 +12,11 @@ import {
   TAXONOMY_NAMED_LINEAGE_RANKS,
   TAXONOMY_SPECIES_INDEX_NAME_CLASSES,
 } from "../lib/taxonomyNameResolver";
-import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
+import type { TaxonomyMapPayload, TaxonomyRank, TaxonomySource } from "../types/taxonomy";
 
 type TaxonomyWorkerRequest =
-  | { type: "download-taxonomy" }
-  | { type: "map-taxonomy"; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean };
+  | { type: "download-taxonomy"; source?: TaxonomySource }
+  | { type: "map-taxonomy"; source?: TaxonomySource; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean };
 
 type TaxonomyWorkerResponse =
   | { type: "taxonomy-progress"; message: string }
@@ -23,7 +24,10 @@ type TaxonomyWorkerResponse =
   | { type: "taxonomy-mapped"; payload: TaxonomyMapPayload }
   | { type: "taxonomy-error"; message: string };
 
-const TAXONOMY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip";
+const TAXONOMY_URLS: Record<TaxonomySource, string> = {
+  ncbi: "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip",
+  "catalogue-of-life": "https://download.checklistbank.org/col/latest_txtree.zip",
+};
 const TAXONOMY_MAPPING_VERSION = 9;
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
@@ -181,10 +185,14 @@ async function streamBlobChunks(blob: Blob, onChunk: (chunk: Uint8Array, final: 
 
 async function parseZipFileLines(
   archiveBlob: Blob,
-  targetFileName: "nodes.dmp" | "names.dmp",
+  targetFile: string | ((fileName: string) => boolean),
   progressMessage: string,
   onLine: (line: string) => void,
 ): Promise<void> {
+  const matchesTarget = typeof targetFile === "string"
+    ? (fileName: string): boolean => fileName === targetFile
+    : targetFile;
+  const targetDescription = typeof targetFile === "string" ? targetFile : "a .txtree file";
   let fileFound = false;
   let fileDone = false;
   await new Promise<void>((resolve, reject) => {
@@ -194,7 +202,7 @@ async function parseZipFileLines(
       }
     };
     const unzipper = new Unzip((file) => {
-      if (file.name !== targetFileName) {
+      if (!matchesTarget(file.name)) {
         return;
       }
       fileFound = true;
@@ -218,7 +226,7 @@ async function parseZipFileLines(
       unzipper.push(chunk, final);
     }).then(() => {
       if (!fileFound) {
-        reject(new Error(`Taxonomy archive did not contain ${targetFileName}.`));
+        reject(new Error(`Taxonomy archive did not contain ${targetDescription}.`));
         return;
       }
       maybeResolve();
@@ -261,17 +269,44 @@ function mapTips(
   taxonomy: ParsedTaxonomy,
   lowMemoryMode: boolean,
 ): TaxonomyMapPayload {
-  return mapTipsWithContext(tips, taxonomy, TARGET_RANKS, TAXONOMY_MAPPING_VERSION, {
-    enableCollapseFallbacks: !lowMemoryMode,
+  return {
+    ...mapTipsWithContext(tips, taxonomy, TARGET_RANKS, TAXONOMY_MAPPING_VERSION, {
+      enableCollapseFallbacks: !lowMemoryMode,
+    }),
+    source: "ncbi",
+  };
+}
+
+async function mapCatalogueOfLifeTextTree(
+  archive: Blob | ArrayBuffer,
+  tips: Array<{ node: number; name: string }>,
+  lowMemoryMode: boolean,
+): Promise<TaxonomyMapPayload> {
+  const archiveBlob = archive instanceof Blob ? archive : new Blob([archive], { type: "application/zip" });
+  const parser = createCatalogueOfLifeTextTreeParser(tips, lowMemoryMode);
+  await parseZipFileLines(
+    archiveBlob,
+    (fileName) => fileName.toLowerCase().endsWith(".txtree"),
+    "Reading Catalogue of Life TextTree...",
+    parser.consumeLine,
+  );
+  post({
+    type: "taxonomy-progress",
+    message: `Mapping tree tips against ${parser.parsedLineCount().toLocaleString()} Catalogue of Life records...`,
   });
+  return {
+    ...parser.finish(),
+    source: "catalogue-of-life",
+  };
 }
 
 self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerRequest>) => {
   try {
     const request = event.data;
     if (request.type === "download-taxonomy") {
-      post({ type: "taxonomy-progress", message: "Downloading NCBI taxonomy..." });
-      const response = await fetch(TAXONOMY_URL);
+      const source = request.source ?? "ncbi";
+      post({ type: "taxonomy-progress", message: `Downloading ${source === "ncbi" ? "NCBI taxonomy" : "Catalogue of Life TextTree"}...` });
+      const response = await fetch(TAXONOMY_URLS[source]);
       if (!response.ok) {
         throw new Error(`Taxonomy download failed with HTTP ${response.status}.`);
       }
@@ -279,7 +314,13 @@ self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerReques
       post({ type: "taxonomy-downloaded", archive }, [archive]);
       return;
     }
+    const source = request.source ?? "ncbi";
     const lowMemoryMode = request.type === "map-taxonomy" ? Boolean(request.lowMemoryMode) : false;
+    if (source === "catalogue-of-life") {
+      const payload = await mapCatalogueOfLifeTextTree(request.archive, request.tips, lowMemoryMode);
+      post({ type: "taxonomy-mapped", payload });
+      return;
+    }
     const lookupFilters = buildLookupFilters(request.tips);
     post({
       type: "taxonomy-progress",

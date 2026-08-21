@@ -20,7 +20,7 @@ const figureSections = [
     title: "Automatically map taxonomy and display ribbons",
     image: `${import.meta.env.BASE_URL}about/example-50k-circular-taxonomy.png`,
     alt: "Circular Big Tree Viewer screenshot showing a mapped 50k-tip tree with taxonomy ribbons.",
-    text: "The Taxonomy panel can fetch the NCBI taxonomy and map species names to Linnaean ranks. Genus, family, order, class, and phylum are then drawn as colored ribbons, making the broad structure of a species tree readable without panning.",
+    text: "The Taxonomy panel can map species names with NCBI Taxonomy or Catalogue of Life. Genus, family, order, class, and phylum are then drawn as colored ribbons, making the broad structure of a species tree readable without panning.",
   },
   {
     title: "Smoothly zoom in to display taxonomy detail",
@@ -169,7 +169,7 @@ const capabilities = [
   },
   {
     label: "Taxonomy",
-    text: "Optional NCBI taxonomy download, species-name matching, and ribbons for genus through phylum. Ranks can be collapsed to summarize clades.",
+    text: "Optional NCBI Taxonomy or Catalogue of Life mapping, species-name matching, and ribbons for genus through phylum. Ranks can be collapsed to summarize clades.",
   },
   {
     label: "Metadata",

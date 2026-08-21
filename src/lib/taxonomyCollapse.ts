@@ -577,6 +577,9 @@ export function buildTaxonomyCollapsedTreePayload(
     payload,
     taxonomyMap: {
       version: taxonomyMap.version,
+      source: taxonomyMap.source,
+      sourceVersion: taxonomyMap.sourceVersion,
+      sourceDoi: taxonomyMap.sourceDoi,
       mappedCount: syntheticTipRanks.length,
       totalTips: payload.leafCount,
       activeRanks: deriveActiveTaxonomyRanks(syntheticTipRanks.map((tip) => tip.ranks)),

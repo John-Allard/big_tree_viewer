@@ -191,8 +191,7 @@ export function buildCircularScaleBar(
   width: number,
   height: number,
   boundaries: StripeBoundary[],
-  rootAge: number,
-  scale: number,
+  radiusForBoundary: (boundary: StripeBoundary) => number,
 ): CircularScaleBar | null {
   const margin = 28;
   const bottomY = height - margin;
@@ -202,7 +201,7 @@ export function buildCircularScaleBar(
 
   for (let index = 0; index < boundaries.length; index += 1) {
     const boundary = boundaries[index];
-    const radiusPx = Math.max(0, rootAge - boundary.value) * scale;
+    const radiusPx = Math.max(0, radiusForBoundary(boundary));
 
     const bottomDy = Math.abs(bottomY - centerY);
     if (radiusPx > bottomDy) {

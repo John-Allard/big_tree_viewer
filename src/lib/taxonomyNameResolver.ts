@@ -7,6 +7,7 @@ export type ParsedTaxonomyForMapping = {
   nodes: Map<number, TaxonomyNodeInfo>;
   rankNames: Map<number, string>;
   speciesIndex: Map<string, number[]>;
+  speciesEpithetIndex?: Map<string, number[]>;
   genusIndex: Map<string, number[]>;
   namedTaxonIndex: Map<string, number[]>;
 };
@@ -63,6 +64,7 @@ export type TipTaxonomyRequest = {
 
 export interface TaxonomyMappingOptions {
   enableCollapseFallbacks?: boolean;
+  rejectEmbeddedBroadRankRuns?: boolean;
 }
 
 type ResolvedTipMapping = {
@@ -77,6 +79,7 @@ type CandidateLineage = {
   ranks: Partial<Record<TaxonomyRank, string>>;
   taxIds: Partial<Record<TaxonomyRank, number>>;
   collapseFallbacks: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
+  requiresContext?: boolean;
 };
 
 const CONTEXT_RANK_WEIGHTS: Array<[TaxonomyRank, number]> = [
@@ -125,6 +128,14 @@ export function candidateSpeciesNames(name: string): string[] {
 export function extractGenus(name: string): string {
   const parts = normalizeTaxonomyName(name).split(/\s+/).filter(Boolean);
   return parts[0] ?? "";
+}
+
+export function extractSpeciesEpithet(name: string): string {
+  const parts = normalizeTaxonomyName(name).split(/\s+/).filter(Boolean);
+  if (parts[0] === "candidatus") {
+    return parts[2] ?? "";
+  }
+  return parts[1] ?? "";
 }
 
 export function candidateExactTaxonName(name: string): string | null {
@@ -278,6 +289,33 @@ function scoreCandidateAgainstResolvedNeighbors(
   return score;
 }
 
+function hasSupportingFamilyOrOrderContext(
+  candidate: CandidateLineage,
+  tipIndex: number,
+  resolved: Array<ResolvedTipMapping | null>,
+): boolean {
+  let seenResolved = 0;
+  for (let radius = 1; radius <= 48 && seenResolved < 12; radius += 1) {
+    for (const neighborIndex of [tipIndex - radius, tipIndex + radius]) {
+      if (neighborIndex < 0 || neighborIndex >= resolved.length) {
+        continue;
+      }
+      const neighbor = resolved[neighborIndex];
+      if (!neighbor) {
+        continue;
+      }
+      seenResolved += 1;
+      for (const rank of ["family", "order"] as const) {
+        const candidateTaxId = candidate.taxIds[rank];
+        if (candidateTaxId && candidateTaxId === neighbor.taxIds[rank]) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function lineagesEquivalent(left: CandidateLineage, right: CandidateLineage, targetRanks: TaxonomyRank[]): boolean {
   for (let rankIndex = 0; rankIndex < targetRanks.length; rankIndex += 1) {
     const rank = targetRanks[rankIndex];
@@ -286,6 +324,50 @@ function lineagesEquivalent(left: CandidateLineage, right: CandidateLineage, tar
     }
   }
   return true;
+}
+
+function rejectEmbeddedBroadRankRuns(
+  resolved: Array<ResolvedTipMapping | null>,
+  rank: TaxonomyRank,
+  maximumRunLength = 64,
+): void {
+  const mappedIndices: number[] = [];
+  for (let index = 0; index < resolved.length; index += 1) {
+    if (resolved[index]?.taxIds[rank]) {
+      mappedIndices.push(index);
+    }
+  }
+  let runStart = 0;
+  while (runStart < mappedIndices.length) {
+    const firstIndex = mappedIndices[runStart];
+    const runTaxId = resolved[firstIndex]?.taxIds[rank];
+    let runEnd = runStart + 1;
+    while (
+      runEnd < mappedIndices.length
+      && resolved[mappedIndices[runEnd]]?.taxIds[rank] === runTaxId
+    ) {
+      runEnd += 1;
+    }
+    const runLength = runEnd - runStart;
+    const leftTaxId = runStart > 0
+      ? resolved[mappedIndices[runStart - 1]]?.taxIds[rank]
+      : undefined;
+    const rightTaxId = runEnd < mappedIndices.length
+      ? resolved[mappedIndices[runEnd]]?.taxIds[rank]
+      : undefined;
+    if (
+      runTaxId
+      && runLength <= maximumRunLength
+      && leftTaxId
+      && leftTaxId === rightTaxId
+      && leftTaxId !== runTaxId
+    ) {
+      for (let mappedOffset = runStart; mappedOffset < runEnd; mappedOffset += 1) {
+        resolved[mappedIndices[mappedOffset]] = null;
+      }
+    }
+    runStart = runEnd;
+  }
 }
 
 function collectCandidatesForTip(
@@ -309,20 +391,27 @@ function collectCandidatesForTip(
   const exactTaxonCandidates = exactTaxonName
     ? [...(taxonomy.namedTaxonIndex.get(exactTaxonName) ?? [])]
     : [];
-  const genusCandidates = speciesCandidates.length > 0 || exactTaxonCandidates.length > 0
+  const hasPrimaryCandidates = speciesCandidates.length > 0 || exactTaxonCandidates.length > 0;
+  const genusCandidates = hasPrimaryCandidates
     ? []
     : [...(taxonomy.genusIndex.get(extractGenus(tip.name)) ?? [])];
+  const epithetCandidates = hasPrimaryCandidates
+    ? []
+    : [...(taxonomy.speciesEpithetIndex?.get(extractSpeciesEpithet(tip.name)) ?? [])];
   const source = speciesCandidates.length > 0
     ? speciesCandidates
     : exactTaxonCandidates.length > 0
       ? exactTaxonCandidates
-      : genusCandidates;
+      : [...genusCandidates, ...epithetCandidates];
+  const genusCandidateIds = new Set(genusCandidates);
+  const epithetCandidateIds = new Set(epithetCandidates);
   const unique = [...new Set(source)];
   const candidates: CandidateLineage[] = [];
   for (let index = 0; index < unique.length; index += 1) {
     const lineage = buildCandidateLineage(unique[index], taxonomy, targetRanks, ancestorMemo, lineageMemo, enableCollapseFallbacks);
     if (lineage) {
-      candidates.push(lineage);
+      const requiresContext = epithetCandidateIds.has(unique[index]) && !genusCandidateIds.has(unique[index]);
+      candidates.push(requiresContext ? { ...lineage, requiresContext: true } : lineage);
     }
   }
   return candidates;
@@ -343,7 +432,7 @@ export function mapTipsWithContext(
 
   for (let index = 0; index < tips.length; index += 1) {
     const candidates = candidatesByTip[index];
-    if (candidates.length === 1) {
+    if (candidates.length === 1 && !candidates[0].requiresContext) {
       resolved[index] = {
         node: tips[index].node,
         ranks: candidates[0].ranks,
@@ -361,7 +450,36 @@ export function mapTipsWithContext(
         continue;
       }
       const candidates = candidatesByTip[index];
-      if (candidates.length <= 1) {
+      if (candidates.length === 0) {
+        continue;
+      }
+      const contextIndependentCandidates = candidates.filter((candidate) => !candidate.requiresContext);
+      if (
+        candidates.length > 1
+        && contextIndependentCandidates.length === 1
+        && hasSupportingFamilyOrOrderContext(contextIndependentCandidates[0], index, resolved)
+      ) {
+        const candidate = contextIndependentCandidates[0];
+        resolved[index] = {
+          node: tips[index].node,
+          ranks: candidate.ranks,
+          taxIds: candidate.taxIds,
+          collapseFallbacks: candidate.collapseFallbacks,
+        };
+        changed = true;
+        continue;
+      }
+      if (candidates.length === 1) {
+        const candidate = candidates[0];
+        if (candidate.requiresContext && hasSupportingFamilyOrOrderContext(candidate, index, resolved)) {
+          resolved[index] = {
+            node: tips[index].node,
+            ranks: candidate.ranks,
+            taxIds: candidate.taxIds,
+            collapseFallbacks: candidate.collapseFallbacks,
+          };
+          changed = true;
+        }
         continue;
       }
       let best: CandidateLineage | null = null;
@@ -378,7 +496,12 @@ export function mapTipsWithContext(
           secondBestScore = score;
         }
       }
-      if (best && bestScore > 0 && (bestScore - secondBestScore) > 1e-6) {
+      if (
+        best
+        && bestScore > 0
+        && (bestScore - secondBestScore) > 1e-6
+        && (!best.requiresContext || hasSupportingFamilyOrOrderContext(best, index, resolved))
+      ) {
         resolved[index] = {
           node: tips[index].node,
           ranks: best.ranks,
@@ -390,15 +513,15 @@ export function mapTipsWithContext(
     }
   }
 
-  const tipRanks: TaxonomyMapPayload["tipRanks"] = [];
   for (let index = 0; index < tips.length; index += 1) {
-    const direct = resolved[index];
-    if (direct) {
-      tipRanks.push(direct);
+    if (resolved[index]) {
       continue;
     }
     const candidates = candidatesByTip[index];
     if (candidates.length === 0) {
+      continue;
+    }
+    if (candidates.some((candidate) => candidate.requiresContext)) {
       continue;
     }
     let equivalent = true;
@@ -411,13 +534,19 @@ export function mapTipsWithContext(
     if (!equivalent) {
       continue;
     }
-    tipRanks.push({
+    resolved[index] = {
       node: tips[index].node,
       ranks: candidates[0].ranks,
       taxIds: candidates[0].taxIds,
       collapseFallbacks: candidates[0].collapseFallbacks,
-    });
+    };
   }
+
+  if (options.rejectEmbeddedBroadRankRuns) {
+    rejectEmbeddedBroadRankRuns(resolved, "phylum");
+  }
+
+  const tipRanks = resolved.filter((mapping): mapping is ResolvedTipMapping => mapping !== null);
 
   return {
     version: mappingVersion,

@@ -104,15 +104,14 @@ export default function FaqPage() {
             <h2>How does taxonomy mapping work?</h2>
             <div className="faq-answer">
               <p>
-                The Taxonomy panel downloads the NCBI taxonomy dump and caches it
-                locally in the browser. Big Tree Viewer maps binomial species
+                Choose NCBI Taxonomy or Catalogue of Life in the Taxonomy panel,
+                then download its official archive once or select a copy you
+                previously saved. Big Tree Viewer maps binomial species
                 names and labels that begin with <code>Genus_species</code> or
                 <code>Genus species</code> followed by gene, specimen, or other
                 identifiers. It also maps exact single-token{" "}
-                <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi" target="_blank" rel="noreferrer">
-                  NCBI Taxonomy Browser
-                </a>{" "}
-                taxon names, such as genus, family, or order names. Once mapped,
+                taxon names, such as genus, family, or order names, when they
+                occur in the selected taxonomy. Once mapped,
                 taxonomy can be used for ribbons, branch coloring, collapsed
                 taxonomic views, and{" "}
                 <a href="https://www.phylopic.org/" target="_blank" rel="noreferrer">PhyloPic</a>{" "}
@@ -127,12 +126,9 @@ export default function FaqPage() {
               <p>
                 Taxa may remain unmapped if tree labels are accession IDs,
                 sample IDs, strain names, misspelled names, unsupported synonyms,
-                ambiguous names, or names that are not present in the{" "}
-                <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi" target="_blank" rel="noreferrer">
-                  NCBI Taxonomy Browser
-                </a>
-                . Single-token labels only map when they exactly match a
-                supported NCBI taxon name. For labels containing sequence,
+                ambiguous names, or names that are not present in the selected
+                taxonomy. Single-token labels only map when they exactly match a
+                supported taxon name. For labels containing sequence,
                 gene, or specimen identifiers, put the genus and species in
                 the first two underscore- or space-separated positions.
               </p>

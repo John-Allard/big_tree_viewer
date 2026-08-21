@@ -144,8 +144,9 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_genus_labels</dt><dd>`true` or `false`.</dd></div>
             <div><dt>btv_taxonomy</dt><dd>Show taxonomy overlays if taxonomy is loaded in the payload.</dd></div>
             <div><dt>btv_taxonomy_branch_colors</dt><dd>Color branches from taxonomy mapping.</dd></div>
-            <div><dt>btv_map_taxonomy</dt><dd>Run standard taxonomy mapping after launch using a cached NCBI taxdump archive.</dd></div>
-            <div><dt>btv_taxonomy_allow_download</dt><dd>`true` explicitly allows launch/API taxonomy mapping to download the NCBI taxdump archive if no cached archive is available.</dd></div>
+            <div><dt>btv_map_taxonomy</dt><dd>Run standard taxonomy mapping after launch using the selected cached taxonomy archive.</dd></div>
+            <div><dt>btv_taxonomy_source</dt><dd>`ncbi` (default) or `catalogue-of-life`.</dd></div>
+            <div><dt>btv_taxonomy_allow_download</dt><dd>`true` explicitly allows launch/API taxonomy mapping to download the selected official archive if it is not already available.</dd></div>
             <div><dt>btv_palette</dt><dd>Taxonomy color palette key.</dd></div>
             <div><dt>btv_branch_thickness</dt><dd>Branch thickness scale, for example `1.5`.</dd></div>
             <div><dt>btv_time_axis</dt><dd>`linear` or `log`.</dd></div>
@@ -277,7 +278,10 @@ window.addEventListener("message", (event) => {
       taxa: Array<{ taxId: number, parentTaxId?: number | null, rank: string, name: string }>,
       tips: Array<{ tipIndex: number, tipLabel?: string, taxId: number }>
     },
-    runMapping?: boolean
+    runMapping?: boolean,
+    source?: "ncbi" | "catalogue-of-life",
+    lowMemoryMode?: boolean,
+    allowDownload?: boolean
   },
   export?: {
     format?: "svg" | "png",

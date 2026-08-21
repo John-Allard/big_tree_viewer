@@ -11,6 +11,7 @@ export const TAXONOMY_RANKS = [
 
 export type TaxonomyRank = typeof TAXONOMY_RANKS[number];
 export type TaxonomyCollapseRank = TaxonomyRank | "species";
+export type TaxonomySource = "ncbi" | "catalogue-of-life";
 
 export interface TaxonomyCollapseFallback {
   label: string;
@@ -27,6 +28,9 @@ export interface TaxonomyTipRanks {
 
 export interface TaxonomyMapPayload {
   version?: number;
+  source?: TaxonomySource;
+  sourceVersion?: string;
+  sourceDoi?: string;
   mappedCount: number;
   totalTips: number;
   activeRanks: TaxonomyRank[];
