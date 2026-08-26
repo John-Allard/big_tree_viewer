@@ -24,8 +24,13 @@ export function colorForTaxonomy(
   }
   const hue = hash % 360;
   const saturation = rank === "genus" ? 58 : 52;
-  const lightness = rank === "superkingdom" ? 72 : rank === "phylum" ? 66 : 60;
+  const lightness = rank === "superkingdom" ? 72 : rank === "kingdom" ? 69 : rank === "phylum" ? 66 : 60;
   return `hsl(${hue}deg ${saturation}% ${lightness}%)`;
+}
+
+function orderedLeafSpanThreshold(leafCount: number): number {
+  const minSpan = (Math.PI * 2) / Math.max(1, leafCount);
+  return Math.max(2.5, 0.01 / Math.max(minSpan, 1e-9));
 }
 
 function unwrapCircularIndices(indices: number[], leafCount: number): number[] {
@@ -79,6 +84,23 @@ export function buildTaxonomyBlocksForOrderedLeaves(
       taxId: number | null;
       indices: number[];
     }>();
+    const addIndex = (entityKey: string, label: string, taxId: number | null, index: number): void => {
+      const existing = byLabel.get(entityKey);
+      if (existing) {
+        existing.indices.push(index);
+      } else {
+        byLabel.set(entityKey, { label, taxId, indices: [index] });
+      }
+    };
+    let mappedCount = 0;
+    let firstMappedIndex = -1;
+    let firstEntityKey = "";
+    let firstLabel = "";
+    let firstTaxId: number | null = null;
+    let previousMappedIndex = -1;
+    let previousEntityKey = "";
+    let previousLabel = "";
+    let previousTaxId: number | null = null;
     for (let index = 0; index < orderedLeaves.length; index += 1) {
       const tip = tipByNode.get(orderedLeaves[index]);
       const label = tip?.ranks[rank] ?? null;
@@ -87,11 +109,36 @@ export function buildTaxonomyBlocksForOrderedLeaves(
       }
       const taxId = tip?.taxIds?.[rank] ?? null;
       const entityKey = taxonomyEntityKey(label, taxId);
-      const existing = byLabel.get(entityKey);
-      if (existing) {
-        existing.indices.push(index);
-      } else {
-        byLabel.set(entityKey, { label, taxId, indices: [index] });
+      if (mappedCount === 0) {
+        firstMappedIndex = index;
+        firstEntityKey = entityKey;
+        firstLabel = label;
+        firstTaxId = taxId;
+      } else if (entityKey === previousEntityKey && index > previousMappedIndex + 1) {
+        for (let fillIndex = previousMappedIndex + 1; fillIndex < index; fillIndex += 1) {
+          addIndex(previousEntityKey, previousLabel, previousTaxId, fillIndex);
+        }
+      }
+      addIndex(entityKey, label, taxId, index);
+      mappedCount += 1;
+      previousMappedIndex = index;
+      previousEntityKey = entityKey;
+      previousLabel = label;
+      previousTaxId = taxId;
+    }
+    const circularGap = firstMappedIndex >= 0
+      ? firstMappedIndex + orderedLeaves.length - previousMappedIndex
+      : Number.POSITIVE_INFINITY;
+    if (
+      mappedCount >= 2
+      && firstEntityKey === previousEntityKey
+      && circularGap <= orderedLeafSpanThreshold(orderedLeaves.length)
+    ) {
+      for (let fillIndex = previousMappedIndex + 1; fillIndex < orderedLeaves.length; fillIndex += 1) {
+        addIndex(previousEntityKey, previousLabel, previousTaxId, fillIndex);
+      }
+      for (let fillIndex = 0; fillIndex < firstMappedIndex; fillIndex += 1) {
+        addIndex(firstEntityKey, firstLabel, firstTaxId, fillIndex);
       }
     }
     accumulator[rank] = byLabel;

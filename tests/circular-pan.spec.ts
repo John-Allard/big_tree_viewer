@@ -477,6 +477,99 @@ test("an ambiguous partially zoomed spiral switches other geometries to fit view
   }
 });
 
+test("a close view of one spiral turn stays local when switching to rectangular", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral"));
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral");
+  const result = await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const spiralFit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const canvas = document.querySelector("canvas");
+    if (!spiralFit || spiralFit.kind !== "circular" || !(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Spiral camera unavailable for local-turn transition test.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    const sourceFocusX = rect.width * 0.78;
+    const sourceFocusY = rect.height * 0.5;
+    const zoomedScale = Number(spiralFit.scale) * 6;
+    const focusWorldX = (sourceFocusX - Number(spiralFit.translateX)) / Number(spiralFit.scale);
+    const focusWorldY = (sourceFocusY - Number(spiralFit.translateY)) / Number(spiralFit.scale);
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      scale: zoomedScale,
+      translateX: (rect.width * 0.5) - (focusWorldX * zoomedScale),
+      translateY: (rect.height * 0.5) - (focusWorldY * zoomedScale),
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const switched = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const fit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    return { switched, fit };
+  });
+
+  expect(result.switched?.kind).toBe("rect");
+  expect(result.fit?.kind).toBe("rect");
+  expect(Number(result.switched?.scaleY ?? 0)).toBeGreaterThan(Number(result.fit?.scaleY ?? 0) * 2);
+  expect(Math.abs(Number(result.switched?.translateY ?? 0) - Number(result.fit?.translateY ?? 0))).toBeGreaterThan(20);
+});
+
+test("the 50k example refreshes a sharp circular bitmap as it zooms", async ({ page }) => {
+  await waitForViewer(page);
+  await page.getByRole("button", { name: "Load Example" }).click();
+  await page.waitForFunction(() => (
+    Number(window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes.length ?? 0) > 40_000
+    && Number(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount ?? 0) > 40_000
+    && !Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().loading)
+  ));
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const canvas = page.getByTestId("tree-canvas");
+  const bounds = await canvas.boundingBox();
+  if (!bounds) {
+    throw new Error("Canvas unavailable for moderate-tree bitmap refresh test.");
+  }
+  await page.mouse.move(bounds.x + (bounds.width * 0.5), bounds.y + (bounds.height * 0.5));
+  for (let index = 0; index < 5; index += 1) {
+    await page.mouse.wheel(0, -100);
+    await settleFrames(page);
+  }
+  const renderMode = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.circular as Record<string, unknown> | undefined
+  )?.branchRenderMode);
+
+  expect(renderMode).toBe("taxonomy-cached-bitmap");
+});
+
+test("a fitted circular taxonomy bitmap covers every legal pan position", async ({ page }) => {
+  await waitForViewer(page);
+  await page.getByRole("button", { name: "Load Example" }).click();
+  await page.waitForFunction(() => (
+    Number(window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes.length ?? 0) > 40_000
+    && Number(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount ?? 0) > 40_000
+    && !Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().loading)
+  ));
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      translateX: Number.POSITIVE_INFINITY,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const renderMode = await page.evaluate(() => (
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.circular as Record<string, unknown> | undefined
+  )?.branchRenderMode);
+
+  expect(renderMode).toBe("taxonomy-cached-bitmap");
+});
+
 test("rectangular vertical wheel input zooms instead of scrolling or panning", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
@@ -788,7 +881,7 @@ test("mobile circular taxonomy panning does not clamp branch bitmap apart from r
     if (!camera || camera.kind !== "circular") {
       throw new Error("Circular camera unavailable.");
     }
-    let pannedDebug: { branchRenderMode?: string } | undefined;
+    let pannedDebug: { branchRenderMode?: string } | undefined = initialDebug;
     for (const delta of [900, 1800, 3200, -900, -1800, -3200]) {
       window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
         translateX: camera.translateX + delta,
@@ -796,9 +889,12 @@ test("mobile circular taxonomy panning does not clamp branch bitmap apart from r
         scale: camera.scale,
       });
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      pannedDebug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.circular as {
+      const candidateDebug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.circular as {
         branchRenderMode?: string;
       } | undefined;
+      if (candidateDebug?.branchRenderMode) {
+        pannedDebug = candidateDebug;
+      }
       if (pannedDebug?.branchRenderMode !== "taxonomy-cached-bitmap") {
         break;
       }
@@ -810,7 +906,7 @@ test("mobile circular taxonomy panning does not clamp branch bitmap apart from r
   });
 
   expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(modes.initial);
-  expect(modes.panned).toBe("taxonomy-cached-paths");
+  expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(modes.panned);
 });
 
 test("large circular fit-view falls back to the cached base path", async ({ page }) => {

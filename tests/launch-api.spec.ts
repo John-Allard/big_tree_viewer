@@ -48,7 +48,8 @@ async function routeTinyTaxdump(page: Page): Promise<void> {
   const nodes = [
     "1\t|\t1\t|\tno rank\t|",
     "2\t|\t1\t|\tsuperkingdom\t|",
-    "3\t|\t2\t|\tphylum\t|",
+    "12\t|\t2\t|\tkingdom\t|",
+    "3\t|\t12\t|\tphylum\t|",
     "4\t|\t3\t|\tclass\t|",
     "5\t|\t4\t|\torder\t|",
     "6\t|\t5\t|\tfamily\t|",
@@ -56,18 +57,22 @@ async function routeTinyTaxdump(page: Page): Promise<void> {
     "8\t|\t7\t|\tspecies\t|",
     "9\t|\t6\t|\tgenus\t|",
     "10\t|\t9\t|\tspecies\t|",
+    "11\t|\t8\t|\tvarietas\t|",
   ].join("\n");
   const names = [
     "1\t|\troot\t|\t\t|\tscientific name\t|",
     "2\t|\tTestkingdom\t|\t\t|\tscientific name\t|",
+    "12\t|\tTestanimalia\t|\t\t|\tscientific name\t|",
     "3\t|\tTestphylum\t|\t\t|\tscientific name\t|",
     "4\t|\tTestclass\t|\t\t|\tscientific name\t|",
     "5\t|\tTestorder\t|\t\t|\tscientific name\t|",
     "6\t|\tTestaceae\t|\t\t|\tscientific name\t|",
     "7\t|\tA\t|\t\t|\tscientific name\t|",
     "8\t|\tA species\t|\t\t|\tscientific name\t|",
+    "8\t|\tA oldspecies\t|\t\t|\tsynonym\t|",
     "9\t|\tB\t|\t\t|\tscientific name\t|",
     "10\t|\tB species\t|\t\t|\tscientific name\t|",
+    "11\t|\tA former-variety\t|\t\t|\tsynonym\t|",
   ].join("\n");
   const archive = Buffer.from(zipSync({
     "nodes.dmp": strToU8(`${nodes}\n`),
@@ -969,7 +974,67 @@ test("standard taxonomy mapping recognizes leading species names in decorated ti
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
   const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
 
-  expect(taxonomy?.version).toBe(9);
+  expect(taxonomy?.version).toBe(10);
+  expect(taxonomy?.mappedCount).toBe(2);
+  expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
+});
+
+test("standard NCBI taxonomy mapping resolves species synonyms", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_oldspecies:1,B_species:1)Root;",
+        label: "species-synonym-tree",
+        taxonomy: {
+          runMapping: true,
+          allowDownload: true,
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    return Number(app?.getState().taxonomyMappedCount ?? 0) > 0 || Boolean(app?.getState().taxonomyError);
+  });
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+
+  expect(taxonomy?.mappedCount).toBe(2);
+  expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
+});
+
+test("standard NCBI taxonomy mapping resolves infraspecific synonyms", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_former-variety:1,B_species:1)Root;",
+        label: "infraspecific-synonym-tree",
+        taxonomy: {
+          runMapping: true,
+          allowDownload: true,
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    return Number(app?.getState().taxonomyMappedCount ?? 0) > 0 || Boolean(app?.getState().taxonomyError);
+  });
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+
   expect(taxonomy?.mappedCount).toBe(2);
   expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
 });
@@ -1017,6 +1082,8 @@ test("postMessage API can map taxonomy for the current loaded tree", async ({ pa
   expect(message.type).toBe("big-tree-viewer:taxonomy-mapped");
   expect((message.taxonomy as { map?: { mappedCount?: number } })?.map?.mappedCount).toBe(2);
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+  expect(taxonomy?.tipRanks.every((tip) => tip.ranks.kingdom === "Testanimalia")).toBeTruthy();
 });
 
 test("postMessage taxonomy mapping does not download taxdump without explicit permission", async ({ page }) => {
@@ -1064,7 +1131,7 @@ test("postMessage taxonomy mapping does not download taxdump without explicit pe
   ));
 
   expect(message.type).toBe("big-tree-viewer:taxonomy-error");
-  expect(String(message.message)).toContain("No cached NCBI taxonomy archive");
+  expect(String(message.message)).toContain("No NCBI Taxonomy archive is available");
   expect(taxdumpRequested).toBe(false);
 });
 

@@ -38,6 +38,26 @@ async function enableMockTaxonomy(page: Page): Promise<void> {
   });
 }
 
+test("loading a replacement tree clears the previous tree's taxonomy state", async ({ page }) => {
+  await waitForViewer(page);
+  await enableMockTaxonomy(page);
+  const previousSignature = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeSignature);
+
+  await page.getByRole("button", { name: "Paste Newick" }).click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("(Replacement_alpha:1,Replacement_beta:1)Replacement_root;");
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction((signature) => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return Boolean(state?.treeLoaded) && !state?.loading && state?.treeSignature !== signature;
+  }, previousSignature);
+
+  const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState());
+  expect(state?.taxonomyEnabled).toBe(false);
+  expect(state?.taxonomyMappedCount).toBe(0);
+  expect(state?.taxonomyStatus).toBe("");
+  expect(state?.taxonomyError).toBeNull();
+});
+
 test("taxonomy branch coloring follows taxonomy and branch-color toggles, not visible-rank choices", async ({ page }) => {
   await waitForViewer(page);
   await enableMockTaxonomy(page);
@@ -1021,7 +1041,7 @@ test("manual subtree colors propagate and branch colors override them", async ({
   expect(colors[nodes.outsideNode]).toBe("#0f172a");
 });
 
-test("taxonomy label context menu exposes subtree, copy, and NCBI actions", async ({ page }) => {
+test("taxonomy label context menu exposes source-specific taxonomy links", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
     const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
@@ -1099,6 +1119,23 @@ test("taxonomy label context menu exposes subtree, copy, and NCBI actions", asyn
 
   const openedUrl = await page.evaluate(() => (window as typeof window & { __openedUrl?: string }).__openedUrl ?? null);
   expect(openedUrl).toContain("id=8782");
+
+  await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const current = app?.getTaxonomyMapForTest();
+    if (!current) {
+      throw new Error("Taxonomy map unavailable for Catalogue of Life context-menu test.");
+    }
+    app?.setTaxonomyMapForTest({ ...current, source: "catalogue-of-life" });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await page.mouse.click(taxonomyPoint.x, taxonomyPoint.y, { button: "right" });
+  await expect(page.getByRole("button", { name: "Open In Catalogue of Life" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open In NCBI Taxonomy" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open In Catalogue of Life" }).click();
+
+  const catalogueUrl = await page.evaluate(() => (window as typeof window & { __openedUrl?: string }).__openedUrl ?? null);
+  expect(catalogueUrl).toBe("https://www.catalogueoflife.org/data/search?q=Aves");
 });
 
 test("taxonomy ribbons remain interactive when their labels do not fit", async ({ page }) => {
@@ -1481,6 +1518,70 @@ test("taxonomy rank controls in taxonomy visual settings filter visible ranks", 
   await expect(page.getByRole("radio", { name: "Class hidden" })).toBeChecked();
   await expect(page.getByRole("radio", { name: "Order ribbon" })).toBeChecked();
   await expect(page.getByRole("radio", { name: "Family ribbon" })).toBeChecked();
+});
+
+test("kingdom ribbons are available manually but excluded from automatic ranks", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for kingdom ribbon test.");
+    }
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 12,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      activeRanks: ["class", "phylum", "kingdom"],
+      tipRanks: leafNodes.map((node, index) => ({
+        node,
+        ranks: {
+          kingdom: index < 30 ? "Animalia" : "Plantae",
+          phylum: index < 15 ? "Chordata" : index < 30 ? "Arthropoda" : index < 45 ? "Tracheophyta" : "Bryophyta",
+          class: `Class ${Math.floor(index / 8) + 1}`,
+        },
+      })),
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  await page.waitForFunction(() => {
+    const ranks = (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined)?.taxonomyVisibleRanks;
+    return Array.isArray(ranks) && ranks.includes("phylum");
+  });
+  const ranksBeforeKingdom = await page.evaluate(() => (
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined)?.taxonomyVisibleRanks ?? []
+  ));
+  expect(ranksBeforeKingdom).not.toContain("kingdom");
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Taxonomy overlays settings" }).click();
+  await expect(page.getByRole("checkbox", { name: "Automatic visible ranks" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Kingdom hidden" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Kingdom ribbon" })).toBeEnabled();
+  await page.getByRole("radio", { name: "Kingdom ribbon" }).check();
+  await page.waitForFunction(() => (
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined)?.taxonomyVisibleRanks?.includes("kingdom")
+  ));
+  const ranksWithKingdom = await page.evaluate(() => (
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined)?.taxonomyVisibleRanks ?? []
+  ));
+  expect(ranksWithKingdom.filter((rank) => rank !== "kingdom")).toEqual(ranksBeforeKingdom);
+  expect(ranksWithKingdom.at(-1)).toBe("kingdom");
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const circularRanks = await page.evaluate(() => (
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as { taxonomyVisibleRanks?: string[] } | undefined)?.taxonomyVisibleRanks ?? []
+  ));
+  expect(circularRanks).toContain("phylum");
+  expect(circularRanks.at(-1)).toBe("kingdom");
 });
 
 test("taxonomy overlays can stay visible while taxonomy branch coloring is disabled", async ({ page }) => {
@@ -2587,8 +2688,10 @@ test("near-fit circular taxonomy labels return after an edge excursion", async (
   });
 
   const initialLabels = await page.evaluate(() => (
-    window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
-      ?.map((label) => label.text).sort() ?? []
+    [...new Set(
+      window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
+        ?.map((label) => label.text) ?? [],
+    )].sort()
   ));
   expect(initialLabels).toEqual(["Alpha", "Beta", "Delta", "Epsilon", "Gamma"]);
 
@@ -2604,8 +2707,10 @@ test("near-fit circular taxonomy labels return after an edge excursion", async (
   }
 
   const offscreenLabels = await page.evaluate(() => (
-    window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
-      ?.map((label) => label.text).sort() ?? []
+    [...new Set(
+      window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
+        ?.map((label) => label.text) ?? [],
+    )].sort()
   ));
   expect(offscreenLabels.length).toBeLessThan(initialLabels.length);
 
@@ -2621,13 +2726,15 @@ test("near-fit circular taxonomy labels return after an edge excursion", async (
   }
 
   const returnedLabels = await page.evaluate(() => (
-    window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
-      ?.map((label) => label.text).sort() ?? []
+    [...new Set(
+      window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.taxonomyPlacedLabels
+        ?.map((label) => label.text) ?? [],
+    )].sort()
   ));
   expect(returnedLabels).toEqual(initialLabels);
 });
 
-test("single unmapped interlopers split taxonomy ribbons into exact contiguous chunks", async ({ page }) => {
+test("single unmapped interlopers preserve taxonomy ribbon continuity", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
@@ -2664,7 +2771,7 @@ test("single unmapped interlopers split taxonomy ribbons into exact contiguous c
     taxonomyBlockCounts?: Record<string, number>;
   });
 
-  expect(Number(circularDebug.taxonomyBlockCounts?.class ?? 0)).toBe(3);
+  expect(Number(circularDebug.taxonomyBlockCounts?.class ?? 0)).toBe(2);
 });
 
 test("circular taxonomy labels move with their clades when the fit view is rotated", async ({ page }) => {

@@ -93,7 +93,8 @@ export default function FaqPage() {
                 column containing labels that match the labels in the tree
                 exactly, then choose that column under <strong>Match tree labels
                 by column</strong>. Other columns can be used for branch colors,
-                text labels, markers, or pie charts. See the{" "}
+                text labels, markers, pie charts, horizontal bars, heat maps,
+                or categorical tip tables. See the{" "}
                 <a href={`${import.meta.env.BASE_URL}#metadata`}>metadata guide</a>{" "}
                 for a complete example.
               </p>
@@ -116,6 +117,11 @@ export default function FaqPage() {
                 taxonomic views, and{" "}
                 <a href="https://www.phylopic.org/" target="_blank" rel="noreferrer">PhyloPic</a>{" "}
                 silhouette retrieval.
+              </p>
+              <p>
+                Mappings are cached by tree and taxonomy source. Returning to a
+                recently mapped tree can restore its latest mapping, and mappings
+                from more than one source can be retained for the same tree.
               </p>
             </div>
           </article>
@@ -144,6 +150,8 @@ export default function FaqPage() {
                 taxonomy to color branches by group. You can let Big Tree Viewer
                 choose visible ranks automatically, choose ranks manually, adjust
                 the palette, and collapse mapped tips to higher taxonomic ranks.
+                Kingdom ribbons are optional rather than automatic and are offered
+                when the mapped tree contains more than one kingdom.
               </p>
             </div>
           </article>
@@ -227,6 +235,68 @@ export default function FaqPage() {
                 a full circle, and its inner radius is adjustable.
                 Spiral view is intended for time-calibrated trees where deep
                 time and recent tips need to share the same figure.
+              </p>
+            </div>
+          </article>
+
+          <article className="faq-entry">
+            <h2>How does tree comparison work?</h2>
+            <div className="faq-answer">
+              <p>
+                Open a second Newick or NEXUS tree in the <strong>Tree
+                Comparison</strong> panel. Comparison mode uses a rectangular
+                tanglegram: the loaded tree remains on the left, the comparison
+                tree faces it from the right, and connectors join tips with
+                matching labels. Tips found in only one tree are retained in
+                that tree but do not affect connector discordance or topology
+                statistics.
+              </p>
+              <p>
+                Big Tree Viewer rotates subtrees in the right-hand tree to reduce
+                connector crossings without changing its topology. Connector
+                color emphasizes residual ordering discordance. The panel also
+                reports shared tips and rooted Robinson-Foulds distance after
+                both trees are logically pruned to their shared labels. If the
+                roots appear incompatible or either root has more than two child
+                groups, the viewer warns that root-dependent results may be
+                misleading and can offer to reroot the comparison tree on the
+                closest matching edge.
+              </p>
+            </div>
+          </article>
+
+          <article className="faq-entry">
+            <h2>What tree statistics and distance measurements are available?</h2>
+            <div className="faq-answer">
+              <p>
+                The <strong>Stats</strong> panel summarizes the loaded tree,
+                including tip and node counts, depth, total branch length,
+                cherries, imbalance, and root-to-tip variation when applicable.
+                Choose <strong>View Subtree Statistics</strong> from an internal
+                branch or taxonomy-group context menu to show the same summary
+                for that subtree without covering the tree.
+              </p>
+              <p>
+                Choose <strong>Measure Distance</strong> from a node context menu,
+                then move the pointer over another branch or tip. Big Tree Viewer
+                highlights the path between the starting and target nodes and
+                updates their patristic distance in real time. Click elsewhere
+                to finish measuring.
+              </p>
+            </div>
+          </article>
+
+          <article className="faq-entry">
+            <h2>How are support values, node heights, and node-height intervals displayed?</h2>
+            <div className="faq-answer">
+              <p>
+                Visual Options can show numeric bootstrap or support labels,
+                node-height labels, and node-height uncertainty intervals parsed
+                from annotated Newick or NEXUS trees. Label size, rotation, and
+                decimal precision are configurable. Intervals can be drawn as
+                translucent rectangles or capped lines with adjustable color,
+                opacity, and thickness. Interval bars are available in
+                rectangular and radial views, but not spiral view.
               </p>
             </div>
           </article>

@@ -21,17 +21,17 @@ declare global {
       setTaxonomyEnabled: (visible: boolean) => void;
       setTaxonomyBranchColoringEnabled: (enabled: boolean) => void;
       setTaxonomyRankVisibilityForTest: (
-        rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus",
+        rank: "superkingdom" | "kingdom" | "phylum" | "class" | "order" | "family" | "genus",
         visible: boolean,
       ) => void;
       setTaxonomyRankVisibilityAutoForTest: (enabled: boolean) => void;
-      setTaxonomyCollapseRankForTest: (rank: "species" | "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
+      setTaxonomyCollapseRankForTest: (rank: "species" | "superkingdom" | "kingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setTaxonomyColorJitterForTest: (value: number) => void;
       setTaxonomyColorPaletteForTest: (palette: TaxonomyColorPaletteKey) => void;
-      setTaxonomyColorRootRankForTest: (rank: "auto" | "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
-      setTaxonomyColorJitterRankForTest: (rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
+      setTaxonomyColorRootRankForTest: (rank: "auto" | "superkingdom" | "kingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
+      setTaxonomyColorJitterRankForTest: (rank: "superkingdom" | "kingdom" | "phylum" | "class" | "order" | "family" | "genus") => void;
       setTaxonomyRankDisplayModeForTest: (
-        rank: "superkingdom" | "phylum" | "class" | "order" | "family" | "genus",
+        rank: "superkingdom" | "kingdom" | "phylum" | "class" | "order" | "family" | "genus",
         mode: "hidden" | "label-only" | "ribbon",
       ) => void;
       setBranchThicknessScaleForTest: (value: number) => void;
@@ -154,6 +154,8 @@ declare global {
       clearManualBranchColor: (node: number) => void;
       setManualSubtreeColor: (node: number, color: string) => void;
       clearManualSubtreeColor: (node: number) => void;
+      setTaxonomyRootColor: (label: string, color: string) => void;
+      getTaxonomyRootColors: () => Array<[string, string]>;
       setCollapsedNodeMode: (node: number, mode: "preserve-width" | "minimize" | null) => void;
       getCollapsedNodeModes: () => Array<[number, "preserve-width" | "minimize"]>;
       getBranchScreenSegmentForTest: (node: number) => {

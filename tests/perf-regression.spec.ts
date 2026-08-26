@@ -667,6 +667,32 @@ test.describe("local circular perf regression", () => {
     );
   });
 
+  test("a large circular tree recovers its fit bitmap after a zoom round trip", async ({ page }) => {
+    test.slow();
+    test.setTimeout(6 * 60 * 1000);
+
+    await waitForViewer(page);
+    await loadTreeFile(page, PERF_TREE_PATH);
+    await configureCircularPerfScene(page);
+    await movePointerToCircularCenter(page);
+    for (let index = 0; index < 18; index += 1) {
+      await page.mouse.wheel(0, -100);
+    }
+    for (let index = 0; index < 18; index += 1) {
+      await page.mouse.wheel(0, 100);
+    }
+    await settleFrames(page);
+
+    const snapshot = await readCircularPerfSnapshot(page);
+    expect(snapshot.circular?.branchRenderMode).toBe("taxonomy-cached-bitmap");
+
+    const benchmark = await runCircularPanBenchmark(page, "local-perf-pan-after-zoom-round-trip", 180, 80, 30);
+    expect(benchmark).not.toBeNull();
+    expect(benchmark?.branchRenderModes ?? []).toEqual(["taxonomy-cached-bitmap"]);
+    expect(Number(benchmark?.drawTotalMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_PARTIAL_DRAW_P95_MAX_MS);
+    expect(Number(benchmark?.frameDeltaMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(PAN_PARTIAL_FRAME_P95_MAX_MS);
+  });
+
   test("210k rectangular taxonomy rank reveal adds class before order", async ({ page }) => {
     test.slow();
     test.setTimeout(6 * 60 * 1000);

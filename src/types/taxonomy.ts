@@ -2,6 +2,7 @@ import type { LayoutOrder } from "./tree";
 
 export const TAXONOMY_RANKS = [
   "superkingdom",
+  "kingdom",
   "phylum",
   "class",
   "order",
@@ -10,6 +11,10 @@ export const TAXONOMY_RANKS = [
 ] as const;
 
 export type TaxonomyRank = typeof TAXONOMY_RANKS[number];
+
+export function isAutomaticTaxonomyRank(rank: TaxonomyRank): boolean {
+  return rank !== "kingdom";
+}
 export type TaxonomyCollapseRank = TaxonomyRank | "species";
 export type TaxonomySource = "ncbi" | "catalogue-of-life";
 

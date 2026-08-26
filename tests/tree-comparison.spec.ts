@@ -362,8 +362,20 @@ test("comparison stats switch trees and search zoom highlights matching tips in 
   expect(Number(layout?.primaryLabelEndX)).toBeLessThan(Number(layout?.connectorStartX));
   expect(Number(layout?.connectorEndX)).toBeLessThan(Number(layout?.comparisonLabelStartX));
 
-  await zoomButton.click();
+  const focusedZoom = Number((layout?.camera as { zoom?: number } | undefined)?.zoom ?? 0);
+  const comparisonCanvas = page.getByLabel("Tree comparison view");
+  await comparisonCanvas.hover({ position: { x: 240, y: 220 } });
+  await page.mouse.wheel(0, 400);
   await expect(zoomButton).toHaveAttribute("aria-pressed", "false");
+  await page.waitForFunction((previousZoom) => {
+    const state = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState();
+    return Number((state?.camera as { zoom?: number } | undefined)?.zoom ?? 0) < previousZoom;
+  }, focusedZoom);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const manuallyZoomed = await page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState());
+  expect(Number((manuallyZoomed?.camera as { zoom?: number } | undefined)?.zoom ?? 0)).toBeLessThan(focusedZoom);
+  expect(Number(manuallyZoomed?.highlightedPrimaryTips ?? 0)).toBeGreaterThan(0);
+  expect(manuallyZoomed?.highlightedComparisonTips).toBe(manuallyZoomed?.highlightedPrimaryTips);
 });
 
 test("unmatched tips do not create false connector discordance", async ({ page }) => {

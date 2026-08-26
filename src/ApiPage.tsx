@@ -105,8 +105,8 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
           </p>
           <p>
             PNG defaults are browser-window-scale: 1600 x 1000 pixels for
-            rectangular or fan views and 1200 x 1200 pixels for circular or
-            spiral views. SVG is useful for smaller or moderately detailed vector
+            rectangular or radial views and 1200 x 1200 pixels for spiral views.
+            SVG is useful for smaller or moderately detailed vector
             figures, but for huge trees PNG is usually safer because SVG output
             can contain an enormous number of vector elements.
           </p>
@@ -122,7 +122,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
   type: "big-tree-viewer:load",
   payload: {
     newick: "(A:1,B:1)Root;",
-    visual: { viewMode: "circular" },
+    visual: { viewMode: "radial" },
     export: {
       format: "svg",
       delivery: "postMessage",
@@ -156,7 +156,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
             <div><dt>btv_export</dt><dd>`svg` or `png`; exports after launch.</dd></div>
             <div><dt>btv_export_delivery</dt><dd>`download` or `postMessage`.</dd></div>
-            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Spiral exports are square; rectangular and radial exports may use independent dimensions.</dd></div>
+            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Spiral exports are square; rectangular and radial exports may use independent dimensions without distorting radial geometry.</dd></div>
             <div><dt>btv_export_filename</dt><dd>Suggested filename for downloads and automation results.</dd></div>
           </dl>
         </section>
@@ -185,7 +185,7 @@ window.addEventListener("message", (event) => {
       newick: "(A_species:1,B_species:1)Root;",
       label: "example tree",
       visual: {
-        viewMode: "circular",
+        viewMode: "radial",
         showTipLabels: true,
         showGenusLabels: false
       },
@@ -213,7 +213,7 @@ window.addEventListener("message", (event) => {
           <p>
             Taxon records may include species, unranked, or intermediate nodes.
             Big Tree Viewer follows `parentTaxId` links and extracts superkingdom,
-            phylum, class, order, family, and genus. A parent link may also skip
+            kingdom, phylum, class, order, family, and genus. A parent link may also skip
             omitted intermediate nodes and point directly to the next supplied
             ancestor. End a lineage with a null, omitted, or self-referencing
             parent.
@@ -245,7 +245,7 @@ window.addEventListener("message", (event) => {
         ]
       }
     },
-    visual: { viewMode: "circular", taxonomyEnabled: true }
+    visual: { viewMode: "radial", taxonomyEnabled: true }
   }
 }, "${origin.replace(/\/$/, "")}");`}</code></pre>
         </section>
@@ -301,7 +301,9 @@ window.addEventListener("message", (event) => {
     branchThicknessScale?: number,
     taxonomyEnabled?: boolean,
     taxonomyBranchColoringEnabled?: boolean,
-    taxonomyRankVisibility?: { genus?: boolean, family?: boolean, order?: boolean },
+    useAutomaticTaxonomyRankVisibility?: boolean,
+    taxonomyRankVisibility?: { superkingdom?: boolean, kingdom?: boolean, phylum?: boolean, class?: boolean, order?: boolean, family?: boolean, genus?: boolean },
+    taxonomyRankDisplayModes?: { kingdom?: "hidden" | "label-only" | "ribbon", [rank: string]: "hidden" | "label-only" | "ribbon" | undefined },
     figureStyles?: object,
     metadataMarkersEnabled?: boolean,
     metadataTipTableEnabled?: boolean,
@@ -319,7 +321,8 @@ window.addEventListener("message", (event) => {
     viewportHeight?: number,
     collapsedNodes?: number[],
     manualBranchColors?: Array<[number, string]>,
-    manualSubtreeColors?: Array<[number, string]>
+    manualSubtreeColors?: Array<[number, string]>,
+    taxonomyRootColors?: Array<[string, string]>
   },
   metadata?: {
     text?: string,

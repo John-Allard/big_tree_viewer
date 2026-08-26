@@ -6,6 +6,7 @@ export const ACTIVE_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "order",
   "class",
   "phylum",
+  "kingdom",
   "superkingdom",
 ];
 
@@ -85,6 +86,10 @@ export function deriveActiveTaxonomyRanks(
     const counts = rankToCounts.get(topRank);
     const total = rankToHits.get(topRank) ?? 0;
     if (!counts || total <= 0) {
+      break;
+    }
+    // Keep kingdom available as a manual ribbon even when one kingdom dominates.
+    if (topRank === "kingdom") {
       break;
     }
     let dominant = 0;

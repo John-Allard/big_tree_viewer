@@ -73,7 +73,9 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
     app.setShowTipLabels(false);
     app.setAlignTipLabels(true);
     app.setShowGenusLabels(true);
+    app.setMockTaxonomy();
     canvas.setManualBranchColor(firstLeaf, "#ff0000");
+    canvas.setTaxonomyRootColor("A-phy", "#00aa44");
   });
   await page.waitForFunction(() => {
     const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
@@ -125,6 +127,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(Number(session.canvas?.viewportWidth ?? 0)).toBeGreaterThan(0);
   expect(Number(session.canvas?.viewportHeight ?? 0)).toBeGreaterThan(0);
   expect(session.canvas?.manualBranchColors?.length).toBe(1);
+  expect(session.canvas?.taxonomyRootColors).toEqual([["A-phy", "#00aa44"]]);
 
   const chooserPromise = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Load Session" }).click();
@@ -144,6 +147,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
     app: window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null,
     camera: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera() ?? null,
     branchColors: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors() ?? null,
+    taxonomyRootColors: window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getTaxonomyRootColors() ?? [],
   }));
   expect(restored.app?.viewMode).toBe("circular");
   expect(restored.app?.showTipLabels).toBe(false);
@@ -159,6 +163,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(restored.app?.metadataRowCount).toBe(2);
   expect(restored.camera?.kind).toBe("circular");
   expect(restored.branchColors).toContain("#ff0000");
+  expect(restored.taxonomyRootColors).toEqual([["A-phy", "#00aa44"]]);
 });
 
 test("session save opens native picker before async session preparation", async ({ page }) => {

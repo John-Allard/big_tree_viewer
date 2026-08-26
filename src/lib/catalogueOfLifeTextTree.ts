@@ -12,8 +12,8 @@ import {
 } from "./taxonomyNameResolver";
 import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
-const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
-const COL_MAPPING_VERSION = 2;
+const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "kingdom", "superkingdom"];
+const COL_MAPPING_VERSION = 5;
 
 interface LineageEntry {
   rank: string;
@@ -99,6 +99,7 @@ export function createCatalogueOfLifeTextTreeParser(
   const speciesIndex: ParsedTaxonomyForMapping["speciesIndex"] = new Map();
   const speciesEpithetIndex: NonNullable<ParsedTaxonomyForMapping["speciesEpithetIndex"]> = new Map();
   const genusIndex: ParsedTaxonomyForMapping["genusIndex"] = new Map();
+  const contextualGenusIndex: NonNullable<ParsedTaxonomyForMapping["contextualGenusIndex"]> = new Map();
   const namedTaxonIndex: ParsedTaxonomyForMapping["namedTaxonIndex"] = new Map();
   const speciesNames = new Set<string>();
   const speciesEpithets = new Set<string>();
@@ -196,7 +197,7 @@ export function createCatalogueOfLifeTextTreeParser(
           addTaxonomyIndexEntry(speciesEpithetIndex, speciesEpithet, acceptedTaxId);
         }
         if (parsed.rank === "genus" && genera.has(normalizedGenusMatch)) {
-          addTaxonomyIndexEntry(genusIndex, normalizedGenusMatch, acceptedTaxId);
+          addTaxonomyIndexEntry(contextualGenusIndex, normalizedGenusMatch, acceptedTaxId);
         }
         const synonymLabel = higherTaxonLabel(parsed.recordText);
         const normalizedSynonymLabel = normalizeTaxonomyName(synonymLabel);
@@ -242,11 +243,13 @@ export function createCatalogueOfLifeTextTreeParser(
         speciesIndex,
         speciesEpithetIndex,
         genusIndex,
+        contextualGenusIndex,
         namedTaxonIndex,
       };
       return mapTipsWithContext(tips, taxonomy, TARGET_RANKS, COL_MAPPING_VERSION, {
         enableCollapseFallbacks: !lowMemoryMode,
         rejectEmbeddedBroadRankRuns: true,
+        requireContextForGenusFallback: true,
       });
     },
     parsedLineCount(): number {

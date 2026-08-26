@@ -800,6 +800,17 @@ function normalizeLaunchCanvasState(raw: unknown): TreeCanvasSessionState | null
         ))
       : []
   );
+  const cleanNamedColorAssignments = (assignments: unknown): Array<[string, string]> => (
+    Array.isArray(assignments)
+      ? assignments.filter((entry): entry is [string, string] => (
+          Array.isArray(entry)
+          && typeof entry[0] === "string"
+          && entry[0].trim() !== ""
+          && typeof entry[1] === "string"
+          && entry[1].trim() !== ""
+        ))
+      : []
+  );
   const cleanCollapsedNodeModes = (assignments: unknown): Array<[number, CollapsedNodeMode]> => (
     Array.isArray(assignments)
       ? assignments.filter((entry): entry is [number, CollapsedNodeMode] => (
@@ -824,6 +835,7 @@ function normalizeLaunchCanvasState(raw: unknown): TreeCanvasSessionState | null
     collapsedNodeModes: cleanCollapsedNodeModes(value.collapsedNodeModes),
     manualBranchColors: cleanColorAssignments(value.manualBranchColors),
     manualSubtreeColors: cleanColorAssignments(value.manualSubtreeColors),
+    taxonomyRootColors: cleanNamedColorAssignments(value.taxonomyRootColors),
   };
 }
 
@@ -1118,7 +1130,7 @@ function clampMetadataGlyphSizePercent(value: number): number {
   return Math.max(MIN_METADATA_GLYPH_SIZE_PERCENT, Math.min(MAX_METADATA_GLYPH_SIZE_PERCENT, Math.round(value)));
 }
 
-type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "branchMenu" | "metadata" | "sessions";
+type TutorialStepId = "data" | "navigation" | "visual" | "taxonomy" | "branchMenu" | "metadata" | "comparison" | "stats" | "sessions";
 
 const TUTORIAL_STEPS: Array<{
   id: TutorialStepId;
@@ -1142,25 +1154,37 @@ const TUTORIAL_STEPS: Array<{
     id: "visual",
     target: "visual",
     title: "Style the figure",
-    body: "Visual Options controls labels, time stripes, branch thickness, and export styling. Gear buttons open detailed controls for typography, spacing, line weights, and taxonomy ribbon styling.",
+    body: "Visual Options controls tip and internal labels, bootstrap support, node heights and intervals, time stripes, branch thickness, and export styling. Gear buttons open detailed controls for typography, precision, spacing, line weights, and taxonomy ribbons.",
   },
   {
     id: "taxonomy",
     target: "taxonomy",
     title: "Map taxonomy",
-    body: "You can automatically map binomial species tip names to taxonomic groups and display colored taxonomy ribbons on your tree. Additional gene, specimen, or sequence identifiers are allowed after a leading Genus_species or Genus species name. Choose NCBI Taxonomy or Catalogue of Life, then download its official archive once or select a copy you already saved.",
+    body: "Map binomial tip names with NCBI Taxonomy or Catalogue of Life, then display ribbons, color branches, or collapse mapped groups. Additional identifiers may follow a leading Genus_species or Genus species name. The viewer selects ordinary visible ranks automatically; kingdom is an optional manual ribbon when several kingdoms are present.",
   },
   {
     id: "branchMenu",
     target: "branch-menu-demo",
     title: "Use the branch menu",
-    body: "Right-click or control-click a branch, tip, or taxonomy ribbon to open the context menu. Use it to zoom to subtrees, reroot, open a subtree in a new tab, collapse clades, copy tip names, or assign manual branch and subtree colors.",
+    body: "Right-click or control-click a branch, tip, or taxonomy ribbon to open the context menu. Use it to zoom or open subtrees, collapse clades, inspect subtree statistics, measure path distance, copy names, assign colors, or reroot the tree.",
   },
   {
     id: "metadata",
     target: "metadata",
     title: "Display metadata",
-    body: "Open a CSV or TSV table, choose the column that matches tree labels, then color branches, add text labels, or draw markers from other columns. Metadata stays local in the browser.",
+    body: "Open a CSV or TSV table and choose the column that matches tree labels. Other columns can color branches, add labels and markers, draw pie charts, or form tip-aligned bars, heat maps, and categorical tables. Metadata stays local in the browser.",
+  },
+  {
+    id: "comparison",
+    target: "comparison",
+    title: "Compare two trees",
+    body: "Open a second tree to create a rectangular tanglegram. Big Tree Viewer matches shared tip labels, reorders the right tree to reduce crossings, marks incompatible splits, reports Robinson-Foulds distance, and warns when the roots may not be comparable.",
+  },
+  {
+    id: "stats",
+    target: "stats",
+    title: "Inspect tree statistics",
+    body: "The Stats panel summarizes tree size, branch lengths, root-to-tip distances, and balance. A branch or taxonomy context menu can replace the whole-tree summary with statistics for one subtree.",
   },
   {
     id: "sessions",
@@ -1776,8 +1800,11 @@ const EMPTY_METADATA_PIE_OVERLAY: MetadataPieOverlayResult = {
   version: "",
 };
 
+const MAX_EAGER_SESSION_TAXONOMY_CACHE_TIPS = 100_000;
+
 const SEARCH_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "superkingdom",
+  "kingdom",
   "phylum",
   "class",
   "order",
@@ -2264,8 +2291,12 @@ export default function App() {
       setTaxonomyOpen(true);
     } else if (step.id === "metadata") {
       setMetadataOpen(true);
+    } else if (step.id === "comparison") {
+      setComparisonOpen(true);
+    } else if (step.id === "stats") {
+      setStatsOpen(true);
     }
-  }, [setDataOpen, setMetadataOpen, setTaxonomyOpen, setViewOpen, setVisualOpen]);
+  }, [setComparisonOpen, setDataOpen, setMetadataOpen, setStatsOpen, setTaxonomyOpen, setViewOpen, setVisualOpen]);
 
   const showTutorialStep = useCallback((stepIndex: number): void => {
     const boundedIndex = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, stepIndex));
@@ -2447,6 +2478,14 @@ export default function App() {
     });
   }, [setSidebarVisible, setStatsOpen]);
   const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
+  const treeCanvasTreeRef = useRef(viewTree);
+  const treeCanvasTaxonomyMapRef = useRef(viewTaxonomyMap);
+  const treeCanvasSourceTreeRef = useRef(tree);
+  const treeCanvasSourceTaxonomyMapRef = useRef(taxonomyMap);
+  treeCanvasTreeRef.current = viewTree;
+  treeCanvasTaxonomyMapRef.current = viewTaxonomyMap;
+  treeCanvasSourceTreeRef.current = tree;
+  treeCanvasSourceTaxonomyMapRef.current = taxonomyMap;
   const taxonomyMappingWarningSummary = useMemo(() => {
     if (!taxonomyMap) {
       return "";
@@ -3283,11 +3322,20 @@ export default function App() {
   const activeSearchGenusCenterNode = activeSearchResult?.kind === "genus" ? activeSearchResult.node : null;
   const activeSearchTaxonomyNode = activeSearchResult?.kind === "taxonomy" ? activeSearchResult.node : null;
   const activeSearchTaxonomyKey = activeSearchResult?.kind === "taxonomy" ? (activeSearchResult.key ?? null) : null;
-  const visibleSearchResults = searchZoomLocked && activeSearchResult ? [activeSearchResult] : searchResults;
-  const visibleSearchMatches = searchZoomLocked
-    ? activeSearchNode !== null ? [activeSearchNode] : []
-    : searchMatches;
+  const visibleSearchResults = useMemo(
+    () => searchZoomLocked && activeSearchResult ? [activeSearchResult] : searchResults,
+    [activeSearchResult, searchResults, searchZoomLocked],
+  );
+  const visibleSearchMatches = useMemo(
+    () => searchZoomLocked
+      ? activeSearchNode !== null ? [activeSearchNode] : []
+      : searchMatches,
+    [activeSearchNode, searchMatches, searchZoomLocked],
+  );
   const visibleSearchQuery = searchZoomLocked ? "" : searchQuery;
+  const releaseSearchZoom = useCallback(() => {
+    setSearchZoomLocked(false);
+  }, []);
   const toggleSearchZoom = useCallback(() => {
     if (!activeSearchResult) {
       return;
@@ -3827,6 +3875,16 @@ export default function App() {
       pendingCompactLaunchTaxonomyRef.current = null;
     }
     const nextSignature = pendingTreeSignatureRef.current;
+    // Commit a replacement tree without any tree-specific taxonomy state from
+    // the previous tree. Pending session, launch, shared-subtree, or cached
+    // mappings are applied by the tree/signature effect after this commit.
+    setTaxonomyMap(null);
+    setTaxonomyEnabled(false);
+    setTaxonomyStatus("");
+    setTaxonomyError(null);
+    setTaxonomyMappingWarning("");
+    setSelectedSourceCachedTaxonomyMap(null);
+    setSelectedSourceMappingCacheChecked(false);
     currentTreeRef.current = nextTree;
     currentTreeSignatureRef.current = nextSignature;
     setTree(nextTree);
@@ -4834,6 +4892,8 @@ export default function App() {
     if (!tree || !treeSignature) {
       setTaxonomyMap(null);
       setTaxonomyEnabled(false);
+      setTaxonomyStatus("");
+      setTaxonomyError(null);
       setTaxonomyMappingWarning("");
       pendingLaunchTaxonomyMappingRef.current?.resolve(null);
       pendingLaunchTaxonomyMappingRef.current = null;
@@ -4877,9 +4937,11 @@ export default function App() {
       if (sessionTaxonomy) {
         const source = taxonomyMapSource(sessionTaxonomy);
         setTaxonomySource(source);
-        void putCachedTaxonomyMapping(treeSignature, sessionTaxonomy, source).catch(() => {
-          // Session loading must still succeed if browser storage is unavailable or full.
-        });
+        if (sessionTaxonomy.totalTips <= MAX_EAGER_SESSION_TAXONOMY_CACHE_TIPS) {
+          void putCachedTaxonomyMapping(treeSignature, sessionTaxonomy, source).catch(() => {
+            // Session loading must still succeed if browser storage is unavailable or full.
+          });
+        }
       }
       setTaxonomyEnabled(sessionTaxonomy ? sessionTaxonomyEnabled ?? true : false);
       setTaxonomyStatus(sessionTaxonomy
@@ -4923,6 +4985,8 @@ export default function App() {
     pendingSharedSubtreeVisualRef.current = null;
     setTaxonomyMap(null);
     setTaxonomyEnabled(false);
+    setTaxonomyStatus("");
+    setTaxonomyError(null);
     setTaxonomyMappingWarning("");
     let cancelled = false;
     void (async () => {
@@ -4950,6 +5014,10 @@ export default function App() {
     setSelectedSourceCachedTaxonomyMap(null);
     setSelectedSourceMappingCacheChecked(false);
     if (!treeSignature) {
+      setSelectedSourceMappingCacheChecked(true);
+      return;
+    }
+    if (taxonomyMap && taxonomyMapSource(taxonomyMap) === taxonomySource) {
       setSelectedSourceMappingCacheChecked(true);
       return;
     }
@@ -7944,7 +8012,7 @@ export default function App() {
                       </label>
                       {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
                         <>
-                          <label className="label-style-inline-toggle" title="Let Big Tree Viewer choose which taxonomy ranks are visible based on zoom and layout. Turn this off to pick ranks manually.">
+                          <label className="label-style-inline-toggle" title="Let Big Tree Viewer choose which taxonomy ranks are visible based on zoom and layout. Kingdom remains an optional manual rank; turn this off to choose all ranks manually.">
                             <input
                               type="checkbox"
                               checked={useAutomaticTaxonomyRankVisibility}
@@ -7953,7 +8021,7 @@ export default function App() {
                             Automatic visible ranks
                           </label>
                           <div className="taxonomy-rank-controls">
-                            <div className="taxonomy-rank-controls-title" title="Manual rank display controls which mapped taxonomy levels are drawn when automatic visible ranks is off. Label only draws black labels and a thin center strand without affecting branch colors.">Visible taxonomy ranks</div>
+                            <div className="taxonomy-rank-controls-title" title="Rank display controls which mapped taxonomy levels are drawn. Kingdom can be enabled independently; turn off automatic visible ranks to choose all other ranks manually. Label only draws black labels and a thin center strand without affecting branch colors.">Visible taxonomy ranks</div>
                             <div className="taxonomy-rank-mode-grid">
                               <div className="taxonomy-rank-mode-heading">Rank</div>
                               <div className="taxonomy-rank-mode-heading">Hidden</div>
@@ -7963,14 +8031,16 @@ export default function App() {
                                 <Fragment key={rank}>
                                   <div className="taxonomy-rank-mode-rank">{taxonomyRankLabel(rank)}</div>
                                   {(["hidden", "label-only", "ribbon"] as const).map((mode) => {
-                                    const selectedMode = taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon");
+                                    const selectedMode = taxonomyRankDisplayModes[rank]
+                                      ?? (rank === "kingdom" ? "hidden" : taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon");
                                     const radioLabel = `${taxonomyRankLabel(rank)} ${mode === "label-only" ? "label only" : mode}`;
+                                    const automaticControlDisabled = useAutomaticTaxonomyRankVisibility && rank !== "kingdom";
                                     return (
                                       <label
                                         key={mode}
                                         className="taxonomy-rank-mode-option"
                                         title={disabledControlTitle(
-                                          useAutomaticTaxonomyRankVisibility
+                                          automaticControlDisabled
                                             ? "Turn off automatic visible ranks to choose ranks manually."
                                             : undefined,
                                         )}
@@ -7980,7 +8050,7 @@ export default function App() {
                                           name={`taxonomy-rank-mode-${rank}`}
                                           aria-label={radioLabel}
                                           checked={selectedMode === mode}
-                                          disabled={useAutomaticTaxonomyRankVisibility}
+                                          disabled={automaticControlDisabled}
                                           onChange={() => {
                                             setTaxonomyRankDisplayModes((current) => ({
                                               ...current,
@@ -9469,7 +9539,7 @@ export default function App() {
           </div>
         </PanelSection>
 
-        <PanelSection title="Tree Comparison" isOpen={comparisonOpen} onToggle={() => setComparisonOpen(!comparisonOpen)}>
+        <PanelSection title="Tree Comparison" isOpen={comparisonOpen} onToggle={() => setComparisonOpen(!comparisonOpen)} tourId="comparison">
           <div className="comparison-controls">
             <p className="status-line">
               Compare the loaded tree with a second tree. Shared tips are matched by label, and the right tree is reordered to reduce connector crossings.
@@ -9727,6 +9797,7 @@ export default function App() {
           isOpen={statsOpen}
           onToggle={() => setStatsOpen(!statsOpen)}
           sectionRef={statsSectionRef}
+          tourId="stats"
         >
           {comparisonEnabled && comparisonTree ? (
             <>
@@ -9785,7 +9856,7 @@ export default function App() {
       <main className="viewer-panel">
         <div className={`normal-tree-layer${comparisonEnabled && comparisonTree && viewTree ? " comparison-hidden" : ""}`}>
           <TreeCanvas
-          tree={viewTree}
+          treeRef={treeCanvasTreeRef}
           order={order}
           viewMode={viewMode}
           zoomAxisMode={viewMode !== "rectangular" ? "both" : zoomAxisMode}
@@ -9821,16 +9892,16 @@ export default function App() {
           useAutomaticTaxonomyRankVisibility={useAutomaticTaxonomyRankVisibility}
           taxonomyRankVisibility={taxonomyRankVisibility}
           taxonomyCollapseRank={taxonomyCollapseRank}
-          taxonomyMap={viewTaxonomyMap}
-          taxonomyColorSourceMap={taxonomyMap}
+          taxonomyMapRef={treeCanvasTaxonomyMapRef}
+          taxonomyColorSourceMapRef={treeCanvasSourceTaxonomyMapRef}
           phylopicEnabled={phylopicEnabled}
           phylopicSilhouettes={phylopicSilhouettes}
           phylopicPlacement={phylopicPlacement}
           phylopicSizeScale={phylopicSizeScale}
           phylopicOffsetXPx={phylopicOffsetXPx}
           phylopicOffsetYPx={phylopicOffsetYPx}
-          sharedSubtreeSourceTree={tree}
-          sharedSubtreeSourceTaxonomyMap={taxonomyMap}
+          sharedSubtreeSourceTreeRef={treeCanvasSourceTreeRef}
+          sharedSubtreeSourceTaxonomyMapRef={treeCanvasSourceTaxonomyMapRef}
           sharedSubtreeSourceNodeByViewNode={collapsedTaxonomyView?.sourceNodeByNode ?? null}
           metadataBranchColors={metadataEnabled && !metadataOverlaysSuppressed && metadataOverlay.hasAny ? metadataOverlay.colors : null}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
@@ -9932,6 +10003,7 @@ export default function App() {
             cameraRestoreRequest={comparisonCameraRestoreRequest}
             cameraRestoreState={comparisonCameraRestoreState}
             onCameraChange={setComparisonCamera}
+            onManualCameraInteraction={releaseSearchZoom}
           />
           </div>
         ) : null}

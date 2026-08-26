@@ -86,9 +86,10 @@ export default function SharePage() {
             <p className="about-author-line">
               A saved session contains the tree, visual settings, metadata,
               manual colors, collapsed clades, taxonomy mappings, and the
-              current viewport. If the session is saved after taxonomy mapping,
-              other users can open the mapped tree without downloading the NCBI
-              taxonomy dump.
+              current viewport. Comparison sessions also contain the second tree
+              and comparison settings. If a session is saved after taxonomy
+              mapping, other users can open the mapped tree without downloading
+              the corresponding taxonomy archive.
             </p>
           </div>
           <a className="about-top-link" href={`${import.meta.env.BASE_URL}#`}>

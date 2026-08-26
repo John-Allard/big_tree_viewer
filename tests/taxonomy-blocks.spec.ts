@@ -45,6 +45,97 @@ test("polyphyletic taxa produce exact non-overlapping blocks for every contiguou
   expect(owners).toEqual(familyByIndex.map((family) => [family]));
 });
 
+test("short unmapped runs inherit a taxonomy ribbon from matching neighbors", () => {
+  const orderedLeaves = [0, 1, 2, 3, 4];
+  const taxonomyMap: TaxonomyMapPayload = {
+    mappedCount: 4,
+    totalTips: 5,
+    activeRanks: ["family"],
+    tipRanks: orderedLeaves
+      .filter((node) => node !== 2)
+      .map((node) => ({ node, ranks: { family: "FamilyA" }, taxIds: { family: 101 } })),
+  };
+
+  const blocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, taxonomyMap, null).family;
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]).toMatchObject({ label: "FamilyA", startIndex: 0, endIndex: 5 });
+});
+
+test("long interior unmapped runs inherit from matching taxonomy anchors", () => {
+  const orderedLeaves = Array.from({ length: 100 }, (_, node) => node);
+  const taxonomyMap: TaxonomyMapPayload = {
+    mappedCount: 2,
+    totalTips: orderedLeaves.length,
+    activeRanks: ["class"],
+    tipRanks: [
+      { node: 0, ranks: { class: "Insecta" }, taxIds: { class: 50557 } },
+      { node: 99, ranks: { class: "Insecta" }, taxIds: { class: 50557 } },
+    ],
+  };
+
+  const blocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, taxonomyMap, null).class;
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]).toMatchObject({ label: "Insecta", startIndex: 0, endIndex: 100 });
+});
+
+test("large unmapped runs across the circular seam remain uninferred", () => {
+  const orderedLeaves = Array.from({ length: 10 }, (_, node) => node);
+  const taxonomyMap: TaxonomyMapPayload = {
+    mappedCount: 2,
+    totalTips: orderedLeaves.length,
+    activeRanks: ["class"],
+    tipRanks: [
+      { node: 2, ranks: { class: "Insecta" }, taxIds: { class: 50557 } },
+      { node: 7, ranks: { class: "Insecta" }, taxIds: { class: 50557 } },
+    ],
+  };
+
+  const blocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, taxonomyMap, null).class;
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]).toMatchObject({ label: "Insecta", startIndex: 2, endIndex: 8 });
+});
+
+test("mapped taxonomic interlopers remain separate contiguous ribbon chunks", () => {
+  const orderedLeaves = [0, 1, 2, 3, 4];
+  const taxonomyMap: TaxonomyMapPayload = {
+    mappedCount: 5,
+    totalTips: 5,
+    activeRanks: ["family"],
+    tipRanks: orderedLeaves.map((node) => ({
+      node,
+      ranks: { family: node === 2 ? "FamilyB" : "FamilyA" },
+    })),
+  };
+
+  const blocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, taxonomyMap, null).family;
+  expect(blocks.filter((block) => block.label === "FamilyA")).toHaveLength(1);
+  expect(blocks.filter((block) => block.label === "FamilyB")).toHaveLength(1);
+  const familyB = blocks.find((block) => block.label === "FamilyB");
+  expect(familyB).toMatchObject({ startIndex: 2, endIndex: 3 });
+});
+
+test("unmapped runs between different taxa remain unpainted", () => {
+  const orderedLeaves = [0, 1, 2, 3, 4];
+  const taxonomyMap: TaxonomyMapPayload = {
+    mappedCount: 4,
+    totalTips: 5,
+    activeRanks: ["family"],
+    tipRanks: [
+      { node: 0, ranks: { family: "FamilyA" } },
+      { node: 1, ranks: { family: "FamilyA" } },
+      { node: 3, ranks: { family: "FamilyB" } },
+      { node: 4, ranks: { family: "FamilyB" } },
+    ],
+  };
+
+  const blocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, taxonomyMap, null).family;
+  expect(blocks).toHaveLength(2);
+  expect(blocks.map((block) => [block.label, block.startIndex, block.endIndex])).toEqual([
+    ["FamilyA", 0, 2],
+    ["FamilyB", 3, 5],
+  ]);
+});
+
 test("adjacent child taxa receive separated colors inherited from one parent", () => {
   const families = ["FamilyA", "FamilyA", "FamilyB", "FamilyB", "FamilyA", "FamilyA", "FamilyC", "FamilyC", "FamilyD", "FamilyD", "FamilyE", "FamilyE"];
   const taxonomyMap: TaxonomyMapPayload = {

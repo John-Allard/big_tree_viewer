@@ -9,11 +9,20 @@ export type ParsedTaxonomyForMapping = {
   speciesIndex: Map<string, number[]>;
   speciesEpithetIndex?: Map<string, number[]>;
   genusIndex: Map<string, number[]>;
+  contextualGenusIndex?: Map<string, number[]>;
   namedTaxonIndex: Map<string, number[]>;
 };
 
 export const TAXONOMY_SPECIES_INDEX_NAME_CLASSES = new Set<string>([
   "scientific name",
+  "synonym",
+]);
+
+export const TAXONOMY_SPECIES_INDEX_RANKS = new Set<string>([
+  "species",
+  "subspecies",
+  "varietas",
+  "forma",
 ]);
 
 const TAXONOMY_COLLAPSE_RANK_PRECEDENCE = new Map<string, number>([
@@ -65,6 +74,7 @@ export type TipTaxonomyRequest = {
 export interface TaxonomyMappingOptions {
   enableCollapseFallbacks?: boolean;
   rejectEmbeddedBroadRankRuns?: boolean;
+  requireContextForGenusFallback?: boolean;
 }
 
 type ResolvedTipMapping = {
@@ -80,10 +90,12 @@ type CandidateLineage = {
   taxIds: Partial<Record<TaxonomyRank, number>>;
   collapseFallbacks: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
   requiresContext?: boolean;
+  allowBroadClassContext?: boolean;
 };
 
 const CONTEXT_RANK_WEIGHTS: Array<[TaxonomyRank, number]> = [
   ["superkingdom", 64],
+  ["kingdom", 48],
   ["phylum", 32],
   ["class", 16],
   ["order", 8],
@@ -257,6 +269,9 @@ function scoreCandidateAgainstResolvedNeighbors(
   candidate: CandidateLineage,
   tipIndex: number,
   resolved: Array<ResolvedTipMapping | null>,
+  trustedResolved: boolean[],
+  nearestTrusted: { left: Int32Array; right: Int32Array },
+  trustedContextOnly: boolean,
 ): number {
   let score = 0;
   let seenResolved = 0;
@@ -268,7 +283,7 @@ function scoreCandidateAgainstResolvedNeighbors(
         continue;
       }
       const neighbor = resolved[neighborIndex];
-      if (!neighbor) {
+      if (!neighbor || (trustedContextOnly && !trustedResolved[neighborIndex])) {
         continue;
       }
       seenResolved += 1;
@@ -286,6 +301,25 @@ function scoreCandidateAgainstResolvedNeighbors(
       }
     }
   }
+  if (!trustedContextOnly) {
+    return score;
+  }
+  for (const neighborIndex of [nearestTrusted.left[tipIndex], nearestTrusted.right[tipIndex]]) {
+    if (neighborIndex < 0) {
+      continue;
+    }
+    const neighbor = resolved[neighborIndex];
+    if (!neighbor) {
+      continue;
+    }
+    for (let rankIndex = 0; rankIndex < CONTEXT_RANK_WEIGHTS.length; rankIndex += 1) {
+      const [rank, rankWeight] = CONTEXT_RANK_WEIGHTS[rankIndex];
+      const candidateTaxId = candidate.taxIds[rank];
+      if (candidateTaxId && candidateTaxId === neighbor.taxIds[rank]) {
+        score += rankWeight;
+      }
+    }
+  }
   return score;
 }
 
@@ -293,6 +327,8 @@ function hasSupportingFamilyOrOrderContext(
   candidate: CandidateLineage,
   tipIndex: number,
   resolved: Array<ResolvedTipMapping | null>,
+  trustedResolved: boolean[],
+  trustedContextOnly: boolean,
 ): boolean {
   let seenResolved = 0;
   for (let radius = 1; radius <= 48 && seenResolved < 12; radius += 1) {
@@ -301,7 +337,7 @@ function hasSupportingFamilyOrOrderContext(
         continue;
       }
       const neighbor = resolved[neighborIndex];
-      if (!neighbor) {
+      if (!neighbor || (trustedContextOnly && !trustedResolved[neighborIndex])) {
         continue;
       }
       seenResolved += 1;
@@ -314,6 +350,73 @@ function hasSupportingFamilyOrOrderContext(
     }
   }
   return false;
+}
+
+function nearestTrustedIndices(trustedResolved: boolean[]): { left: Int32Array; right: Int32Array } {
+  const left = new Int32Array(trustedResolved.length);
+  const right = new Int32Array(trustedResolved.length);
+  let nearest = -1;
+  for (let index = 0; index < trustedResolved.length; index += 1) {
+    left[index] = nearest;
+    if (trustedResolved[index]) {
+      nearest = index;
+    }
+  }
+  nearest = -1;
+  for (let index = trustedResolved.length - 1; index >= 0; index -= 1) {
+    right[index] = nearest;
+    if (trustedResolved[index]) {
+      nearest = index;
+    }
+  }
+  return { left, right };
+}
+
+function hasSupportingCandidateContext(
+  candidate: CandidateLineage,
+  tipIndex: number,
+  resolved: Array<ResolvedTipMapping | null>,
+  trustedResolved: boolean[],
+  nearestTrusted: { left: Int32Array; right: Int32Array },
+  extendedTrustedContext: boolean,
+): boolean {
+  if (hasSupportingFamilyOrOrderContext(candidate, tipIndex, resolved, trustedResolved, extendedTrustedContext)) {
+    return true;
+  }
+  if (!extendedTrustedContext) {
+    return false;
+  }
+  const leftIndex = nearestTrusted.left[tipIndex];
+  const rightIndex = nearestTrusted.right[tipIndex];
+  for (const rank of ["family", "order"] as const) {
+    const candidateTaxId = candidate.taxIds[rank];
+    if (
+      candidateTaxId
+      && (
+        (leftIndex >= 0 && resolved[leftIndex]?.taxIds[rank] === candidateTaxId)
+        || (rightIndex >= 0 && resolved[rightIndex]?.taxIds[rank] === candidateTaxId)
+      )
+    ) {
+      return true;
+    }
+  }
+  if (!candidate.allowBroadClassContext) {
+    return false;
+  }
+  const candidateClass = candidate.taxIds.class;
+  const leftSupports = Boolean(
+    candidateClass
+    && leftIndex >= 0
+    && resolved[leftIndex]?.taxIds.class === candidateClass,
+  );
+  const rightSupports = Boolean(
+    candidateClass
+    && rightIndex >= 0
+    && resolved[rightIndex]?.taxIds.class === candidateClass,
+  );
+  return Boolean(
+    leftSupports || rightSupports,
+  );
 }
 
 function lineagesEquivalent(left: CandidateLineage, right: CandidateLineage, targetRanks: TaxonomyRank[]): boolean {
@@ -377,6 +480,7 @@ function collectCandidatesForTip(
   ancestorMemo: Map<string, number | null>,
   lineageMemo: Map<number, CandidateLineage | null>,
   enableCollapseFallbacks: boolean,
+  requireContextForGenusFallback: boolean,
 ): CandidateLineage[] {
   const speciesNameCandidates = candidateSpeciesNames(tip.name);
   let speciesCandidates: number[] = [];
@@ -392,9 +496,13 @@ function collectCandidatesForTip(
     ? [...(taxonomy.namedTaxonIndex.get(exactTaxonName) ?? [])]
     : [];
   const hasPrimaryCandidates = speciesCandidates.length > 0 || exactTaxonCandidates.length > 0;
-  const genusCandidates = hasPrimaryCandidates
+  const directGenusCandidates = hasPrimaryCandidates
     ? []
     : [...(taxonomy.genusIndex.get(extractGenus(tip.name)) ?? [])];
+  const contextualGenusCandidates = hasPrimaryCandidates
+    ? []
+    : [...(taxonomy.contextualGenusIndex?.get(extractGenus(tip.name)) ?? [])];
+  const genusCandidates = [...directGenusCandidates, ...contextualGenusCandidates];
   const epithetCandidates = hasPrimaryCandidates
     ? []
     : [...(taxonomy.speciesEpithetIndex?.get(extractSpeciesEpithet(tip.name)) ?? [])];
@@ -403,15 +511,24 @@ function collectCandidatesForTip(
     : exactTaxonCandidates.length > 0
       ? exactTaxonCandidates
       : [...genusCandidates, ...epithetCandidates];
-  const genusCandidateIds = new Set(genusCandidates);
+  const directGenusCandidateIds = new Set(directGenusCandidates);
+  const contextualGenusCandidateIds = new Set(contextualGenusCandidates);
   const epithetCandidateIds = new Set(epithetCandidates);
   const unique = [...new Set(source)];
   const candidates: CandidateLineage[] = [];
   for (let index = 0; index < unique.length; index += 1) {
     const lineage = buildCandidateLineage(unique[index], taxonomy, targetRanks, ancestorMemo, lineageMemo, enableCollapseFallbacks);
     if (lineage) {
-      const requiresContext = epithetCandidateIds.has(unique[index]) && !genusCandidateIds.has(unique[index]);
-      candidates.push(requiresContext ? { ...lineage, requiresContext: true } : lineage);
+      const genusFallback = directGenusCandidateIds.has(unique[index]) || contextualGenusCandidateIds.has(unique[index]);
+      const requiresContext = (
+        !directGenusCandidateIds.has(unique[index])
+        && (epithetCandidateIds.has(unique[index]) || contextualGenusCandidateIds.has(unique[index]))
+      ) || (requireContextForGenusFallback && genusFallback);
+      candidates.push(requiresContext ? {
+        ...lineage,
+        requiresContext: true,
+        allowBroadClassContext: genusFallback,
+      } : lineage);
     }
   }
   return candidates;
@@ -425,10 +542,20 @@ export function mapTipsWithContext(
   options: TaxonomyMappingOptions = {},
 ): TaxonomyMapPayload {
   const enableCollapseFallbacks = options.enableCollapseFallbacks ?? true;
+  const requireContextForGenusFallback = options.requireContextForGenusFallback ?? false;
   const ancestorMemo = new Map<string, number | null>();
   const lineageMemo = new Map<number, CandidateLineage | null>();
-  const candidatesByTip = tips.map((tip) => collectCandidatesForTip(tip, taxonomy, targetRanks, ancestorMemo, lineageMemo, enableCollapseFallbacks));
+  const candidatesByTip = tips.map((tip) => collectCandidatesForTip(
+    tip,
+    taxonomy,
+    targetRanks,
+    ancestorMemo,
+    lineageMemo,
+    enableCollapseFallbacks,
+    requireContextForGenusFallback,
+  ));
   const resolved: Array<ResolvedTipMapping | null> = new Array(tips.length).fill(null);
+  const trustedResolved = new Array<boolean>(tips.length).fill(false);
 
   for (let index = 0; index < tips.length; index += 1) {
     const candidates = candidatesByTip[index];
@@ -439,8 +566,10 @@ export function mapTipsWithContext(
         taxIds: candidates[0].taxIds,
         collapseFallbacks: candidates[0].collapseFallbacks,
       };
+      trustedResolved[index] = true;
     }
   }
+  const nearestTrusted = nearestTrustedIndices(trustedResolved);
 
   let changed = true;
   while (changed) {
@@ -457,7 +586,14 @@ export function mapTipsWithContext(
       if (
         candidates.length > 1
         && contextIndependentCandidates.length === 1
-        && hasSupportingFamilyOrOrderContext(contextIndependentCandidates[0], index, resolved)
+        && hasSupportingCandidateContext(
+          contextIndependentCandidates[0],
+          index,
+          resolved,
+          trustedResolved,
+          nearestTrusted,
+          requireContextForGenusFallback,
+        )
       ) {
         const candidate = contextIndependentCandidates[0];
         resolved[index] = {
@@ -471,7 +607,17 @@ export function mapTipsWithContext(
       }
       if (candidates.length === 1) {
         const candidate = candidates[0];
-        if (candidate.requiresContext && hasSupportingFamilyOrOrderContext(candidate, index, resolved)) {
+        if (
+          candidate.requiresContext
+          && hasSupportingCandidateContext(
+            candidate,
+            index,
+            resolved,
+            trustedResolved,
+            nearestTrusted,
+            requireContextForGenusFallback,
+          )
+        ) {
           resolved[index] = {
             node: tips[index].node,
             ranks: candidate.ranks,
@@ -487,7 +633,14 @@ export function mapTipsWithContext(
       let secondBestScore = 0;
       for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
         const candidate = candidates[candidateIndex];
-        const score = scoreCandidateAgainstResolvedNeighbors(candidate, index, resolved);
+        const score = scoreCandidateAgainstResolvedNeighbors(
+          candidate,
+          index,
+          resolved,
+          trustedResolved,
+          nearestTrusted,
+          requireContextForGenusFallback,
+        );
         if (score > bestScore) {
           secondBestScore = bestScore;
           bestScore = score;
@@ -500,7 +653,14 @@ export function mapTipsWithContext(
         best
         && bestScore > 0
         && (bestScore - secondBestScore) > 1e-6
-        && (!best.requiresContext || hasSupportingFamilyOrOrderContext(best, index, resolved))
+        && (!best.requiresContext || hasSupportingCandidateContext(
+          best,
+          index,
+          resolved,
+          trustedResolved,
+          nearestTrusted,
+          requireContextForGenusFallback,
+        ))
       ) {
         resolved[index] = {
           node: tips[index].node,

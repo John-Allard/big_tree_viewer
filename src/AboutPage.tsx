@@ -20,13 +20,13 @@ const figureSections = [
     title: "Automatically map taxonomy and display ribbons",
     image: `${import.meta.env.BASE_URL}about/example-50k-circular-taxonomy.png`,
     alt: "Circular Big Tree Viewer screenshot showing a mapped 50k-tip tree with taxonomy ribbons.",
-    text: "The Taxonomy panel can map species names with NCBI Taxonomy or Catalogue of Life. Genus, family, order, class, and phylum are then drawn as colored ribbons, making the broad structure of a species tree readable without panning.",
+    text: "The Taxonomy panel can map species names with NCBI Taxonomy or Catalogue of Life. Genus, family, order, class, and phylum can then be drawn as colored ribbons; kingdom is available as an optional rank when multiple kingdoms are present.",
   },
   {
     title: "Smoothly zoom in to display taxonomy detail",
     image: `${import.meta.env.BASE_URL}about/example-circular-taxonomy-quadrant.png`,
     alt: "Big Tree Viewer screenshot showing one quadrant of a circular vertebrate tree with class, order, and family ribbons and branches colored by class.",
-    text: "Zooming into part of the tree exposes finer ranks while keeping coarser ones in view. Daughter taxa inherit the color with jitter from their parent taxon to make them visually distinct the user can choose or define new color palettes and set the degree of jitter.",
+    text: "Zooming into part of the tree exposes finer ranks while keeping coarser ones in view. Daughter taxa inherit color from their parent taxon with adjustable jitter; users can choose a built-in palette, define a custom palette, and control the palette anchor rank.",
   },
   {
     title: "Local detail with global context",
@@ -56,7 +56,7 @@ const figureSections = [
       },
     ],
     alt: "Two Big Tree Viewer metadata examples showing branch coloring and per-tip pie charts.",
-    text: "CSV or TSV metadata can color branches, add labels and markers, or display several numeric values together as pie charts. The examples show a binary branch-color overlay on a 50,062-tip tree and four-part composition data on individual tips.",
+    text: "CSV or TSV metadata can color branches, add labels and markers, display several numeric values as pie charts, or place bars, heat maps, and categorical cells beside rectangular tip labels. The examples show a binary branch-color overlay and four-part composition data.",
     wide: true,
   },
   {
@@ -169,11 +169,23 @@ const capabilities = [
   },
   {
     label: "Taxonomy",
-    text: "Optional NCBI Taxonomy or Catalogue of Life mapping, species-name matching, and ribbons for genus through phylum. Ranks can be collapsed to summarize clades.",
+    text: "Optional NCBI Taxonomy or Catalogue of Life mapping, species-name matching, ribbons for genus through phylum, and optional kingdom ribbons. Ranks can be collapsed to summarize clades.",
   },
   {
     label: "Metadata",
-    text: "CSV/TSV tables can be joined to tree labels to drive branch colors, labels, markers, and multivalue pie charts, with continuous and categorical palettes.",
+    text: "CSV/TSV tables can drive branch colors, labels, markers, multivalue pie charts, and tip-aligned bars, heat maps, or categorical tables.",
+  },
+  {
+    label: "Node annotations",
+    text: "Display internal labels, bootstrap support, node heights, and annotated node-height intervals with configurable labels and error-bar styles.",
+  },
+  {
+    label: "Tree comparison",
+    text: "Compare two trees as a tanglegram, optimize the right-hand tip order, inspect incompatible splits, and calculate shared-tip Robinson-Foulds statistics.",
+  },
+  {
+    label: "Analysis",
+    text: "Inspect whole-tree or selected-subtree statistics and interactively measure patristic distance while highlighting the connecting path.",
   },
   {
     label: "Search and navigation",
@@ -181,7 +193,7 @@ const capabilities = [
   },
   {
     label: "Export",
-    text: "Save the current view as PNG or SVG for downstream figure preparation.",
+    text: "Save the current view as PNG or SVG, or save a compressed session containing the tree, mappings, metadata, comparison state, and viewport.",
   },
   {
     label: "Privacy",

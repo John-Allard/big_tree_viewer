@@ -26,6 +26,19 @@ const FIXTURE = `Eukaryota Chatton, 1925 [domain]
           Muridae Illiger, 1811 [family]
             Mus Linnaeus, 1758 [genus]
               Mus (Mus) musculus Linnaeus, 1758 [species]
+    Arthropoda von Siebold, 1848 [phylum]
+      Malacostraca Latreille, 1802 [class]
+        Amphipoda Latreille, 1816 [order]
+          Eriopisidae Example, 1900 [family]
+            Eriopisa Stebbing, 1890 [genus]
+              =Eriopis Bruzelius, 1859 [genus]
+              Eriopisa elongata Bruzelius, 1859 [species]
+      Insecta Linnaeus, 1758 [class]
+        Coleoptera Linnaeus, 1758 [order]
+          Coccinellidae Latreille, 1807 [family]
+            Ladybirdus Example, 1900 [genus]
+              Ladybirdus anchor Example, 1900 [species]
+              Ladybirdus secunda Example, 1901 [species]
   Plantae Haeckel, 1866 [kingdom]
     Tracheophyta Sinnott ex Cavalier-Smith, 1998 [phylum]
       Magnoliopsida Brongniart, 1843 [class]
@@ -67,9 +80,12 @@ test("TextTree mapping ignores authorship after an exact scientific-name prefix"
   expect(payload.mappedCount).toBe(3);
   expect(byNode.get(1)?.ranks.genus).toBe("Homo");
   expect(byNode.get(1)?.ranks.family).toBe("Hominidae");
+  expect(byNode.get(1)?.ranks.kingdom).toBe("Animalia");
   expect(byNode.get(1)?.ranks.superkingdom).toBe("Eukaryota");
   expect(byNode.get(2)?.ranks.order).toBe("Primates");
   expect(byNode.get(3)?.ranks.phylum).toBe("Tracheophyta");
+  expect(byNode.get(3)?.ranks.kingdom).toBe("Plantae");
+  expect(payload.activeRanks).toContain("kingdom");
 });
 
 test("TextTree synonyms inherit the accepted taxon's lineage", () => {
@@ -100,6 +116,63 @@ test("an obsolete genus combination maps by epithet only with close family or or
   expect(byNode.get(14)?.ranks.genus).toBe("Cephalophus");
   expect(byNode.get(14)?.ranks.family).toBe("Bovidae");
   expect(byNode.get(14)?.ranks.order).toBe("Artiodactyla");
+});
+
+test("a homonymous genus fallback cannot seed a false class mapping", () => {
+  const payload = parseFixture([
+    { node: 30, name: "Ladybirdus anchor" },
+    { node: 31, name: "Eriopis canrash" },
+    { node: 32, name: "Ladybirdus secunda" },
+  ]);
+  const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
+
+  expect(byNode.get(30)?.ranks.class).toBe("Insecta");
+  expect(byNode.get(32)?.ranks.class).toBe("Insecta");
+  expect(byNode.has(31)).toBe(false);
+});
+
+test("an accepted genus can classify a species absent from the TextTree", () => {
+  const payload = parseFixture([
+    { node: 33, name: "Ladybirdus anchor" },
+    { node: 34, name: "Ladybirdus missing" },
+    { node: 35, name: "Ladybirdus secunda" },
+  ]);
+  const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
+
+  expect(payload.mappedCount).toBe(3);
+  expect(byNode.get(34)?.ranks.class).toBe("Insecta");
+  expect(byNode.get(34)?.ranks.family).toBe("Coccinellidae");
+  expect(byNode.get(34)?.ranks.genus).toBe("Ladybirdus");
+});
+
+test("an accepted genus can use one trusted class flank at a class boundary", () => {
+  const payload = parseFixture([
+    { node: 36, name: "Ladybirdus anchor" },
+    { node: 37, name: "Ladybirdus missing" },
+    { node: 38, name: "Malus domestica" },
+  ]);
+  const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
+
+  expect(payload.mappedCount).toBe(3);
+  expect(byNode.get(37)?.ranks.class).toBe("Insecta");
+  expect(byNode.get(37)?.ranks.genus).toBe("Ladybirdus");
+});
+
+test("a long run of absent species can use trusted taxonomy at its flanks", () => {
+  const missing = Array.from({ length: 80 }, (_, index) => ({
+    node: 100 + index,
+    name: `Ladybirdus missing${index}`,
+  }));
+  const payload = parseFixture([
+    { node: 99, name: "Ladybirdus anchor" },
+    ...missing,
+    { node: 180, name: "Ladybirdus secunda" },
+  ]);
+  const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
+
+  expect(payload.mappedCount).toBe(82);
+  expect(byNode.get(140)?.ranks.class).toBe("Insecta");
+  expect(byNode.get(140)?.ranks.family).toBe("Coccinellidae");
 });
 
 test("parenthesized subgenera do not prevent an exact binomial match", () => {

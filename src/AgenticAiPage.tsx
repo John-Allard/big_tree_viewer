@@ -1,6 +1,6 @@
 export default function AgenticAiPage() {
   const skillZipUrl = "https://bigtreeviewer.net/agentic-ai/bigtreeviewer-agent-skill.zip";
-  const skillZipSha256 = "7e68da5d16c59420def7f34caeb8bf2cee785ff527e9191d9710931f00faf50c";
+  const skillZipSha256 = "e15ad9b11a0ee422bc9f444a6d76c4585db46b1aa7811fb5c1c9adcb8f88e851";
 
   return (
     <main className="about-page api-page">
@@ -117,7 +117,7 @@ directory for this agent.`}</code></pre>
         <section className="api-doc-section">
           <h2>What you can ask an agent to do</h2>
           <ul>
-            <li>Open this Newick file in Big Tree Viewer as a circular tree.</li>
+            <li>Open this Newick file in Big Tree Viewer as a radial tree.</li>
             <li>Render this modest tree as an SVG with tip labels hidden and thicker branches.</li>
             <li>Make a PNG spiral view of this tree for a slide.</li>
             <li>Load this metadata table, color branches by group, and export the current view.</li>
@@ -142,8 +142,8 @@ directory for this agent.`}</code></pre>
 
         <section className="api-doc-section">
           <h2>Example commands</h2>
-          <pre><code>{`python scripts/btv_open.py tree.nwk --view circular --tip-labels true
-python scripts/btv_render.py tree.nwk --output tree.png --view circular
+          <pre><code>{`python scripts/btv_open.py tree.nwk --view radial --tip-labels true
+python scripts/btv_render.py tree.nwk --output tree.png --view radial
 python scripts/btv_render.py tree.nwk --output spiral.png --view spiral
 python scripts/btv_render.py saved-view.btvsession --output saved-view.png`}</code></pre>
         </section>

@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 test("metadata guide presents the workflow with responsive images", async ({ page }) => {
   await page.goto("/#metadata");
@@ -45,6 +48,25 @@ test("API documentation page is linked and documents launch parameters", async (
   await expect(page.getByRole("heading", { name: "Compact taxonomy handoff" })).toBeVisible();
   await expect(page.getByText("big-tree-viewer-compact-taxonomy").first()).toBeVisible();
   await expect(page.getByText("Metadata-driven branch colors")).toBeVisible();
+});
+
+test("documentation describes comparison, measurements, annotations, and optional kingdom ribbons", async ({ page }) => {
+  await page.goto("/#about");
+  await expect(page.getByText("Tree comparison", { exact: true })).toBeVisible();
+  await expect(page.getByText("Node annotations", { exact: true })).toBeVisible();
+  await expect(page.getByText(/optional kingdom ribbons/)).toBeVisible();
+
+  await page.goto("/#faq");
+  await expect(page.getByRole("heading", { name: "How does tree comparison work?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What tree statistics and distance measurements are available?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "How are support values, node heights, and node-height intervals displayed?" })).toBeVisible();
+});
+
+test("published agent skill checksum matches the downloadable ZIP", async ({ page }) => {
+  const zipPath = path.resolve(import.meta.dirname, "../public/agentic-ai/bigtreeviewer-agent-skill.zip");
+  const checksum = createHash("sha256").update(await fs.readFile(zipPath)).digest("hex");
+  await page.goto("/#agentic-ai");
+  await expect(page.getByText(new RegExp(`expected: ${checksum}`))).toBeVisible();
 });
 
 test("share sessions page generates a launch link and QR code", async ({ page }) => {
@@ -134,7 +156,7 @@ test("new-user tutorial prompt can start, advance, and persist dismissal", async
 
   await page.getByRole("button", { name: "Next" }).click();
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Map taxonomy");
-  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("automatically map binomial species tip names");
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Map binomial tip names with NCBI Taxonomy or Catalogue of Life");
   await expect(page.locator('[data-tour="taxonomy"]')).toHaveClass(/tour-highlight/);
 
   await page.getByRole("button", { name: "Next" }).click();
@@ -143,6 +165,22 @@ test("new-user tutorial prompt can start, advance, and persist dismissal", async
   await expect(page.locator('[data-tour="branch-menu-demo"]')).toHaveClass(/tour-highlight/);
   await expect(page.locator('[data-tour="branch-menu-demo"]')).toContainText("Right click to open this menu");
   await expect(page.locator('[data-tour="branch-menu-demo"]')).toContainText("Color Subtree");
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Display metadata");
+  await expect(page.locator('[data-tour="metadata"]')).toHaveClass(/tour-highlight/);
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Compare two trees");
+  await expect(page.locator('[data-tour="comparison"]')).toHaveClass(/tour-highlight/);
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Inspect tree statistics");
+  await expect(page.locator('[data-tour="stats"]')).toHaveClass(/tour-highlight/);
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Save your work");
+  await expect(page.locator('[data-tour="sessions"]')).toHaveClass(/tour-highlight/);
 
   await page.getByRole("button", { name: "Stop" }).click();
   await page.reload();

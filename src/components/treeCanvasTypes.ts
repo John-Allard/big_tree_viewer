@@ -43,7 +43,7 @@ export interface AutomationExportResult {
 }
 
 export interface TreeCanvasProps {
-  tree: TreeModel | null;
+  treeRef: { current: TreeModel | null };
   order: LayoutOrder;
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;
@@ -79,8 +79,8 @@ export interface TreeCanvasProps {
   useAutomaticTaxonomyRankVisibility: boolean;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyCollapseRank: TaxonomyCollapseRank;
-  taxonomyMap: TaxonomyMapPayload | null;
-  taxonomyColorSourceMap?: TaxonomyMapPayload | null;
+  taxonomyMapRef: { current: TaxonomyMapPayload | null };
+  taxonomyColorSourceMapRef: { current: TaxonomyMapPayload | null };
   phylopicEnabled: boolean;
   phylopicSilhouettes: PhyloPicSilhouette[];
   phylopicPlacement: "after-label" | "outside-ribbon";
@@ -90,8 +90,8 @@ export interface TreeCanvasProps {
   onPhyloPicRemoveSilhouette?: (silhouette: PhyloPicSilhouette) => void;
   onPhyloPicTryAnotherSilhouette?: (silhouette: PhyloPicSilhouette) => void;
   hideDownloadNewick?: boolean;
-  sharedSubtreeSourceTree?: TreeModel | null;
-  sharedSubtreeSourceTaxonomyMap?: TaxonomyMapPayload | null;
+  sharedSubtreeSourceTreeRef: { current: TreeModel | null };
+  sharedSubtreeSourceTaxonomyMapRef: { current: TaxonomyMapPayload | null };
   sharedSubtreeSourceNodeByViewNode?: Int32Array | null;
   metadataBranchColors: Array<string | null> | null;
   metadataBranchColorVersion: string;
@@ -185,6 +185,7 @@ export interface TreeCanvasSessionState {
   collapsedNodeModes?: Array<[number, CollapsedNodeMode]>;
   manualBranchColors: Array<[number, string]>;
   manualSubtreeColors: Array<[number, string]>;
+  taxonomyRootColors?: Array<[string, string]>;
 }
 
 export interface GenusBlock {

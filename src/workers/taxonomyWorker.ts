@@ -11,6 +11,7 @@ import {
   normalizeTaxonomyName,
   TAXONOMY_NAMED_LINEAGE_RANKS,
   TAXONOMY_SPECIES_INDEX_NAME_CLASSES,
+  TAXONOMY_SPECIES_INDEX_RANKS,
 } from "../lib/taxonomyNameResolver";
 import type { TaxonomyMapPayload, TaxonomyRank, TaxonomySource } from "../types/taxonomy";
 
@@ -28,8 +29,8 @@ const TAXONOMY_URLS: Record<TaxonomySource, string> = {
   ncbi: "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip",
   "catalogue-of-life": "https://download.checklistbank.org/col/latest_txtree.zip",
 };
-const TAXONOMY_MAPPING_VERSION = 9;
-const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
+const TAXONOMY_MAPPING_VERSION = 11;
+const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "kingdom", "superkingdom"];
 
 type NodeInfo = { parentId: number; rank: string };
 type ParsedTaxonomy = {
@@ -90,7 +91,7 @@ function parseTaxonomyNameLine(
   const scientificName = parts[1];
   const nameClass = parts[3];
   const rank = nodes.get(taxId)?.rank ?? "";
-  if (rank === "species" && TAXONOMY_SPECIES_INDEX_NAME_CLASSES.has(nameClass)) {
+  if (TAXONOMY_SPECIES_INDEX_RANKS.has(rank) && TAXONOMY_SPECIES_INDEX_NAME_CLASSES.has(nameClass)) {
     const normalized = normalizeTaxonomyName(scientificName);
     if (lookupFilters.speciesNames.has(normalized)) {
       addTaxonomyIndexEntry(speciesIndex, normalized, taxId);

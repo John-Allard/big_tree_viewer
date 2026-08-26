@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { fontFamilyCss, type FigureStyleSettings } from "../lib/figureStyles";
 import { buildComparisonLayout, normalizeComparisonTipName } from "../lib/treeComparison";
-import { TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
+import { isAutomaticTaxonomyRank, TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 import type { LayoutOrder, TreeModel, ZoomAxisMode } from "../types/tree";
 import type { TaxonomyRankDisplayMode } from "./treeCanvasTypes";
 import { buildTaxonomyColorMap, taxonomyVisibleRanksForZoom } from "./TreeCanvas";
@@ -40,6 +40,7 @@ interface TreeComparisonCanvasProps {
   cameraRestoreRequest: number;
   cameraRestoreState: TreeComparisonCameraState | null;
   onCameraChange: (camera: TreeComparisonCameraState) => void;
+  onManualCameraInteraction: () => void;
 }
 
 export interface ComparisonSearchResult {
@@ -303,6 +304,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     cameraRestoreRequest,
     cameraRestoreState,
     onCameraChange,
+    onManualCameraInteraction,
   } = props;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -334,7 +336,9 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     }
     return [...taxonomyMap.activeRanks]
       .filter((rank) => useAutomaticTaxonomyRankVisibility
-        || (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) === "ribbon")
+        ? isAutomaticTaxonomyRank(rank)
+          || (taxonomyRankDisplayModes.kingdom ?? "hidden") === "ribbon"
+        : (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) === "ribbon")
       .sort((left, right) => TAXONOMY_RANKS.indexOf(right) - TAXONOMY_RANKS.indexOf(left));
   }, [taxonomyEnabled, taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
   const activeRanks = useMemo(() => {
@@ -1092,6 +1096,9 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
   const handleWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
     event.preventDefault();
     updateHoverTooltip(null);
+    if (searchZoomLocked) {
+      onManualCameraInteraction();
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     const cursorX = event.clientX - rect.left;
     const cursorY = event.clientY - rect.top;
@@ -1141,6 +1148,9 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     }
     if (drag.pointerId !== event.pointerId) {
       return;
+    }
+    if (searchZoomLocked && (event.clientX !== drag.startX || event.clientY !== drag.startY)) {
+      onManualCameraInteraction();
     }
     setCamera((current) => ({
       ...current,
