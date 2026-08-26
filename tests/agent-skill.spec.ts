@@ -173,6 +173,42 @@ test("interactive helper promotes a local tree into one top-level BTV tab", asyn
   await expect(page.getByText(/Loaded session from/)).toBeVisible();
 });
 
+test("agent skill supports unified radial controls and rectangular radial exports", async () => {
+  const bootstrap = [
+    "import argparse, json, sys",
+    "sys.path.insert(0, sys.argv[1])",
+    "import btv_common",
+    "parser = argparse.ArgumentParser()",
+    "btv_common.add_common_arguments(parser)",
+    "args = parser.parse_args(sys.argv[2:])",
+    "payload = btv_common.load_payload(args)",
+    "dimensions = btv_common.export_dimensions_for_view('png', 'radial', 800, 500, None, None)",
+    "print(json.dumps({'visual': payload['visual'], 'dimensions': dimensions}))",
+  ].join(";");
+  const result = await execFileAsync("python3", [
+    "-S",
+    "-c",
+    bootstrap,
+    scriptsDir,
+    treePath,
+    "--view", "radial",
+    "--radial-span", "240",
+    "--radial-inner-radius", "0.35",
+  ], {
+    cwd: repoRoot,
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+    timeout: 30_000,
+  });
+  const parsed = JSON.parse(result.stdout) as {
+    visual: Record<string, unknown>;
+    dimensions: Array<number | null>;
+  };
+  expect(parsed.visual.viewMode).toBe("radial");
+  expect(parsed.visual.radialAngularSpanDegrees).toBe(240);
+  expect(parsed.visual.radialCenterOpeningRatio).toBe(0.35);
+  expect(parsed.dimensions).toEqual([800, 500, null, null]);
+});
+
 test("agent skill renders all view modes without using the active browser", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   const browserPath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || chromium.executablePath();

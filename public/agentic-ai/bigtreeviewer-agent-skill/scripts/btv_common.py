@@ -62,7 +62,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--metadata", help="Optional local CSV/TSV metadata file.")
     parser.add_argument("--metadata-key", help="Metadata column matched to tree labels.")
     parser.add_argument("--metadata-value", help="Metadata value/color column.")
-    parser.add_argument("--view", choices=["rectangular", "circular", "fan", "spiral"], help="Tree view mode.")
+    parser.add_argument("--view", choices=["rectangular", "radial", "circular", "fan", "spiral"], help="Tree view mode. Circular and fan remain accepted as radial presets.")
     parser.add_argument("--order", choices=["asc", "desc", "input"], help="Child ordering.")
     parser.add_argument("--tip-labels", type=parse_bool, help="Show tip labels: true or false.")
     parser.add_argument("--genus-labels", type=parse_bool, help="Show genus labels: true or false.")
@@ -76,6 +76,8 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--scale-bars", type=parse_bool, help="Show scale bars: true or false.")
     parser.add_argument("--branch-thickness", type=float, help="Branch thickness scale.")
     parser.add_argument("--rotation", type=float, help="Circular rotation in degrees.")
+    parser.add_argument("--radial-span", type=float, help="Radial angular span in degrees from 30 to 360.")
+    parser.add_argument("--radial-inner-radius", type=float, help="Radial inner-radius fraction from 0 to 0.85.")
     parser.add_argument("--spiral-turns", type=float, help="Number of spiral turns.")
     parser.add_argument("--rect-scale-x", type=float, help="Rectangular camera x scale. Use with the other --rect-* camera options.")
     parser.add_argument("--rect-scale-y", type=float, help="Rectangular camera y scale. Use with the other --rect-* camera options.")
@@ -116,6 +118,8 @@ def load_payload(args: argparse.Namespace, *, require_source: bool = True) -> di
         "scale_bars": "showScaleBars",
         "branch_thickness": "branchThicknessScale",
         "rotation": "circularRotationDegrees",
+        "radial_span": "radialAngularSpanDegrees",
+        "radial_inner_radius": "radialCenterOpeningRatio",
         "spiral_turns": "spiralTurns",
     }
     for arg_name, payload_name in option_map.items():
@@ -153,13 +157,13 @@ def load_payload(args: argparse.Namespace, *, require_source: bool = True) -> di
 
 def payload_view_mode(payload: dict[str, Any], fallback: str = "rectangular") -> str:
     visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
-    if visual.get("viewMode") in {"rectangular", "circular", "fan", "spiral"}:
+    if visual.get("viewMode") in {"rectangular", "radial", "circular", "fan", "spiral"}:
         return str(visual["viewMode"])
     session = payload.get("session") if isinstance(payload.get("session"), dict) else {}
     settings = session.get("settings") if isinstance(session.get("settings"), dict) else {}
-    if settings.get("viewMode") in {"rectangular", "circular", "fan", "spiral"}:
+    if settings.get("viewMode") in {"rectangular", "radial", "circular", "fan", "spiral"}:
         return str(settings["viewMode"])
-    return fallback if fallback in {"rectangular", "circular", "fan", "spiral"} else "rectangular"
+    return fallback if fallback in {"rectangular", "radial", "circular", "fan", "spiral"} else "rectangular"
 
 
 def export_dimensions_for_view(
@@ -172,7 +176,7 @@ def export_dimensions_for_view(
 ) -> tuple[int | None, int | None, int | None, int | None]:
     if export_format != "png":
         return None, None, viewport_width, viewport_height
-    if view_mode in {"rectangular", "fan"}:
+    if view_mode != "spiral":
         return (
             width if width is not None else DEFAULT_RECTANGULAR_EXPORT_SIZE[0],
             height if height is not None else DEFAULT_RECTANGULAR_EXPORT_SIZE[1],
@@ -180,9 +184,9 @@ def export_dimensions_for_view(
             viewport_height,
         )
     if width is not None and height is not None and width != height:
-        raise SystemExit("Circular and spiral PNG exports must be square. Use equal --width and --height, or provide only one dimension.")
+        raise SystemExit("Spiral PNG exports must be square. Use equal --width and --height, or provide only one dimension.")
     if viewport_width is not None and viewport_height is not None and viewport_width != viewport_height:
-        raise SystemExit("Circular and spiral PNG export viewports must be square. Use equal viewport dimensions, or provide only one.")
+        raise SystemExit("Spiral PNG export viewports must be square. Use equal viewport dimensions, or provide only one.")
     size = width if width is not None else height
     if size is None:
         size = DEFAULT_SQUARE_EXPORT_SIZE[0]
