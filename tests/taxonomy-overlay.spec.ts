@@ -734,7 +734,7 @@ test("custom color input does not dismiss the context menu before selection", as
   await expect(page.getByRole("button", { name: "Clear Branch Color" })).toBeVisible();
 });
 
-test("opening a subtree in a new tab inherits the loaded taxonomy mapping", async ({ page, context }) => {
+test("opening a subtree in a new tab inherits taxonomy and resets visible ranks to automatic", async ({ page, context }) => {
   await waitForViewer(page);
   await enableMockTaxonomy(page);
   await page.evaluate(async () => {
@@ -748,6 +748,8 @@ test("opening a subtree in a new tab inherits the loaded taxonomy mapping", asyn
     window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("order", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("family", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("genus", false);
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
@@ -807,10 +809,21 @@ test("opening a subtree in a new tab inherits the loaded taxonomy mapping", asyn
   expect(popupState?.branchThicknessScale).toBeCloseTo(1.8, 4);
   expect(popupState?.taxonomyBranchColoringEnabled).toBe(false);
   expect(popupState?.taxonomyColorJitter).toBeCloseTo(1.6, 4);
-  expect(popupState?.taxonomyRankVisibilityAuto).toBe(false);
+  expect(popupState?.taxonomyRankVisibilityAuto).toBe(true);
   expect(popupState?.circularCenterScaleAngleAuto).toBe(false);
   expect(popupState?.circularCenterScaleAngleDegrees).toBeCloseTo(23, 4);
   expect(Boolean(popupState?.figureStyles?.tip?.bold)).toBe(true);
+  const popupTaxonomyRender = await popup.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      taxonomyVisibleRanks?: string[];
+    } | undefined;
+    return {
+      visibleRanks: debug?.taxonomyVisibleRanks ?? [],
+    };
+  });
+  expect(popupTaxonomyRender.visibleRanks.length).toBeGreaterThan(0);
   await popup.close();
 });
 
@@ -820,6 +833,11 @@ test("opening a large taxonomy group subtree in a new tab keeps taxonomy enabled
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("order", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("family", false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("genus", false);
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
     if (!camera || camera.kind !== "rect") {
@@ -858,13 +876,29 @@ test("opening a large taxonomy group subtree in a new tab keeps taxonomy enabled
   const popupState = await popup.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null) as {
     taxonomyEnabled?: boolean;
     taxonomyMappedCount?: number;
+    taxonomyRankVisibilityAuto?: boolean;
   } | null;
   expect(Boolean(popupState?.taxonomyEnabled)).toBe(true);
   expect(Number(popupState?.taxonomyMappedCount ?? 0)).toBeGreaterThan(0);
+  expect(popupState?.taxonomyRankVisibilityAuto).toBe(true);
+  const popupRender = await popup.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyVisibleRanks?: string[];
+      taxonomyRenderedBlocks?: unknown[];
+    } | undefined;
+    return {
+      visibleRanks: debug?.taxonomyVisibleRanks ?? [],
+      blockCount: debug?.taxonomyRenderedBlocks?.length ?? 0,
+    };
+  });
+  expect(popupRender.visibleRanks.length).toBeGreaterThan(0);
+  expect(popupRender.blockCount).toBeGreaterThan(0);
   await popup.close();
 });
 
-test("shared subtree taxonomy recomputes active ranks for the standalone tree", async ({ page, context }) => {
+test("shared subtree taxonomy preserves available outer ranks despite a dominant group", async ({ page, context }) => {
   await waitForViewer(page);
   const subtreeKey = `big-tree-viewer:subtree:test-${Date.now()}`;
   await page.evaluate((key) => {
@@ -875,16 +909,16 @@ test("shared subtree taxonomy recomputes active ranks for the standalone tree", 
         version: 3,
         mappedCount: 8,
         totalTips: 8,
-        activeRanks: ["genus", "family", "order", "class"],
+        activeRanks: ["genus", "family", "order", "class", "phylum", "kingdom"],
         tipEntries: [
-          { name: "Alpha", ranks: { class: "Aves", order: "Passeriformes", family: "FamA", genus: "Alpha" } },
-          { name: "Beta", ranks: { class: "Aves", order: "Passeriformes", family: "FamA", genus: "Beta" } },
-          { name: "Gamma", ranks: { class: "Aves", order: "Galliformes", family: "FamB", genus: "Gamma" } },
-          { name: "Delta", ranks: { class: "Aves", order: "Galliformes", family: "FamB", genus: "Delta" } },
-          { name: "Epsilon", ranks: { class: "Aves", order: "Strigiformes", family: "FamC", genus: "Epsilon" } },
-          { name: "Zeta", ranks: { class: "Aves", order: "Strigiformes", family: "FamC", genus: "Zeta" } },
-          { name: "Eta", ranks: { class: "Aves", order: "Anseriformes", family: "FamD", genus: "Eta" } },
-          { name: "Theta", ranks: { class: "Mammalia", order: "Anseriformes", family: "FamD", genus: "Theta" } },
+          { name: "Alpha", ranks: { kingdom: "Metazoa", phylum: "Chordata", class: "Aves", order: "Passeriformes", family: "FamA", genus: "Alpha" } },
+          { name: "Beta", ranks: { kingdom: "Metazoa", phylum: "Chordata", class: "Aves", order: "Passeriformes", family: "FamA", genus: "Beta" } },
+          { name: "Gamma", ranks: { kingdom: "Metazoa", phylum: "Chordata", class: "Aves", order: "Galliformes", family: "FamB", genus: "Gamma" } },
+          { name: "Delta", ranks: { kingdom: "Metazoa", phylum: "Chordata", class: "Aves", order: "Galliformes", family: "FamB", genus: "Delta" } },
+          { name: "Epsilon", ranks: { kingdom: "Metazoa", phylum: "Chordata", class: "Aves", order: "Strigiformes", family: "FamC", genus: "Epsilon" } },
+          { name: "Zeta", ranks: { kingdom: "Metazoa", phylum: "Chordata", class: "Aves", order: "Strigiformes", family: "FamC", genus: "Zeta" } },
+          { name: "Eta", ranks: { kingdom: "Metazoa", phylum: "Chordata", class: "Aves", order: "Anseriformes", family: "FamD", genus: "Eta" } },
+          { name: "Theta", ranks: { kingdom: "Chromista", phylum: "Arthropoda", class: "Mammalia", order: "Anseriformes", family: "FamD", genus: "Theta" } },
         ],
       },
     };
@@ -899,13 +933,37 @@ test("shared subtree taxonomy recomputes active ranks for the standalone tree", 
     return Boolean(state?.taxonomyEnabled) && Number(state?.taxonomyMappedCount ?? 0) > 0;
   });
 
-  const popupTaxonomy = await popup.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null) as {
+  const popupTaxonomy = await popup.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const defaultVisibleRanks = (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+      taxonomyVisibleRanks?: string[];
+    } | undefined)?.taxonomyVisibleRanks ?? [];
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    for (const rank of ["family", "order", "class", "phylum", "kingdom"] as const) {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest(rank, true);
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return {
+      taxonomy: window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null,
+      defaultVisibleRanks,
+      manualVisibleRanks: (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as {
+        taxonomyVisibleRanks?: string[];
+      } | undefined)?.taxonomyVisibleRanks ?? [],
+    };
+  }) as {
+    taxonomy?: {
     activeRanks?: string[];
     mappedCount?: number;
-  } | null;
-  expect(popupTaxonomy?.activeRanks ?? []).not.toContain("class");
-  expect(popupTaxonomy?.activeRanks?.[popupTaxonomy.activeRanks.length - 1] ?? null).toBe("order");
-  expect(Number(popupTaxonomy?.mappedCount ?? 0)).toBe(8);
+    } | null;
+    defaultVisibleRanks: string[];
+    manualVisibleRanks: string[];
+  };
+  expect(popupTaxonomy.taxonomy?.activeRanks ?? []).toEqual(["family", "order", "class", "phylum", "kingdom"]);
+  expect(popupTaxonomy.defaultVisibleRanks).toEqual(["family", "order"]);
+  expect(popupTaxonomy.manualVisibleRanks).toEqual(["family", "order", "class", "phylum", "kingdom"]);
+  expect(Number(popupTaxonomy.taxonomy?.mappedCount ?? 0)).toBe(8);
   await popup.close();
 });
 
@@ -3585,7 +3643,7 @@ test("collapsed subtree sharing preserves collapse state and full taxonomy mappi
 
   expect(popupState.taxonomyCollapseRank).toBe("order");
   expect(popupState.collapsibleTaxonomyRanks).toContain("genus");
-  expect(popupState.taxonomyRankVisibilityAuto).toBe(false);
+  expect(popupState.taxonomyRankVisibilityAuto).toBe(true);
   expect(popupState.taxonomyRankVisibility.family).toBe(true);
   expect(popupState.taxonomyRankVisibility.genus).toBe(false);
   expect(popupState.hasGenusRanks).toBe(true);

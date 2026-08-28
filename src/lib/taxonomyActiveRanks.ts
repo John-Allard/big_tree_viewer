@@ -1,4 +1,4 @@
-import type { TaxonomyRank, TaxonomyTipRanks } from "../types/taxonomy";
+import { isAutomaticTaxonomyRank, type TaxonomyRank, type TaxonomyTipRanks } from "../types/taxonomy";
 
 export const ACTIVE_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
   "genus",
@@ -58,51 +58,32 @@ export function deriveCollapsibleTaxonomyRanks(
 export function deriveActiveTaxonomyRanks(
   tipRankEntries: Array<Partial<Record<TaxonomyRank, string>>>,
 ): TaxonomyRank[] {
-  const rankToHits = new Map<TaxonomyRank, number>();
-  const rankToCounts = new Map<TaxonomyRank, Map<string, number>>();
-  for (let index = 0; index < ACTIVE_TAXONOMY_RANK_ORDER.length; index += 1) {
-    const rank = ACTIVE_TAXONOMY_RANK_ORDER[index];
-    rankToHits.set(rank, 0);
-    rankToCounts.set(rank, new Map());
-  }
-  for (let entryIndex = 0; entryIndex < tipRankEntries.length; entryIndex += 1) {
-    const entry = tipRankEntries[entryIndex];
-    for (let rankIndex = 0; rankIndex < ACTIVE_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
-      const rank = ACTIVE_TAXONOMY_RANK_ORDER[rankIndex];
-      const label = entry[rank];
-      if (!label) {
-        continue;
-      }
-      rankToHits.set(rank, (rankToHits.get(rank) ?? 0) + 1);
-      const counts = rankToCounts.get(rank);
-      if (counts) {
+  // Rank availability describes the data, not the relative abundance of its groups.
+  // Automatic ribbon visibility decides which available ranks to show at each zoom.
+  return deriveCollapsibleTaxonomyRanks(tipRankEntries);
+}
+
+export function deriveDefaultVisibleTaxonomyRanks(
+  tipRankEntries: Array<Partial<Record<TaxonomyRank, string>>>,
+  availableRanks: TaxonomyRank[] = deriveActiveTaxonomyRanks(tipRankEntries),
+): TaxonomyRank[] {
+  const defaultRanks = availableRanks.filter(isAutomaticTaxonomyRank);
+  while (defaultRanks.length > 1) {
+    const topRank = defaultRanks[defaultRanks.length - 1];
+    const counts = new Map<string, number>();
+    for (let index = 0; index < tipRankEntries.length; index += 1) {
+      const label = tipRankEntries[index][topRank];
+      if (label) {
         counts.set(label, (counts.get(label) ?? 0) + 1);
       }
     }
-  }
-  const activeRanks = deriveCollapsibleTaxonomyRanks(tipRankEntries);
-  while (activeRanks.length > 1) {
-    const topRank = activeRanks[activeRanks.length - 1];
-    const counts = rankToCounts.get(topRank);
-    const total = rankToHits.get(topRank) ?? 0;
-    if (!counts || total <= 0) {
-      break;
-    }
-    // Keep kingdom available as a manual ribbon even when one kingdom dominates.
-    if (topRank === "kingdom") {
-      break;
-    }
-    let dominant = 0;
-    counts.forEach((count) => {
-      if (count > dominant) {
-        dominant = count;
-      }
-    });
-    if ((dominant / total) > 0.8) {
-      activeRanks.pop();
+    const total = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
+    const dominant = counts.size > 0 ? Math.max(...counts.values()) : 0;
+    if (total > 0 && (dominant / total) > 0.8) {
+      defaultRanks.pop();
       continue;
     }
     break;
   }
-  return activeRanks;
+  return defaultRanks;
 }

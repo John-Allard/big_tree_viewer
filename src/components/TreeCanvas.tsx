@@ -8,6 +8,7 @@ import {
   type LabelStyleClass,
 } from "../lib/figureStyles";
 import { putSharedSubtreePayload } from "../lib/taxonomyCache";
+import { deriveDefaultVisibleTaxonomyRanks } from "../lib/taxonomyActiveRanks";
 import type { SharedSubtreeStoragePayload, SharedSubtreeTaxonomyEntry, SharedSubtreeVisualPayload } from "../lib/sharedSubtreePayload";
 import { distanceToSegmentSquared, UniformGridIndex, type IndexedSegment } from "../lib/spatialIndex";
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, taxonomyEntityKey, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
@@ -1225,7 +1226,10 @@ function buildSharedSubtreeStoragePayload(
   const payload: SharedSubtreeStoragePayload = {
     version: 2,
     newick: serializeSubtreeToNewick(tree, rootNode),
-    visual,
+    visual: {
+      ...visual,
+      useAutomaticTaxonomyRankVisibility: true,
+    },
   };
   if (controls?.hideDownloadNewick === true) {
     payload.controls = { hideDownloadNewick: true };
@@ -4788,9 +4792,25 @@ export default function TreeCanvas({
       ),
     );
   }, [taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
+  const defaultAutomaticTaxonomyRankSet = useMemo(() => {
+    if (!taxonomyMap) {
+      return new Set(TAXONOMY_RANKS.filter(isAutomaticTaxonomyRank));
+    }
+    const defaultRanks = deriveDefaultVisibleTaxonomyRanks(
+      taxonomyMap.tipRanks.map((tip) => tip.ranks),
+      taxonomyActiveRanks,
+    );
+    if (defaultRanks.length > 0) {
+      return new Set(defaultRanks);
+    }
+    const availableAutomaticRanks = taxonomyActiveRanks.filter(isAutomaticTaxonomyRank);
+    return new Set(availableAutomaticRanks.slice(-1));
+  }, [taxonomyActiveRanks, taxonomyMap]);
   const automaticTaxonomyRanks = useMemo(
-    () => taxonomyActiveRanks.filter(isAutomaticTaxonomyRank),
-    [taxonomyActiveRanks],
+    () => taxonomyActiveRanks.filter((rank) => (
+      isAutomaticTaxonomyRank(rank) && defaultAutomaticTaxonomyRankSet.has(rank)
+    )),
+    [defaultAutomaticTaxonomyRankSet, taxonomyActiveRanks],
   );
   const supplementalTaxonomyRanks = useMemo(
     () => taxonomyActiveRanks.filter((rank) => !isAutomaticTaxonomyRank(rank)),
@@ -6392,7 +6412,7 @@ export default function TreeCanvas({
     if (taxonomyEnabled) {
       if (taxonomyBlocks) {
         const visibleRanks = useAutomaticTaxonomyRankVisibility
-          ? taxonomyVisibleRanksForZoom(angularSpacingPx, taxonomyActiveRanks)
+          ? withSupplementalTaxonomyRanks(taxonomyVisibleRanksForZoom(angularSpacingPx, automaticTaxonomyRanks))
           : taxonomyActiveRanks;
         const hasLabelOnlyRank = visibleRanks.some((rank) => taxonomyRankDisplayModeForRank(rank) === "label-only");
         const reservedRankCount = hasLabelOnlyRank
@@ -6425,7 +6445,7 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [circularOverlayViewportScale, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, tree, useAutomaticTaxonomyRankVisibility]);
+  }, [automaticTaxonomyRanks, circularOverlayViewportScale, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, tree, useAutomaticTaxonomyRankVisibility, withSupplementalTaxonomyRanks]);
 
   const circularFitLabelEnvelopePx = useCallback((camera: CircularCamera): number => {
     if (!tree || taxonomyEnabled) {
@@ -7779,6 +7799,11 @@ export default function TreeCanvas({
       tree.isUltrametric ? `${formatAgeNumber(value)} mya` : formatScaleNumber(value)
     );
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Canvas state persists across frames. Start every repaint opaque so a
+    // translucent stroke from the previous frame cannot make the background
+    // retain a faint copy of the old camera position.
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
     const svgExportCapture = exportCaptureRef.current !== null;
@@ -12476,6 +12501,7 @@ export default function TreeCanvas({
           ctx.globalAlpha = 0.95;
           ctx.stroke(path);
         });
+        ctx.globalAlpha = 1;
         circularRenderedColoredStemCount = coloredStemCount;
         circularRenderedColoredConnectorCount = coloredConnectorCount;
       }

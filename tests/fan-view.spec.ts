@@ -129,6 +129,69 @@ test("fan geometry fits an upper semicircle and supports precise rotation", asyn
   });
 });
 
+test("radial repaint fully replaces a frame after translucent drawing state", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(
+    page,
+    "(((A_species:1,B_species:1):1,(C_species:1,D_species:1):1):1,((E_species:1,F_species:1):1,(G_species:1,H_species:1):1):1)Root;",
+  );
+
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("fan");
+    const root = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.parent?.findIndex((parent) => parent < 0) ?? -1;
+    const firstChild = root >= 0
+      ? window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.firstChild?.[root] ?? -1
+      : -1;
+    if (firstChild < 0) {
+      throw new Error("Test subtree unavailable.");
+    }
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setManualSubtreeColor(firstChild, "#7c3aed");
+  });
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "fan"
+    && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors()?.includes("#7c3aed")
+  ));
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const canvasState = await page.evaluate(async () => {
+    const canvas = document.querySelector("[data-testid=tree-canvas]");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Tree canvas unavailable.");
+    }
+    const context = canvas.getContext("2d");
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (!context || !camera || camera.kind !== "circular") {
+      throw new Error("Radial canvas state unavailable.");
+    }
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalAlpha = 1;
+    context.fillStyle = "#ff0000";
+    context.fillRect(0, 0, 8, 8);
+    context.restore();
+    context.globalAlpha = 0.05;
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
+      translateX: Number(camera.translateX) + 1,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const pixel = Array.from(context.getImageData(2, 2, 1, 1).data);
+    return {
+      globalAlpha: context.globalAlpha,
+      globalCompositeOperation: context.globalCompositeOperation,
+      pixel,
+    };
+  });
+
+  expect(canvasState).toEqual({
+    globalAlpha: 1,
+    globalCompositeOperation: "source-over",
+    pixel: [251, 252, 254, 255],
+  });
+});
+
 test("fan deep zoom keeps the same tip centered when switching to rectangular", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(
