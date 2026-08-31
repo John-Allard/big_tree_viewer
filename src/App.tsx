@@ -321,6 +321,8 @@ type BigTreeViewerSessionSettings = {
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
   showScaleZeroTick: boolean;
+  showMyaTimeUnit?: boolean;
+  customTimeUnit?: string;
   scaleTickIntervalInput: string;
   useAutoCircularCenterScaleAngle: boolean;
   circularCenterScaleAngleDegrees: number;
@@ -1085,6 +1087,7 @@ const DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED = true;
 const DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS = true;
 const DEFAULT_EXTEND_RECT_SCALE_TO_TICK = false;
 const DEFAULT_SHOW_SCALE_ZERO_TICK = false;
+const DEFAULT_SHOW_MYA_TIME_UNIT = true;
 const DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES = -5;
 const DEFAULT_SHOW_CIRCULAR_CENTER_RADIAL_SCALE_BAR = false;
 const DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES = 360;
@@ -2017,6 +2020,8 @@ export default function App() {
   const [showIntermediateScaleTicks, setShowIntermediateScaleTicks] = useState(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
   const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
+  const [showMyaTimeUnit, setShowMyaTimeUnit] = useState(DEFAULT_SHOW_MYA_TIME_UNIT);
+  const [customTimeUnit, setCustomTimeUnit] = useState("");
   const [scaleTickIntervalInput, setScaleTickIntervalInput] = useState("");
   const [useAutomaticTaxonomyRankVisibility, setUseAutomaticTaxonomyRankVisibility] = useState(true);
   const [useAutoCircularCenterScaleAngle, setUseAutoCircularCenterScaleAngle] = useState(true);
@@ -2674,6 +2679,8 @@ export default function App() {
     setShowIntermediateScaleTicks(visual.showIntermediateScaleTicks);
     setExtendRectScaleToTick(visual.extendRectScaleToTick);
     setShowScaleZeroTick(visual.showScaleZeroTick);
+    setShowMyaTimeUnit(visual.showMyaTimeUnit);
+    setCustomTimeUnit(visual.customTimeUnit);
     setUseAutoCircularCenterScaleAngle(visual.useAutoCircularCenterScaleAngle);
     setCircularCenterScaleAngleDegrees(visual.circularCenterScaleAngleDegrees);
     setShowCircularCenterRadialScaleBar(visual.showCircularCenterRadialScaleBar);
@@ -2770,6 +2777,12 @@ export default function App() {
     }
     if (typeof visual.showScaleZeroTick === "boolean") {
       setShowScaleZeroTick(visual.showScaleZeroTick);
+    }
+    if (typeof visual.showMyaTimeUnit === "boolean") {
+      setShowMyaTimeUnit(visual.showMyaTimeUnit);
+    }
+    if (typeof visual.customTimeUnit === "string") {
+      setCustomTimeUnit(visual.customTimeUnit);
     }
     if (typeof visual.scaleTickIntervalInput === "string") {
       setScaleTickIntervalInput(visual.scaleTickIntervalInput);
@@ -4401,6 +4414,8 @@ export default function App() {
     showIntermediateScaleTicks,
     extendRectScaleToTick,
     showScaleZeroTick,
+    showMyaTimeUnit,
+    customTimeUnit,
     scaleTickIntervalInput,
     useAutoCircularCenterScaleAngle,
     circularCenterScaleAngleDegrees,
@@ -4539,6 +4554,8 @@ export default function App() {
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
+    showMyaTimeUnit,
+    customTimeUnit,
     showTimeStripes,
     showTipLabels,
     alignTipLabels,
@@ -4595,6 +4612,8 @@ export default function App() {
     setShowIntermediateScaleTicks(settings.showIntermediateScaleTicks);
     setExtendRectScaleToTick(settings.extendRectScaleToTick);
     setShowScaleZeroTick(settings.showScaleZeroTick);
+    setShowMyaTimeUnit(settings.showMyaTimeUnit ?? DEFAULT_SHOW_MYA_TIME_UNIT);
+    setCustomTimeUnit(settings.customTimeUnit ?? "");
     setScaleTickIntervalInput(settings.scaleTickIntervalInput);
     setUseAutoCircularCenterScaleAngle(settings.useAutoCircularCenterScaleAngle);
     setCircularCenterScaleAngleDegrees(settings.circularCenterScaleAngleDegrees);
@@ -6769,6 +6788,8 @@ export default function App() {
     setTimeAxisLogBaseDraft(DEFAULT_TIME_AXIS_LOG_BASE);
     setExtendRectScaleToTick(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
     setShowScaleZeroTick(DEFAULT_SHOW_SCALE_ZERO_TICK);
+    setShowMyaTimeUnit(DEFAULT_SHOW_MYA_TIME_UNIT);
+    setCustomTimeUnit("");
     setScaleTickIntervalInput("");
     setUseAutoCircularCenterScaleAngle(true);
     setCircularCenterScaleAngleDegrees(DEFAULT_CIRCULAR_CENTER_SCALE_ANGLE_DEGREES);
@@ -6969,6 +6990,8 @@ export default function App() {
       setShowTimeStripes,
       setExtendRectScaleToTick,
       setShowScaleZeroTick,
+      setShowMyaTimeUnit,
+      setCustomTimeUnit,
       setScaleTickIntervalInput,
       setCircularCenterScaleAngleDegrees: (value: number) => {
         setUseAutoCircularCenterScaleAngle(false);
@@ -8349,6 +8372,25 @@ export default function App() {
                         />
                         Show zero tick
                       </label>
+                      <label className="label-style-inline-toggle" title="Append MYA to time labels on ultrametric trees.">
+                        <input
+                          type="checkbox"
+                          checked={showMyaTimeUnit}
+                          onChange={(event) => setShowMyaTimeUnit(event.target.checked)}
+                        />
+                        Show MYA
+                      </label>
+                      {!showMyaTimeUnit ? (
+                        <label title="Enter a time unit to append to scale labels, or leave blank to show numbers only.">
+                          Time unit
+                          <input
+                            type="text"
+                            value={customTimeUnit}
+                            placeholder="e.g. MA, MYR, years"
+                            onChange={(event) => setCustomTimeUnit(event.target.value)}
+                          />
+                        </label>
+                      ) : null}
                       <label className="label-style-inline-toggle" title="Choose the circular center scale angle from the tree orientation automatically.">
                         <input
                           type="checkbox"
@@ -9874,6 +9916,8 @@ export default function App() {
           showIntermediateScaleTicks={showIntermediateScaleTicks}
           extendRectScaleToTick={extendRectScaleToTick}
           showScaleZeroTick={showScaleZeroTick}
+          showMyaTimeUnit={showMyaTimeUnit}
+          customTimeUnit={customTimeUnit}
           circularCenterScaleAngleDegrees={effectiveCircularCenterScaleAngleDegrees}
           useAutoCircularCenterScaleAngle={useAutoCircularCenterScaleAngle}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}

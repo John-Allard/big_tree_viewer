@@ -1347,6 +1347,40 @@ test("scale settings support explicit tick interval and disabling fading subdivi
   expect(svg).not.toContain(">300 mya<");
 });
 
+test("scale labels support MYA, custom units, and unitless values", async ({ page }) => {
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");
+
+  await page.getByRole("button", { name: /Visual Options/ }).click();
+  await page.getByRole("button", { name: "Scale labels settings" }).click();
+  await expect(page.getByLabel("Show MYA")).toBeChecked();
+  await page.getByLabel("Show MYA").uncheck();
+  await expect(page.getByLabel("Time unit")).toBeVisible();
+  await page.getByLabel("Time unit").fill("MA");
+
+  const labels = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setViewMode("rectangular");
+    app?.setScaleTickIntervalInput("200");
+    app?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const custom = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+    app?.setCustomTimeUnit("");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const unitless = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+    app?.setShowMyaTimeUnit(true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const mya = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
+    return { custom, unitless, mya };
+  });
+
+  expect(labels.custom).toContain(" MA</text>");
+  expect(labels.unitless).toMatch(/>\d+(?:\.\d+)?<\/text>/);
+  expect(labels.unitless).not.toContain(" mya</text>");
+  expect(labels.unitless).not.toContain(" MA</text>");
+  expect(labels.mya).toContain(" mya</text>");
+});
+
 test("solid subdivision ticks remain when fading ticks are hidden", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A:300,B:300):300,(C:300,D:300):300)Root;");
@@ -1591,6 +1625,31 @@ test("circular radial scale bar offsets below and rotates center labels", async 
   expect(svg).toContain(">200 mya<");
   expect(svg).toContain('text-anchor="middle"');
   expect(svg).toContain('transform="rotate(');
+});
+
+test("radial center scale labels shrink to avoid dense tick overlap", async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 620 });
+  await waitForViewer(page);
+  await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");
+
+  await page.getByRole("button", { name: /Visual Options/ }).click();
+  await page.getByRole("button", { name: "Scale labels settings" }).click();
+  await page.getByLabel("Tick interval").fill("25");
+  const fontSize = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    app?.setViewMode("circular");
+    app?.setRadialCenterOpeningRatioForTest(0.85);
+    app?.requestFit();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+      centerScaleLabelFontSize?: number;
+    } | undefined;
+    return debug?.centerScaleLabelFontSize ?? null;
+  });
+
+  expect(fontSize).not.toBeNull();
+  expect(fontSize).toBeGreaterThanOrEqual(1.5);
+  expect(fontSize).toBeLessThan(11);
 });
 
 test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {

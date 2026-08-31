@@ -4234,6 +4234,8 @@ export default function TreeCanvas({
   showIntermediateScaleTicks,
   extendRectScaleToTick,
   showScaleZeroTick,
+  showMyaTimeUnit,
+  customTimeUnit,
   circularCenterScaleAngleDegrees,
   useAutoCircularCenterScaleAngle,
   showCircularCenterRadialScaleBar,
@@ -7805,9 +7807,13 @@ export default function TreeCanvas({
     if (!ctx) {
       return;
     }
-    const scaleLabelText = (value: number): string => (
-      tree.isUltrametric ? `${formatAgeNumber(value)} mya` : formatScaleNumber(value)
-    );
+    const scaleLabelText = (value: number): string => {
+      if (!tree.isUltrametric) {
+        return formatScaleNumber(value);
+      }
+      const unit = showMyaTimeUnit ? "mya" : customTimeUnit.trim();
+      return unit ? `${formatAgeNumber(value)} ${unit}` : formatAgeNumber(value);
+    };
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Canvas state persists across frames. Start every repaint opaque so a
     // translucent stroke from the previous frame cannot make the background
@@ -11469,7 +11475,7 @@ export default function TreeCanvas({
       }
 
       if (showScaleBars) {
-        const scaleFontSize = Math.max(
+        let scaleFontSize = Math.max(
           1.5,
           Math.min(
             (Math.max(11.5, Math.min(15, 10 + (camera.scale * 0.02))) * figureStyles.scale.sizeScale),
@@ -11490,9 +11496,20 @@ export default function TreeCanvas({
         const labelVector = worldToScreenCircular(camera, sideWorldX, sideWorldY);
         const labelOrigin = worldToScreenCircular(camera, 0, 0);
         const labelAlign: CanvasTextAlign = (labelVector.x - labelOrigin.x) < 0 ? "right" : "left";
-        const spiralScaleCandidates = timeBoundaryValues
-          .filter((age) => showScaleZeroTick || age > 0)
-          .map((age) => {
+        const visibleSpiralScaleAges = timeBoundaryValues
+          .filter((age) => showScaleZeroTick || age > 0);
+        const labelBoxesOverlap = (
+          left: { left: number; right: number; top: number; bottom: number },
+          right: { left: number; right: number; top: number; bottom: number },
+        ): boolean => (
+          left.left < right.right
+          && right.left < left.right
+          && left.top < right.bottom
+          && right.top < left.bottom
+        );
+        const buildSpiralScaleCandidates = (fontSize: number) => {
+          ctx.font = fontSpec("scale", fontSize);
+          return visibleSpiralScaleAges.map((age) => {
             const point = spiralPointAt(axisTheta, age, metrics);
             const frame = spiralFrameAt(axisTheta, spiralOffsetForAge(age, metrics), metrics);
             const tickStart = spiralToScreen({
@@ -11520,21 +11537,33 @@ export default function TreeCanvas({
               bounds: {
                 left: labelLeft - 4,
                 right: labelLeft + textWidth + 4,
-                top: label.y - (scaleFontSize * 0.65),
-                bottom: label.y + (scaleFontSize * 0.65),
+                top: label.y - (fontSize * 0.65),
+                bottom: label.y + (fontSize * 0.65),
               },
             };
           });
-        const selectedSpiralScaleLabels: typeof spiralScaleCandidates = [];
-        const labelBoxesOverlap = (
-          left: { left: number; right: number; top: number; bottom: number },
-          right: { left: number; right: number; top: number; bottom: number },
-        ): boolean => (
-          left.left < right.right
-          && right.left < left.right
-          && left.top < right.bottom
-          && right.top < left.bottom
+        };
+        let spiralScaleCandidates = buildSpiralScaleCandidates(scaleFontSize);
+        const allSpiralLabelsFit = (candidates: typeof spiralScaleCandidates): boolean => (
+          candidates.every((candidate, index) => (
+            candidates.slice(index + 1).every((other) => !labelBoxesOverlap(candidate.bounds, other.bounds))
+          ))
         );
+        if (!allSpiralLabelsFit(spiralScaleCandidates) && scaleFontSize > 1.5) {
+          let low = 1.5;
+          let high = scaleFontSize;
+          for (let step = 0; step < 8; step += 1) {
+            const candidateSize = (low + high) * 0.5;
+            if (allSpiralLabelsFit(buildSpiralScaleCandidates(candidateSize))) {
+              low = candidateSize;
+            } else {
+              high = candidateSize;
+            }
+          }
+          scaleFontSize = low;
+          spiralScaleCandidates = buildSpiralScaleCandidates(scaleFontSize);
+        }
+        const selectedSpiralScaleLabels: typeof spiralScaleCandidates = [];
         for (let index = spiralScaleCandidates.length - 1; index >= 0; index -= 1) {
           const candidate = spiralScaleCandidates[index];
           if (selectedSpiralScaleLabels.some((placed) => labelBoxesOverlap(candidate.bounds, placed.bounds))) {
@@ -14889,7 +14918,7 @@ export default function TreeCanvas({
 
       if (showScaleBars) {
         ctx.fillStyle = "#6b7280";
-        const scaleFontSize = scaleLabelFontSize("scale", 11);
+        let scaleFontSize = scaleLabelFontSize("scale", 11);
         ctx.font = fontSpec("scale", scaleFontSize);
         ctx.textBaseline = "middle";
         if (showCentralTimeLabels) {
@@ -14898,14 +14927,14 @@ export default function TreeCanvas({
             : centerScaleTheta;
           const centerScaleBarTangentX = -Math.sin(centerScaleBarTheta + rotationAngle);
           const centerScaleBarTangentY = Math.cos(centerScaleBarTheta + rotationAngle);
-          const centerScaleLabelOffsetPx = showCircularCenterRadialScaleBar
+          let centerScaleLabelOffsetPx = showCircularCenterRadialScaleBar
             ? Math.max((scaleFontSize * 0.72) + 3, scaleFontSize)
             : 0;
           const rotatedLabelDegrees = (centerScaleBarTheta + rotationAngle) * 180 / Math.PI;
           const rotatedLabelOnRightSide = Math.cos(centerScaleBarTheta + rotationAngle) >= 0;
           const rotatedLabelRadians = normalizeRotation(rotatedLabelOnRightSide ? rotatedLabelDegrees : rotatedLabelDegrees + 180) * Math.PI / 180;
           let centerScaleLabelRotation = showCircularCenterRadialScaleBar ? rotatedLabelRadians : 0;
-          if (polarInnerRadius > 1e-9 && displayedCircularCenterScaleBoundaries.length > 1) {
+          if (displayedCircularCenterScaleBoundaries.length > 1) {
             const sortedTickPositions = displayedCircularCenterScaleBoundaries
               .map((boundary) => circularRadiusForBoundary(boundary.value) * camera.scale)
               .sort((left, right) => left - right);
@@ -14941,7 +14970,16 @@ export default function TreeCanvas({
                 }
               }
             }
+            const projectedExtentPx = projectedLabelExtent(centerScaleLabelRotation);
+            if (projectedExtentPx > availableSpacingPx && scaleFontSize > 1.5) {
+              scaleFontSize = Math.max(1.5, scaleFontSize * (availableSpacingPx / projectedExtentPx));
+              ctx.font = fontSpec("scale", scaleFontSize);
+              centerScaleLabelOffsetPx = showCircularCenterRadialScaleBar
+                ? Math.max((scaleFontSize * 0.72) + 3, scaleFontSize)
+                : 0;
+            }
           }
+          (renderDebug.circular as Record<string, unknown>).centerScaleLabelFontSize = scaleFontSize;
           const rotateCenterScaleLabels = Math.abs(centerScaleLabelRotation) > 1e-6;
           ctx.textAlign = rotateCenterScaleLabels || showCircularCenterRadialScaleBar
             ? "center"
@@ -15264,6 +15302,8 @@ export default function TreeCanvas({
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
+    showMyaTimeUnit,
+    customTimeUnit,
     showTimeStripes,
     size.height,
     size.width,
@@ -17012,23 +17052,20 @@ export default function TreeCanvas({
       lastCanvasPointerRef.current = { x: localX, y: localY };
       markPanBenchmarkInput();
       clearHoverState();
-        if (isHorizontalWheelPanEvent(event)) {
-          if (camera.kind === "rect") {
-            camera.translateX -= event.deltaX;
-            camera.translateY -= event.deltaY;
+      if (isHorizontalWheelPanEvent(event)) {
+        if (camera.kind === "rect") {
+          camera.translateX -= event.deltaX;
+          camera.translateY -= event.deltaY;
           clampRectCamera(camera, tree, size.width, size.height, rectClampPadding(camera));
         } else {
           camera.translateX -= event.deltaX;
           camera.translateY -= event.deltaY;
           finalizeCircularCamera(camera);
         }
-          scheduleDraw();
-          return;
-        }
-        if (tree.leafCount > HUGE_TREE_TIP_LIMIT && frameRequestRef.current !== null) {
-          return;
-        }
-        const deltaY = normalizedWheelZoomDelta(event, size.height);
+        scheduleDraw();
+        return;
+      }
+      const deltaY = normalizedWheelZoomDelta(event, size.height);
       const zoom = Math.exp(-deltaY * WHEEL_ZOOM_SENSITIVITY);
       zoomAtPoint(localX, localY, zoom);
       scheduleDraw();
@@ -17320,6 +17357,8 @@ export default function TreeCanvas({
       showIntermediateScaleTicks,
       extendRectScaleToTick,
       showScaleZeroTick,
+      showMyaTimeUnit,
+      customTimeUnit,
       useAutoCircularCenterScaleAngle,
       circularCenterScaleAngleDegrees,
       showCircularCenterRadialScaleBar,
@@ -17392,6 +17431,8 @@ export default function TreeCanvas({
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
+    showMyaTimeUnit,
+    customTimeUnit,
     showTimeStripes,
     taxonomyBranchColoringEnabled,
     taxonomyCollapseRank,
@@ -17965,6 +18006,8 @@ export default function TreeCanvas({
           showIntermediateScaleTicks,
           extendRectScaleToTick,
           showScaleZeroTick,
+          showMyaTimeUnit,
+          customTimeUnit,
           useAutoCircularCenterScaleAngle,
           circularCenterScaleAngleDegrees,
           showCircularCenterRadialScaleBar,
@@ -18042,6 +18085,8 @@ export default function TreeCanvas({
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
+    showMyaTimeUnit,
+    customTimeUnit,
     showTimeStripes,
     size.height,
     size.width,

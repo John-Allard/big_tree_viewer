@@ -54,6 +54,8 @@ export type SharedSubtreeVisualPayload = {
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
   showScaleZeroTick: boolean;
+  showMyaTimeUnit: boolean;
+  customTimeUnit: string;
   useAutoCircularCenterScaleAngle: boolean;
   circularCenterScaleAngleDegrees: number;
   showCircularCenterRadialScaleBar: boolean;
@@ -215,6 +217,8 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     showIntermediateScaleTicks: coerceBoolean(source.showIntermediateScaleTicks, true),
     extendRectScaleToTick: coerceBoolean(source.extendRectScaleToTick, false),
     showScaleZeroTick: coerceBoolean(source.showScaleZeroTick, false),
+    showMyaTimeUnit: coerceBoolean(source.showMyaTimeUnit, true),
+    customTimeUnit: typeof source.customTimeUnit === "string" ? source.customTimeUnit : "",
     useAutoCircularCenterScaleAngle: coerceBoolean(source.useAutoCircularCenterScaleAngle, true),
     circularCenterScaleAngleDegrees: coerceFiniteNumber(source.circularCenterScaleAngleDegrees, -5),
     showCircularCenterRadialScaleBar: coerceBoolean(source.showCircularCenterRadialScaleBar, false),

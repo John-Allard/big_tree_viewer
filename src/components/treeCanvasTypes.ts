@@ -61,6 +61,8 @@ export interface TreeCanvasProps {
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
   showScaleZeroTick: boolean;
+  showMyaTimeUnit: boolean;
+  customTimeUnit: string;
   circularCenterScaleAngleDegrees: number;
   useAutoCircularCenterScaleAngle: boolean;
   showCircularCenterRadialScaleBar: boolean;

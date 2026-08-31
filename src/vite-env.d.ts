@@ -39,6 +39,8 @@ declare global {
       setShowTimeStripes: (visible: boolean) => void;
       setExtendRectScaleToTick: (visible: boolean) => void;
       setShowScaleZeroTick: (visible: boolean) => void;
+      setShowMyaTimeUnit: (visible: boolean) => void;
+      setCustomTimeUnit: (value: string) => void;
       setScaleTickIntervalInput: (value: string) => void;
       setCircularCenterScaleAngleDegrees: (value: number) => void;
       setUseAutoCircularCenterScaleAngle: (enabled: boolean) => void;
