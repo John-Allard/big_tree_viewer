@@ -1635,7 +1635,7 @@ test("radial center scale labels shrink to avoid dense tick overlap", async ({ p
   await page.getByRole("button", { name: /Visual Options/ }).click();
   await page.getByRole("button", { name: "Scale labels settings" }).click();
   await page.getByLabel("Tick interval").fill("25");
-  const fontSize = await page.evaluate(async () => {
+  const result = await page.evaluate(async () => {
     const app = window.__BIG_TREE_VIEWER_APP_TEST__;
     app?.setViewMode("circular");
     app?.setRadialCenterOpeningRatioForTest(0.85);
@@ -1643,13 +1643,32 @@ test("radial center scale labels shrink to avoid dense tick overlap", async ({ p
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
       centerScaleLabelFontSize?: number;
+      centerScaleTickCount?: number;
+      visibleCenterScaleLabelCount?: number;
+      centerScaleLabelRotationRadians?: number;
+      centerScaleLabelBaseline?: string;
+      centerScaleUnitOmitted?: boolean;
+      centerScaleBoundaryGapPx?: number;
     } | undefined;
-    return debug?.centerScaleLabelFontSize ?? null;
+    return {
+      fontSize: debug?.centerScaleLabelFontSize ?? null,
+      tickCount: debug?.centerScaleTickCount ?? null,
+      labelCount: debug?.visibleCenterScaleLabelCount ?? null,
+      rotation: debug?.centerScaleLabelRotationRadians ?? null,
+      baseline: debug?.centerScaleLabelBaseline ?? null,
+      unitOmitted: debug?.centerScaleUnitOmitted ?? null,
+      boundaryGapPx: debug?.centerScaleBoundaryGapPx ?? null,
+    };
   });
 
-  expect(fontSize).not.toBeNull();
-  expect(fontSize).toBeGreaterThanOrEqual(1.5);
-  expect(fontSize).toBeLessThan(11);
+  expect(result.fontSize).not.toBeNull();
+  expect(result.fontSize).toBeGreaterThanOrEqual(6);
+  expect(result.fontSize).toBeLessThan(11);
+  expect(result.rotation).toBe(0);
+  expect(result.baseline).toBe("bottom");
+  expect(result.unitOmitted).toBe(true);
+  expect(result.boundaryGapPx).toBeLessThan(10);
+  expect(result.labelCount).toBeLessThan(result.tickCount ?? Number.POSITIVE_INFINITY);
 });
 
 test("rectangular scale can extend to the next tick and include zero", async ({ page }) => {

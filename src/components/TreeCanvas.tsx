@@ -1358,6 +1358,7 @@ type SvgScenePrimitive =
     fontStyle?: string;
     anchor: "start" | "middle" | "end";
     rotation?: number;
+    dominantBaseline?: "middle" | "text-after-edge";
   };
 
 interface SvgScene {
@@ -1771,7 +1772,7 @@ function buildSvgString(scene: SvgScene): string {
       ? ` transform="rotate(${((element.rotation * 180) / Math.PI).toFixed(3)} ${element.x.toFixed(3)} ${element.y.toFixed(3)})"`
       : "";
     const style = element.fontStyle ? ` font-style="${element.fontStyle.includes("italic") ? "italic" : "normal"}" font-weight="${element.fontStyle.includes("700") ? "700" : "400"}"` : "";
-    return `<text x="${element.x.toFixed(3)}" y="${element.y.toFixed(3)}" fill="${element.fill}" font-size="${element.fontSize.toFixed(3)}" font-family="${escapeSvgText(element.fontFamily)}"${style} text-anchor="${element.anchor}" dominant-baseline="middle"${transform}>${escapeSvgText(element.text)}</text>`;
+    return `<text x="${element.x.toFixed(3)}" y="${element.y.toFixed(3)}" fill="${element.fill}" font-size="${element.fontSize.toFixed(3)}" font-family="${escapeSvgText(element.fontFamily)}"${style} text-anchor="${element.anchor}" dominant-baseline="${element.dominantBaseline ?? "middle"}"${transform}>${escapeSvgText(element.text)}</text>`;
   }).join("");
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${scene.width}" height="${scene.height}" viewBox="0 0 ${scene.width} ${scene.height}">`,
@@ -7864,6 +7865,7 @@ export default function TreeCanvas({
       anchor: "start" | "middle" | "end",
       rotation?: number,
       fontStyle?: string,
+      dominantBaseline?: "middle" | "text-after-edge",
     ): void => {
       if (!exportCaptureRef.current || !text) {
         return;
@@ -7879,6 +7881,7 @@ export default function TreeCanvas({
         fontStyle,
         anchor,
         rotation,
+        dominantBaseline,
       });
     };
     const pushSceneImage = (href: string, x: number, y: number, width: number, height: number, opacity?: number): void => {
@@ -11482,6 +11485,7 @@ export default function TreeCanvas({
             metrics.pitch * camera.scale * 0.28,
           ),
         );
+        const spiralScaleLabelsReadable = scaleFontSize >= 6;
         ctx.font = fontSpec("scale", scaleFontSize);
         ctx.fillStyle = "#475569";
         ctx.strokeStyle = "#64748b";
@@ -11496,8 +11500,9 @@ export default function TreeCanvas({
         const labelVector = worldToScreenCircular(camera, sideWorldX, sideWorldY);
         const labelOrigin = worldToScreenCircular(camera, 0, 0);
         const labelAlign: CanvasTextAlign = (labelVector.x - labelOrigin.x) < 0 ? "right" : "left";
-        const visibleSpiralScaleAges = timeBoundaryValues
-          .filter((age) => showScaleZeroTick || age > 0);
+        const visibleSpiralScaleAges = spiralScaleLabelsReadable
+          ? timeBoundaryValues.filter((age) => showScaleZeroTick || age > 0)
+          : [];
         const labelBoxesOverlap = (
           left: { left: number; right: number; top: number; bottom: number },
           right: { left: number; right: number; top: number; bottom: number },
@@ -11549,8 +11554,8 @@ export default function TreeCanvas({
             candidates.slice(index + 1).every((other) => !labelBoxesOverlap(candidate.bounds, other.bounds))
           ))
         );
-        if (!allSpiralLabelsFit(spiralScaleCandidates) && scaleFontSize > 1.5) {
-          let low = 1.5;
+        if (!allSpiralLabelsFit(spiralScaleCandidates) && scaleFontSize > 6) {
+          let low = 6;
           let high = scaleFontSize;
           for (let step = 0; step < 8; step += 1) {
             const candidateSize = (low + high) * 0.5;
@@ -14933,7 +14938,16 @@ export default function TreeCanvas({
           const rotatedLabelDegrees = (centerScaleBarTheta + rotationAngle) * 180 / Math.PI;
           const rotatedLabelOnRightSide = Math.cos(centerScaleBarTheta + rotationAngle) >= 0;
           const rotatedLabelRadians = normalizeRotation(rotatedLabelOnRightSide ? rotatedLabelDegrees : rotatedLabelDegrees + 180) * Math.PI / 180;
-          let centerScaleLabelRotation = showCircularCenterRadialScaleBar ? rotatedLabelRadians : 0;
+          const centerScaleLabelRotation = showCircularCenterRadialScaleBar ? rotatedLabelRadians : 0;
+          let visibleCenterScaleBoundaries = displayedCircularCenterScaleBoundaries;
+          let omitCenterScaleUnit = false;
+          let centerScaleBoundaryGapPx = showCircularCenterRadialScaleBar ? 0 : 10;
+          const centerScaleNumberText = (value: number): string => (
+            tree.isUltrametric ? formatAgeNumber(value) : formatScaleNumber(value)
+          );
+          const centerScaleLabelText = (value: number): string => (
+            omitCenterScaleUnit ? centerScaleNumberText(value) : scaleLabelText(value)
+          );
           if (displayedCircularCenterScaleBoundaries.length > 1) {
             const sortedTickPositions = displayedCircularCenterScaleBoundaries
               .map((boundary) => circularRadiusForBoundary(boundary.value) * camera.scale)
@@ -14945,48 +14959,76 @@ export default function TreeCanvas({
                 sortedTickPositions[index] - sortedTickPositions[index - 1],
               );
             }
-            const maximumLabelWidthPx = displayedCircularCenterScaleBoundaries.reduce(
+            centerScaleBoundaryGapPx = showCircularCenterRadialScaleBar
+              ? 0
+              : Math.min(10, Math.max(0, minimumTickSpacingPx * 0.18));
+            let maximumLabelWidthPx = displayedCircularCenterScaleBoundaries.reduce(
               (maximum, boundary) => Math.max(maximum, ctx.measureText(scaleLabelText(boundary.value)).width),
               0,
             );
             const screenAxisAngle = centerScaleTheta + rotationAngle;
-            const tangentLabelRotation = normalizeRotation(
-              ((screenAxisAngle * 180) / Math.PI) + 90,
-            ) * Math.PI / 180;
-            const projectedLabelExtent = (labelRotation: number): number => {
+            const projectedLabelExtent = (labelRotation: number, labelWidth: number): number => {
               const relativeAngle = labelRotation - screenAxisAngle;
-              return (Math.abs(Math.cos(relativeAngle)) * maximumLabelWidthPx)
+              return (Math.abs(Math.cos(relativeAngle)) * labelWidth)
                 + (Math.abs(Math.sin(relativeAngle)) * scaleFontSize * 1.15);
             };
             const availableSpacingPx = Math.max(1, minimumTickSpacingPx - 3);
-            if (projectedLabelExtent(centerScaleLabelRotation) > availableSpacingPx) {
-              for (let step = 1; step <= 20; step += 1) {
-                const progress = step / 20;
-                const candidate = centerScaleLabelRotation
-                  + ((tangentLabelRotation - centerScaleLabelRotation) * progress);
-                centerScaleLabelRotation = candidate;
-                if (projectedLabelExtent(candidate) <= availableSpacingPx) {
-                  break;
-                }
-              }
+            let projectedExtentPx = projectedLabelExtent(centerScaleLabelRotation, maximumLabelWidthPx);
+            const hasDisplayedUnit = displayedCircularCenterScaleBoundaries.some((boundary) => (
+              scaleLabelText(boundary.value) !== centerScaleNumberText(boundary.value)
+            ));
+            if (hasDisplayedUnit && projectedExtentPx > availableSpacingPx) {
+              omitCenterScaleUnit = true;
+              maximumLabelWidthPx = displayedCircularCenterScaleBoundaries.reduce(
+                (maximum, boundary) => Math.max(maximum, ctx.measureText(centerScaleNumberText(boundary.value)).width),
+                0,
+              );
+              projectedExtentPx = projectedLabelExtent(centerScaleLabelRotation, maximumLabelWidthPx);
             }
-            const projectedExtentPx = projectedLabelExtent(centerScaleLabelRotation);
-            if (projectedExtentPx > availableSpacingPx && scaleFontSize > 1.5) {
-              scaleFontSize = Math.max(1.5, scaleFontSize * (availableSpacingPx / projectedExtentPx));
+            if (projectedExtentPx > availableSpacingPx && scaleFontSize > 6) {
+              scaleFontSize = Math.max(6, scaleFontSize * (availableSpacingPx / projectedExtentPx));
               ctx.font = fontSpec("scale", scaleFontSize);
               centerScaleLabelOffsetPx = showCircularCenterRadialScaleBar
                 ? Math.max((scaleFontSize * 0.72) + 3, scaleFontSize)
                 : 0;
             }
+            if (projectedExtentPx > availableSpacingPx && scaleFontSize <= 6) {
+              const minimumVisibleSpacingPx = Math.max(
+                7,
+                projectedExtentPx * (6 / Math.max(1e-9, scaleLabelFontSize("scale", 11))),
+              );
+              const selected: typeof displayedCircularCenterScaleBoundaries = [];
+              const descending = [...displayedCircularCenterScaleBoundaries]
+                .sort((left, right) => (
+                  circularRadiusForBoundary(right.value) - circularRadiusForBoundary(left.value)
+                ));
+              let lastPosition = Number.POSITIVE_INFINITY;
+              for (const boundary of descending) {
+                const position = circularRadiusForBoundary(boundary.value) * camera.scale;
+                if (lastPosition - position < minimumVisibleSpacingPx) {
+                  continue;
+                }
+                selected.push(boundary);
+                lastPosition = position;
+              }
+              visibleCenterScaleBoundaries = selected;
+            }
           }
           (renderDebug.circular as Record<string, unknown>).centerScaleLabelFontSize = scaleFontSize;
+          (renderDebug.circular as Record<string, unknown>).visibleCenterScaleLabelCount = visibleCenterScaleBoundaries.length;
+          (renderDebug.circular as Record<string, unknown>).centerScaleLabelRotationRadians = centerScaleLabelRotation;
+          (renderDebug.circular as Record<string, unknown>).centerScaleUnitOmitted = omitCenterScaleUnit;
+          (renderDebug.circular as Record<string, unknown>).centerScaleBoundaryGapPx = centerScaleBoundaryGapPx;
           const rotateCenterScaleLabels = Math.abs(centerScaleLabelRotation) > 1e-6;
+          const centerScaleTextBaseline: CanvasTextBaseline = showCircularCenterRadialScaleBar ? "middle" : "bottom";
+          ctx.textBaseline = centerScaleTextBaseline;
+          (renderDebug.circular as Record<string, unknown>).centerScaleLabelBaseline = centerScaleTextBaseline;
           ctx.textAlign = rotateCenterScaleLabels || showCircularCenterRadialScaleBar
             ? "center"
             : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "left" : "right";
-          for (let index = 0; index < displayedCircularCenterScaleBoundaries.length; index += 1) {
-            const boundary = displayedCircularCenterScaleBoundaries[index];
-            const radius = circularRadiusForBoundary(boundary.value) + (showCircularCenterRadialScaleBar ? 0 : (10 / camera.scale));
+          for (let index = 0; index < visibleCenterScaleBoundaries.length; index += 1) {
+            const boundary = visibleCenterScaleBoundaries[index];
+            const radius = circularRadiusForBoundary(boundary.value) + (centerScaleBoundaryGapPx / camera.scale);
             const point = polarToCartesian(radius, showCircularCenterRadialScaleBar ? centerScaleBarTheta : centerScaleTheta);
             const screen = worldToScreenCircular(camera, point.x, point.y);
             const labelX = showCircularCenterRadialScaleBar
@@ -15000,13 +15042,13 @@ export default function TreeCanvas({
               ctx.save();
               ctx.translate(labelX, labelY);
               ctx.rotate(centerScaleLabelRotation);
-              ctx.fillText(scaleLabelText(boundary.value), 0, 0);
+              ctx.fillText(centerScaleLabelText(boundary.value), 0, 0);
               ctx.restore();
             } else {
-              ctx.fillText(scaleLabelText(boundary.value), labelX, labelY);
+              ctx.fillText(centerScaleLabelText(boundary.value), labelX, labelY);
             }
             pushSceneText(
-              scaleLabelText(boundary.value),
+              centerScaleLabelText(boundary.value),
               labelX,
               labelY,
               "#6b7280",
@@ -15015,6 +15057,7 @@ export default function TreeCanvas({
               rotateCenterScaleLabels || showCircularCenterRadialScaleBar ? "middle" : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "start" : "end",
               rotateCenterScaleLabels || showCircularCenterRadialScaleBar ? centerScaleLabelRotation : undefined,
               labelFontStyles.scale,
+              showCircularCenterRadialScaleBar ? "middle" : "text-after-edge",
             );
           }
           if (showCircularCenterRadialScaleBar) {
