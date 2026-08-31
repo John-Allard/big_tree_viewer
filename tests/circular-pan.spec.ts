@@ -662,6 +662,97 @@ test("small pixel wheel deltas from trackpads zoom with usable sensitivity", asy
   expect(Number(after?.scaleY ?? 0) / Number(before?.scaleY ?? 1)).toBeGreaterThan(1.025);
 });
 
+test("Mac pinch wheel input lifts tiny deltas without making larger deltas jump", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const zoomRatioForDelta = async (deltaY: number): Promise<number> => page.evaluate(async (delta) => {
+    const canvasApi = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const canvas = document.querySelector("canvas");
+    if (!canvasApi || !(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Canvas unavailable for Mac pinch wheel test.");
+    }
+    canvasApi.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const before = canvasApi.getCamera();
+    if (!before || before.kind !== "rect") {
+      throw new Error("Rectangular camera unavailable for Mac pinch wheel test.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      deltaX: 0,
+      deltaY: delta,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      ctrlKey: true,
+      clientX: rect.left + (rect.width * 0.5),
+      clientY: rect.top + (rect.height * 0.5),
+      bubbles: true,
+      cancelable: true,
+    }));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const after = canvasApi.getCamera();
+    if (!after || after.kind !== "rect") {
+      throw new Error("Updated rectangular camera unavailable for Mac pinch wheel test.");
+    }
+    return Number(after.scaleX) / Number(before.scaleX);
+  }, deltaY);
+
+  const tinyPinchRatio = await zoomRatioForDelta(-1);
+  const largerPinchRatio = await zoomRatioForDelta(-20);
+  expect(tinyPinchRatio).toBeGreaterThan(1.009);
+  expect(tinyPinchRatio).toBeLessThan(1.03);
+  expect(largerPinchRatio).toBeGreaterThan(1.12);
+  expect(largerPinchRatio).toBeLessThan(1.2);
+});
+
+test("native Mac gesture pinch has a responsive but bounded scale", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const ratio = await page.evaluate(async () => {
+    const canvasApi = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const canvas = document.querySelector("canvas");
+    const before = canvasApi?.getCamera();
+    if (!canvasApi || !(canvas instanceof HTMLCanvasElement) || !before || before.kind !== "rect") {
+      throw new Error("Canvas unavailable for native Mac gesture test.");
+    }
+    const rect = canvas.getBoundingClientRect();
+    const gestureEvent = (type: string, scale: number): Event => {
+      const event = new Event(type, { bubbles: true, cancelable: true }) as Event & {
+        scale?: number;
+        clientX?: number;
+        clientY?: number;
+      };
+      Object.defineProperties(event, {
+        scale: { value: scale },
+        clientX: { value: rect.left + (rect.width * 0.5) },
+        clientY: { value: rect.top + (rect.height * 0.5) },
+      });
+      return event;
+    };
+    canvas.dispatchEvent(gestureEvent("gesturestart", 1));
+    canvas.dispatchEvent(gestureEvent("gesturechange", 1.01));
+    canvas.dispatchEvent(gestureEvent("gestureend", 1.01));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const after = canvasApi.getCamera();
+    if (!after || after.kind !== "rect") {
+      throw new Error("Updated camera unavailable for native Mac gesture test.");
+    }
+    return Number(after.scaleX) / Number(before.scaleX);
+  });
+
+  expect(ratio).toBeGreaterThan(1.018);
+  expect(ratio).toBeLessThan(1.03);
+});
+
 for (const mode of ["rectangular", "circular"] as const) {
   test(`${mode} keyboard zoom keeps the world point under the mouse fixed`, async ({ page }) => {
     await waitForViewer(page);

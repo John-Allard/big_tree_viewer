@@ -102,7 +102,9 @@ const CIRCULAR_TAXONOMY_SCREEN_SPACE_RIBBON_MIN_RADIUS_PX = 1200;
 const WHEEL_ZOOM_SENSITIVITY = 0.0015;
 const TRACKPAD_PIXEL_ZOOM_MULTIPLIER = 5;
 const TRACKPAD_PIXEL_DELTA_THRESHOLD = 32;
-const MAC_GESTURE_ZOOM_EXPONENT = 1.7;
+const MAC_PINCH_TINY_DELTA_EXTRA_MULTIPLIER = 2;
+const MAC_PINCH_EXTRA_MULTIPLIER_TAPER_DELTA = 24;
+const MAC_GESTURE_ZOOM_EXPONENT = 2;
 const HUGE_TREE_TIP_LIMIT = 500_000;
 const HUGE_TREE_CACHED_CIRCULAR_PATH_MAX_ZOOM_MULTIPLIER = 1.6;
 const HUGE_TREE_MAX_CIRCULAR_ZOOM_MULTIPLIER = 32_768;
@@ -256,6 +258,13 @@ function normalizedWheelZoomDelta(event: WheelEvent, viewportHeight: number): nu
     return event.deltaY * viewportHeight;
   }
   const absDeltaY = Math.abs(event.deltaY);
+  if (event.ctrlKey && absDeltaY > 0) {
+    const tinyDeltaWeight = 1 - Math.min(1, absDeltaY / MAC_PINCH_EXTRA_MULTIPLIER_TAPER_DELTA);
+    return event.deltaY * (
+      TRACKPAD_PIXEL_ZOOM_MULTIPLIER
+      + (MAC_PINCH_TINY_DELTA_EXTRA_MULTIPLIER * tinyDeltaWeight)
+    );
+  }
   const looksLikeTrackpad = absDeltaY > 0
     && absDeltaY < TRACKPAD_PIXEL_DELTA_THRESHOLD
     && Math.abs(event.deltaX) < Math.max(1, absDeltaY * 0.4);
