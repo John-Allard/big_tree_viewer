@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { fontFamilyCss, type FigureStyleSettings } from "../lib/figureStyles";
 import { buildComparisonLayout, normalizeComparisonTipName } from "../lib/treeComparison";
+import { deriveDefaultVisibleTaxonomyRanks } from "../lib/taxonomyActiveRanks";
 import { isAutomaticTaxonomyRank, TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 import type { LayoutOrder, TreeModel, ZoomAxisMode } from "../types/tree";
 import type { TaxonomyRankDisplayMode } from "./treeCanvasTypes";
@@ -330,17 +331,25 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
   const primaryLayout = primaryTree.layouts[order];
   const primaryDenominator = Math.max(1, comparison.primaryLeaves.length - 1);
   const comparisonDenominator = Math.max(1, comparison.comparisonLeaves.length - 1);
+  const defaultAutomaticRankSet = useMemo(() => new Set(
+    taxonomyMap
+      ? deriveDefaultVisibleTaxonomyRanks(
+        taxonomyMap.tipRanks.map((tip) => tip.ranks),
+        taxonomyMap.activeRanks,
+      )
+      : [],
+  ), [taxonomyMap]);
   const availableRanks = useMemo(() => {
     if (!taxonomyEnabled || !taxonomyMap) {
       return [] as TaxonomyRank[];
     }
     return [...taxonomyMap.activeRanks]
       .filter((rank) => useAutomaticTaxonomyRankVisibility
-        ? isAutomaticTaxonomyRank(rank)
+        ? (isAutomaticTaxonomyRank(rank) && defaultAutomaticRankSet.has(rank))
           || (taxonomyRankDisplayModes.kingdom ?? "hidden") === "ribbon"
         : (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) === "ribbon")
       .sort((left, right) => TAXONOMY_RANKS.indexOf(right) - TAXONOMY_RANKS.indexOf(left));
-  }, [taxonomyEnabled, taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
+  }, [defaultAutomaticRankSet, taxonomyEnabled, taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
   const activeRanks = useMemo(() => {
     if (!useAutomaticTaxonomyRankVisibility || availableRanks.length === 0) {
       return availableRanks;
