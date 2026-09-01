@@ -130,6 +130,8 @@ type DistanceMeasurement = {
   targetNode: number;
   mrcaNode: number;
   distance: number;
+  mrcaAge: number | null;
+  mrcaRootDistance: number;
   screenX: number;
   screenY: number;
 };
@@ -4379,6 +4381,7 @@ export default function TreeCanvas({
   const distanceTooltipNodesRef = useRef<HTMLDivElement | null>(null);
   const distanceTooltipValueRef = useRef<HTMLDivElement | null>(null);
   const distanceTooltipMrcaRef = useRef<HTMLDivElement | null>(null);
+  const distanceTooltipMrcaDistanceRef = useRef<HTMLDivElement | null>(null);
   const distanceStartNodeRef = useRef<number | null>(null);
   const distanceStartAncestorsRef = useRef<Set<number>>(new Set());
   const distanceMeasurementRef = useRef<DistanceMeasurement | null>(null);
@@ -5607,7 +5610,8 @@ export default function TreeCanvas({
     const nodes = distanceTooltipNodesRef.current;
     const value = distanceTooltipValueRef.current;
     const mrca = distanceTooltipMrcaRef.current;
-    if (!tooltip || !nodes || !value || !mrca) {
+    const mrcaDistance = distanceTooltipMrcaDistanceRef.current;
+    if (!tooltip || !nodes || !value || !mrca || !mrcaDistance) {
       return;
     }
     if (!measurement) {
@@ -5620,6 +5624,9 @@ export default function TreeCanvas({
     nodes.textContent = `${displayNodeNameForView(measurement.startNode)} to ${displayNodeNameForView(measurement.targetNode)}`;
     value.textContent = `Distance: ${formatDistance(measurement.distance)}`;
     mrca.textContent = `MRCA: ${displayNodeNameForView(measurement.mrcaNode)}`;
+    mrcaDistance.textContent = measurement.mrcaAge === null
+      ? `MRCA root distance: ${formatDistance(measurement.mrcaRootDistance)}`
+      : `MRCA age: ${formatDistance(measurement.mrcaAge)}`;
     tooltip.style.left = `${Math.max(8, Math.min(size.width - 260, measurement.screenX + 16))}px`;
     tooltip.style.top = `${Math.max(8, Math.min(size.height - 120, measurement.screenY + 16))}px`;
     tooltip.hidden = false;
@@ -6382,6 +6389,10 @@ export default function TreeCanvas({
       targetNode: startNode,
       mrcaNode: startNode,
       distance: 0,
+      mrcaAge: tree.isUltrametric
+        ? Math.max(0, tree.rootAge - tree.buffers.depth[startNode])
+        : null,
+      mrcaRootDistance: tree.buffers.depth[startNode],
       screenX,
       screenY,
     };
@@ -6415,6 +6426,10 @@ export default function TreeCanvas({
       distance: tree.buffers.depth[startNode]
         + tree.buffers.depth[targetNode]
         - (2 * tree.buffers.depth[mrcaNode]),
+      mrcaAge: tree.isUltrametric
+        ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode])
+        : null,
+      mrcaRootDistance: tree.buffers.depth[mrcaNode],
       screenX,
       screenY,
     };
@@ -16944,10 +16959,6 @@ export default function TreeCanvas({
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
       lastCanvasPointerRef.current = { x: localX, y: localY };
-      if (distanceStartNodeRef.current !== null) {
-        clearDistanceMeasurement();
-        return;
-      }
       for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
         const hitbox = labelHitsRef.current[index];
         if (hitbox.source !== "collapse") {
@@ -16991,6 +17002,10 @@ export default function TreeCanvas({
             activePointersRef.current.delete(event.pointerId);
             if (canvas.hasPointerCapture(event.pointerId)) {
               canvas.releasePointerCapture(event.pointerId);
+            }
+            if (distanceStartNodeRef.current !== null) {
+              clearDistanceMeasurement();
+              return;
             }
             showContextMenuAt(localX, localY);
           }, 550);
@@ -17317,11 +17332,33 @@ export default function TreeCanvas({
       event.preventDefault();
       if (distanceStartNodeRef.current !== null) {
         clearDistanceMeasurement();
+        setContextMenu(null);
+        return;
       }
       const rect = canvas.getBoundingClientRect();
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
       showContextMenuAt(localX, localY);
+    };
+
+    const handleDoubleClick = (event: MouseEvent): void => {
+      if (event.button !== 0 || distanceStartNodeRef.current === null) {
+        return;
+      }
+      event.preventDefault();
+      clearDistanceMeasurement();
+      setContextMenu(null);
+    };
+
+    const handleDocumentPointerDown = (event: PointerEvent): void => {
+      if (distanceStartNodeRef.current === null) {
+        return;
+      }
+      const target = event.target;
+      if (target instanceof Element && target.closest(".control-panel")) {
+        clearDistanceMeasurement();
+        setContextMenu(null);
+      }
     };
 
     canvas.addEventListener("pointerdown", handlePointerDown);
@@ -17331,6 +17368,8 @@ export default function TreeCanvas({
     canvas.addEventListener("pointerleave", handlePointerLeave);
     wheelElement.addEventListener("wheel", handleWheelEvent, { passive: false });
     canvas.addEventListener("contextmenu", handleContextMenu);
+    canvas.addEventListener("dblclick", handleDoubleClick);
+    document.addEventListener("pointerdown", handleDocumentPointerDown, true);
     const handleTouchMove = (event: TouchEvent): void => {
       if (event.touches.length > 1) {
         event.preventDefault();
@@ -17395,6 +17434,8 @@ export default function TreeCanvas({
       canvas.removeEventListener("pointerleave", handlePointerLeave);
       wheelElement.removeEventListener("wheel", handleWheelEvent);
       canvas.removeEventListener("contextmenu", handleContextMenu);
+      canvas.removeEventListener("dblclick", handleDoubleClick);
+      document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
       canvas.removeEventListener("touchmove", handleTouchMove);
       canvas.removeEventListener("gesturestart", handleGestureStart);
       canvas.removeEventListener("gesturechange", handleGestureChange);
@@ -18401,6 +18442,7 @@ export default function TreeCanvas({
         <div ref={distanceTooltipNodesRef} />
         <div ref={distanceTooltipValueRef} className="distance-measurement-value" />
         <div ref={distanceTooltipMrcaRef} />
+        <div ref={distanceTooltipMrcaDistanceRef} />
       </div>
       {contextMenu ? (
         <div

@@ -143,7 +143,7 @@ test("unlabeled subtree statistics identify the selection as an internal node", 
   await expect(panel.locator(".subtree-statistics-panel-header p")).toHaveText("Internal node");
 });
 
-test("distance measurement follows the hovered node path and survives wheel zoom", async ({ page }) => {
+test("distance measurement reports MRCA age and allows navigation until explicitly stopped", async ({ page }) => {
   await loadTree(page);
   const startNode = await nodeIndex(page, "A");
   const targetNode = await nodeIndex(page, "C");
@@ -159,6 +159,7 @@ test("distance measurement follows the hovered node path and survives wheel zoom
   await expect(tooltip).toContainText("A to C");
   await expect(tooltip).toContainText("Distance: 4");
   await expect(tooltip).toContainText("MRCA: Root");
+  await expect(tooltip).toContainText("MRCA age: 2");
 
   const highlightedPixels = await page.locator(".tree-canvas-overlay").evaluate((canvas) => {
     const context = (canvas as HTMLCanvasElement).getContext("2d");
@@ -176,6 +177,24 @@ test("distance measurement follows the hovered node path and survives wheel zoom
   });
   expect(highlightedPixels).toBeGreaterThan(20);
 
+  const canvas = page.getByTestId("tree-canvas");
+  const canvasBox = await canvas.boundingBox();
+  if (!canvasBox) {
+    throw new Error("Tree canvas has no bounding box.");
+  }
+  const cameraBeforePan = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+  await page.mouse.move(canvasBox.x + (canvasBox.width * 0.5), canvasBox.y + (canvasBox.height * 0.5));
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + (canvasBox.width * 0.5) + 60, canvasBox.y + (canvasBox.height * 0.5) + 30, { steps: 4 });
+  await page.mouse.up();
+  const cameraAfterPan = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+  expect(cameraAfterPan?.translateX).not.toBe(cameraBeforePan?.translateX);
+  expect(cameraAfterPan?.translateY).not.toBe(cameraBeforePan?.translateY);
+  const targetPointAfterPan = await branchPoint(page, targetNode);
+  await page.mouse.move(targetPointAfterPan.x, targetPointAfterPan.y);
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("A to C");
+
   await page.mouse.wheel(0, -120);
   await expect(tooltip).toBeVisible();
 
@@ -192,11 +211,22 @@ test("distance measurement follows the hovered node path and survives wheel zoom
     await expect(tooltip).toContainText("MRCA: Root");
   }
 
-  const canvasBox = await page.getByTestId("tree-canvas").boundingBox();
-  if (!canvasBox) {
-    throw new Error("Tree canvas has no bounding box.");
-  }
-  await page.mouse.click(canvasBox.x + 20, canvasBox.y + 20);
+  await page.mouse.dblclick(canvasBox.x + 20, canvasBox.y + 20);
+  await expect(tooltip).toBeHidden();
+
+  const nextStartPoint = await branchPoint(page, startNode);
+  await page.mouse.click(nextStartPoint.x, nextStartPoint.y, { button: "right" });
+  await page.getByRole("button", { name: "Measure Distance" }).click();
+  await expect(tooltip).toBeVisible();
+  await page.mouse.click(canvasBox.x + 20, canvasBox.y + 20, { button: "right" });
+  await expect(tooltip).toBeHidden();
+  await expect(page.locator(".tree-context-menu")).toHaveCount(0);
+
+  const finalStartPoint = await branchPoint(page, startNode);
+  await page.mouse.click(finalStartPoint.x, finalStartPoint.y, { button: "right" });
+  await page.getByRole("button", { name: "Measure Distance" }).click();
+  await expect(tooltip).toBeVisible();
+  await page.locator(".control-panel").click({ position: { x: 12, y: 12 } });
   await expect(tooltip).toBeHidden();
 });
 
