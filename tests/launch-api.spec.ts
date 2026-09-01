@@ -974,7 +974,7 @@ test("standard taxonomy mapping recognizes leading species names in decorated ti
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
   const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
 
-  expect(taxonomy?.version).toBe(10);
+  expect(taxonomy?.version).toBe(11);
   expect(taxonomy?.mappedCount).toBe(2);
   expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
 });
