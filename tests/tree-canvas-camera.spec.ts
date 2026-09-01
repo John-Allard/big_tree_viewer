@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { clampCircularCamera } from "../src/components/treeCanvasCamera";
+import { clampCircularCamera, clampRadialCamera, setCircularCameraRotation } from "../src/components/treeCanvasCamera";
 import type { CircularCamera } from "../src/components/treeCanvasTypes";
 import type { TreeModel } from "../src/types/tree";
 
@@ -46,6 +46,25 @@ test("circular camera padding cannot move the actual tree entirely offscreen", (
 
   const treeRadiusPx = TEST_TREE.maxDepth * camera.scale;
   expect(treeRadiusPx + camera.translateX).toBeCloseTo(8, 6);
+  expect(camera.translateY).toBe(300);
+});
+
+test("partial radial camera clamps against the visible upper fan instead of a full circle", () => {
+  const camera = circularCamera(400, -100_000);
+
+  clampRadialCamera(camera, 800, 600, Math.PI, Math.PI, 0, 100);
+
+  expect(camera.translateX).toBe(400);
+  expect(camera.translateY).toBeCloseTo(56, 6);
+});
+
+test("partial radial camera respects rotation when retaining the visible sector", () => {
+  const camera = circularCamera(100_000, 300);
+  setCircularCameraRotation(camera, Math.PI * 0.5);
+
+  clampRadialCamera(camera, 800, 600, Math.PI, Math.PI, 0, 100);
+
+  expect(camera.translateX).toBeCloseTo(744, 6);
   expect(camera.translateY).toBe(300);
 });
 

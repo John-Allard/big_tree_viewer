@@ -268,3 +268,104 @@ export function clampCircularCamera(
     camera.translateY = closestViewportY + (offsetY * correctionScale);
   }
 }
+
+export function clampRadialCamera(
+  camera: CircularCamera,
+  width: number,
+  height: number,
+  startTheta: number,
+  angleSpan: number,
+  innerRadius: number,
+  outerRadius: number,
+  extraRadiusPx = 0,
+): void {
+  const visibleMargin = Math.max(8, 56 - Math.max(0, extraRadiusPx));
+  const boundedOuterRadius = Math.max(outerRadius, innerRadius);
+  const bounds = radialBounds(
+    startTheta,
+    Math.max(0, Math.min(Math.PI * 2, angleSpan)),
+    Math.max(0, innerRadius),
+    boundedOuterRadius,
+    camera.rotation,
+  );
+  const minTranslateX = visibleMargin - (bounds.maxX * camera.scale);
+  const maxTranslateX = width - visibleMargin - (bounds.minX * camera.scale);
+  const minTranslateY = visibleMargin - (bounds.maxY * camera.scale);
+  const maxTranslateY = height - visibleMargin - (bounds.minY * camera.scale);
+  camera.translateX = Math.min(maxTranslateX, Math.max(minTranslateX, camera.translateX));
+  camera.translateY = Math.min(maxTranslateY, Math.max(minTranslateY, camera.translateY));
+
+  const span = Math.max(0, Math.min(Math.PI * 2, angleSpan));
+  const normalizedAngleDelta = (angle: number): number => {
+    const fullTurn = Math.PI * 2;
+    return ((angle - startTheta) % fullTurn + fullTurn) % fullTurn;
+  };
+  const screenPointInsideSector = (screenX: number, screenY: number): boolean => {
+    const world = screenToWorldCircular(camera, screenX, screenY);
+    const radius = Math.hypot(world.x, world.y);
+    return radius >= innerRadius
+      && radius <= boundedOuterRadius
+      && (span >= (Math.PI * 2) - 1e-9 || normalizedAngleDelta(Math.atan2(world.y, world.x)) <= span);
+  };
+  const viewportProbePoints = [
+    [width * 0.5, height * 0.5],
+    [visibleMargin, visibleMargin],
+    [width - visibleMargin, visibleMargin],
+    [visibleMargin, height - visibleMargin],
+    [width - visibleMargin, height - visibleMargin],
+  ];
+  if (viewportProbePoints.some(([x, y]) => screenPointInsideSector(x, y))) {
+    return;
+  }
+
+  const boundaryPoints: Array<{ x: number; y: number }> = [];
+  const arcSteps = Math.max(1, Math.ceil(span / (Math.PI / 90)));
+  for (let step = 0; step <= arcSteps; step += 1) {
+    const theta = startTheta + ((span * step) / arcSteps);
+    boundaryPoints.push(worldToScreenCircular(
+      camera,
+      Math.cos(theta) * boundedOuterRadius,
+      Math.sin(theta) * boundedOuterRadius,
+    ));
+    if (innerRadius > 0) {
+      boundaryPoints.push(worldToScreenCircular(
+        camera,
+        Math.cos(theta) * innerRadius,
+        Math.sin(theta) * innerRadius,
+      ));
+    }
+  }
+  if (innerRadius <= 0) {
+    boundaryPoints.push(worldToScreenCircular(camera, 0, 0));
+  }
+  const edgeSteps = 16;
+  for (let step = 0; step <= edgeSteps; step += 1) {
+    const radius = innerRadius + (((boundedOuterRadius - innerRadius) * step) / edgeSteps);
+    for (const theta of [startTheta, startTheta + span]) {
+      boundaryPoints.push(worldToScreenCircular(
+        camera,
+        Math.cos(theta) * radius,
+        Math.sin(theta) * radius,
+      ));
+    }
+  }
+
+  let closest: { dx: number; dy: number; distanceSquared: number } | null = null;
+  for (const point of boundaryPoints) {
+    const targetX = Math.min(width - visibleMargin, Math.max(visibleMargin, point.x));
+    const targetY = Math.min(height - visibleMargin, Math.max(visibleMargin, point.y));
+    const dx = targetX - point.x;
+    const dy = targetY - point.y;
+    const distanceSquared = (dx * dx) + (dy * dy);
+    if (distanceSquared <= 1e-9) {
+      return;
+    }
+    if (!closest || distanceSquared < closest.distanceSquared) {
+      closest = { dx, dy, distanceSquared };
+    }
+  }
+  if (closest) {
+    camera.translateX += closest.dx;
+    camera.translateY += closest.dy;
+  }
+}

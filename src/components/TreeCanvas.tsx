@@ -20,6 +20,7 @@ import { isAutomaticTaxonomyRank, TAXONOMY_RANKS, type TaxonomyBlock, type Taxon
 import { buildCache } from "./treeCanvasCache";
 import {
   clampCircularCamera,
+  clampRadialCamera,
   clampRectCamera,
   fitCircularCamera,
   fitRadialCamera,
@@ -865,15 +866,31 @@ function drawSpiralRibbonScreenPath(
   ctx.restore();
 }
 
-function curvedTextNeeded(textWidthPx: number, fontSizePx: number, curveRadiusPx: number): boolean {
+function curvedTextSagitta(textWidthPx: number, curveRadiusPx: number): number {
   if (!(curveRadiusPx > 0) || !(textWidthPx > 0)) {
-    return false;
+    return 0;
   }
   const halfWidthPx = textWidthPx * 0.5;
-  const sagittaPx = halfWidthPx >= curveRadiusPx
+  return halfWidthPx >= curveRadiusPx
     ? curveRadiusPx
     : curveRadiusPx - Math.sqrt(Math.max(0, (curveRadiusPx * curveRadiusPx) - (halfWidthPx * halfWidthPx)));
+}
+
+function curvedTextNeeded(textWidthPx: number, fontSizePx: number, curveRadiusPx: number): boolean {
+  const sagittaPx = curvedTextSagitta(textWidthPx, curveRadiusPx);
   return sagittaPx > Math.max(1.4, fontSizePx * 0.16) || curveRadiusPx < fontSizePx * 9;
+}
+
+function curvedTextShouldFollowArc(
+  textWidthPx: number,
+  fontSizePx: number,
+  curveRadiusPx: number,
+): boolean {
+  if (fontSizePx < 7) {
+    return curvedTextNeeded(textWidthPx, fontSizePx, curveRadiusPx);
+  }
+  const sagittaPx = curvedTextSagitta(textWidthPx, curveRadiusPx);
+  return sagittaPx > Math.max(1.25, fontSizePx * 0.1);
 }
 
 function drawCircularCurvedText(
@@ -886,6 +903,7 @@ function drawCircularCurvedText(
   color: string,
   searchHighlightColor: string | null,
   searchMatchRange: { start: number; end: number } | null,
+  captureGlyph?: (glyph: string, x: number, y: number, color: string, rotation: number) => void,
 ): void {
   if (!(radiusPx > 1)) {
     ctx.fillStyle = color;
@@ -906,14 +924,18 @@ function drawCircularCurvedText(
     const offsetPx = cursor + (glyphWidth * 0.5);
     const theta = centerTheta + ((direction * offsetPx) / radiusPx);
     const rotation = theta + (Math.PI * 0.5) + (wordFlipped ? Math.PI : 0);
-    ctx.save();
-    ctx.translate(centerX + (Math.cos(theta) * radiusPx), centerY + (Math.sin(theta) * radiusPx));
-    ctx.rotate(rotation);
-    ctx.fillStyle = searchHighlightColor && searchMatchRange && index >= searchMatchRange.start && index < searchMatchRange.end
+    const glyphColor = searchHighlightColor && searchMatchRange && index >= searchMatchRange.start && index < searchMatchRange.end
       ? searchHighlightColor
       : color;
+    const x = centerX + (Math.cos(theta) * radiusPx);
+    const y = centerY + (Math.sin(theta) * radiusPx);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rotation);
+    ctx.fillStyle = glyphColor;
     ctx.fillText(glyph, 0, 0);
     ctx.restore();
+    captureGlyph?.(glyph, x, y, glyphColor, rotation);
     cursor += glyphWidth;
   }
 }
@@ -6541,9 +6563,33 @@ export default function TreeCanvas({
         camera.scale,
       ).outerRadius
       : Math.max(polarOuterRadius, tree.branchLengthMinPositive);
-    clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera), clampRadiusWorld);
-    clampCircularCamera(camera, tree, size.width, size.height, circularClampExtraRadiusPx(camera), clampRadiusWorld);
-  }, [circularClampExtraRadiusPx, polarOuterRadius, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
+    const extraRadiusPx = circularClampExtraRadiusPx(camera);
+    if (viewMode !== "spiral" && isPartialRadial) {
+      clampRadialCamera(
+        camera,
+        size.width,
+        size.height,
+        polarAngleStart,
+        polarAngleSpan,
+        polarInnerRadius,
+        clampRadiusWorld,
+        extraRadiusPx,
+      );
+      clampRadialCamera(
+        camera,
+        size.width,
+        size.height,
+        polarAngleStart,
+        polarAngleSpan,
+        polarInnerRadius,
+        clampRadiusWorld,
+        extraRadiusPx,
+      );
+      return;
+    }
+    clampCircularCamera(camera, tree, size.width, size.height, extraRadiusPx, clampRadiusWorld);
+    clampCircularCamera(camera, tree, size.width, size.height, extraRadiusPx, clampRadiusWorld);
+  }, [circularClampExtraRadiusPx, isPartialRadial, polarAngleSpan, polarAngleStart, polarInnerRadius, polarOuterRadius, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
 
   const fitPolarCamera = useCallback((mode: ViewMode, extraRadiusPx = 0): CircularCamera | null => {
     if (!tree) {
@@ -14431,6 +14477,7 @@ export default function TreeCanvas({
           }
         }
       }
+      let curvedTaxonomyLabelCount = 0;
       for (let index = 0; index < circularGenusLabels.length; index += 1) {
         const label = circularGenusLabels[index];
         ctx.font = `${label.fontSize ?? circularGenusBaseFontSize}px ${label.rank ? labelFontFamilies.taxonomy : labelFontFamilies.genus}`;
@@ -14452,12 +14499,15 @@ export default function TreeCanvas({
         const useCurvedText = Boolean(
           label.rank
           && label.clipArc
-          && curvedTextNeeded(
+          && curvedTextShouldFollowArc(
             labelMetrics.width,
             label.fontSize ?? circularGenusBaseFontSize,
             curvedRadiusPx,
-          ),
+          )
         );
+        if (label.rank && useCurvedText) {
+          curvedTaxonomyLabelCount += 1;
+        }
         const shouldMaskTaxonomyStrand = Boolean(label.rank && (taxonomyOverlayStyle === "strands" || label.taxonomyDisplayMode === "label-only"));
         if (useCurvedText) {
           if (shouldMaskTaxonomyStrand) {
@@ -14494,6 +14544,17 @@ export default function TreeCanvas({
             label.color ?? GENUS_COLOR,
             label.searchHighlightColor ?? null,
             label.searchMatchRange ?? null,
+            (glyph, x, y, color, rotation) => pushSceneText(
+              glyph,
+              x,
+              y,
+              color,
+              label.fontSize ?? circularGenusBaseFontSize,
+              labelFontFamilies.taxonomy,
+              "middle",
+              rotation,
+              labelFontStyles.taxonomy,
+            ),
           );
         } else {
           if (shouldMaskTaxonomyStrand) {
@@ -14543,16 +14604,18 @@ export default function TreeCanvas({
           );
         }
         ctx.restore();
-        pushSceneText(
-          label.text,
-          label.x,
-          label.y + (label.offsetY ?? 0),
-          label.searchHighlightColor ?? label.color ?? GENUS_COLOR,
-          label.fontSize ?? circularGenusBaseFontSize,
-          label.rank ? labelFontFamilies.taxonomy : labelFontFamilies.genus,
-          label.align === "right" ? "end" : label.align === "center" ? "middle" : "start",
-          label.rotation ?? 0,
-        );
+        if (!useCurvedText) {
+          pushSceneText(
+            label.text,
+            label.x,
+            label.y + (label.offsetY ?? 0),
+            label.searchHighlightColor ?? label.color ?? GENUS_COLOR,
+            label.fontSize ?? circularGenusBaseFontSize,
+            label.rank ? labelFontFamilies.taxonomy : labelFontFamilies.genus,
+            label.align === "right" ? "end" : label.align === "center" ? "middle" : "start",
+            label.rotation ?? 0,
+          );
+        }
         if (label.rank) {
           drawPhyloPicForTaxonomyLabel(label, labelMetrics.width, label.fontSize ?? circularGenusBaseFontSize);
         }
@@ -14576,6 +14639,9 @@ export default function TreeCanvas({
             height: Math.max(20, (label.fontSize ?? circularGenusBaseFontSize) * 1.4),
           });
         }
+      }
+      if (renderDebug.circular && typeof renderDebug.circular === "object") {
+        (renderDebug.circular as Record<string, unknown>).curvedTaxonomyLabelCount = curvedTaxonomyLabelCount;
       }
       timing.taxonomyOverlayMs += performance.now() - circularTaxonomyOverlayStartTime;
 

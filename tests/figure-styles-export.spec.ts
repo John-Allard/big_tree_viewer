@@ -1328,6 +1328,36 @@ test("taxonomy label size and band thickness controls are independent", async ({
   }
 });
 
+test("radial taxonomy labels automatically follow visibly curved ribbons", async ({ page }) => {
+  await waitForViewer(page);
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount ?? 0,
+  ) > 0);
+
+  const result = await page.evaluate(async () => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__;
+    if (!app) {
+      throw new Error("Viewer test controls unavailable.");
+    }
+    const settle = async (): Promise<void> => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    };
+    const count = () => {
+      const debug = window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
+        curvedTaxonomyLabelCount?: number;
+      } | undefined;
+      return debug?.curvedTaxonomyLabelCount ?? 0;
+    };
+    app.setViewMode("circular");
+    app.setTaxonomyEnabled(true);
+    app.requestFit();
+    await settle();
+    return count();
+  });
+
+  expect(result).toBeGreaterThan(0);
+});
+
 test("scale settings support explicit tick interval and disabling fading subdivision ticks", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A:500,B:500):500,(C:500,D:500):500)Root;");
