@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react";
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
+import { ChevronLeft, ChevronRight, Maximize, Minimize } from "lucide-react";
 import TreeCanvas from "./components/TreeCanvas";
 import TreeComparisonCanvas, { type TreeComparisonCameraState } from "./components/TreeComparisonCanvas";
 import TreeStatisticsView from "./components/TreeStatisticsView";
@@ -1992,7 +1993,7 @@ export default function App() {
   const pendingTreeParseRejecterRef = useRef<((error: Error) => void) | null>(null);
   const phylopicCancelRequestedRef = useRef(false);
   const phylopicTriedImageUuidsByKeyRef = useRef<Map<string, Set<string>>>(new Map());
-  const viewerPanelRef = useRef<HTMLElement | null>(null);
+  const appShellRef = useRef<HTMLDivElement | null>(null);
   const automationExportRequestCounterRef = useRef(0);
   const automationExportReplyTargetsRef = useRef<Map<number, { target: Window | null; origin: string }>>(new Map());
   const apiReadyAnnouncedRef = useRef(false);
@@ -2069,9 +2070,9 @@ export default function App() {
   const [subtreeStatisticsTarget, setSubtreeStatisticsTarget] = useState<{ node: number; name: string } | null>(null);
   const statsSectionRef = useRef<HTMLElement | null>(null);
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
+  const [sidebarOverlayMode, setSidebarOverlayMode] = useState(!sidebarVisible);
   const [viewerFullscreen, setViewerFullscreen] = useState(false);
   const [viewerFullscreenFallback, setViewerFullscreenFallback] = useState(false);
-  const [fullscreenToolbarOpen, setFullscreenToolbarOpen] = useState(false);
   const [pastedTreeText, setPastedTreeText] = useState("");
   const [showPasteInput, setShowPasteInput] = useState(false);
   const [comparisonTree, setComparisonTree] = useState<TreeModel | null>(null);
@@ -2478,14 +2479,24 @@ export default function App() {
   useEffect(() => {
     setSubtreeStatisticsTarget(null);
   }, [viewTree]);
+  const showSidebar = useCallback((): void => {
+    if (!sidebarVisible) {
+      setSidebarOverlayMode(true);
+    }
+    setSidebarVisible(true);
+  }, [setSidebarVisible, sidebarVisible]);
+  const hideSidebar = useCallback((): void => {
+    setSidebarOverlayMode(true);
+    setSidebarVisible(false);
+  }, [setSidebarVisible]);
   const handleSubtreeStatisticsRequest = useCallback((target: { node: number; name: string }) => {
     setSubtreeStatisticsTarget(target);
     setStatsOpen(true);
-    setSidebarVisible(true);
+    showSidebar();
     window.requestAnimationFrame(() => {
       statsSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
-  }, [setSidebarVisible, setStatsOpen]);
+  }, [setStatsOpen, showSidebar]);
   const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
   const treeCanvasTreeRef = useRef(viewTree);
   const treeCanvasTaxonomyMapRef = useRef(viewTaxonomyMap);
@@ -7248,20 +7259,18 @@ export default function App() {
 
   useEffect(() => {
     const handleFullscreenChange = (): void => {
-      const nativeFullscreen = document.fullscreenElement === viewerPanelRef.current;
+      const nativeFullscreen = document.fullscreenElement === appShellRef.current;
       if (nativeFullscreen) {
         setViewerFullscreenFallback(false);
         setViewerFullscreen(true);
       } else if (!viewerFullscreenFallback) {
         setViewerFullscreen(false);
-        setFullscreenToolbarOpen(false);
       }
     };
     const handleFullscreenKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape" && viewerFullscreenFallback) {
         setViewerFullscreenFallback(false);
         setViewerFullscreen(false);
-        setFullscreenToolbarOpen(false);
       }
     };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
@@ -7273,25 +7282,23 @@ export default function App() {
   }, [viewerFullscreenFallback]);
 
   const toggleViewerFullscreen = useCallback(async (): Promise<void> => {
-    const viewerPanel = viewerPanelRef.current;
-    if (!viewerPanel) {
+    const appShell = appShellRef.current;
+    if (!appShell) {
       return;
     }
-    if (document.fullscreenElement === viewerPanel) {
+    if (document.fullscreenElement === appShell) {
       await document.exitFullscreen();
       return;
     }
     if (viewerFullscreenFallback) {
       setViewerFullscreenFallback(false);
       setViewerFullscreen(false);
-      setFullscreenToolbarOpen(false);
       return;
     }
-    if (viewerPanel.requestFullscreen) {
+    if (appShell.requestFullscreen) {
       try {
-        await viewerPanel.requestFullscreen();
+        await appShell.requestFullscreen();
         setViewerFullscreen(true);
-        setFullscreenToolbarOpen(true);
         return;
       } catch {
         // Fall through to the in-page mode when the browser blocks element fullscreen.
@@ -7299,7 +7306,6 @@ export default function App() {
     }
     setViewerFullscreenFallback(true);
     setViewerFullscreen(true);
-    setFullscreenToolbarOpen(true);
   }, [viewerFullscreenFallback]);
 
   const fitCurrentView = useCallback((): void => {
@@ -7312,7 +7318,8 @@ export default function App() {
 
   return (
     <div
-      className={`app-shell${sidebarVisible ? "" : " sidebar-hidden"}${dragActive ? " drag-active" : ""}`}
+      ref={appShellRef}
+      className={`app-shell${sidebarVisible ? "" : " sidebar-hidden"}${sidebarOverlayMode ? " sidebar-overlay-mode" : ""}${viewerFullscreen ? " app-shell-fullscreen" : ""}${viewerFullscreenFallback ? " app-shell-fullscreen-fallback" : ""}${dragActive ? " drag-active" : ""}`}
       onDragEnter={(event) => {
         event.preventDefault();
         dragCounterRef.current += 1;
@@ -7390,22 +7397,31 @@ export default function App() {
         </div>
       ) : null}
       {!sidebarVisible ? (
-        <button
-          type="button"
-          className="mobile-sidebar-toggle mobile-sidebar-toggle-floating"
-          onClick={() => setSidebarVisible(true)}
-        >
-          Show Panel
-        </button>
+        <div className="sidebar-collapsed-tabs" role="toolbar" aria-label="Side panel controls">
+          <button
+            type="button"
+            className="sidebar-edge-button secondary"
+            onClick={showSidebar}
+            aria-label="Show side panel"
+            title="Show the side panel."
+          >
+            <ChevronRight aria-hidden="true" />
+          </button>
+          {viewerFullscreen ? (
+            <button
+              type="button"
+              className="sidebar-edge-button secondary"
+              onClick={() => void toggleViewerFullscreen()}
+              aria-label="Exit full screen"
+              title="Exit full-screen mode."
+            >
+              <Minimize aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
       ) : null}
-      <aside className="control-panel">
-        <button
-          type="button"
-          className="mobile-sidebar-toggle mobile-sidebar-toggle-inline"
-          onClick={() => setSidebarVisible(false)}
-        >
-          Hide Panel
-        </button>
+      <div className="control-panel-shell">
+        <aside className="control-panel">
         <div className="panel-title-row">
           <div className="panel-title-block">
             <h1>Big Tree Viewer</h1>
@@ -7713,14 +7729,6 @@ export default function App() {
             </button>
           </div>
           <div className="button-row view-primary-actions">
-            <button
-              type="button"
-              className="secondary view-fullscreen-button"
-              onClick={() => void toggleViewerFullscreen()}
-              title="Expand the tree view to fill the screen."
-            >
-              Full Screen
-            </button>
             <button
               type="button"
               className="secondary view-fit-button"
@@ -9963,56 +9971,30 @@ export default function App() {
             <p className="empty-note">No tree loaded.</p>
           )}
         </PanelSection>
-      </aside>
+        </aside>
+        <div className="panel-edge-controls" role="toolbar" aria-label="Side panel controls">
+          <button
+            type="button"
+            className="sidebar-edge-button secondary"
+            onClick={hideSidebar}
+            aria-label="Hide side panel"
+            title="Hide the side panel."
+          >
+            <ChevronLeft aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="sidebar-edge-button secondary"
+            onClick={() => void toggleViewerFullscreen()}
+            aria-label={viewerFullscreen ? "Exit full screen" : "Enter full screen"}
+            title={viewerFullscreen ? "Exit full-screen mode." : "Expand Big Tree Viewer to fill the screen."}
+          >
+            {viewerFullscreen ? <Minimize aria-hidden="true" /> : <Maximize aria-hidden="true" />}
+          </button>
+        </div>
+      </div>
 
-      <main
-        ref={viewerPanelRef}
-        className={`viewer-panel${viewerFullscreen ? " viewer-panel-fullscreen" : ""}${viewerFullscreenFallback ? " viewer-panel-fullscreen-fallback" : ""}`}
-      >
-        {viewerFullscreen ? (
-          fullscreenToolbarOpen ? (
-            <div className="viewer-fullscreen-toolbar" role="toolbar" aria-label="Full-screen tree controls">
-              <button
-                type="button"
-                className="secondary viewer-fullscreen-toolbar-collapse"
-                onClick={() => setFullscreenToolbarOpen(false)}
-                aria-label="Hide full-screen toolbar"
-                title="Hide the full-screen toolbar."
-              >
-                <span aria-hidden="true">↘ ↖</span>
-              </button>
-              <button type="button" onClick={() => void toggleViewerFullscreen()} title="Exit the full-screen tree view.">
-                Exit Full Screen
-              </button>
-              <button type="button" className="secondary" onClick={fitCurrentView} title="Reset pan and zoom so the full tree fits in the canvas.">
-                Fit View
-              </button>
-              {viewMode === "rectangular" ? (
-                <div className="viewer-fullscreen-zoom-controls segmented" aria-label="Zoom axis">
-                  <button type="button" className={zoomAxisMode === "both" ? "active" : ""} onClick={() => setZoomAxisMode("both")}>
-                    Zoom Both
-                  </button>
-                  <button type="button" className={zoomAxisMode === "x" ? "active" : ""} onClick={() => setZoomAxisMode("x")}>
-                    Zoom X
-                  </button>
-                  <button type="button" className={zoomAxisMode === "y" ? "active" : ""} onClick={() => setZoomAxisMode("y")}>
-                    Zoom Y
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="viewer-fullscreen-toolbar-tab secondary"
-              onClick={() => setFullscreenToolbarOpen(true)}
-              aria-label="Open full-screen toolbar"
-              title="Open full-screen tree controls."
-            >
-              <span aria-hidden="true">↖ ↘</span>
-            </button>
-          )
-        ) : null}
+      <main className="viewer-panel">
         <div className={`normal-tree-layer${comparisonEnabled && comparisonTree && viewTree ? " comparison-hidden" : ""}`}>
           <TreeCanvas
           treeRef={treeCanvasTreeRef}

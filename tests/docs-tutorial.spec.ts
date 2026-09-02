@@ -112,17 +112,17 @@ test("tutorial prompt and tour are suppressed on mobile-sized viewports", async 
   const mobilePanelLayout = await page.evaluate(() => {
     const panel = document.querySelector(".control-panel")?.getBoundingClientRect();
     const title = document.querySelector(".panel-title-block h1")?.getBoundingClientRect();
-    const button = document.querySelector(".mobile-sidebar-toggle-inline")?.getBoundingClientRect();
-    return panel && title && button
+    const controls = document.querySelector(".panel-edge-controls")?.getBoundingClientRect();
+    return panel && title && controls
       ? {
         titleTopOffset: title.top - panel.top,
-        buttonTopOffset: button.top - panel.top,
+        controlsTopOffset: controls.top - panel.top,
       }
       : null;
   });
   expect(mobilePanelLayout).not.toBeNull();
   expect(mobilePanelLayout?.titleTopOffset ?? Number.POSITIVE_INFINITY).toBeLessThan(28);
-  expect(mobilePanelLayout?.buttonTopOffset ?? Number.POSITIVE_INFINITY).toBeLessThan(28);
+  expect(mobilePanelLayout?.controlsTopOffset ?? Number.POSITIVE_INFINITY).toBeLessThan(28);
   await page.goto("/#tutorial");
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toHaveCount(0);
   await expect(page).not.toHaveURL(/#tutorial$/);
