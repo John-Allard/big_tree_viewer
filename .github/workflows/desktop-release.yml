@@ -86,8 +86,9 @@ jobs:
       - name: Verify macOS signature and notarization ticket
         run: |
           codesign --verify --deep --strict --verbose=2 "release/mac-universal/Big Tree Viewer.app"
-          xcrun stapler validate "release/Big-Tree-Viewer-macOS-universal.dmg"
-          spctl --assess --type open --context context:primary-signature --verbose=4 "release/Big-Tree-Viewer-macOS-universal.dmg"
+          xcrun stapler validate "release/mac-universal/Big Tree Viewer.app"
+          spctl --assess --type execute --verbose=4 "release/mac-universal/Big Tree Viewer.app"
+          hdiutil verify "release/Big-Tree-Viewer-macOS-universal.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-macos
