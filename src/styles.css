@@ -176,6 +176,29 @@ button.secondary {
   min-height: 0;
 }
 
+.viewer-empty-state {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-content: center;
+  gap: 0.4rem;
+  padding: 2rem;
+  color: #334155;
+  text-align: center;
+  pointer-events: none;
+}
+
+.viewer-empty-state strong {
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.viewer-empty-state span {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
 .viewer-corner-controls {
   position: absolute;
   top: 0.55rem;
@@ -342,12 +365,13 @@ button.secondary {
 }
 
 .tutorial-prompt {
+  position: absolute;
   top: 1.25rem;
   left: 50%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
-  width: min(620px, calc(100vw - 2rem));
+  width: min(620px, calc(100% - 6rem));
   padding: 1rem 1.1rem;
   transform: translateX(-50%);
 }

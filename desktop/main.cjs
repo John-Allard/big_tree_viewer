@@ -41,6 +41,44 @@ function sendOpenPaths(paths) {
   mainWindow.focus();
 }
 
+function sendMenuCommand(command) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("btv:menu-command", command);
+}
+
+async function showDefaultApplicationHelp() {
+  if (process.platform === "darwin") {
+    await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "Set Big Tree Viewer as the Default",
+      message: "Set Big Tree Viewer as the default for tree files",
+      detail: "Big Tree Viewer sessions are registered with Big Tree Viewer when the app is installed. For Newick and other tree files, select a file in Finder, choose File > Get Info, select Big Tree Viewer under Open with, then click Change All.",
+      buttons: ["OK"],
+    });
+    return;
+  }
+  if (process.platform === "win32") {
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "Set Big Tree Viewer as the Default",
+      message: "Choose Big Tree Viewer for tree file types",
+      detail: "Windows controls default applications. Open Default Apps, search for a tree extension such as .nwk, and choose Big Tree Viewer.",
+      buttons: ["Open Default Apps", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (result.response === 0) void shell.openExternal("ms-settings:defaultapps");
+    return;
+  }
+  await dialog.showMessageBox(mainWindow, {
+    type: "info",
+    title: "Set Big Tree Viewer as the Default",
+    message: "Set Big Tree Viewer as the default for tree files",
+    detail: "In your file manager, right-click a tree file, choose Open With, select Big Tree Viewer, and enable the option to remember or always use that application.",
+    buttons: ["OK"],
+  });
+}
+
 async function chooseTreeFiles() {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Open tree or Big Tree Viewer session",
@@ -69,13 +107,36 @@ function installApplicationMenu() {
       label: "File",
       submenu: [
         { label: "Open Tree or Session...", accelerator: "CmdOrCtrl+O", click: () => void chooseTreeFiles() },
+        { label: "Save Session...", accelerator: "CmdOrCtrl+S", click: () => sendMenuCommand("save-session") },
+        { label: "Export View...", accelerator: "CmdOrCtrl+Shift+E", click: () => sendMenuCommand("export-view") },
+        { type: "separator" },
+        { label: "Set as Default for Tree Files...", click: () => void showDefaultApplicationHelp() },
         { type: "separator" },
         process.platform === "darwin" ? { role: "close" } : { role: "quit" },
       ],
     },
     { role: "editMenu" },
-    { role: "viewMenu" },
+    {
+      label: "View",
+      submenu: [
+        { label: "Fit View", accelerator: "CmdOrCtrl+0", click: () => sendMenuCommand("fit-view") },
+        { label: "Toggle Side Panel", accelerator: "CmdOrCtrl+Shift+B", click: () => sendMenuCommand("toggle-side-panel") },
+        { type: "separator" },
+        {
+          label: "Toggle Full Screen",
+          accelerator: process.platform === "darwin" ? "Control+Command+F" : "F11",
+          click: () => sendMenuCommand("toggle-full-screen"),
+        },
+      ],
+    },
     { role: "windowMenu" },
+    {
+      role: "help",
+      submenu: [
+        { label: "Big Tree Viewer Website", click: () => void shell.openExternal("https://bigtreeviewer.net/") },
+        { label: "Learn More", click: () => void shell.openExternal("https://bigtreeviewer.net/#about") },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -178,6 +239,25 @@ if (!app.requestSingleInstanceLock()) {
         name: path.basename(resolvedPath),
         url: `btv-file://open/${token}/${encodeURIComponent(path.basename(resolvedPath))}`,
       };
+    });
+    ipcMain.handle("btv:save-file", async (_event, suggestedName, data) => {
+      const safeName = typeof suggestedName === "string" && suggestedName.trim()
+        ? path.basename(suggestedName.trim())
+        : "big-tree-viewer.btvsession";
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: "Save Big Tree Viewer session",
+        defaultPath: safeName,
+        filters: [{ name: "Big Tree Viewer session", extensions: ["btvsession"] }],
+      });
+      if (result.canceled || !result.filePath) return false;
+      if (!(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
+        throw new Error("The session data could not be transferred to the desktop application.");
+      }
+      const bytes = data instanceof ArrayBuffer
+        ? Buffer.from(data)
+        : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+      await fs.writeFile(result.filePath, bytes);
+      return true;
     });
     ipcMain.handle("btv:consume-pending-open-paths", () => {
       const paths = [...new Set(pendingOpenPaths)];

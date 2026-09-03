@@ -5,18 +5,33 @@ directories:
   output: release
 files:
   - dist/**/*
+  - "!dist/example_tree.btvsession"
   - desktop/**/*
   - package.json
 fileAssociations:
   - ext:
+      - btvsession
+    name: Big Tree Viewer session
+    description: Big Tree Viewer session
+    role: Viewer
+  - ext:
       - nwk
       - newick
       - tre
+      - tree
+      - treefile
+      - trees
       - nexus
       - nex
-      - btvsession
+      - nh
+      - nhx
+      - dnd
+      - contree
+      - mcc
+      - mctree
+      - ufboot
     name: Phylogenetic tree
-    description: Phylogenetic tree or Big Tree Viewer session
+    description: Phylogenetic tree
     role: Viewer
 mac:
   category: public.app-category.education

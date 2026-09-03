@@ -6062,8 +6062,8 @@ export default function TreeCanvas({
     ) {
       canvas.width = backingWidth;
       canvas.height = backingHeight;
-      canvas.style.width = `${size.width}px`;
-      canvas.style.height = `${size.height}px`;
+      canvas.style.removeProperty("width");
+      canvas.style.removeProperty("height");
       hoverCanvasBackingStoreRef.current = {
         width: backingWidth,
         height: backingHeight,
@@ -7809,15 +7809,36 @@ export default function TreeCanvas({
     if (!element) {
       return undefined;
     }
+    let resizeTimer: number | null = null;
+    let initialized = false;
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      setSize({
+      const nextSize = {
         width: Math.max(320, Math.floor(entry.contentRect.width)),
         height: Math.max(320, Math.floor(entry.contentRect.height)),
-      });
+      };
+      if (!initialized) {
+        initialized = true;
+        setSize(nextSize);
+        return;
+      }
+      if (resizeTimer !== null) {
+        window.clearTimeout(resizeTimer);
+      }
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = null;
+        setSize((current) => (
+          current.width === nextSize.width && current.height === nextSize.height ? current : nextSize
+        ));
+      }, 80);
     });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (resizeTimer !== null) {
+        window.clearTimeout(resizeTimer);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -7854,8 +7875,13 @@ export default function TreeCanvas({
     ) {
       canvas.width = backingWidth;
       canvas.height = backingHeight;
-      canvas.style.width = `${renderSize.width}px`;
-      canvas.style.height = `${renderSize.height}px`;
+      if (isOverrideRender) {
+        canvas.style.width = `${renderSize.width}px`;
+        canvas.style.height = `${renderSize.height}px`;
+      } else {
+        canvas.style.removeProperty("width");
+        canvas.style.removeProperty("height");
+      }
       if (!isOverrideRender) {
         canvasBackingStoreRef.current = {
           width: backingWidth,

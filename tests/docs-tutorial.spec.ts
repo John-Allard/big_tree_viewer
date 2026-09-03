@@ -152,6 +152,19 @@ test("new-user tutorial prompt can start, advance, and persist dismissal", async
   });
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial" })).toBeVisible();
+  const tutorialPrompt = await page.getByRole("dialog", { name: "Big Tree Viewer tutorial" }).boundingBox();
+  const viewerPanel = await page.locator(".viewer-panel").boundingBox();
+  const viewerControls = await page.getByRole("toolbar", { name: "Viewer controls" }).boundingBox();
+  expect(tutorialPrompt).toBeTruthy();
+  expect(viewerPanel).toBeTruthy();
+  expect(viewerControls).toBeTruthy();
+  expect((tutorialPrompt?.x ?? 0) + ((tutorialPrompt?.width ?? 0) / 2)).toBeCloseTo(
+    (viewerPanel?.x ?? 0) + ((viewerPanel?.width ?? 0) / 2),
+    0,
+  );
+  expect(tutorialPrompt?.x ?? 0).toBeGreaterThan(
+    (viewerControls?.x ?? 0) + (viewerControls?.width ?? 0),
+  );
   await page.getByRole("button", { name: "Start tutorial" }).first().click();
 
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Load a tree");

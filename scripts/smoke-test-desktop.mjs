@@ -7,6 +7,21 @@ if (!executablePath) {
 }
 
 const fixturePath = path.resolve("tests/fixtures/agent-skill-tree.nwk");
+const emptyApp = await electron.launch({
+  executablePath: path.resolve(executablePath),
+  env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
+});
+
+try {
+  const emptyPage = await emptyApp.firstWindow();
+  await emptyPage.getByText("Drag a tree file here to load", { exact: true }).waitFor({ timeout: 15_000 });
+  if (await emptyPage.getByRole("button", { name: "Load Example", exact: true }).count() !== 0) {
+    throw new Error("The desktop application exposed the web-only bundled example control.");
+  }
+} finally {
+  await emptyApp.close();
+}
+
 const app = await electron.launch({
   executablePath: path.resolve(executablePath),
   args: [fixturePath],

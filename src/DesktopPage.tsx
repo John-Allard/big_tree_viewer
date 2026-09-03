@@ -106,14 +106,6 @@ export default function DesktopPage() {
           </p>
         </section>
 
-        <section className="api-doc-section">
-          <h2>Opening tree files</h2>
-          <p>
-            The installer registers common Newick and NEXUS extensions, including <code>.nwk</code>, <code>.newick</code>,
-            {" "}<code>.tre</code>, <code>.nex</code>, and <code>.nexus</code>, plus <code>.btvsession</code> files.
-            You can make Big Tree Viewer the default application for any of these formats in your operating system.
-          </p>
-        </section>
       </div>
     </main>
   );

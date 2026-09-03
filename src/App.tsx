@@ -2202,6 +2202,9 @@ export default function App() {
     if (typeof window === "undefined") {
       return false;
     }
+    if (window.bigTreeViewerDesktop) {
+      return false;
+    }
     if (suppressTutorialForCurrentViewport()) {
       return false;
     }
@@ -4764,6 +4767,10 @@ export default function App() {
     }
     const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel ?? "big-tree-viewer");
     const suggestedName = `${baseLabel}.btvsession`;
+    const desktop = window.bigTreeViewerDesktop;
+    if (desktop) {
+      return async (blob: Blob) => await desktop.saveFile(suggestedName, await blob.arrayBuffer());
+    }
     const pickerWindow = window as Window & {
       showSaveFilePicker?: (options: unknown) => Promise<{
         createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
@@ -5994,6 +6001,10 @@ export default function App() {
         return;
       }
       if (new URLSearchParams(window.location.search).get("btv_desktop_open") === "1") {
+        return;
+      }
+      if (window.bigTreeViewerDesktop) {
+        setLoadState({ loading: false, message: "", error: null });
         return;
       }
       const loadedSubtree = await loadSubtreeFromUrl();
@@ -7347,6 +7358,38 @@ export default function App() {
     }
   }, [comparisonEnabled, comparisonTree]);
 
+  useEffect(() => {
+    const desktop = window.bigTreeViewerDesktop;
+    if (!desktop) {
+      return;
+    }
+    return desktop.onMenuCommand((command) => {
+      switch (command) {
+        case "save-session":
+          void saveSession();
+          break;
+        case "export-view":
+          setDataOpen(true);
+          setShowExportOptions(true);
+          showSidebar();
+          break;
+        case "fit-view":
+          fitCurrentView();
+          break;
+        case "toggle-side-panel":
+          if (sidebarVisible) {
+            hideSidebar();
+          } else {
+            showSidebar();
+          }
+          break;
+        case "toggle-full-screen":
+          void toggleViewerFullscreen();
+          break;
+      }
+    });
+  }, [fitCurrentView, hideSidebar, saveSession, setDataOpen, showSidebar, sidebarVisible, toggleViewerFullscreen]);
+
   return (
     <div
       ref={appShellRef}
@@ -7367,26 +7410,6 @@ export default function App() {
       onDrop={(event) => void handleDrop(event)}
     >
       {dragActive ? <div className="drag-overlay">Drop a tree file, CSV/TSV metadata file, or Newick / NEXUS text to load it</div> : null}
-      {tutorialPromptVisible && !tutorialSuppressedForMobile ? (
-        <div className="tutorial-prompt" role="dialog" aria-label="Big Tree Viewer tutorial">
-          <button
-            type="button"
-            className="tutorial-close"
-            aria-label="Close tutorial prompt"
-            onClick={() => dismissTutorial(false)}
-          >
-            ×
-          </button>
-          <div>
-            <strong>New to Big Tree Viewer?</strong>
-            <p>Take a short guided tour of loading trees, navigation, taxonomy, metadata, and session files.</p>
-          </div>
-          <div className="tutorial-actions">
-            <button type="button" onClick={startTutorial}>Start tutorial</button>
-            <button type="button" className="secondary" onClick={() => dismissTutorial(true)}>Don&apos;t show again</button>
-          </div>
-        </div>
-      ) : null}
       {tutorialActive && !tutorialSuppressedForMobile ? (
         <div
           className={`tutorial-card${tutorialCardReady ? " ready" : ""}`}
@@ -7452,17 +7475,17 @@ export default function App() {
             <p className="panel-title-description">
               {HOME_DESCRIPTION}{" "}
               <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
-              {" · "}
-              <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#desktop`}>Desktop app</a>
             </p>
           </div>
         </div>
 
         <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)} tourId="data">
           <div className="button-row">
-            <button type="button" onClick={() => void loadExample()} disabled={loadState.loading || sessionLoading} title="Load the bundled example tree and reset the current tree view.">
-              Load Example
-            </button>
+            {!window.bigTreeViewerDesktop ? (
+              <button type="button" onClick={() => void loadExample()} disabled={loadState.loading || sessionLoading} title="Load the bundled example tree and reset the current tree view.">
+                Load Example
+              </button>
+            ) : null}
             <button
               type="button"
               className="secondary"
@@ -10000,6 +10023,32 @@ export default function App() {
       </div>
 
       <main className="viewer-panel">
+        {!viewTree && !loadState.loading && !sessionLoading ? (
+          <div className="viewer-empty-state" aria-live="polite">
+            <strong>Drag a tree file here to load</strong>
+            <span>or choose Open File</span>
+          </div>
+        ) : null}
+        {tutorialPromptVisible && !tutorialSuppressedForMobile ? (
+          <div className="tutorial-prompt" role="dialog" aria-label="Big Tree Viewer tutorial">
+            <button
+              type="button"
+              className="tutorial-close"
+              aria-label="Close tutorial prompt"
+              onClick={() => dismissTutorial(false)}
+            >
+              ×
+            </button>
+            <div>
+              <strong>New to Big Tree Viewer?</strong>
+              <p>Take a short guided tour of loading trees, navigation, taxonomy, metadata, and session files.</p>
+            </div>
+            <div className="tutorial-actions">
+              <button type="button" onClick={startTutorial}>Start tutorial</button>
+              <button type="button" className="secondary" onClick={() => dismissTutorial(true)}>Don&apos;t show again</button>
+            </div>
+          </div>
+        ) : null}
         <div className="viewer-corner-controls" role="toolbar" aria-label="Viewer controls">
           <button
             type="button"

@@ -448,11 +448,36 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     if (!wrapper) {
       return;
     }
-    const update = () => setSize({ width: Math.max(1, wrapper.clientWidth), height: Math.max(1, wrapper.clientHeight) });
-    update();
-    const observer = new ResizeObserver(update);
+    let resizeTimer: number | null = null;
+    let initialized = false;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextSize = {
+        width: Math.max(1, Math.floor(entry.contentRect.width)),
+        height: Math.max(1, Math.floor(entry.contentRect.height)),
+      };
+      if (!initialized) {
+        initialized = true;
+        setSize(nextSize);
+        return;
+      }
+      if (resizeTimer !== null) {
+        window.clearTimeout(resizeTimer);
+      }
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = null;
+        setSize((current) => (
+          current.width === nextSize.width && current.height === nextSize.height ? current : nextSize
+        ));
+      }, 80);
+    });
     observer.observe(wrapper);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (resizeTimer !== null) {
+        window.clearTimeout(resizeTimer);
+      }
+    };
   }, []);
   useEffect(() => setCamera({ zoom: 1, zoomX: 1, panX: 0, panY: 0 }), [comparisonTree, primaryTree]);
   useEffect(() => setCamera({ zoom: 1, zoomX: 1, panX: 0, panY: 0 }), [fitRequest]);
@@ -510,8 +535,8 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     canvas.width = Math.round(size.width * dpr);
     canvas.height = Math.round(size.height * dpr);
-    canvas.style.width = `${size.width}px`;
-    canvas.style.height = `${size.height}px`;
+    canvas.style.removeProperty("width");
+    canvas.style.removeProperty("height");
     const context = canvas.getContext("2d");
     if (!context) {
       return;
