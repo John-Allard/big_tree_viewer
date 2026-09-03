@@ -11,6 +11,7 @@ export default function MetadataGuidePage() {
           <a href={`${base}#faq`}>FAQ</a>
           <a href={`${base}#metadata`} aria-current="page">Metadata</a>
           <a href={`${base}#share`}>Share sessions</a>
+          <a href={`${base}#desktop`}>Desktop app</a>
           <a href={`${base}#api`}>API</a>
           <a href={`${base}#agentic-ai`}>Agentic AI</a>
         </nav>

@@ -5390,6 +5390,34 @@ export default function App() {
     }
   }, [loadFullSessionFromObject, parseSessionFile, parseText]);
 
+  useEffect(() => {
+    const desktop = window.bigTreeViewerDesktop;
+    if (!desktop) {
+      return;
+    }
+    const openPaths = async (paths: string[]): Promise<void> => {
+      for (const filePath of paths) {
+        try {
+          const payload = await desktop.grantFile(filePath);
+          const response = await fetch(payload.url);
+          if (!response.ok) {
+            throw new Error(`Unable to read ${payload.name}.`);
+          }
+          await loadFileAsTreeOrSession(new File([await response.blob()], payload.name));
+        } catch (error) {
+          setSessionError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    };
+    void desktop.consumePendingOpenPaths().then(openPaths).catch((error: unknown) => {
+      setSessionError(error instanceof Error ? error.message : String(error));
+    });
+    const unsubscribe = desktop.onOpenPaths((paths) => void openPaths(paths));
+    return () => {
+      unsubscribe();
+    };
+  }, [loadFileAsTreeOrSession]);
+
   const onFileChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
     if (!file) {
@@ -5963,6 +5991,9 @@ export default function App() {
           message: "Waiting for Big Tree Viewer launch payload...",
           error: null,
         });
+        return;
+      }
+      if (new URLSearchParams(window.location.search).get("btv_desktop_open") === "1") {
         return;
       }
       const loadedSubtree = await loadSubtreeFromUrl();
@@ -7421,6 +7452,8 @@ export default function App() {
             <p className="panel-title-description">
               {HOME_DESCRIPTION}{" "}
               <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
+              {" · "}
+              <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#desktop`}>Desktop app</a>
             </p>
           </div>
         </div>

@@ -2,11 +2,24 @@
   "name": "big-tree-viewer",
   "private": true,
   "version": "0.1.0",
+  "description": "Interactive viewer for very large phylogenetic trees",
+  "author": {
+    "name": "John B Allard",
+    "email": "john.allard@temple.edu"
+  },
+  "desktopName": "BigTreeViewer",
   "type": "module",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:pages": "BIG_TREE_VIEWER_BASE=/ npm run build",
+    "build:desktop:web": "tsc -b && vite build --base=./",
+    "desktop:dev": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron desktop/main.cjs --dev-server-url=http://127.0.0.1:5173\"",
+    "desktop:run": "npm run build:desktop:web && electron desktop/main.cjs",
+    "desktop:pack": "npm run build:desktop:web && electron-builder --dir",
+    "desktop:dist": "npm run build:desktop:web && electron-builder",
+    "test:desktop:smoke": "node scripts/smoke-test-desktop.mjs",
     "preview": "vite preview",
     "bench:pan": "node scripts/benchmark-circular-pan.mjs",
     "test:e2e": "playwright test",
@@ -28,8 +41,12 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^10.0.5",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
     "playwright": "^1.58.2",
     "typescript": "^5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "wait-on": "^9.1.0"
   }
 }

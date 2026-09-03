@@ -1,0 +1,53 @@
+appId: net.bigtreeviewer.desktop
+productName: Big Tree Viewer
+asar: true
+directories:
+  output: release
+files:
+  - dist/**/*
+  - desktop/**/*
+  - package.json
+fileAssociations:
+  - ext:
+      - nwk
+      - newick
+      - tre
+      - nexus
+      - nex
+      - btvsession
+    name: Phylogenetic tree
+    description: Phylogenetic tree or Big Tree Viewer session
+    role: Viewer
+mac:
+  category: public.app-category.education
+  icon: public/icon-512.png
+  target:
+    - target: dmg
+      arch:
+        - universal
+  artifactName: Big-Tree-Viewer-macOS-universal.${ext}
+win:
+  icon: public/icon-512.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Big-Tree-Viewer-Windows-x64.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  packElevateHelper: false
+linux:
+  category: Science
+  icon: public/icon-512.png
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  artifactName: Big-Tree-Viewer-Linux-x86_64.${ext}

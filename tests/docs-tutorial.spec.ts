@@ -50,6 +50,20 @@ test("API documentation page is linked and documents launch parameters", async (
   await expect(page.getByText("Metadata-driven branch colors")).toBeVisible();
 });
 
+test("desktop download page recommends the current platform and lists every build", async ({ page }) => {
+  await page.goto("/#desktop");
+
+  await expect(page.getByRole("heading", { name: "Desktop app" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recommended for this computer" })).toBeVisible();
+  await expect(page.locator(".desktop-download-button")).toHaveAttribute(
+    "href",
+    /releases\/latest\/download\/Big-Tree-Viewer-(?:macOS-universal\.dmg|Windows-x64\.exe|Linux-x86_64\.AppImage)$/,
+  );
+  await expect(page.getByRole("link", { name: "Download Big Tree Viewer for macOS" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download Big Tree Viewer for Windows" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download Big Tree Viewer for Linux Debian package" })).toBeVisible();
+});
+
 test("documentation describes comparison, measurements, annotations, and optional kingdom ribbons", async ({ page }) => {
   await page.goto("/#about");
   await expect(page.getByText("Tree comparison", { exact: true })).toBeVisible();

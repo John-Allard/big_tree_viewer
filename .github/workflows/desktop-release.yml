@@ -1,0 +1,143 @@
+name: Build Desktop Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub release tag to create or update"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  NODE_VERSION: "22"
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release tag matches package version
+        run: node -e "const expected='v'+require('./package.json').version; if(process.env.RELEASE_TAG!==expected) throw new Error('Release tag '+process.env.RELEASE_TAG+' must match '+expected)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:desktop:web
+      - run: npx electron-builder --linux AppImage deb --x64 --publish never
+      - name: Smoke-test packaged app and file association launch
+        run: xvfb-run -a npm run test:desktop:smoke -- release/linux-unpacked/big-tree-viewer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: |
+            release/Big-Tree-Viewer-Linux-x86_64.AppImage
+            release/Big-Tree-Viewer-Linux-x86_64.deb
+
+  build-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release tag matches package version
+        run: node -e "const expected='v'+require('./package.json').version; if(process.env.RELEASE_TAG!==expected) throw new Error('Release tag '+process.env.RELEASE_TAG+' must match '+expected)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:desktop:web
+      - name: Build, sign, and notarize universal macOS app
+        run: npx electron-builder --mac dmg --universal --publish never -c.mac.notarize=true
+        env:
+          CSC_LINK: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+          CSC_NAME: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: release/Big-Tree-Viewer-macOS-universal.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    environment: windows-signing
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      SIGNING_ENDPOINT: https://eus.codesigning.azure.net/
+      SIGNING_ACCOUNT: jallardcodesign
+      CERTIFICATE_PROFILE: johnallardpublictrust
+      TIMESTAMP_URL: http://timestamp.acs.microsoft.com
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release tag matches package version
+        run: node -e "const expected='v'+require('./package.json').version; if(process.env.RELEASE_TAG!==expected) throw new Error('Release tag '+process.env.RELEASE_TAG+' must match '+expected)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:desktop:web
+      - name: Build unpacked Windows application
+        run: npx electron-builder --win --x64 --dir --publish never
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign application executables and libraries
+        uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\release\win-unpacked
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: ${{ env.TIMESTAMP_URL }}
+          timestamp-digest: SHA256
+      - name: Package signed Windows application
+        run: npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
+      - name: Sign Windows installer
+        uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: ${{ env.TIMESTAMP_URL }}
+          timestamp-digest: SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: release/Big-Tree-Viewer-Windows-x64.exe
+
+  publish-release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create release if needed and upload installers
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "Big Tree Viewer $RELEASE_TAG" --generate-notes
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber release-assets/*

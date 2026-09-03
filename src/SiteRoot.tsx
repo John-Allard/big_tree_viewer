@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import App from "./App";
 import AboutPage from "./AboutPage";
 import AgenticAiPage from "./AgenticAiPage";
+import DesktopPage from "./DesktopPage";
 import ApiPage from "./ApiPage";
 import FaqPage from "./FaqPage";
 import MetadataGuidePage from "./MetadataGuidePage";
 import SharePage from "./SharePage";
 
-type SitePage = "viewer" | "about" | "api" | "faq" | "metadata" | "share" | "agentic-ai";
+type SitePage = "viewer" | "about" | "api" | "faq" | "metadata" | "share" | "desktop" | "agentic-ai";
 
 function currentSitePage(): SitePage {
   if (typeof window === "undefined") {
@@ -32,6 +33,9 @@ function currentSitePage(): SitePage {
   if (route === "share") {
     return "share";
   }
+  if (route === "desktop" || route === "download") {
+    return "desktop";
+  }
   if (route === "agentic-ai") {
     return "agentic-ai";
   }
@@ -53,7 +57,7 @@ export default function SiteRoot() {
   }, []);
 
   useEffect(() => {
-    const isDocumentPage = page === "about" || page === "api" || page === "faq" || page === "metadata" || page === "share" || page === "agentic-ai";
+    const isDocumentPage = page === "about" || page === "api" || page === "faq" || page === "metadata" || page === "share" || page === "desktop" || page === "agentic-ai";
     document.body.style.overflow = isDocumentPage ? "auto" : "hidden";
     document.body.style.overscrollBehavior = isDocumentPage ? "auto" : "none";
     document.title = page === "about"
@@ -66,6 +70,8 @@ export default function SiteRoot() {
             ? "Big Tree Viewer | Metadata guide"
             : page === "share"
               ? "Big Tree Viewer | Share sessions"
+              : page === "desktop"
+                ? "Big Tree Viewer | Desktop app"
               : page === "agentic-ai"
                 ? "Big Tree Viewer | Using BTV with agentic AI"
                 : "Big Tree Viewer";
@@ -89,6 +95,9 @@ export default function SiteRoot() {
   }
   if (page === "share") {
     return <SharePage />;
+  }
+  if (page === "desktop") {
+    return <DesktopPage />;
   }
   if (page === "agentic-ai") {
     return <AgenticAiPage />;
