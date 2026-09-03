@@ -7397,31 +7397,23 @@ export default function App() {
         </div>
       ) : null}
       {!sidebarVisible ? (
-        <div className="sidebar-collapsed-tabs" role="toolbar" aria-label="Side panel controls">
-          <button
-            type="button"
-            className="sidebar-edge-button secondary"
-            onClick={showSidebar}
-            aria-label="Show side panel"
-            title="Show the side panel."
-          >
-            <ChevronRight aria-hidden="true" />
-          </button>
-          {viewerFullscreen ? (
-            <button
-              type="button"
-              className="sidebar-edge-button secondary"
-              onClick={() => void toggleViewerFullscreen()}
-              aria-label="Exit full screen"
-              title="Exit full-screen mode."
-            >
-              <Minimize aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
+        <button
+          type="button"
+          className="mobile-sidebar-toggle mobile-sidebar-toggle-floating"
+          onClick={showSidebar}
+        >
+          Show Panel
+        </button>
       ) : null}
       <div className="control-panel-shell">
         <aside className="control-panel">
+        <button
+          type="button"
+          className="mobile-sidebar-toggle mobile-sidebar-toggle-inline"
+          onClick={hideSidebar}
+        >
+          Hide Panel
+        </button>
         <div className="panel-title-row">
           <div className="panel-title-block">
             <h1>Big Tree Viewer</h1>
@@ -9972,19 +9964,22 @@ export default function App() {
           )}
         </PanelSection>
         </aside>
-        <div className="panel-edge-controls" role="toolbar" aria-label="Side panel controls">
+      </div>
+
+      <main className="viewer-panel">
+        <div className="viewer-corner-controls" role="toolbar" aria-label="Viewer controls">
           <button
             type="button"
-            className="sidebar-edge-button secondary"
-            onClick={hideSidebar}
-            aria-label="Hide side panel"
-            title="Hide the side panel."
+            className="viewer-corner-button secondary"
+            onClick={sidebarVisible ? hideSidebar : showSidebar}
+            aria-label={sidebarVisible ? "Hide side panel" : "Show side panel"}
+            title={sidebarVisible ? "Hide the side panel." : "Show the side panel."}
           >
-            <ChevronLeft aria-hidden="true" />
+            {sidebarVisible ? <ChevronLeft aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
           </button>
           <button
             type="button"
-            className="sidebar-edge-button secondary"
+            className="viewer-corner-button secondary"
             onClick={() => void toggleViewerFullscreen()}
             aria-label={viewerFullscreen ? "Exit full screen" : "Enter full screen"}
             title={viewerFullscreen ? "Exit full-screen mode." : "Expand Big Tree Viewer to fill the screen."}
@@ -9992,9 +9987,6 @@ export default function App() {
             {viewerFullscreen ? <Minimize aria-hidden="true" /> : <Maximize aria-hidden="true" />}
           </button>
         </div>
-      </div>
-
-      <main className="viewer-panel">
         <div className={`normal-tree-layer${comparisonEnabled && comparisonTree && viewTree ? " comparison-hidden" : ""}`}>
           <TreeCanvas
           treeRef={treeCanvasTreeRef}

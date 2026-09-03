@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("full screen retains the side panel and exposes compact edge controls", async ({ page }) => {
+test("full screen retains the side panel and exposes compact viewport controls", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(Element.prototype, "requestFullscreen", {
       configurable: true,
@@ -20,14 +20,16 @@ test("full screen retains the side panel and exposes compact edge controls", asy
   await expect(page.getByRole("button", { name: "Full Screen", exact: true })).toHaveCount(0);
   const fitBounds = await fitButton.boundingBox();
   const panelBounds = await panel.boundingBox();
-  const panelControlsBounds = await page.locator(".panel-edge-controls").boundingBox();
+  const viewerBounds = await viewer.boundingBox();
+  const viewerControlsBounds = await page.locator(".viewer-corner-controls").boundingBox();
   expect(fitBounds).not.toBeNull();
   expect(panelBounds).not.toBeNull();
-  expect(panelControlsBounds).not.toBeNull();
+  expect(viewerBounds).not.toBeNull();
+  expect(viewerControlsBounds).not.toBeNull();
   expect(fitBounds?.width ?? 0).toBeGreaterThan((panelBounds?.width ?? 0) * 0.75);
-  expect(panelControlsBounds?.x ?? 0).toBeGreaterThan(panelBounds?.x ?? 0);
-  expect((panelControlsBounds?.x ?? 0) + (panelControlsBounds?.width ?? 0))
-    .toBeLessThan((panelBounds?.x ?? 0) + (panelBounds?.width ?? 0) - 8);
+  expect(viewerControlsBounds?.x ?? 0).toBeGreaterThanOrEqual(viewerBounds?.x ?? 0);
+  expect(viewerControlsBounds?.x ?? Number.POSITIVE_INFINITY).toBeLessThan((viewerBounds?.x ?? 0) + 50);
+  expect(viewerControlsBounds?.x ?? 0).toBeGreaterThanOrEqual(panelBounds?.x ? panelBounds.x + panelBounds.width : 0);
 
   await enterButton.click();
   await expect(app).toHaveClass(/app-shell-fullscreen-fallback/);
@@ -50,10 +52,14 @@ test("full screen retains the side panel and exposes compact edge controls", asy
   await expect(panel).toBeVisible();
   const viewerWithOverlay = await viewer.boundingBox();
   const overlayPanelBounds = await panel.boundingBox();
+  const overlayControlsBounds = await page.locator(".viewer-corner-controls").boundingBox();
   const cameraAfterRestore = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
   expect(viewerWithOverlay).toEqual(viewerWithoutPanel);
   expect(cameraAfterRestore).toEqual(cameraBeforeRestore);
   expect(overlayPanelBounds?.x ?? 0).toBeLessThan((viewerWithOverlay?.x ?? 0) + (viewerWithOverlay?.width ?? 0));
+  expect(overlayControlsBounds?.x ?? 0).toBeGreaterThanOrEqual(
+    (overlayPanelBounds?.x ?? 0) + (overlayPanelBounds?.width ?? 0),
+  );
   await page.getByRole("button", { name: "Exit full screen" }).click();
   await expect(app).not.toHaveClass(/app-shell-fullscreen/);
   await expect(page.getByRole("button", { name: "Enter full screen" })).toBeVisible();
