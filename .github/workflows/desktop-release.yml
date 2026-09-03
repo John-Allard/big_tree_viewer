@@ -69,12 +69,17 @@ jobs:
               exit 1
             fi
           done
+      - name: Normalize Apple signing identity
+        env:
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          identity="${MACOS_CODESIGN_IDENTITY#Developer ID Application: }"
+          echo "CSC_NAME=$identity" >> "$GITHUB_ENV"
       - name: Build, sign, and notarize universal macOS app
         run: npx electron-builder --mac dmg --universal --publish never -c.mac.notarize=true
         env:
           CSC_LINK: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
-          CSC_NAME: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
