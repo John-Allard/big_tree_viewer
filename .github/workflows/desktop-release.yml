@@ -54,6 +54,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:desktop:web
+      - name: Validate Apple signing secrets
+        env:
+          MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+          MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          for name in MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD MACOS_CODESIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required Apple signing secret: $name"
+              exit 1
+            fi
+          done
       - name: Build, sign, and notarize universal macOS app
         run: npx electron-builder --mac dmg --universal --publish never -c.mac.notarize=true
         env:
@@ -63,6 +78,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      - name: Verify macOS signature and notarization ticket
+        run: |
+          codesign --verify --deep --strict --verbose=2 "release/mac-universal/Big Tree Viewer.app"
+          xcrun stapler validate "release/Big-Tree-Viewer-macOS-universal.dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "release/Big-Tree-Viewer-macOS-universal.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-macos
@@ -107,6 +127,14 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: ${{ env.TIMESTAMP_URL }}
           timestamp-digest: SHA256
+      - name: Verify application signature
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature -LiteralPath "release\win-unpacked\Big Tree Viewer.exe"
+          $signature | Format-List Path, Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+          if ($signature.Status -ne "Valid") {
+            throw "Application signature verification failed with status $($signature.Status)."
+          }
       - name: Package signed Windows application
         run: npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
       - name: Sign Windows installer
@@ -120,6 +148,14 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: ${{ env.TIMESTAMP_URL }}
           timestamp-digest: SHA256
+      - name: Verify installer signature
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature -LiteralPath "release\Big-Tree-Viewer-Windows-x64.exe"
+          $signature | Format-List Path, Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+          if ($signature.Status -ne "Valid") {
+            throw "Installer signature verification failed with status $($signature.Status)."
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows
