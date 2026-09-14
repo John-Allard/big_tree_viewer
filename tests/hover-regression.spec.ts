@@ -118,6 +118,11 @@ async function findDenseRectInternalHoverTarget(page: Page): Promise<{
     const stepY = Math.max(6, Math.floor((rect.height - 24) / 96));
     for (let x = 24; x <= maxLocalX; x += stepX) {
       for (let y = 12; y <= rect.height - 12; y += stepY) {
+        // A canvas hit probe ignores controls overlaid on the tree; the real
+        // pointer does not. Choose an unobscured branch for the interaction.
+        if (document.elementFromPoint(rect.left + x, rect.top + y) !== canvas) {
+          continue;
+        }
         const hit = canvasTest.probeHoverForTest(x, y);
         const node = Number(hit?.node ?? -1);
         if (!hit || hit.targetKind === "label" || node < 0) {

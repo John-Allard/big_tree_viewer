@@ -107,12 +107,12 @@ const MAC_PINCH_TINY_DELTA_EXTRA_MULTIPLIER = 2;
 const MAC_PINCH_EXTRA_MULTIPLIER_TAPER_DELTA = 24;
 const MAC_GESTURE_ZOOM_EXPONENT = 2;
 const HUGE_TREE_TIP_LIMIT = 500_000;
-const HUGE_TREE_CACHED_CIRCULAR_PATH_MAX_ZOOM_MULTIPLIER = 1.6;
 const HUGE_TREE_MAX_CIRCULAR_ZOOM_MULTIPLIER = 32_768;
-const HUGE_TREE_MAX_TIP_SPACING_PX = 64;
-const HUGE_TREE_ZOOMED_SAMPLE_LEAF_LIMIT = 1_500;
-const HUGE_TREE_ZOOMED_SEGMENT_BUDGET = 12_000;
+// Permit roughly ten named tips in a desktop-height circular detail view.
+// The separate fit-relative ceiling still bounds extreme camera transforms.
+const HUGE_TREE_MAX_TIP_SPACING_PX = 128;
 const LARGE_METADATA_BRANCH_NODE_LIMIT = 250_000;
+const MAX_RECT_BASE_PATH_NODES = 250_000;
 const LARGE_METADATA_COLORED_SEGMENT_BUDGET = 120_000;
 const LARGE_METADATA_COLORED_SAMPLE_LEAF_LIMIT = 2_400;
 const MAX_TIME_STRIPE_BANDS_PER_DRAW = 4_096;
@@ -4406,6 +4406,12 @@ export default function TreeCanvas({
   const spiralTaxonomyRibbonPathCacheRef = useRef<Map<string, SpiralTaxonomyRibbonPathCache>>(new Map());
   const circularBasePathCacheRef = useRef<Map<string, CircularBranchPathCache>>(new Map());
   const rectBasePathCacheRef = useRef<Map<string, RectBranchPathCache>>(new Map());
+  // A translation-only cache of the near-fit, pixel-resolved branch layer.
+  // The draw callback identity invalidates every captured style/layout input.
+  const circularPanBranchCacheRef = useRef<{
+    owner: () => void; canvas: HTMLCanvasElement; scale: number; rotation: number;
+    dpr: number; extent: number; stems: number; connectors: number;
+  } | null>(null);
   const circularTaxonomyBitmapCacheRef = useRef<CircularTaxonomyBitmapCache | null>(null);
   const rectTaxonomyBitmapCacheRef = useRef<RectTaxonomyBitmapCache | null>(null);
   const circularTaxonomyOverlayLayoutCacheRef = useRef<CircularTaxonomyOverlayLayoutCache | null>(null);
@@ -5417,6 +5423,8 @@ export default function TreeCanvas({
     spiralTaxonomyRibbonPathCacheRef.current.clear();
     circularBasePathCacheRef.current.clear();
     rectBasePathCacheRef.current.clear();
+    disposeCanvasCache(circularPanBranchCacheRef.current);
+    circularPanBranchCacheRef.current = null;
     disposeCanvasCache(circularTaxonomyBitmapCacheRef.current);
     disposeCanvasCache(rectTaxonomyBitmapCacheRef.current);
     circularTaxonomyBitmapCacheRef.current = null;
@@ -7122,7 +7130,9 @@ export default function TreeCanvas({
     orderKey: LayoutOrder,
     layout: TreeModel["layouts"][LayoutOrder],
   ): RectBranchPathCache | null => {
-    if (!tree || !cache) {
+    // Very large compound paths can suppress the rest of a canvas frame,
+    // including labels. Returning null selects the existing segment renderer.
+    if (!tree || !cache || tree.nodeCount >= MAX_RECT_BASE_PATH_NODES) {
       return null;
     }
     const key = `${orderKey}:${effectiveTimeAxisScale}`;
@@ -7845,10 +7855,12 @@ export default function TreeCanvas({
     return () => {
       panBenchmarkRef.current?.observer?.disconnect();
       panBenchmarkRef.current = null;
+      disposeCanvasCache(circularPanBranchCacheRef.current);
+      circularPanBranchCacheRef.current = null;
     };
   }, []);
 
-  const draw = useCallback(() => {
+  const draw: () => void = useCallback(() => {
     const canvas = renderCanvasOverrideRef.current ?? canvasRef.current;
     const renderSize = renderSizeOverrideRef.current ?? size;
     if (!canvas || !tree || !cache) {
@@ -8426,8 +8438,8 @@ export default function TreeCanvas({
       const maxX = Math.max(worldMin.x, worldMax.x);
       const minY = Math.min(worldMin.y, worldMax.y);
       const maxY = Math.max(worldMin.y, worldMax.y);
-      const rectWorldOverscanX = Math.max(tree.branchLengthMinPositive * 2, 48 / Math.max(camera.scaleX, 1e-6));
-      const rectWorldOverscanY = Math.max(2, 48 / Math.max(camera.scaleY, 1e-6));
+      const rectWorldOverscanX = 48 / Math.max(camera.scaleX, 1e-6);
+      const rectWorldOverscanY = 48 / Math.max(camera.scaleY, 1e-6);
       const axisBarHeight = showScaleBars ? 44 : 0;
       const treeDrawBottom = renderSize.height - axisBarHeight;
       const stripeExtent = effectiveTimeAxisScale === "log" ? timeAxisExtent : (tree.isUltrametric ? tree.rootAge : tree.maxDepth);
@@ -8504,7 +8516,10 @@ export default function TreeCanvas({
       const cachedRectTaxonomyBitmap = useCachedRectTaxonomyBitmap
         ? getRectTaxonomyBitmapCache(order, coloredBranchKey, cachedRectTaxonomyPaths, camera)
         : null;
-      const useCachedRectBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0;
+      // Deep zoom can transform a whole-tree Path2D to tens of millions of
+      // pixels and suppress subsequent canvas drawing. Use the spatially
+      // queried, screen-coordinate segments once outside the overview.
+      const useCachedRectBasePath = !exportCapture && !useColoredBranchRendering && collapsedNodes.size === 0 && nearRectFit;
       const cachedRectBasePaths = useCachedRectBasePath
         ? getRectBasePaths(order, layout)
         : null;
@@ -8565,11 +8580,10 @@ export default function TreeCanvas({
       const rectConnectorKeys = useDenseRectLOD ? new Set<string>() : null;
       const rectStemKeys = useDenseRectLOD ? new Set<string>() : null;
       const visibleRectSegments = collapsedNodes.size === 0 && needsVisibleRectSegments
-        ? cache.rectIndices[order].query(
-          (minX + maxX) * 0.5,
-          (minY + maxY) * 0.5,
-          Math.max(1e-6, (maxX - minX) * 0.5) + rectWorldOverscanX,
-          Math.max(1e-6, (maxY - minY) * 0.5) + rectWorldOverscanY,
+        ? cache.rectTreeIndex.query(
+          layout, minX - rectWorldOverscanX, minY - rectWorldOverscanY,
+          maxX + rectWorldOverscanX, maxY + rectWorldOverscanY,
+          !exportCapture && !useColoredBranchRendering ? 0.5 / Math.max(camera.scaleY, 1e-6) : 0,
         )
         : null;
       const rectBranchRenderMode = cachedRectTaxonomyBitmap
@@ -8756,6 +8770,11 @@ export default function TreeCanvas({
           if (coloredSegmentCount >= coloredSegmentBudget) {
             return;
           }
+          if (!lineIntersectsRect(x1, y1, x2, y2, -48, -48, renderSize.width + 48, renderSize.height + 48)) return;
+          x1 = Math.max(-48, Math.min(renderSize.width + 48, x1));
+          x2 = Math.max(-48, Math.min(renderSize.width + 48, x2));
+          y1 = Math.max(-48, Math.min(renderSize.height + 48, y1));
+          y2 = Math.max(-48, Math.min(renderSize.height + 48, y2));
           const path = getColorPath(color);
           path.moveTo(x1, y1);
           path.lineTo(x2, y2);
@@ -8884,7 +8903,9 @@ export default function TreeCanvas({
           terminalConnectorPaths.set(color, path);
           return path;
         };
-        for (let node = 0; node < tree.nodeCount; node += 1) {
+        for (let candidate = 0; candidate < (visibleRectSegments?.length ?? tree.nodeCount); candidate += 1) {
+          if (visibleRectSegments && visibleRectSegments[candidate].kind !== "connector") continue;
+          const node = visibleRectSegments ? visibleRectSegments[candidate].node : candidate;
           if (
             hiddenNodes[node]
             || collapsedNodes.has(node)
@@ -8908,8 +8929,8 @@ export default function TreeCanvas({
               const end = worldToScreenRect(camera, terminalWorldX, endY);
               const color = effectiveBranchColors?.[childNode] ?? BRANCH_COLOR;
               const path = terminalPathForColor(color);
-              path.moveTo(connectorX, start.y);
-              path.lineTo(connectorX, end.y);
+              path.moveTo(connectorX, Math.max(-48, Math.min(renderSize.height + 48, start.y)));
+              path.lineTo(connectorX, Math.max(-48, Math.min(renderSize.height + 48, end.y)));
               pushSceneLine(connectorX, start.y, connectorX, end.y, color, terminalConnectorStrokeWidth);
             });
           } else {
@@ -8921,8 +8942,8 @@ export default function TreeCanvas({
             const start = worldToScreenRect(camera, terminalWorldX, firstY);
             const end = worldToScreenRect(camera, terminalWorldX, lastY);
             const path = terminalPathForColor(BRANCH_COLOR);
-            path.moveTo(connectorX, start.y);
-            path.lineTo(connectorX, end.y);
+            path.moveTo(connectorX, Math.max(-48, Math.min(renderSize.height + 48, start.y)));
+            path.lineTo(connectorX, Math.max(-48, Math.min(renderSize.height + 48, end.y)));
             pushSceneLine(connectorX, start.y, connectorX, end.y, BRANCH_COLOR, terminalConnectorStrokeWidth);
           }
         }
@@ -11853,7 +11874,22 @@ export default function TreeCanvas({
         && useColoredBranchRendering
         && metadataBranchColorOverlay.hasAny
         && tree.nodeCount >= LARGE_METADATA_BRANCH_NODE_LIMIT;
-      const useGlobalColoredBranchCaches = useColoredBranchRendering && metadataBranchColorCacheable && !useLargeMetadataBranchLOD;
+      // Avoid re-rasterizing a whole large taxonomy-colored tree near fit.
+      // Reuse the existing direct-path size limit when choosing scalable traversal.
+      const useVisibleCircularTree = !exportCapture && collapsedNodes.size === 0
+        && (!useColoredBranchRendering || (!useLargeMetadataBranchLOD && tree.leafCount > CIRCULAR_TAXONOMY_DIRECT_PATH_MAX_TIPS));
+      const panBranchExtent = Math.ceil(polarOuterRadius * camera.scale + 8);
+      const canCachePanBranches = useVisibleCircularTree && useColoredBranchRendering
+        && nearCircularFit && panBranchExtent * 2 * dpr <= 4096;
+      const previousPanBranches = circularPanBranchCacheRef.current;
+      const cachedPanBranches = canCachePanBranches && previousPanBranches?.owner === draw
+        && previousPanBranches.scale === camera.scale && previousPanBranches.rotation === rotationAngle
+        && previousPanBranches.dpr === dpr ? previousPanBranches : null;
+      // Only build during a drag. Wheel zoom retains the direct sector renderer,
+      // and never pays for a bitmap that the next wheel step would invalidate.
+      const buildPanBranches = canCachePanBranches && !cachedPanBranches && pointerDownRef.current;
+      const useGlobalColoredBranchCaches = useColoredBranchRendering && metadataBranchColorCacheable
+        && !useLargeMetadataBranchLOD && !useVisibleCircularTree;
       const useCachedCircularTaxonomyPaths = !exportCapture && useGlobalColoredBranchCaches && collapsedNodes.size === 0 && angularSpacingPx < 0.8;
       const cachedCircularTaxonomyPaths = useCachedCircularTaxonomyPaths
         ? getCircularTaxonomyPaths(order, layout, coloredBranchKey, effectiveBranchColors)
@@ -11897,17 +11933,6 @@ export default function TreeCanvas({
           cachedCircularTaxonomyBitmap = null;
         }
       }
-      const useHugeTreeZoomedCircularRendering = viewMode === "circular"
-        && tree.leafCount > HUGE_TREE_TIP_LIMIT
-        && fitLikeCircular?.kind === "circular"
-        && camera.scale > (fitLikeCircular.scale * HUGE_TREE_CACHED_CIRCULAR_PATH_MAX_ZOOM_MULTIPLIER);
-      const useCachedCircularBasePath = !exportCapture
-        && !useColoredBranchRendering
-        && collapsedNodes.size === 0
-        && !useHugeTreeZoomedCircularRendering;
-      const cachedCircularBasePath = useCachedCircularBasePath
-        ? getCircularBasePath(order, layout)
-        : null;
       const useSampledColoredCircularRendering = viewMode === "circular"
         && useLargeMetadataBranchLOD
         && collapsedNodes.size === 0
@@ -11925,10 +11950,8 @@ export default function TreeCanvas({
           ? "taxonomy-cached-bitmap"
           : drawCachedCircularTaxonomyPaths
             ? "taxonomy-cached-paths"
-          : cachedCircularBasePath
-            ? "cached-path"
-          : useHugeTreeZoomedCircularRendering && !useColoredBranchRendering && collapsedNodes.size === 0
-            ? "huge-tree-sampled"
+          : useVisibleCircularTree
+            ? "clade-sectors"
           : useSampledColoredCircularRendering
             ? "large-metadata-sampled"
           : useColoredBranchRendering
@@ -12032,16 +12055,15 @@ export default function TreeCanvas({
       }
 
       const circularVisibilityPrepStartTime = performance.now();
-      const needsVisibleCircularSegments = !cachedCircularTaxonomyBitmap
-        && !drawCachedCircularTaxonomyPaths
-        && !cachedCircularBasePath;
+      const needsVisibleCircularSegments = !cachedPanBranches && !cachedCircularTaxonomyBitmap
+        && !drawCachedCircularTaxonomyPaths;
       const useDenseCircularLOD = !exportCapture
         && needsVisibleCircularSegments
         && (angularSpacingPx < 1.1 || useLargeMetadataBranchLOD);
       const circularConnectorKeys = useDenseCircularLOD ? new Set<string>() : null;
       const circularStemKeys = useDenseCircularLOD ? new Set<string>() : null;
       let visibleCircularSegments: ReturnType<typeof cache.circularIndices[typeof order]["query"]> | null = null;
-      if (needsVisibleCircularSegments && collapsedNodes.size === 0 && !useHugeTreeZoomedCircularRendering && !useSampledColoredCircularRendering) {
+      if (needsVisibleCircularSegments && collapsedNodes.size === 0 && !useSampledColoredCircularRendering) {
         const cornerWorldPoints = [
           screenToWorldCircular(camera, 0, 0),
           screenToWorldCircular(camera, renderSize.width, 0),
@@ -12052,14 +12074,23 @@ export default function TreeCanvas({
         let circularMaxX = Number.NEGATIVE_INFINITY;
         let circularMinY = Number.POSITIVE_INFINITY;
         let circularMaxY = Number.NEGATIVE_INFINITY;
-        const circularWorldOverscan = Math.max(tree.branchLengthMinPositive * 2, 24 / camera.scale);
+        const circularWorldOverscan = 24 / camera.scale;
         for (let index = 0; index < cornerWorldPoints.length; index += 1) {
           circularMinX = Math.min(circularMinX, cornerWorldPoints[index].x);
           circularMaxX = Math.max(circularMaxX, cornerWorldPoints[index].x);
           circularMinY = Math.min(circularMinY, cornerWorldPoints[index].y);
           circularMaxY = Math.max(circularMaxY, cornerWorldPoints[index].y);
         }
-        visibleCircularSegments = cache.circularIndices[order].query(
+        if (buildPanBranches) {
+          // Cache the complete disk at the current LOD so every pan direction is covered.
+          circularMinX = circularMinY = -polarOuterRadius;
+          circularMaxX = circularMaxY = polarOuterRadius;
+        }
+        visibleCircularSegments = useVisibleCircularTree ? cache.circularTreeIndex.query(
+          layout, circularMinX - circularWorldOverscan, circularMinY - circularWorldOverscan,
+          circularMaxX + circularWorldOverscan, circularMaxY + circularWorldOverscan,
+          0.5 / camera.scale,
+        ) : cache.circularIndices[order].query(
           (circularMinX + circularMaxX) * 0.5,
           (circularMinY + circularMaxY) * 0.5,
           Math.max(1e-6, (circularMaxX - circularMinX) * 0.5) + circularWorldOverscan,
@@ -12069,7 +12100,13 @@ export default function TreeCanvas({
       const circularBranchStartTime = performance.now();
       let circularRenderedColoredStemCount: number | null = null;
       let circularRenderedColoredConnectorCount: number | null = null;
-      if (cachedCircularTaxonomyBitmap) {
+      if (cachedPanBranches) {
+        ctx.drawImage(cachedPanBranches.canvas,
+          camera.translateX - cachedPanBranches.extent, camera.translateY - cachedPanBranches.extent,
+          cachedPanBranches.extent * 2, cachedPanBranches.extent * 2);
+        circularRenderedColoredStemCount = cachedPanBranches.stems;
+        circularRenderedColoredConnectorCount = cachedPanBranches.connectors;
+      } else if (cachedCircularTaxonomyBitmap) {
         const bitmapScaleRatio = camera.scale / Math.max(cachedCircularTaxonomyBitmap.scale, 1e-6);
         const sourceWidth = Math.max(1, cachedCircularTaxonomyBitmap.viewportWidth / Math.max(bitmapScaleRatio, 1e-6));
         const sourceHeight = Math.max(1, cachedCircularTaxonomyBitmap.viewportHeight / Math.max(bitmapScaleRatio, 1e-6));
@@ -12102,124 +12139,12 @@ export default function TreeCanvas({
         });
         ctx.globalAlpha = 1;
         ctx.restore();
-        } else if (cachedCircularBasePath) {
-          ctx.save();
-          ctx.translate(camera.translateX, camera.translateY);
-          ctx.scale(camera.scale, camera.scale);
-          ctx.rotate(rotationAngle);
-          ctx.strokeStyle = BRANCH_COLOR;
-          ctx.lineWidth = circularBranchStrokeScale / Math.max(camera.scale, 1e-6);
-          ctx.lineCap = "square";
-          ctx.stroke(cachedCircularBasePath.connectors);
-          ctx.lineCap = "butt";
-          ctx.stroke(cachedCircularBasePath.stems);
-          ctx.restore();
         } else if (!useColoredBranchRendering) {
           ctx.strokeStyle = BRANCH_COLOR;
           ctx.lineWidth = circularBranchStrokeScale;
           const connectorPath = new Path2D();
           const stemPath = new Path2D();
-          if (useHugeTreeZoomedCircularRendering && collapsedNodes.size === 0) {
-            const tau = Math.PI * 2;
-            const screenCenterWorld = screenToWorldCircular(camera, renderSize.width * 0.5, renderSize.height * 0.5);
-            const screenCenterTheta = wrapPositive(Math.atan2(screenCenterWorld.y, screenCenterWorld.x) - rotationAngle);
-            const viewportContainsOrigin = centerPoint.x >= 0
-              && centerPoint.x <= renderSize.width
-              && centerPoint.y >= 0
-              && centerPoint.y <= renderSize.height;
-            let angularHalfSpan = Math.PI;
-            if (!viewportContainsOrigin) {
-              const cornerAngles = [
-                screenToWorldCircular(camera, 0, 0),
-                screenToWorldCircular(camera, renderSize.width, 0),
-                screenToWorldCircular(camera, 0, renderSize.height),
-                screenToWorldCircular(camera, renderSize.width, renderSize.height),
-              ].map((point) => {
-                let delta = wrapPositive(Math.atan2(point.y, point.x) - rotationAngle) - screenCenterTheta;
-                if (delta > Math.PI) {
-                  delta -= tau;
-                } else if (delta < -Math.PI) {
-                  delta += tau;
-                }
-                return delta;
-              });
-              angularHalfSpan = Math.min(
-                Math.PI,
-                Math.max(...cornerAngles.map((angle) => Math.abs(angle))) + (96 / Math.max(1, camera.scale * maxRadius)),
-              );
-            }
-            const ordered = orderedLeaves;
-            const drawLeafPath = (leafIndex: number, drawnStems: Set<number>, drawnConnectors: Set<number>, budget: { count: number }): void => {
-              let node = ordered[Math.max(0, Math.min(ordered.length - 1, leafIndex))];
-              while (node >= 0 && budget.count < HUGE_TREE_ZOOMED_SEGMENT_BUDGET) {
-                const parent = tree.buffers.parent[node];
-                if (parent >= 0 && !drawnStems.has(node)) {
-                  drawnStems.add(node);
-                  const theta = polarThetaFor(layout.center, node);
-                  const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), theta);
-                  const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[node]), theta);
-                  const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
-                  const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
-                  if (lineIntersectsRect(start.x, start.y, end.x, end.y, -80, -80, renderSize.width + 160, renderSize.height + 160)) {
-                    stemPath.moveTo(start.x, start.y);
-                    stemPath.lineTo(end.x, end.y);
-                    budget.count += 1;
-                  }
-                }
-                if (parent >= 0 && !drawnConnectors.has(parent) && children[parent]?.length >= 2) {
-                  drawnConnectors.add(parent);
-                  const siblings = children[parent];
-                  const radiusPx = axisDepth(tree.buffers.depth[parent]) * camera.scale;
-                  if (radiusPx >= 0.25) {
-                    const startTheta = polarThetaFor(layout.center, siblings[0]);
-                    const endTheta = polarThetaFor(layout.center, siblings[siblings.length - 1]);
-                    const arcStart = polarThetaFor(layout.min, parent);
-                    const arcEnd = polarThetaFor(layout.max, parent);
-                    const arcLength = Math.max(0, arcEnd - arcStart);
-                    const arcAngles = arcAnglesWithinSpan(startTheta, endTheta, arcStart, arcLength);
-                    const start = arcAngles.start + rotationAngle;
-                    const end = arcAngles.end + rotationAngle;
-                    if (arcIntersectsViewport(centerPoint.x, centerPoint.y, radiusPx, start, end, renderSize.width, renderSize.height)) {
-                      connectorPath.moveTo(
-                        centerPoint.x + Math.cos(start) * radiusPx,
-                        centerPoint.y + Math.sin(start) * radiusPx,
-                      );
-                      connectorPath.arc(centerPoint.x, centerPoint.y, radiusPx, start, end, false);
-                      budget.count += 1;
-                    }
-                  }
-                }
-                node = parent;
-              }
-            };
-            const drawnStems = new Set<number>();
-            const drawnConnectors = new Set<number>();
-            const budget = { count: 0 };
-            const drawIndexRange = (rawStart: number, rawEnd: number): void => {
-              const start = Math.max(0, Math.min(ordered.length - 1, Math.floor(rawStart)));
-              const end = Math.max(start, Math.min(ordered.length - 1, Math.ceil(rawEnd)));
-              const count = end - start + 1;
-              const step = Math.max(1, Math.ceil(count / HUGE_TREE_ZOOMED_SAMPLE_LEAF_LIMIT));
-              for (let leafIndex = start; leafIndex <= end && budget.count < HUGE_TREE_ZOOMED_SEGMENT_BUDGET; leafIndex += step) {
-                drawLeafPath(leafIndex, drawnStems, drawnConnectors, budget);
-              }
-            };
-            if (viewportContainsOrigin || angularHalfSpan >= Math.PI) {
-              drawIndexRange(0, ordered.length - 1);
-            } else {
-              const startTheta = screenCenterTheta - angularHalfSpan;
-              const endTheta = screenCenterTheta + angularHalfSpan;
-              if (startTheta < 0) {
-                drawIndexRange(((startTheta + tau) / tau) * tree.leafCount, tree.leafCount - 1);
-                drawIndexRange(0, (endTheta / tau) * tree.leafCount);
-              } else if (endTheta >= tau) {
-                drawIndexRange((startTheta / tau) * tree.leafCount, tree.leafCount - 1);
-                drawIndexRange(0, ((endTheta - tau) / tau) * tree.leafCount);
-              } else {
-                drawIndexRange((startTheta / tau) * tree.leafCount, (endTheta / tau) * tree.leafCount);
-              }
-            }
-          } else if (visibleCircularSegments) {
+          if (visibleCircularSegments) {
             const drawnConnectorNodes = new Set<number>();
             for (let index = 0; index < visibleCircularSegments.length; index += 1) {
               const segment = visibleCircularSegments[index];
@@ -12622,21 +12547,46 @@ export default function TreeCanvas({
             }
           }
         }
+        let panCanvas: HTMLCanvasElement | null = null;
+        let branchCtx = ctx;
+        if (buildPanBranches) {
+          disposeCanvasCache(circularPanBranchCacheRef.current);
+          circularPanBranchCacheRef.current = null;
+          panCanvas = document.createElement("canvas");
+          panCanvas.width = panCanvas.height = Math.ceil(panBranchExtent * 2 * dpr);
+          const panCtx = panCanvas.getContext("2d");
+          if (panCtx) {
+            branchCtx = panCtx;
+            branchCtx.setTransform(dpr, 0, 0, dpr,
+              (panBranchExtent - camera.translateX) * dpr,
+              (panBranchExtent - camera.translateY) * dpr);
+          } else {
+            panCanvas = null;
+          }
+        }
         colorArcPaths.forEach((path, color) => {
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2 * circularBranchStrokeScale;
-          ctx.lineCap = "square";
-          ctx.globalAlpha = 0.95;
-          ctx.stroke(path);
+          branchCtx.strokeStyle = color;
+          branchCtx.lineWidth = 1.2 * circularBranchStrokeScale;
+          branchCtx.lineCap = "square";
+          branchCtx.globalAlpha = 0.95;
+          branchCtx.stroke(path);
         });
         colorStemPaths.forEach((path, color) => {
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2 * circularBranchStrokeScale;
-          ctx.lineCap = "butt";
-          ctx.globalAlpha = 0.95;
-          ctx.stroke(path);
+          branchCtx.strokeStyle = color;
+          branchCtx.lineWidth = 1.2 * circularBranchStrokeScale;
+          branchCtx.lineCap = "butt";
+          branchCtx.globalAlpha = 0.95;
+          branchCtx.stroke(path);
         });
-        ctx.globalAlpha = 1;
+        branchCtx.globalAlpha = 1;
+        if (panCanvas) {
+          circularPanBranchCacheRef.current = {
+            owner: draw, canvas: panCanvas, scale: camera.scale, rotation: rotationAngle,
+            dpr, extent: panBranchExtent, stems: coloredStemCount, connectors: coloredConnectorCount,
+          };
+          ctx.drawImage(panCanvas, camera.translateX - panBranchExtent, camera.translateY - panBranchExtent,
+            panBranchExtent * 2, panBranchExtent * 2);
+        }
         circularRenderedColoredStemCount = coloredStemCount;
         circularRenderedColoredConnectorCount = coloredConnectorCount;
       }
@@ -15016,6 +14966,7 @@ export default function TreeCanvas({
       (renderDebug.circular as Record<string, unknown>).showCentralScaleLabels = showCentralTimeLabels;
       (renderDebug.circular as Record<string, unknown>).centerScaleTickCount = displayedCircularCenterScaleBoundaries.length;
       (renderDebug.circular as Record<string, unknown>).showCenterRadialScaleBar = showCentralTimeLabels && showCircularCenterRadialScaleBar;
+      (renderDebug.circular as Record<string, unknown>).panBranchBitmapReused = Boolean(cachedPanBranches);
       (renderDebug.circular as Record<string, unknown>).renderedColoredStemCount = circularRenderedColoredStemCount;
       (renderDebug.circular as Record<string, unknown>).renderedColoredConnectorCount = circularRenderedColoredConnectorCount;
       (renderDebug.circular as Record<string, unknown>).collapsedMinimizedAngularSpans = visibleCollapsedNodes
@@ -16345,8 +16296,12 @@ export default function TreeCanvas({
     const layout = collapsedView?.layout ?? tree.layouts[order];
     const children = cache.orderedChildren[order];
     const visibleTerminalNodes = collapsedView?.visibleTerminalNodes ?? cache.orderedLeaves[order];
-    const rectHitIndex = collapsedSpatialCache?.rectIndex ?? cache.rectIndices[order];
-    const circularHitIndex = collapsedSpatialCache?.circularIndex ?? cache.circularIndices[order];
+    const queryRectHits = (x: number, y: number, camera: RectCamera) => {
+      if (collapsedSpatialCache) return collapsedSpatialCache.rectIndex.queryPoint(x, y, 1, 1);
+      const dx = 20 / Math.max(camera.scaleX, 1e-6), dy = 20 / Math.max(camera.scaleY, 1e-6);
+      return cache.rectTreeIndex.query(layout, x - dx, y - dy, x + dx, y + dy);
+    };
+    const getCircularHitIndex = () => collapsedSpatialCache?.circularIndex ?? cache.circularIndices[order];
     const findLabelHitboxAt = (localX: number, localY: number): LabelHitbox | null => {
       const collapsedTriangle = collapsedTriangleHitsRef.current.find((triangle) => (
         pointInCollapsedTriangleHitArea(localX, localY, triangle.points)
@@ -16712,7 +16667,7 @@ export default function TreeCanvas({
 
         const tipScreenX = camera.translateX + (tipDepth * camera.scaleX);
         if (!skipSpatialBranchHitTesting && localX <= tipScreenX - threshold) {
-          const candidates = rectHitIndex.queryPoint(world.x, world.y, 1, 1);
+          const candidates = queryRectHits(world.x, world.y, camera);
           bestDistance = Number.POSITIVE_INFINITY;
           for (let index = 0; index < candidates.length; index += 1) {
             const segment = candidates[index];
@@ -16800,7 +16755,7 @@ export default function TreeCanvas({
         const pointerRadiusPx = Math.hypot(localX - camera.translateX, localY - camera.translateY);
         if (!skipSpatialBranchHitTesting && pointerRadiusPx <= tipRadiusPx - threshold) {
           const radius = 6 / camera.scale;
-          const candidates = circularHitIndex.query(world.x, world.y, radius, radius);
+          const candidates = getCircularHitIndex().query(world.x, world.y, radius, radius);
           bestDistance = Number.POSITIVE_INFINITY;
           for (let index = 0; index < candidates.length; index += 1) {
             const segment = candidates[index];
@@ -16852,7 +16807,7 @@ export default function TreeCanvas({
 
       if (camera.kind === "rect" && branchHoverEnabled) {
         const world = screenToWorldRect(camera, localX, localY);
-        const candidates = rectHitIndex.queryPoint(world.x, world.y, 1, 1);
+        const candidates = queryRectHits(world.x, world.y, camera);
         let bestDistance = Number.POSITIVE_INFINITY;
         const threshold = 16;
         for (let index = 0; index < candidates.length; index += 1) {
@@ -16888,7 +16843,7 @@ export default function TreeCanvas({
       } else if (camera.kind === "circular" && branchHoverEnabled) {
         const world = screenToWorldCircular(camera, localX, localY);
         const radius = 6 / camera.scale;
-        const candidates = circularHitIndex.query(world.x, world.y, radius, radius);
+        const candidates = getCircularHitIndex().query(world.x, world.y, radius, radius);
         let bestDistance = Number.POSITIVE_INFINITY;
         for (let index = 0; index < candidates.length; index += 1) {
           const segment = candidates[index];

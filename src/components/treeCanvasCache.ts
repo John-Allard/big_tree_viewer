@@ -1,3 +1,5 @@
+import { CircularTreeIndex } from "../lib/circularTreeIndex";
+import { RectTreeIndex } from "../lib/rectTreeIndex";
 import { UniformGridIndex, type IndexedSegment } from "../lib/spatialIndex";
 import { DEFAULT_TIME_AXIS_LOG_BASE, depthToTimeAxisDepth, treeTimeAxisExtent, type TimeAxisScale } from "../lib/timeAxis";
 import type { LayoutOrder, TreeModel } from "../types/tree";
@@ -31,7 +33,13 @@ function lazyOrderRecord<T>(factory: (order: LayoutOrder) => T): Record<LayoutOr
 }
 
 export function computeOrderedLeaves(tree: TreeModel, order: LayoutOrder): number[] {
-  return [...tree.leafNodes].sort((left, right) => tree.layouts[order].center[left] - tree.layouts[order].center[right]);
+  // Layout generation assigns each tip a unique integer row in [0, leafCount).
+  // Index by that row instead of sorting a second million-element array.
+  const leaves = new Array<number>(tree.leafCount);
+  for (const node of tree.leafNodes) {
+    leaves[tree.layouts[order].center[node]] = node;
+  }
+  return leaves;
 }
 
 export function computeGenusBlocks(tree: TreeModel, orderedLeaves: number[], timeAxisScale: TimeAxisScale, timeAxisLogBase = DEFAULT_TIME_AXIS_LOG_BASE): GenusBlock[] {
@@ -228,6 +236,8 @@ export function buildCache(
   const circularIndices = lazyOrderRecord((order) => new UniformGridIndex(circularSegments[order], boundsCircular));
 
   return {
+    circularTreeIndex: new CircularTreeIndex(tree, polarDepth, row => polarAngleStart + row / Math.max(1, polarAngleSpan < Math.PI * 2 - 1e-9 ? tree.leafCount - 1 : tree.leafCount) * polarAngleSpan),
+    rectTreeIndex: new RectTreeIndex(tree, depth => depthToTimeAxisDepth(tree, depth, timeAxisScale, timeAxisLogBase)),
     orderedChildren,
     orderedLeaves,
     genusBlocks,

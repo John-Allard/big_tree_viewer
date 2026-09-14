@@ -1000,7 +1000,7 @@ test("mobile circular taxonomy panning does not clamp branch bitmap apart from r
   expect(["taxonomy-cached-bitmap", "taxonomy-cached-paths"]).toContain(modes.panned);
 });
 
-test("large circular fit-view falls back to the cached base path", async ({ page }) => {
+test("large circular fit-view uses viewport clade traversal", async ({ page }) => {
   await waitForViewer(page);
   await loadTreeFile(page, path.resolve(TEST_DIR, "..", "backbone_hang_supertree.nwk"));
   await page.evaluate(async () => {
@@ -1014,7 +1014,7 @@ test("large circular fit-view falls back to the cached base path", async ({ page
     branchRenderMode?: string;
   } | null);
 
-  expect(debug?.branchRenderMode).toBe("cached-path");
+  expect(debug?.branchRenderMode).toBe("clade-sectors");
 });
 
 test("circular log-scale live branch arcs use transformed radii", async ({ page }) => {
@@ -1033,7 +1033,11 @@ test("circular log-scale live branch arcs use transformed radii", async ({ page 
 
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setTimeAxisScale("log");
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    // Geometry changes trigger a fit in a React effect; let that complete before
+    // installing the camera whose arc radius this test measures.
+    for (let frame = 0; frame < 6; frame++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.setCircularCamera({
       scale,
       translateX: 500,
@@ -1041,6 +1045,8 @@ test("circular log-scale live branch arcs use transformed radii", async ({ page 
     });
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
+    const actualCamera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    if (actualCamera?.kind !== "circular" || actualCamera.scale !== scale) throw new Error("Test camera was reset by a pending fit");
     const svg = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
     const branchArcRadii: number[] = [];
     const pathPattern = /<path d="([^"]*?A ([0-9.]+) ([0-9.]+)[^"]*?)" stroke="#0f172a"/g;
@@ -1062,4 +1068,73 @@ test("circular log-scale live branch arcs use transformed radii", async ({ page 
 
   expect(result.branchArcRadii.some((radius) => Math.abs(radius - result.expectedRadius) < 0.75)).toBeTruthy();
   expect(result.branchArcRadii.some((radius) => Math.abs(radius - result.rawRadius) < 0.75)).toBeFalsy();
+});
+
+test("large colored circular pans reuse branches without losing newly exposed geometry", async ({ page }) => {
+  await waitForViewer(page);
+  const clade = (start: number, depth: number): string => depth === 0
+    ? `Species_${start}:1`
+    : `(${clade(start, depth - 1)},${clade(start + 2 ** (depth - 1), depth - 1)}):1`;
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: "large-pan.nwk", mimeType: "text/plain", buffer: Buffer.from(`${clade(0, 17)};`),
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.treeLoaded && !state.loading && state.maxDepth === 17;
+  });
+  await page.evaluate(() => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy();
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyBranchColoringEnabled(true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
+  });
+  const settle = async () => page.evaluate(async () => {
+    for (let i = 0; i < 6; i++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  });
+  await settle();
+  await page.getByRole("button", { name: "Fit View", exact: true }).click();
+  await settle();
+  const bounds = await page.locator(".tree-canvas").boundingBox();
+  expect(bounds).not.toBeNull();
+  if (!bounds) return;
+  await page.mouse.move(bounds.x + bounds.width * 0.55, bounds.y + bounds.height * 0.55);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width * 0.55 + 20, bounds.y + bounds.height * 0.55);
+  await settle();
+  await page.mouse.move(bounds.x + bounds.width * 0.55 + 40, bounds.y + bounds.height * 0.55);
+  await settle();
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.panBranchBitmapReused)).toBe(true);
+
+  // Move beyond the region of the first frame. The branch cache must cover the
+  // full disk, including branches that were off screen when it was created.
+  await page.evaluate(() => {
+    const api = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+    const camera = api.getCamera()!;
+    api.setCircularCamera({ translateX: 100, translateY: camera.translateY });
+  });
+  await settle();
+  const cached = await page.locator(".tree-canvas").evaluate((canvas: HTMLCanvasElement) => {
+    return Array.from(canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data);
+  });
+  // A style edit invalidates the cache. Restore the style for comparison with
+  // a fresh direct render at exactly the same camera position.
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setBranchThicknessScaleForTest(1.01));
+  await settle();
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setBranchThicknessScaleForTest(1));
+  await settle();
+  expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.panBranchBitmapReused)).toBe(false);
+  const difference = await page.locator(".tree-canvas").evaluate((canvas: HTMLCanvasElement, prior) => {
+    const current = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+    let changed = 0, ink = 0;
+    for (let i = 0; i < current.length; i += 4) {
+      if (Math.max(current[i], current[i + 1], current[i + 2]) - Math.min(current[i], current[i + 1], current[i + 2]) > 40) ink++;
+      if (Math.max(Math.abs(current[i] - prior[i]), Math.abs(current[i + 1] - prior[i + 1]), Math.abs(current[i + 2] - prior[i + 2])) > 40) changed++;
+    }
+    return { fraction: changed / (current.length / 4), ink };
+  }, cached);
+  expect(difference.ink).toBeGreaterThan(1000);
+  expect(difference.fraction).toBeLessThan(0.02);
+  await page.mouse.wheel(0, -100);
+  await settle();
+  expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular?.panBranchBitmapReused)).toBe(false);
 });

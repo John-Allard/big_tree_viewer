@@ -1,3 +1,5 @@
+import type { CircularTreeIndex } from "../lib/circularTreeIndex";
+import type { RectTreeIndex } from "../lib/rectTreeIndex";
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import type { FigureStyleSettings } from "../lib/figureStyles";
@@ -200,6 +202,8 @@ export interface GenusBlock {
 }
 
 export interface RenderCache {
+  rectTreeIndex: RectTreeIndex;
+  circularTreeIndex: CircularTreeIndex;
   orderedChildren: Record<LayoutOrder, number[][]>;
   orderedLeaves: Record<LayoutOrder, number[]>;
   genusBlocks: Record<LayoutOrder, GenusBlock[]>;
