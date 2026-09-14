@@ -330,6 +330,18 @@ button.secondary {
   text-decoration: underline;
 }
 
+.panel-author-link {
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+}
+
+.panel-author-link:hover,
+.panel-author-link:focus-visible {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
 .text-link-button {
   border: 0;
   background: transparent;

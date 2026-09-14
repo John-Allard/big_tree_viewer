@@ -220,7 +220,9 @@ export default function AboutPage() {
             <p className="about-kicker">Big Tree Viewer</p>
             <h1>About</h1>
             <p className="about-author-line">
-              Big Tree Viewer is developed by John Allard in the{" "}
+              Big Tree Viewer is developed by{" "}
+              <a href="http://allardjb.com/" target="_blank" rel="noopener noreferrer">John B. Allard</a>{" "}
+              in the{" "}
               <a href="https://www.kumarlab.net/" target="_blank" rel="noreferrer">Kumar lab</a>{" "}
               at the Institute for Genomics and Evolutionary Medicine, Temple University.
             </p>

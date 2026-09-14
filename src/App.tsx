@@ -7471,7 +7471,7 @@ export default function App() {
         <div className="panel-title-row">
           <div className="panel-title-block">
             <h1>Big Tree Viewer</h1>
-            <p>by John B Allard</p>
+            <p>by <a className="panel-author-link" href="http://allardjb.com/" target="_blank" rel="noopener noreferrer">John B. Allard</a></p>
             <p className="panel-title-description">
               {HOME_DESCRIPTION}{" "}
               <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
