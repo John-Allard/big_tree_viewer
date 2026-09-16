@@ -15,20 +15,32 @@ if (!installerPath) throw new Error("Usage: node scripts/verify-windows-updater-
 const sevenZip = await getPath7za();
 const temporaryDir = await mkdtemp(path.join(os.tmpdir(), "btv-windows-updater-"));
 async function findExtractedFile(directory, filename) {
-  const entries = await readdir(directory, { recursive: true, withFileTypes: true });
-  const match = entries.find((entry) => entry.isFile() && entry.name === filename);
-  if (!match) throw new Error(`${filename} was not found after extracting the Windows installer.`);
-  return path.join(match.parentPath || match.path, match.name);
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isFile() && entry.name === filename) return entryPath;
+    if (entry.isDirectory()) {
+      const nestedMatch = await findExtractedFile(entryPath, filename);
+      if (nestedMatch) return nestedMatch;
+    }
+  }
+  return null;
 }
 
 try {
   const outerDir = path.join(temporaryDir, "outer");
   const innerDir = path.join(temporaryDir, "inner");
   await Promise.all([mkdir(outerDir, { recursive: true }), mkdir(innerDir, { recursive: true })]);
-  await execFileAsync(sevenZip, ["e", path.resolve(installerPath), "$PLUGINSDIR/app-64.7z", `-o${outerDir}`, "-y"]);
+  // Extract complete archives so verification does not depend on the platform-specific
+  // separators used for NSIS internal paths.
+  await execFileAsync(sevenZip, ["x", path.resolve(installerPath), `-o${outerDir}`, "-y"]);
   const applicationArchive = await findExtractedFile(outerDir, "app-64.7z");
-  await execFileAsync(sevenZip, ["e", applicationArchive, "resources/app-update.yml", `-o${innerDir}`, "-y"]);
+  if (!applicationArchive) throw new Error("app-64.7z was not found after extracting the Windows installer.");
+  await execFileAsync(sevenZip, ["x", applicationArchive, `-o${innerDir}`, "-y"]);
   const updateConfigurationPath = await findExtractedFile(innerDir, "app-update.yml");
+  if (!updateConfigurationPath) {
+    throw new Error("app-update.yml was not found in the packaged Windows application.");
+  }
   const updateConfiguration = await readFile(updateConfigurationPath, "utf8");
   assert.match(updateConfiguration, /^provider:\s*github$/m);
   assert.match(updateConfiguration, /^owner:\s*John-Allard$/m);
