@@ -256,3 +256,42 @@ test("an existing legacy browser archive is detected without a download prompt",
   await expect(page.getByRole("button", { name: "Download Taxonomy" })).toHaveCount(0);
   expect(await browserCacheContainsArchive(page)).toBe(true);
 });
+
+test("an old taxonomy archive offers a refresh without downloading automatically", async ({ page }) => {
+  let downloadRequested = false;
+  await page.route(taxonomyUrl, async (route) => {
+    downloadRequested = true;
+    await route.abort();
+  });
+  await page.goto("/");
+  await page.evaluate(async () => await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open("big-tree-viewer-taxonomy", 3);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const transaction = db.transaction("archives", "readwrite");
+      const store = transaction.objectStore("archives");
+      store.put(new Blob(["PK\u0003\u0004cached-taxonomy"], { type: "application/zip" }), "ncbi-taxdmp-zip");
+      store.put({
+        version: 1,
+        source: "ncbi",
+        acquiredAt: Date.now() - (91 * 24 * 60 * 60 * 1000),
+        fileName: "taxdmp.zip",
+      }, "ncbi-taxdmp-metadata");
+      transaction.onerror = () => reject(transaction.error);
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+    };
+  }));
+  await page.reload();
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyCached === true);
+  const closeTutorial = page.getByRole("button", { name: "Close tutorial prompt" });
+  if (await closeTutorial.isVisible()) await closeTutorial.click();
+  await page.getByRole("button", { name: "Taxonomy" }).click();
+
+  await expect(page.getByText(/Your NCBI Taxonomy archive was downloaded on/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download Latest Version" })).toBeEnabled();
+  expect(downloadRequested).toBe(false);
+});

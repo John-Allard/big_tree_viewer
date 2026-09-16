@@ -25,6 +25,13 @@ export interface LinkedTaxonomyArchiveStatus {
   permission: PermissionState;
 }
 
+export interface TaxonomyArchiveMetadata {
+  version: 1;
+  source: TaxonomySource;
+  acquiredAt: number;
+  fileName?: string;
+}
+
 interface CachedTaxonomyMappingRecord {
   version: number;
   treeSignature: string;
@@ -56,6 +63,10 @@ function archiveKey(source: TaxonomySource): string {
 
 function archiveFileHandleKey(source: TaxonomySource): string {
   return source === "ncbi" ? "ncbi-taxdmp-file-handle" : "catalogue-of-life-texttree-file-handle";
+}
+
+function archiveMetadataKey(source: TaxonomySource): string {
+  return source === "ncbi" ? "ncbi-taxdmp-metadata" : "catalogue-of-life-texttree-metadata";
 }
 
 function legacyMappingKey(source: TaxonomySource): string {
@@ -131,6 +142,47 @@ async function persistArchiveStoreValue(key: string, value: unknown): Promise<vo
 
 async function persistTaxonomyArchive(source: TaxonomySource, archive: Blob | ArrayBuffer): Promise<void> {
   await persistArchiveStoreValue(archiveKey(source), archive);
+}
+
+function parseTaxonomyArchiveMetadata(value: unknown, source: TaxonomySource): TaxonomyArchiveMetadata | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const metadata = value as Partial<TaxonomyArchiveMetadata>;
+  if (
+    metadata.version !== 1
+    || metadata.source !== source
+    || typeof metadata.acquiredAt !== "number"
+    || !Number.isFinite(metadata.acquiredAt)
+    || metadata.acquiredAt <= 0
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    source,
+    acquiredAt: metadata.acquiredAt,
+    ...(typeof metadata.fileName === "string" && metadata.fileName ? { fileName: metadata.fileName } : {}),
+  };
+}
+
+export async function getTaxonomyArchiveMetadata(source: TaxonomySource = "ncbi"): Promise<TaxonomyArchiveMetadata | null> {
+  return parseTaxonomyArchiveMetadata(await readArchiveStoreValue(archiveMetadataKey(source)), source);
+}
+
+export async function recordTaxonomyArchiveMetadata(
+  source: TaxonomySource,
+  acquiredAt: number,
+  fileName?: string,
+): Promise<TaxonomyArchiveMetadata> {
+  const metadata: TaxonomyArchiveMetadata = {
+    version: 1,
+    source,
+    acquiredAt: Number.isFinite(acquiredAt) && acquiredAt > 0 ? acquiredAt : Date.now(),
+    ...(fileName ? { fileName } : {}),
+  };
+  await persistArchiveStoreValue(archiveMetadataKey(source), metadata);
+  return metadata;
 }
 
 async function getLinkedTaxonomyArchiveHandle(source: TaxonomySource): Promise<TaxonomyArchiveFileHandle | null> {
@@ -225,15 +277,21 @@ export async function getCachedTaxonomyArchive(source: TaxonomySource = "ncbi"):
   return null;
 }
 
-export async function putCachedTaxonomyArchive(source: TaxonomySource, archive: Blob | ArrayBuffer): Promise<"persistent" | "memory"> {
+export async function putCachedTaxonomyArchive(
+  source: TaxonomySource,
+  archive: Blob | ArrayBuffer,
+  acquiredAt = Date.now(),
+): Promise<"persistent" | "memory"> {
   cachedArchiveInMemory.set(source, archive instanceof ArrayBuffer ? cloneArchiveBuffer(archive) : archive);
   try {
     await persistTaxonomyArchive(source, archive);
+    await recordTaxonomyArchiveMetadata(source, acquiredAt);
     return "persistent";
   } catch (error) {
     if (archive instanceof Blob) {
       try {
         await persistTaxonomyArchive(source, await archive.arrayBuffer());
+        await recordTaxonomyArchiveMetadata(source, acquiredAt);
         return "persistent";
       } catch {
         return "memory";
@@ -242,6 +300,7 @@ export async function putCachedTaxonomyArchive(source: TaxonomySource, archive: 
     if (archive instanceof ArrayBuffer) {
       try {
         await persistTaxonomyArchive(source, cloneArchiveBuffer(archive));
+        await recordTaxonomyArchiveMetadata(source, acquiredAt);
         return "persistent";
       } catch {
         return "memory";

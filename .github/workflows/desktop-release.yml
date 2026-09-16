@@ -76,7 +76,7 @@ jobs:
           identity="${MACOS_CODESIGN_IDENTITY#Developer ID Application: }"
           echo "CSC_NAME=$identity" >> "$GITHUB_ENV"
       - name: Build, sign, and notarize universal macOS app
-        run: npx electron-builder --mac dmg --universal --publish never -c.mac.notarize=true
+        run: npx electron-builder --mac dmg zip --universal --publish never -c.mac.notarize=true
         env:
           CSC_LINK: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
@@ -92,7 +92,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-macos
-          path: release/Big-Tree-Viewer-macOS-universal.dmg
+          path: |
+            release/Big-Tree-Viewer-macOS-universal.dmg
+            release/Big-Tree-Viewer-macOS-universal.zip
 
   build-windows:
     runs-on: windows-latest
@@ -165,7 +167,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows
-          path: release/Big-Tree-Viewer-Windows-x64.exe
+          path: |
+            release/Big-Tree-Viewer-Windows-x64.exe
 
   publish-release:
     needs: [build-linux, build-macos, build-windows]
@@ -173,11 +176,14 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
           path: release-assets
           merge-multiple: true
+      - name: Generate auto-update metadata from final signed artifacts
+        run: node scripts/generate-update-metadata.mjs release-assets
       - name: Create release if needed and upload installers
         run: |
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \

@@ -739,6 +739,30 @@ test.describe("local circular perf regression", () => {
     expect((benchmark?.branchRenderModes ?? []).every((mode) => ["taxonomy-cached-bitmap", "taxonomy-cached-paths"].includes(mode))).toBeTruthy();
     expect(Number(benchmark?.drawTotalMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(RECT_PAN_DRAW_P95_MAX_MS);
     expect(Number(benchmark?.taxonomyOverlayMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(RECT_PAN_TAXONOMY_P95_MAX_MS);
+
+    await page.evaluate(() => {
+      const canvasTest = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+      canvasTest?.fitView();
+      const camera = canvasTest?.getCamera();
+      const canvas = document.querySelector('[data-testid="tree-canvas"]');
+      if (!camera || camera.kind !== "rect" || !(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("Rectangular fit camera unavailable.");
+      }
+      const centerY = canvas.getBoundingClientRect().height * 0.5;
+      const worldCenterY = (centerY - Number(camera.translateY)) / Number(camera.scaleY);
+      const scaleY = Number(camera.scaleY) * 2;
+      canvasTest.setRectCamera({
+        scaleY,
+        translateY: centerY - (worldCenterY * scaleY),
+      });
+    });
+    await settleFrames(page);
+
+    const nearFitBenchmark = await runRectPanBenchmark(page, "local-perf-pan-rect-near-fit", 0, -180, 24);
+    expect(nearFitBenchmark).not.toBeNull();
+    expect(nearFitBenchmark?.branchRenderModes).toEqual(["taxonomy-cached-bitmap"]);
+    expect(Number(nearFitBenchmark?.drawTotalMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(RECT_PAN_DRAW_P95_MAX_MS);
+    expect(Number(nearFitBenchmark?.taxonomyOverlayMsP95 ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(RECT_PAN_TAXONOMY_P95_MAX_MS);
   });
 
   test("deep 210k circular zoom keeps five taxonomy rings radially ordered", async ({ page }) => {

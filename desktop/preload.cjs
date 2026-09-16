@@ -23,6 +23,13 @@ ipcRenderer.on("btv:menu-command", (_event, command) => {
   for (const listener of menuCommandListeners) listener(command);
 });
 
+const agentListeners = new Set();
+const agentQueue = [];
+ipcRenderer.on("btv:agent-request", (_event, request) => {
+  if (!agentListeners.size) agentQueue.push(request);
+  else for (const listener of agentListeners) listener(request);
+});
+
 contextBridge.exposeInMainWorld("bigTreeViewerDesktop", {
   async consumePendingOpenPaths() {
     const mainPaths = await ipcRenderer.invoke("btv:consume-pending-open-paths");
@@ -39,5 +46,12 @@ contextBridge.exposeInMainWorld("bigTreeViewerDesktop", {
   },
   grantFile: (filePath) => ipcRenderer.invoke("btv:grant-file", filePath),
   saveFile: (suggestedName, data) => ipcRenderer.invoke("btv:save-file", suggestedName, data),
+  onAgentRequest(callback) {
+    agentListeners.add(callback);
+    for (const request of agentQueue.splice(0)) callback(request);
+    ipcRenderer.send("btv:agent-ready");
+    return () => agentListeners.delete(callback);
+  },
+  agentResult: (result) => ipcRenderer.send("btv:agent-result", result),
   platform: process.platform,
 });

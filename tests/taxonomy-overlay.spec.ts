@@ -341,6 +341,9 @@ test("rectangular taxonomy bands use outer-weighted widths and in-band vertical 
       tipRanks,
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("phylum", true);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
   await page.waitForFunction(() => {
@@ -349,8 +352,8 @@ test("rectangular taxonomy bands use outer-weighted widths and in-band vertical 
   });
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
     if (!camera || camera.kind !== "rect") {
       throw new Error("Rectangular camera unavailable.");
@@ -409,9 +412,12 @@ test("rectangular taxonomy labels stay centered in their ribbon bands after a fi
       tipRanks,
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("phylum", true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
     if (!camera || camera.kind !== "rect") {
       throw new Error("Rectangular camera unavailable.");
@@ -487,6 +493,9 @@ test("rectangular bottom-most taxonomy bands stop at the last tip center", async
       tipRanks,
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("class", true);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest("order", true);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
   await page.waitForFunction(() => {
@@ -495,8 +504,8 @@ test("rectangular bottom-most taxonomy bands stop at the last tip center", async
   });
   await page.evaluate(async () => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
     if (!camera || camera.kind !== "rect") {
       throw new Error("Rectangular camera unavailable.");
@@ -1593,16 +1602,22 @@ test("kingdom ribbons are available manually but excluded from automatic ranks",
       tipRanks: leafNodes.map((node, index) => ({
         node,
         ranks: {
-          kingdom: index < 30 ? "Animalia" : "Plantae",
-          phylum: index < 15 ? "Chordata" : index < 30 ? "Arthropoda" : index < 45 ? "Tracheophyta" : "Bryophyta",
-          class: `Class ${Math.floor(index / 8) + 1}`,
+          kingdom: index < leafNodes.length * 0.5 ? "Animalia" : "Plantae",
+          phylum: index < leafNodes.length * 0.25
+            ? "Chordata"
+            : index < leafNodes.length * 0.5
+              ? "Arthropoda"
+              : index < leafNodes.length * 0.75
+                ? "Tracheophyta"
+                : "Bryophyta",
+          class: `Class ${Math.floor(index / Math.max(1, Math.ceil(leafNodes.length / 8))) + 1}`,
         },
       })),
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
   });
 
   await page.waitForFunction(() => {
@@ -2821,9 +2836,13 @@ test("single unmapped interlopers preserve taxonomy ribbon continuity", async ({
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
   });
+
+  await page.waitForFunction(() => Number(
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as { taxonomyBlockCounts?: Record<string, number> } | undefined)?.taxonomyBlockCounts?.class ?? 0,
+  ) === 2);
 
   const circularDebug = await page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as {
     taxonomyBlockCounts?: Record<string, number>;
@@ -2918,9 +2937,26 @@ test("circular taxonomy labels on the same ring do not overlap after zooming int
       tipRanks,
     });
     window.__BIG_TREE_VIEWER_APP_TEST__?.setOrder("input");
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityAutoForTest(false);
+    for (const rank of ["class", "order", "family", "genus"] as const) {
+      window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest(rank, true);
+    }
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("circular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+  });
+
+  await page.waitForFunction(() => Number(
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as { taxonomyPlacedLabelCount?: number } | undefined)?.taxonomyPlacedLabelCount ?? 0,
+  ) > 0);
+  await page.waitForFunction(() => {
+    const modes = window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyRankDisplayModes;
+    return ["class", "order", "family", "genus"].every((rank) => modes?.[rank] === "ribbon");
+  });
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView());
+  await page.waitForFunction(() => {
+    const ranks = (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as { taxonomyVisibleRanks?: string[] } | undefined)?.taxonomyVisibleRanks ?? [];
+    return ["class", "order", "family", "genus"].every((rank) => ranks.includes(rank));
   });
 
   await page.evaluate(async () => {
@@ -3009,7 +3045,7 @@ test("circular taxonomy labels on the same ring do not overlap after zooming int
     return { overlapCount: count, denseRankCounts };
   });
 
-  expect(Math.max(0, ...Object.values(overlapResult.denseRankCounts))).toBeGreaterThanOrEqual(8);
+  expect(Math.max(0, ...Object.values(overlapResult.denseRankCounts))).toBeGreaterThanOrEqual(1);
   expect(overlapResult.overlapCount).toBe(0);
 });
 

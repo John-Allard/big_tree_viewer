@@ -1,6 +1,6 @@
 export default function AgenticAiPage() {
   const skillZipUrl = "https://bigtreeviewer.net/agentic-ai/bigtreeviewer-agent-skill.zip";
-  const skillZipSha256 = "e15ad9b11a0ee422bc9f444a6d76c4585db46b1aa7811fb5c1c9adcb8f88e851";
+  const skillZipSha256 = "ccb1af967a3588a50045c7c3289b0d9d21a52e88849fcd6045608e6c30e33deb";
 
   return (
     <main className="about-page api-page">
@@ -21,16 +21,48 @@ export default function AgenticAiPage() {
             <p className="about-kicker">Big Tree Viewer</p>
             <h1>Using BTV with agentic AI</h1>
             <p className="about-author-line">
-              Big Tree Viewer can be launched and exported through its browser
-              API, which means coding agents can open local trees, apply visual
-              settings, and render figure files without requiring you to click
-              through the interface.
+              Coding agents can open configured trees in the desktop app, change
+              their display, and export figures. Desktop builds with MCP support
+              use the bundled renderer; the browser launch API remains available
+              for websites and integrations without the desktop app.
             </p>
           </div>
           <a className="about-top-link" href={`${import.meta.env.BASE_URL}#`}>
             Back to viewer
           </a>
         </header>
+
+        <section className="api-doc-section">
+          <h2>Connect the desktop app to an agent</h2>
+          <p>In a desktop build with MCP support, choose Help → Connect an AI Agent.
+            Copy the configuration for Codex or Claude Code into your agent's MCP
+            settings and restart the agent. The server runs locally through the
+            installed BTV executable with <code>--mcp</code>; no Python, external
+            Chrome installation, or live BTV website is required.</p>
+          <p>Ask your agent to open a local Newick, NEXUS, or BTV session with the
+            layout, metadata, and taxonomy ribbons you want. It can update that
+            tree, inspect the applied settings, export PNG/SVG, and save an editable
+            session. Background rendering does not open a visible window.</p>
+          <p>Use <code>handoff_tree</code> to move a configured tree into the independent
+            desktop app before ending the agent session. Agent-controlled windows
+            close when the MCP connection ends. Each client uses its own named
+            profile and taxonomy cache. First-time taxonomy downloads must be enabled
+            explicitly; saved sessions can carry their existing mapping.</p>
+          <p>For scripts, <code>--command /absolute/path/request.json</code> calls the
+            same operations once. This is a thin alternative to MCP, with the same
+            settings and results.</p>
+          <pre><code>{`{
+  "tool": "open_tree",
+  "arguments": {
+    "treePath": "/absolute/path/tree.nwk",
+    "layout": "circular",
+    "settings": { "showGenusLabels": true }
+  }
+}`}</code></pre>
+          <p>The <a href={`${import.meta.env.BASE_URL}#api`}>website launch API</a> is
+            a separate integration: a website can open BTV for its visitors with a
+            tree and initial display settings. It does not require a local MCP connection.</p>
+        </section>
 
         <section className="api-doc-section">
           <h2>Download the agent skill</h2>

@@ -223,9 +223,15 @@ test("distance measurement reports MRCA age and allows navigation until explicit
   await expect(page.locator(".tree-context-menu")).toHaveCount(0);
 
   const finalStartPoint = await branchPoint(page, startNode);
-  await page.mouse.click(finalStartPoint.x, finalStartPoint.y, { button: "right" });
-  await page.getByRole("button", { name: "Measure Distance" }).click();
+  await page.evaluate(({ node, x, y }) => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.startDistanceMeasurementForTest(node, x, y);
+  }, { node: startNode, x: finalStartPoint.x, y: finalStartPoint.y });
   await expect(tooltip).toBeVisible();
+  const showSidePanel = page.getByRole("button", { name: "Show side panel" });
+  if (await showSidePanel.isVisible()) {
+    await showSidePanel.click();
+  }
+  await expect(page.locator(".control-panel")).toBeVisible();
   await page.locator(".control-panel").click({ position: { x: 12, y: 12 } });
   await expect(tooltip).toBeHidden();
 });

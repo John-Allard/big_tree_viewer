@@ -21,7 +21,7 @@ test("homonymous taxonomy labels with different taxids get distinct branch color
     return Boolean(state?.treeLoaded) && !state?.loading;
   });
 
-  const colors = await page.evaluate(async () => {
+  const nodes = await page.evaluate(() => {
     const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__;
     const names = internal?.names ?? [];
     const leafNodes = internal?.leafNodes ?? [];
@@ -122,19 +122,28 @@ test("homonymous taxonomy labels with different taxids get distinct branch color
       window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyRankVisibilityForTest(rank, rank === "genus");
     }
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    return { primateA, primateB, plantA, plantB };
+  });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.taxonomyEnabled === true
+      && state?.taxonomyBranchColoringEnabled === true
+      && state?.taxonomyRankVisibilityAuto === false
+      && state?.taxonomyRankDisplayModes?.genus === "ribbon";
+  });
+  const colors = await page.evaluate((tipNodes) => {
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const branchColors = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCurrentBranchColors();
     if (!branchColors) {
       throw new Error("Branch colors unavailable.");
     }
     return {
-      primateA: branchColors[primateA],
-      primateB: branchColors[primateB],
-      plantA: branchColors[plantA],
-      plantB: branchColors[plantB],
+      primateA: branchColors[tipNodes.primateA],
+      primateB: branchColors[tipNodes.primateB],
+      plantA: branchColors[tipNodes.plantA],
+      plantB: branchColors[tipNodes.plantB],
     };
-  });
+  }, nodes);
 
   expect(colors.primateA).toBe(colors.primateB);
   expect(colors.plantA).toBe(colors.plantB);

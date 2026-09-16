@@ -94,12 +94,15 @@ import {
   getLinkedTaxonomyArchiveStatus,
   getMostRecentCachedTaxonomyMapping,
   getSharedSubtreePayload,
+  getTaxonomyArchiveMetadata,
   linkTaxonomyArchiveFile,
   putCachedTaxonomyArchive,
   putCachedTaxonomyMapping,
   readLinkedTaxonomyArchive,
+  recordTaxonomyArchiveMetadata,
   touchCachedTaxonomyMapping,
   useTaxonomyArchiveForSession,
+  type TaxonomyArchiveMetadata,
   type TaxonomyArchiveFileHandle,
 } from "./lib/taxonomyCache";
 import { rerootTreePayload, rerootTreePayloadAtNode, type RerootMode } from "./lib/rerootTree";
@@ -1228,6 +1231,7 @@ const DEFAULT_TAXONOMY_COLLAPSE_RANK: TaxonomyCollapseRank = "species";
 const DEFAULT_TIME_AXIS_SCALE: TimeAxisScale = "linear";
 const DEFAULT_TAXONOMY_COLOR_ROOT_RANK: TaxonomyRank | "auto" = "auto";
 const DEFAULT_TAXONOMY_COLOR_JITTER_RANK: TaxonomyRank = "genus";
+const TAXONOMY_ARCHIVE_REFRESH_INTERVAL_MS = 90 * 24 * 60 * 60 * 1000;
 const TAXONOMY_SOURCE_CONFIG: Record<TaxonomySource, {
   label: string;
   archiveUrl: string;
@@ -1994,6 +1998,8 @@ export default function App() {
   const phylopicCancelRequestedRef = useRef(false);
   const phylopicTriedImageUuidsByKeyRef = useRef<Map<string, Set<string>>>(new Map());
   const appShellRef = useRef<HTMLDivElement | null>(null);
+  const controlPanelShellRef = useRef<HTMLDivElement | null>(null);
+  const viewerPanelRef = useRef<HTMLElement | null>(null);
   const automationExportRequestCounterRef = useRef(0);
   const automationExportReplyTargetsRef = useRef<Map<number, { target: Window | null; origin: string }>>(new Map());
   const apiReadyAnnouncedRef = useRef(false);
@@ -2071,6 +2077,7 @@ export default function App() {
   const statsSectionRef = useRef<HTMLElement | null>(null);
   const [sidebarVisible, setSidebarVisible] = useSessionDisclosure("sidebar-visible", true);
   const [sidebarOverlayMode, setSidebarOverlayMode] = useState(!sidebarVisible);
+  const [viewerLeftOcclusionPx, setViewerLeftOcclusionPx] = useState(0);
   const [viewerFullscreen, setViewerFullscreen] = useState(false);
   const [viewerFullscreenFallback, setViewerFullscreenFallback] = useState(false);
   const [pastedTreeText, setPastedTreeText] = useState("");
@@ -2166,6 +2173,7 @@ export default function App() {
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
   const [taxonomyArchiveFileName, setTaxonomyArchiveFileName] = useState("");
   const [taxonomyLinkedFilePermission, setTaxonomyLinkedFilePermission] = useState<PermissionState | null>(null);
+  const [taxonomyArchiveMetadata, setTaxonomyArchiveMetadata] = useState<TaxonomyArchiveMetadata | null>(null);
   const [taxonomyLoading, setTaxonomyLoading] = useState(false);
   const [taxonomyStatus, setTaxonomyStatus] = useState("");
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
@@ -2492,6 +2500,31 @@ export default function App() {
     setSidebarOverlayMode(true);
     setSidebarVisible(false);
   }, [setSidebarVisible]);
+  useLayoutEffect(() => {
+    const panel = controlPanelShellRef.current;
+    const viewer = viewerPanelRef.current;
+    if (!panel || !viewer) {
+      return undefined;
+    }
+    const updateOcclusion = (): void => {
+      const panelBounds = panel.getBoundingClientRect();
+      const viewerBounds = viewer.getBoundingClientRect();
+      const verticallyOverlaps = panelBounds.bottom > viewerBounds.top && panelBounds.top < viewerBounds.bottom;
+      const overlap = sidebarVisible && verticallyOverlaps
+        ? Math.max(0, Math.min(viewerBounds.right, panelBounds.right) - viewerBounds.left)
+        : 0;
+      setViewerLeftOcclusionPx((current) => Math.abs(current - overlap) < 0.5 ? current : overlap);
+    };
+    updateOcclusion();
+    const observer = new ResizeObserver(updateOcclusion);
+    observer.observe(panel);
+    observer.observe(viewer);
+    window.addEventListener("resize", updateOcclusion);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateOcclusion);
+    };
+  }, [sidebarOverlayMode, sidebarVisible, viewerFullscreen, viewerFullscreenFallback]);
   const handleSubtreeStatisticsRequest = useCallback((target: { node: number; name: string }) => {
     setSubtreeStatisticsTarget(target);
     setStatsOpen(true);
@@ -4075,14 +4108,19 @@ export default function App() {
         }
         setTaxonomyArchiveFileName(linkedStatus?.name ?? "");
         setTaxonomyLinkedFilePermission(linkedStatus?.permission ?? null);
-        const cached = await getCachedTaxonomyArchive(taxonomySource);
+        const [cached, archiveMetadata] = await Promise.all([
+          getCachedTaxonomyArchive(taxonomySource),
+          getTaxonomyArchiveMetadata(taxonomySource),
+        ]);
         if (cancelled) {
           return;
         }
         setTaxonomyCached(cached !== null);
+        setTaxonomyArchiveMetadata(archiveMetadata);
       } catch {
         if (!cancelled) {
           setTaxonomyCached(false);
+          setTaxonomyArchiveMetadata(null);
         }
       }
     })();
@@ -4117,7 +4155,7 @@ export default function App() {
       return cached;
     }
     if (!allowDownload) {
-      throw new Error(`No ${sourceConfig.label} archive is available. Download or load its taxonomy archive in this browser before running automated taxonomy mapping.`);
+      throw new Error(`No ${sourceConfig.label} archive is available. Download or load its taxonomy archive in Big Tree Viewer before running automated taxonomy mapping.`);
     }
     setTaxonomyStatus("Preparing taxonomy download...");
     setTaxonomyStatus(`Downloading ${sourceConfig.label}...`);
@@ -4126,8 +4164,10 @@ export default function App() {
       throw new Error(`Taxonomy download failed with HTTP ${response.status}.`);
     }
     const archive = await response.blob();
-    const cacheMode = await putCachedTaxonomyArchive(source, archive);
+    const downloadedAt = Date.now();
+    const cacheMode = await putCachedTaxonomyArchive(source, archive, downloadedAt);
     setTaxonomyCached(true);
+    setTaxonomyArchiveMetadata({ version: 1, source, acquiredAt: downloadedAt });
     setTaxonomyArchiveFileName("");
     setTaxonomyLinkedFilePermission(null);
     setTaxonomyStatus(
@@ -4330,6 +4370,8 @@ export default function App() {
     viewMode,
   ]);
 
+  const desktopExportRepliesRef = useRef(new Map<number, string>());
+
   const queueAutomationExport = useCallback((
     request: BigTreeViewerLaunchPayload["export"],
     replyTarget?: { target: Window | null; origin: string },
@@ -4367,6 +4409,12 @@ export default function App() {
   }, [loadedTreeLabel, viewMode]);
 
   const handleAutomationExportComplete = useCallback((result: AutomationExportResult): void => {
+    const desktopRequest = desktopExportRepliesRef.current.get(result.id);
+    if (desktopRequest) {
+      desktopExportRepliesRef.current.delete(result.id);
+      window.bigTreeViewerDesktop?.agentResult({ id: desktopRequest, ok: result.ok, result, message: result.message });
+      return;
+    }
     const replyTarget = automationExportReplyTargetsRef.current.get(result.id);
     automationExportReplyTargetsRef.current.delete(result.id);
     if (result.delivery !== "postMessage") {
@@ -4857,54 +4905,41 @@ export default function App() {
 
   const parseSessionFile = useCallback(async (file: File): Promise<BigTreeViewerSessionFile> => await parseSessionBytes(new Uint8Array(await file.arrayBuffer())), []);
 
-  const saveSession = useCallback(async (): Promise<void> => {
-    try {
-      setSessionError(null);
-      const writer = await createSessionFileWriter();
-      if (!writer) {
-        setSessionStatus("");
-        return;
-      }
-      setSessionStatus("Preparing session file...");
-      const canvas = await requestCanvasSessionState();
-      const session: BigTreeViewerSessionFile = {
-        format: "big-tree-viewer-session",
-        version: 1,
-        savedAt: new Date().toISOString(),
-        settings: captureSessionSettings(),
-        tree: tree ? {
-          label: loadedTreeLabel,
-          newick: serializeSubtreeToNewick(tree, tree.root),
-          signature: treeSignature,
-        } : undefined,
-        controls: hideDownloadNewick ? { hideDownloadNewick: true } : undefined,
-        metadata: metadataRawText ? {
-          text: metadataRawText,
-          label: metadataFileName || "metadata.csv",
-          firstRowIsHeader: metadataFirstRowIsHeader,
-        } : undefined,
-        taxonomy: tree ? { map: taxonomyMap } : undefined,
-        phylopic: phylopicSilhouettes.length > 0 ? {
-          enabled: phylopicEnabled,
-          silhouettes: phylopicSilhouettes,
-        } : undefined,
-        canvas,
-        comparison: comparisonTree ? {
-          enabled: comparisonEnabled,
-          label: comparisonTreeLabel,
-          newick: serializeSubtreeToNewick(comparisonTree, comparisonTree.root),
-          camera: comparisonCamera,
-          showIncompatibleSplits: showIncompatibleComparisonSplits,
-          connectorSensitivity: comparisonConnectorSensitivity,
-          centerWidthScale: comparisonCenterWidthScale,
-        } : undefined,
-      };
-      const saved = await writeSessionFile(session, writer);
-      setSessionStatus(saved ? "Session saved." : "");
-    } catch (error) {
-      setSessionStatus("");
-      setSessionError(error instanceof Error ? error.message : String(error));
-    }
+  const buildCurrentSession = useCallback(async (): Promise<BigTreeViewerSessionFile> => {
+    const canvas = await requestCanvasSessionState();
+    const session: BigTreeViewerSessionFile = {
+      format: "big-tree-viewer-session",
+      version: 1,
+      savedAt: new Date().toISOString(),
+      settings: captureSessionSettings(),
+      tree: tree ? {
+        label: loadedTreeLabel,
+        newick: serializeSubtreeToNewick(tree, tree.root),
+        signature: treeSignature,
+      } : undefined,
+      controls: hideDownloadNewick ? { hideDownloadNewick: true } : undefined,
+      metadata: metadataRawText ? {
+        text: metadataRawText,
+        label: metadataFileName || "metadata.csv",
+        firstRowIsHeader: metadataFirstRowIsHeader,
+      } : undefined,
+      taxonomy: tree ? { map: taxonomyMap } : undefined,
+      phylopic: phylopicSilhouettes.length > 0 ? {
+        enabled: phylopicEnabled,
+        silhouettes: phylopicSilhouettes,
+      } : undefined,
+      canvas,
+      comparison: comparisonTree ? {
+        enabled: comparisonEnabled,
+        label: comparisonTreeLabel,
+        newick: serializeSubtreeToNewick(comparisonTree, comparisonTree.root),
+        camera: comparisonCamera,
+        showIncompatibleSplits: showIncompatibleComparisonSplits,
+        connectorSensitivity: comparisonConnectorSensitivity,
+        centerWidthScale: comparisonCenterWidthScale,
+      } : undefined,
+    };
+    return session;
   }, [
     captureSessionSettings,
     comparisonCamera,
@@ -4913,7 +4948,6 @@ export default function App() {
     comparisonEnabled,
     comparisonTree,
     comparisonTreeLabel,
-    createSessionFileWriter,
     loadedTreeLabel,
     hideDownloadNewick,
     metadataFileName,
@@ -4926,8 +4960,25 @@ export default function App() {
     taxonomyMap,
     tree,
     treeSignature,
-    writeSessionFile,
   ]);
+
+  const saveSession = useCallback(async (): Promise<void> => {
+    try {
+      setSessionError(null);
+      const writer = await createSessionFileWriter();
+      if (!writer) {
+        setSessionStatus("");
+        return;
+      }
+      setSessionStatus("Preparing session file...");
+      const session = await buildCurrentSession();
+      const saved = await writeSessionFile(session, writer);
+      setSessionStatus(saved ? "Session saved." : "");
+    } catch (error) {
+      setSessionStatus("");
+      setSessionError(error instanceof Error ? error.message : String(error));
+    }
+  }, [buildCurrentSession, createSessionFileWriter, writeSessionFile]);
 
   useEffect(() => {
     if (!tree || !treeSignature) {
@@ -6000,6 +6051,10 @@ export default function App() {
         });
         return;
       }
+      const loadedSubtree = await loadSubtreeFromUrl();
+      if (loadedSubtree) {
+        return;
+      }
       if (new URLSearchParams(window.location.search).get("btv_desktop_open") === "1") {
         return;
       }
@@ -6007,10 +6062,7 @@ export default function App() {
         setLoadState({ loading: false, message: "", error: null });
         return;
       }
-      const loadedSubtree = await loadSubtreeFromUrl();
-      if (!loadedSubtree) {
-        await loadExample();
-      }
+      await loadExample();
     })();
   }, [
     loadExample,
@@ -6158,6 +6210,98 @@ export default function App() {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [loadLaunchPayload, queueAutomationExport, runStandardTaxonomyMappingForTree, tree, treeSignature, useLowMemoryTaxonomyMapping]);
+
+  // The desktop transport calls the same application operations directly through
+  // the isolated preload bridge. No external browser or public message transport.
+  useEffect(() => {
+    const desktop = window.bigTreeViewerDesktop;
+    if (!desktop?.onAgentRequest) return;
+    return desktop.onAgentRequest(request => {
+      const complete = (result: unknown) => desktop.agentResult({ id: request.id, ok: true, result });
+      const settle = async () => {
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      };
+      void (async () => {
+        const payload = request.payload as BigTreeViewerLaunchPayload;
+        if (request.operation === "load" || request.operation === "update") {
+          const defaults = captureSessionSettings() as unknown as Record<string, unknown>;
+          for (const [key, value] of Object.entries(payload.visual || {})) {
+            if (!(key in defaults)) throw new Error(`Unknown visual setting: ${key}`);
+            if (defaults[key] !== null && defaults[key] !== undefined && typeof value !== typeof defaults[key]) {
+              throw new Error(`Invalid type for visual setting: ${key}`);
+            }
+          }
+          if (payload.visual?.viewMode && !["rectangular", "circular", "radial", "fan", "spiral"].includes(payload.visual.viewMode)) throw new Error("Unknown tree layout.");
+          if (request.operation === "load") {
+            // Local capabilities are resolved only on this desktop IPC path;
+            // the public website API continues to accept HTTP(S) URLs only.
+            if (payload.newickUrl?.startsWith("btv-file://open/")) {
+              const response = await fetch(payload.newickUrl);
+              if (!response.ok) throw new Error("Could not read the granted local tree file.");
+              payload.newick = await response.text();
+              delete payload.newickUrl;
+            }
+            if (payload.sessionUrl?.startsWith("btv-file://open/")) {
+              const response = await fetch(payload.sessionUrl);
+              if (!response.ok) throw new Error("Could not read the granted local session file.");
+              payload.session = await parseSessionBytes(new Uint8Array(await response.arrayBuffer()));
+              delete payload.sessionUrl;
+            }
+            const result = await loadLaunchPayload(payload, "desktop agent");
+            if (!result.loaded) throw new Error("No tree was loaded. Supply a Newick/NEXUS tree or BTV session.");
+            if (payload.visual?.viewMode === "spiral" && (currentTreeRef.current?.leafCount ?? 0) < 1000) throw new Error("Spiral layout requires at least 1,000 tips. Use circular or rectangular for this tree.");
+            await settle();
+            complete(result);
+          } else {
+            if (!tree) throw new Error("No tree is loaded.");
+            if (payload.visual?.viewMode === "spiral" && tree.leafCount < 1000) throw new Error("Spiral layout requires at least 1,000 tips.");
+            applyLaunchVisualSettings(payload.visual);
+            await applyLaunchMetadata(payload.metadata);
+            if (payload.taxonomy?.runMapping) {
+              const mapped = await runStandardTaxonomyMappingForTree(tree, treeSignature,
+                payload.taxonomy.lowMemoryMode ?? useLowMemoryTaxonomyMapping,
+                payload.taxonomy.allowDownload === true,
+                payload.taxonomy.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi");
+              if (!mapped) throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping failed.");
+            }
+            if (payload.canvas) {
+              const canvas = normalizeLaunchCanvasState(payload.canvas);
+              if (!canvas) throw new Error("Invalid canvas state.");
+              await new Promise<void>(resolve => {
+                pendingSessionRestoreResolverRef.current = resolve;
+                setSessionRestoreState(canvas);
+                setSessionRestoreRequest(value => value + 1);
+              });
+            }
+            await waitForMetadataOverlayCompletion();
+            await settle();
+            complete({ updated: true });
+          }
+          return;
+        }
+        if (request.operation === "inspect") {
+          complete({ label: loadedTreeLabel, tips: tree?.leafCount ?? 0, nodes: tree?.nodeCount ?? 0,
+            layout: viewMode, ultrametric: tree?.isUltrametric, settings: captureSessionSettings(),
+            taxonomy: { mappedTips: taxonomyMap?.mappedCount ?? 0, status: taxonomyStatus, warning: taxonomyMappingWarning, error: taxonomyError },
+            metadata: { status: metadataStatus, error: metadataError },
+          });
+          return;
+        }
+        if (!tree) throw new Error("No tree is loaded.");
+        if (request.operation === "export") {
+          const exportRequest = request.payload as BigTreeViewerLaunchPayload["export"];
+          desktopExportRepliesRef.current.set(automationExportRequestCounterRef.current + 1, request.id);
+          queueAutomationExport({ ...exportRequest, delivery: "postMessage" });
+          return;
+        }
+        if (request.operation === "save-session") {
+          complete({ session: await buildCurrentSession() });
+          return;
+        }
+        throw new Error(`Unknown desktop operation: ${request.operation}`);
+      })().catch(error => desktop.agentResult({ id: request.id, ok: false, message: error instanceof Error ? error.message : String(error) }));
+    });
+  });
 
   const onMetadataFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -6324,20 +6468,37 @@ export default function App() {
   const activateTaxonomyArchiveFile = useCallback(async (
     file: File,
     handle?: TaxonomyArchiveFileHandle,
+    acquiredAt = file.lastModified || Date.now(),
   ): Promise<void> => {
     if (file.size <= 0) {
       throw new Error("The selected taxonomy archive is empty.");
     }
     useTaxonomyArchiveForSession(taxonomySource, file);
     const handleStorage = handle ? await linkTaxonomyArchiveFile(taxonomySource, handle) : null;
+    const archiveMetadata: TaxonomyArchiveMetadata = {
+      version: 1,
+      source: taxonomySource,
+      acquiredAt: Number.isFinite(acquiredAt) && acquiredAt > 0 ? acquiredAt : Date.now(),
+      fileName: file.name || TAXONOMY_SOURCE_CONFIG[taxonomySource].suggestedFileName,
+    };
+    try {
+      await recordTaxonomyArchiveMetadata(
+        taxonomySource,
+        archiveMetadata.acquiredAt,
+        archiveMetadata.fileName,
+      );
+    } catch {
+      // The archive remains usable for this session when browser storage is unavailable.
+    }
     setTaxonomyCached(true);
+    setTaxonomyArchiveMetadata(archiveMetadata);
     setTaxonomyArchiveFileName(file.name || TAXONOMY_SOURCE_CONFIG[taxonomySource].suggestedFileName);
     setTaxonomyLinkedFilePermission(handleStorage === "persistent" ? "granted" : null);
     setTaxonomyStatus(
       handleStorage === "persistent"
-        ? `Using taxonomy file ${file.name}. This browser will reuse the file without storing another archive copy.`
+        ? `Using taxonomy file ${file.name}. Big Tree Viewer will reuse the file without storing another archive copy.`
         : handle
-          ? `Using taxonomy file ${file.name} for this session. This browser could not retain access, so select the same file again next time.`
+          ? `Using taxonomy file ${file.name} for this session. Big Tree Viewer could not retain access, so select the same file again next time.`
           : `Using taxonomy file ${file.name} for this session. Select the same file again after reloading.`,
     );
     appendDiagnostic("taxonomy-file-loaded", {
@@ -6457,10 +6618,10 @@ export default function App() {
         const writable = await saveHandle.createWritable();
         await writable.write(archive);
         await writable.close();
-        await activateTaxonomyArchiveFile(await saveHandle.getFile(), saveHandle);
+        await activateTaxonomyArchiveFile(await saveHandle.getFile(), saveHandle, Date.now());
       } else {
         const file = new File([archive], sourceConfig.suggestedFileName, { type: archive.type || "application/zip" });
-        await activateTaxonomyArchiveFile(file);
+        await activateTaxonomyArchiveFile(file, undefined, Date.now());
         const url = window.URL.createObjectURL(file);
         const link = window.document.createElement("a");
         link.href = url;
@@ -6505,6 +6666,11 @@ export default function App() {
     tree
     && taxonomyMap
     && taxonomyMapSource(taxonomyMap) === taxonomySource,
+  );
+  const taxonomyArchiveIsStale = Boolean(
+    taxonomyCached
+    && taxonomyArchiveMetadata
+    && Date.now() - taxonomyArchiveMetadata.acquiredAt >= TAXONOMY_ARCHIVE_REFRESH_INTERVAL_MS,
   );
 
   const loadOrRunTaxonomyMapping = useCallback(async (): Promise<TaxonomyMapPayload | null> => {
@@ -6960,6 +7126,7 @@ export default function App() {
         radialAngularSpanDegrees,
         radialCenterOpeningRatio,
         spiralTurns,
+        viewerLeftOcclusionPx,
         taxonomyRankVisibilityAuto: useAutomaticTaxonomyRankVisibility,
         taxonomyRankDisplayModes,
         timeStripeStyle,
@@ -7297,6 +7464,7 @@ export default function App() {
     treeSignature,
     updateFigureStyle,
     viewMode,
+    viewerLeftOcclusionPx,
   ]);
 
   useEffect(() => {
@@ -7459,7 +7627,7 @@ export default function App() {
           Show Panel
         </button>
       ) : null}
-      <div className="control-panel-shell">
+      <div ref={controlPanelShellRef} className="control-panel-shell">
         <aside className="control-panel">
         <button
           type="button"
@@ -7472,10 +7640,23 @@ export default function App() {
           <div className="panel-title-block">
             <h1>Big Tree Viewer</h1>
             <p>by <a className="panel-author-link" href="http://allardjb.com/" target="_blank" rel="noopener noreferrer">John B. Allard</a></p>
-            <p className="panel-title-description">
-              {HOME_DESCRIPTION}{" "}
-              <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
-            </p>
+            {window.bigTreeViewerDesktop ? (
+              <p className="panel-title-desktop-link">
+                <a
+                  className="panel-title-link"
+                  href="https://bigtreeviewer.net/#about"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Learn more
+                </a>
+              </p>
+            ) : (
+              <p className="panel-title-description">
+                {HOME_DESCRIPTION}{" "}
+                <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
+              </p>
+            )}
           </div>
         </div>
 
@@ -8714,6 +8895,23 @@ export default function App() {
                     : canLoadSelectedCachedTaxonomyMapping
                       ? "Load Taxonomy Mapping"
                       : "Run Taxonomy Mapping"}
+                </button>
+              </div>
+            ) : null}
+            {taxonomyArchiveIsStale && taxonomyArchiveMetadata ? (
+              <div className="taxonomy-update-callout">
+                <p>
+                  Your {TAXONOMY_SOURCE_CONFIG[taxonomySource].label} archive was downloaded on{
+                    " "
+                  }{new Date(taxonomyArchiveMetadata.acquiredAt).toLocaleDateString()}.
+                </p>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={taxonomyLoading}
+                  onClick={() => void downloadTaxonomy()}
+                >
+                  Download Latest Version
                 </button>
               </div>
             ) : null}
@@ -10022,7 +10220,7 @@ export default function App() {
         </aside>
       </div>
 
-      <main className="viewer-panel">
+      <main ref={viewerPanelRef} className="viewer-panel">
         {!viewTree && !loadState.loading && !sessionLoading ? (
           <div className="viewer-empty-state" aria-live="polite">
             <strong>Drag a tree file here to load</strong>
@@ -10072,6 +10270,7 @@ export default function App() {
         <div className={`normal-tree-layer${comparisonEnabled && comparisonTree && viewTree ? " comparison-hidden" : ""}`}>
           <TreeCanvas
           treeRef={treeCanvasTreeRef}
+          visibleViewportLeftInsetPx={viewerLeftOcclusionPx}
           order={order}
           viewMode={viewMode}
           zoomAxisMode={viewMode !== "rectangular" ? "both" : zoomAxisMode}

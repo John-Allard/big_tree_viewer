@@ -24,35 +24,49 @@ function collapseLabelForRank(
 export function deriveCollapsibleTaxonomyRanks(
   tipRankEntries: Array<Partial<Record<TaxonomyRank, string>> | TaxonomyTipRanks>,
 ): TaxonomyRank[] {
-  const rankToCounts = new Map<TaxonomyRank, Map<string, number>>();
-  for (let index = 0; index < ACTIVE_TAXONOMY_RANK_ORDER.length; index += 1) {
-    rankToCounts.set(ACTIVE_TAXONOMY_RANK_ORDER[index], new Map());
-  }
+  const states = ACTIVE_TAXONOMY_RANK_ORDER.map(() => ({
+    firstLabel: null as string | null,
+    sawDifferentLabel: false,
+    sawRepeatedLabel: false,
+    seen: new Set<string>(),
+  }));
+  let unresolvedRankCount = states.length;
   for (let entryIndex = 0; entryIndex < tipRankEntries.length; entryIndex += 1) {
     const entry = tipRankEntries[entryIndex];
     for (let rankIndex = 0; rankIndex < ACTIVE_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
+      const state = states[rankIndex];
+      if (state.sawDifferentLabel && state.sawRepeatedLabel) {
+        continue;
+      }
       const rank = ACTIVE_TAXONOMY_RANK_ORDER[rankIndex];
       const label = collapseLabelForRank(entry, rank);
       if (!label) {
         continue;
       }
-      const counts = rankToCounts.get(rank);
-      if (counts) {
-        counts.set(label, (counts.get(label) ?? 0) + 1);
+      if (state.firstLabel === null) {
+        state.firstLabel = label;
+      } else if (label !== state.firstLabel) {
+        state.sawDifferentLabel = true;
+      }
+      if (!state.sawRepeatedLabel) {
+        if (state.seen.has(label)) {
+          state.sawRepeatedLabel = true;
+          state.seen.clear();
+        } else {
+          state.seen.add(label);
+        }
+      }
+      if (state.sawDifferentLabel && state.sawRepeatedLabel) {
+        unresolvedRankCount -= 1;
       }
     }
+    if (unresolvedRankCount === 0) {
+      break;
+    }
   }
-  return ACTIVE_TAXONOMY_RANK_ORDER.filter((rank) => {
-    const counts = rankToCounts.get(rank);
-    const distinctLabelCount = counts?.size ?? 0;
-    let largestBlock = 0;
-    counts?.forEach((count) => {
-      if (count > largestBlock) {
-        largestBlock = count;
-      }
-    });
-    return distinctLabelCount > 1 && largestBlock > 1;
-  });
+  return ACTIVE_TAXONOMY_RANK_ORDER.filter((_, index) => (
+    states[index].sawDifferentLabel && states[index].sawRepeatedLabel
+  ));
 }
 
 export function deriveActiveTaxonomyRanks(

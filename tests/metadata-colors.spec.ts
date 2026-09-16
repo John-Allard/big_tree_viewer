@@ -248,7 +248,7 @@ test("continuous metadata controls support palette, transform, and clamp setting
 test("metadata labels can annotate matched nodes in SVG export", async ({ page }) => {
   await waitForViewer(page);
   await loadLabeledTree(page);
-  const svg = await page.evaluate(async () => {
+  await page.evaluate(() => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.importMetadataTextForTest(
       "label,group,note\nCladeOne,Alpha,Major clade\nCladeTwo,Beta,Sister clade\n",
       "notes.csv",
@@ -257,10 +257,12 @@ test("metadata labels can annotate matched nodes in SVG export", async ({ page }
     window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelsEnabled(true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataLabelColumn("note");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
-    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "";
   });
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataLabeledNodeCount ?? 0,
+  ) >= 2);
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView());
+  const svg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
 
   expect(svg).toContain("Major clade");
   expect(svg).toContain("Sister clade");

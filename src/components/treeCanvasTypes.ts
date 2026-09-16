@@ -46,6 +46,7 @@ export interface AutomationExportResult {
 
 export interface TreeCanvasProps {
   treeRef: { current: TreeModel | null };
+  visibleViewportLeftInsetPx?: number;
   order: LayoutOrder;
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;

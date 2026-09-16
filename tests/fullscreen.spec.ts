@@ -1,5 +1,51 @@
 import { expect, test } from "@playwright/test";
 
+async function waitForViewer(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
+}
+
+test("fit view uses the uncovered viewport after the side panel becomes an overlay", async ({ page }) => {
+  await waitForViewer(page);
+  await page.locator('.viewer-corner-controls button[aria-label="Hide side panel"]').click();
+  await page.locator('.viewer-corner-controls button[aria-label="Show side panel"]').click();
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewerLeftOcclusionPx ?? 0,
+  ) > 300);
+
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  const result = await page.evaluate(() => {
+    const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
+    const canvas = document.querySelector("canvas")?.getBoundingClientRect();
+    const panel = document.querySelector(".control-panel-shell")?.getBoundingClientRect();
+    return {
+      camera,
+      canvasLeft: canvas?.left ?? 0,
+      panelRight: panel?.right ?? 0,
+    };
+  });
+  expect(result.camera?.kind).toBe("rect");
+  expect(result.canvasLeft + Number(result.camera?.translateX ?? 0)).toBeGreaterThanOrEqual(result.panelRight + 24);
+
+  await page.locator('.viewer-corner-controls button[aria-label="Hide side panel"]').click();
+  await page.waitForFunction(() => Number(
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewerLeftOcclusionPx ?? -1,
+  ) === 0);
+  await page.evaluate(async () => {
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const hiddenCamera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
+  expect(hiddenCamera?.kind).toBe("rect");
+  expect(Number(hiddenCamera?.translateX ?? 0)).toBeCloseTo(32, 0);
+});
+
 test("full screen retains the side panel and exposes compact viewport controls", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(Element.prototype, "requestFullscreen", {

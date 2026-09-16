@@ -1,4 +1,10 @@
-import { TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
+import {
+  TAXONOMY_RANKS,
+  type TaxonomyBlock,
+  type TaxonomyMapPayload,
+  type TaxonomyRank,
+  type TaxonomyTipRanks,
+} from "../types/taxonomy";
 
 export type TaxonomyColorByRank = Partial<Record<TaxonomyRank, Record<string, string>>>;
 
@@ -33,179 +39,146 @@ function orderedLeafSpanThreshold(leafCount: number): number {
   return Math.max(2.5, 0.01 / Math.max(minSpan, 1e-9));
 }
 
-function unwrapCircularIndices(indices: number[], leafCount: number): number[] {
-  if (indices.length === 0) {
-    return [];
-  }
-  const sorted = [...indices].sort((left, right) => left - right);
-  if (sorted.length === 1) {
-    return sorted;
-  }
-  let largestGap = -1;
-  let largestGapIndex = 0;
-  for (let index = 0; index < sorted.length; index += 1) {
-    const current = sorted[index];
-    const next = index + 1 < sorted.length ? sorted[index + 1] : sorted[0] + leafCount;
-    const gap = next - current;
-    if (gap > largestGap) {
-      largestGap = gap;
-      largestGapIndex = index;
-    }
-  }
-  const startIndex = (largestGapIndex + 1) % sorted.length;
-  const base = sorted[startIndex];
-  const unwrapped: number[] = [];
-  for (let offset = 0; offset < sorted.length; offset += 1) {
-    let value = sorted[(startIndex + offset) % sorted.length];
-    if (value < base) {
-      value += leafCount;
-    }
-    unwrapped.push(value);
-  }
-  return unwrapped;
-}
-
 export function buildTaxonomyBlocksForOrderedLeaves(
   orderedLeaves: number[],
   taxonomyMap: TaxonomyMapPayload,
   colorsByRank: TaxonomyColorByRank | null,
+  indexedTips?: Array<TaxonomyTipRanks | undefined>,
 ): Record<TaxonomyRank, TaxonomyBlock[]> {
-  const tipByNode = new Map<number, TaxonomyMapPayload["tipRanks"][number]>();
-  for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
-    tipByNode.set(taxonomyMap.tipRanks[index].node, taxonomyMap.tipRanks[index]);
+  let tipByNode = indexedTips;
+  if (!tipByNode) {
+    const maxNode = orderedLeaves.reduce((maximum, node) => Math.max(maximum, node), -1);
+    tipByNode = new Array<TaxonomyTipRanks | undefined>(maxNode + 1);
+    for (let index = 0; index < taxonomyMap.tipRanks.length; index += 1) {
+      const tip = taxonomyMap.tipRanks[index];
+      if (tip.node >= 0 && tip.node <= maxNode) {
+        tipByNode[tip.node] = tip;
+      }
+    }
   }
-  const labelsByRank = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, Map<string, {
+  const blocks = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, TaxonomyBlock[]>>((accumulator, rank) => {
+    accumulator[rank] = [];
+    return accumulator;
+  }, {} as Record<TaxonomyRank, TaxonomyBlock[]>);
+  const assignments = new Array<{
+    entityKey: string;
     label: string;
     taxId: number | null;
-    indices: number[];
-  }>>>((accumulator, rank) => {
-    const byLabel = new Map<string, {
-      label: string;
-      taxId: number | null;
-      indices: number[];
-    }>();
-    const addIndex = (entityKey: string, label: string, taxId: number | null, index: number): void => {
-      const existing = byLabel.get(entityKey);
-      if (existing) {
-        existing.indices.push(index);
-      } else {
-        byLabel.set(entityKey, { label, taxId, indices: [index] });
-      }
-    };
+  } | null>(orderedLeaves.length).fill(null);
+
+  for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
+    const rank = TAXONOMY_RANKS[rankIndex];
+    assignments.fill(null);
     let mappedCount = 0;
     let firstMappedIndex = -1;
-    let firstEntityKey = "";
-    let firstLabel = "";
-    let firstTaxId: number | null = null;
+    let firstAssignment: NonNullable<typeof assignments[number]> | null = null;
     let previousMappedIndex = -1;
-    let previousEntityKey = "";
-    let previousLabel = "";
-    let previousTaxId: number | null = null;
+    let previousAssignment: NonNullable<typeof assignments[number]> | null = null;
     for (let index = 0; index < orderedLeaves.length; index += 1) {
-      const tip = tipByNode.get(orderedLeaves[index]);
+      const tip = tipByNode[orderedLeaves[index]];
       const label = tip?.ranks[rank] ?? null;
       if (!label) {
         continue;
       }
       const taxId = tip?.taxIds?.[rank] ?? null;
       const entityKey = taxonomyEntityKey(label, taxId);
+      const assignment = { entityKey, label, taxId };
       if (mappedCount === 0) {
         firstMappedIndex = index;
-        firstEntityKey = entityKey;
-        firstLabel = label;
-        firstTaxId = taxId;
-      } else if (entityKey === previousEntityKey && index > previousMappedIndex + 1) {
+        firstAssignment = assignment;
+      } else if (entityKey === previousAssignment?.entityKey && index > previousMappedIndex + 1) {
         for (let fillIndex = previousMappedIndex + 1; fillIndex < index; fillIndex += 1) {
-          addIndex(previousEntityKey, previousLabel, previousTaxId, fillIndex);
+          assignments[fillIndex] = previousAssignment;
         }
       }
-      addIndex(entityKey, label, taxId, index);
+      assignments[index] = assignment;
       mappedCount += 1;
       previousMappedIndex = index;
-      previousEntityKey = entityKey;
-      previousLabel = label;
-      previousTaxId = taxId;
+      previousAssignment = assignment;
     }
     const circularGap = firstMappedIndex >= 0
       ? firstMappedIndex + orderedLeaves.length - previousMappedIndex
       : Number.POSITIVE_INFINITY;
     if (
       mappedCount >= 2
-      && firstEntityKey === previousEntityKey
+      && firstAssignment?.entityKey === previousAssignment?.entityKey
       && circularGap <= orderedLeafSpanThreshold(orderedLeaves.length)
     ) {
       for (let fillIndex = previousMappedIndex + 1; fillIndex < orderedLeaves.length; fillIndex += 1) {
-        addIndex(previousEntityKey, previousLabel, previousTaxId, fillIndex);
+        assignments[fillIndex] = previousAssignment;
       }
       for (let fillIndex = 0; fillIndex < firstMappedIndex; fillIndex += 1) {
-        addIndex(firstEntityKey, firstLabel, firstTaxId, fillIndex);
+        assignments[fillIndex] = firstAssignment;
       }
     }
-    accumulator[rank] = byLabel;
-    return accumulator;
-  }, {} as Record<TaxonomyRank, Map<string, {
-    label: string;
-    taxId: number | null;
-    indices: number[];
-  }>>);
-  const blocks = TAXONOMY_RANKS.reduce<Record<TaxonomyRank, TaxonomyBlock[]>>((accumulator, rank) => {
-    accumulator[rank] = [];
-    return accumulator;
-  }, {} as Record<TaxonomyRank, TaxonomyBlock[]>);
-  for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
-    const rank = TAXONOMY_RANKS[rankIndex];
-    const entries = [...labelsByRank[rank].entries()].sort((left, right) => left[1].indices[0] - right[1].indices[0]);
-    for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-      const [entityKey, entry] = entries[entryIndex];
-      const { label, taxId, indices } = entry;
-      const unwrapped = unwrapCircularIndices(indices, orderedLeaves.length);
-      if (unwrapped.length === 0) {
+
+    if (mappedCount === 0) {
+      continue;
+    }
+    let scanStart = 0;
+    const boundaryFirst = assignments[0];
+    const boundaryLast = assignments[orderedLeaves.length - 1];
+    if (
+      boundaryFirst
+      && boundaryLast
+      && boundaryFirst.entityKey === boundaryLast.entityKey
+    ) {
+      while (
+        scanStart < orderedLeaves.length
+        && assignments[scanStart]?.entityKey === boundaryFirst.entityKey
+      ) {
+        scanStart += 1;
+      }
+      if (scanStart === orderedLeaves.length) {
+        scanStart = 0;
+      }
+    }
+    let offset = 0;
+    while (offset < orderedLeaves.length) {
+      const startOffset = offset;
+      const startIndex = (scanStart + offset) % orderedLeaves.length;
+      const assignment = assignments[startIndex];
+      offset += 1;
+      while (
+        offset < orderedLeaves.length
+        && assignments[(scanStart + offset) % orderedLeaves.length]?.entityKey === assignment?.entityKey
+      ) {
+        offset += 1;
+      }
+      if (!assignment) {
         continue;
       }
-      let segmentStart = unwrapped[0];
-      for (let index = 1; index <= unwrapped.length; index += 1) {
-        const previous = unwrapped[index - 1];
-        const next = index < unwrapped.length ? unwrapped[index] : Number.POSITIVE_INFINITY;
-        if (index < unwrapped.length && next === previous + 1) {
-          continue;
-        }
-        const segmentEnd = previous + 1;
-        const segmentSpan = segmentEnd - segmentStart;
-        const coversAllLeaves = segmentSpan >= orderedLeaves.length;
-        const wrappedStartIndex = coversAllLeaves
-          ? 0
-          : ((segmentStart % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
-        const wrappedEndExclusive = coversAllLeaves
-          ? orderedLeaves.length
-          : ((segmentEnd % orderedLeaves.length) + orderedLeaves.length) % orderedLeaves.length;
-        const wrappedEndIndex = wrappedEndExclusive === 0 ? orderedLeaves.length : wrappedEndExclusive;
-        const lastIndex = coversAllLeaves
-          ? orderedLeaves.length - 1
-          : (wrappedEndIndex - 1 + orderedLeaves.length) % orderedLeaves.length;
-        const centerIndex = Math.floor((segmentStart + segmentEnd - 1) * 0.5) % orderedLeaves.length;
-        const segment = {
-          firstNode: orderedLeaves[wrappedStartIndex],
-          lastNode: orderedLeaves[lastIndex],
-          startIndex: wrappedStartIndex,
-          endIndex: wrappedEndIndex,
-        };
-        blocks[rank].push({
-          rank,
-          label,
-          taxId,
-          entityKey,
-          firstNode: segment.firstNode,
-          lastNode: segment.lastNode,
-          centerNode: orderedLeaves[centerIndex],
-          startIndex: segment.startIndex,
-          endIndex: segment.endIndex,
-          labelStartIndex: segment.startIndex,
-          labelEndIndex: segment.endIndex,
-          color: colorForTaxonomy(rank, label, colorsByRank, taxId),
-          segments: [segment],
-        });
-        segmentStart = next;
-      }
+      const span = offset - startOffset;
+      const coversAllLeaves = span >= orderedLeaves.length;
+      const rawEndIndex = scanStart + offset;
+      const endIndex = coversAllLeaves
+        ? orderedLeaves.length
+        : rawEndIndex <= orderedLeaves.length
+          ? rawEndIndex
+          : rawEndIndex % orderedLeaves.length;
+      const lastIndex = (startIndex + span - 1) % orderedLeaves.length;
+      const centerIndex = (startIndex + Math.floor((span - 1) * 0.5)) % orderedLeaves.length;
+      const segment = {
+        firstNode: orderedLeaves[startIndex],
+        lastNode: orderedLeaves[lastIndex],
+        startIndex,
+        endIndex,
+      };
+      blocks[rank].push({
+        rank,
+        label: assignment.label,
+        taxId: assignment.taxId,
+        entityKey: assignment.entityKey,
+        firstNode: segment.firstNode,
+        lastNode: segment.lastNode,
+        centerNode: orderedLeaves[centerIndex],
+        startIndex: segment.startIndex,
+        endIndex: segment.endIndex,
+        labelStartIndex: segment.startIndex,
+        labelEndIndex: segment.endIndex,
+        color: colorForTaxonomy(rank, assignment.label, colorsByRank, assignment.taxId),
+        segments: [segment],
+      });
     }
     blocks[rank].sort((left, right) => (left.startIndex ?? 0) - (right.startIndex ?? 0));
   }

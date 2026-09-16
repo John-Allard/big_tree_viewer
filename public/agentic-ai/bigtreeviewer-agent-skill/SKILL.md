@@ -9,10 +9,33 @@ metadata:
 
 Use this skill when a user asks to open, inspect, style, or render a phylogenetic tree with Big Tree Viewer.
 
+## Desktop MCP (preferred when connected)
+
+When the installed desktop app exposes Big Tree Viewer MCP tools, use them instead of the browser helpers:
+- `open_tree`: open a visible, configured Newick/NEXUS tree or `.btvsession`. Returns a `sessionId`.
+- `update_tree`: change layout, saved visual settings, canvas state, metadata, or taxonomy on that session without reparsing the tree.
+- `inspect_tree`: read effective settings, counts, taxonomy coverage, and metadata status.
+- `export_tree`: export the current view or save a complete editable `.btvsession`.
+- `render_tree`: one-shot background rendering; its temporary session closes after output.
+- `handoff_tree`: open a saved copy in the independent desktop app so the user can continue after the agent disconnects.
+- `close_tree`: release an agent-controlled session.
+
+Use absolute local input/output paths. Common arguments are `treePath`, `layout`, `settings`, `metadataPath`, `metadata`, and `taxonomy`. `layout` accepts rectangular, circular, fan, or spiral. `settings` uses the existing saved visual setting names described below. For taxonomy, use `{ "source": "ncbi", "ranks": ["class", "order"] }`; `catalogue-of-life` is also supported. Mapping uses the agent profile's cache. Set `allowDownload: true` only when a fresh taxonomy archive download is wanted; otherwise a missing archive is reported as an error. Saved sessions retain their maps.
+
+Inspect the returned effective settings and mapping/metadata report, then inspect the returned PNG preview. Do not describe unmapped tips as classified. Avoid `render_tree` for an interactive viewing request. Use `open_tree`, and call `handoff_tree` when the user should retain the tree independently of the agent connection. Agent-controlled windows close on disconnect. Existing files are protected unless `overwrite: true` is supplied.
+
+Desktop builds with MCP expose setup under **Help → Connect an AI Agent**. Copy the client-specific configuration and restart the agent. The executable runs with `--mcp`; use a different `BTV_AGENT_PROFILE` for each concurrent client. Allow a tool timeout of 240 seconds for large trees and taxonomy work. The app bundles its renderer and local dependencies; external Chrome and Python are unnecessary on this route.
+
+A minimal shell fallback uses the identical tool request: `BigTreeViewer --command /absolute/path/request.json`, with JSON `{ "tool": "open_tree", "arguments": { "treePath": "/absolute/path/tree.nwk", "layout": "circular" } }`. The actual executable path is platform-specific. This is a single operation, not a persistent cross-command session. For multiple edits, use MCP. Do not guess that an older installed app supports these switches.
+
+## Browser/helper fallback
+
+Use the following instructions when desktop MCP is not connected or not available. Existing browser scripts remain supported.
+
 ## Quick Choice
 
 - For agent rendering, run `scripts/btv_render.py`. It uses an isolated headless Chrome/Chromium/Edge profile and never opens a tab in the user's active browser.
-- To show an interactive tree or saved session to the user, run `scripts/btv_open.py` only when the user explicitly wants a browser window.
+- For a simple interactive opening of a local tree or `.btvsession`, prefer an installed Big Tree Viewer desktop application. Fall back to `scripts/btv_open.py` when the desktop application is unavailable or the launch needs browser-only API settings.
 - `btv_open.py --download-export png|svg` remains compatible with older commands, but now renders headlessly and saves the named file instead of using the active browser's download UI.
 - For huge trees, avoid SVG unless the user explicitly needs vector output for a limited visible region. SVG can become slow or unusable because every visible branch is vector geometry; PNG is usually safer.
 - For slide figures, prefer setting PNG `--width`/`--height` to the final on-slide pixel box, or use `--export-viewport-width`/`--export-viewport-height` to preserve slide-scale styling while exporting at higher pixel density.
@@ -23,6 +46,23 @@ Use this skill when a user asks to open, inspect, style, or render a phylogeneti
 - Use Big Tree Viewer's defaults unless the user asks for a different setting or the figure goal clearly requires it. Do not send every possible visual/API setting just because it exists.
 
 ## Open an Interactive Viewer
+
+For a local tree or `.btvsession` with no requested launch-time styling, first look for the desktop application and use it when available:
+
+```bash
+# Linux
+big-tree-viewer /absolute/path/to/tree.nwk
+
+# macOS
+open -a "Big Tree Viewer" /absolute/path/to/tree.nwk
+
+# Windows (PowerShell)
+Start-Process "Big Tree Viewer" -ArgumentList 'C:\absolute\path\to\tree.nwk'
+```
+
+Launching a visible application is appropriate only when the user asks to open or view the tree interactively. Use an absolute input path. If the command is unavailable or fails because the application is not installed, use the browser helper below.
+
+Use the browser helper when no desktop installation is available, for public session URLs, or when the requested initial view requires launch API options that cannot be expressed by opening a file alone:
 
 Run examples from the skill folder. If you are elsewhere, use absolute paths to
 the scripts.
@@ -41,13 +81,9 @@ python scripts/btv_open.py tree.nwk --view radial --radial-span 360 --taxonomy t
 python scripts/btv_open.py --session-url https://example.org/tree.btvsession
 ```
 
-`btv_open.py` uses only Python's standard library. For a local interactive launch, it opens one temporary handoff page in the user's default browser. Current BTV deployments verify that the browser preserves a one-use same-tab transfer, replace the handoff page with a top-level BTV page, and clear the transferred payload as it is consumed. The final address bar therefore shows the configured BTV URL, and BTV has normal top-level access to browser-granted file permissions. Browsers or older deployments that cannot make that transfer fall back to embedding BTV in the same tab. The helper does not request a pop-up or leave a blank launcher tab. Opening the user's browser is intentional only for this explicitly interactive command; do not use it for unattended rendering.
+`btv_open.py` uses only Python's standard library. For a local interactive browser launch, it opens one temporary handoff page in the user's default browser. Current BTV deployments verify that the browser preserves a one-use same-tab transfer, replace the handoff page with a top-level BTV page, and clear the transferred payload as it is consumed. The final address bar therefore shows the configured BTV URL, and BTV has normal top-level access to browser-granted file permissions. Browsers or older deployments that cannot make that transfer fall back to embedding BTV in the same tab. The helper does not request a pop-up or leave a blank launcher tab. Opening the user's browser is intentional only for this explicitly interactive command; do not use it for unattended rendering.
 
-### Use the desktop application when requested
-
-If Big Tree Viewer Desktop is installed and the user explicitly wants a tree opened in that application, launch the tree or `.btvsession` through the operating system instead of opening a browser handoff page. On macOS use `open -a "Big Tree Viewer" /path/to/tree.nwk`; on Linux invoke the installed Big Tree Viewer executable with the file path; on Windows launch the file itself or pass it to the installed application. The desktop application accepts files both at startup and while it is already running.
-
-Do not use the desktop application for unattended rendering. `btv_render.py` remains the reproducible headless path: it uses an isolated browser profile, validates the output, and does not interfere with the user's desktop application or active browser.
+For desktop builds without MCP support, use `btv_render.py` for unattended rendering: it uses an isolated browser profile, validates the output, and does not interfere with the user's desktop application or active browser.
 
 ## Render Without Opening the User's Browser
 
