@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   agentClientEnvironment,
+  agentClientRegistrationArguments,
   agentRegistrationMatches,
   ensureAgentClientRegistration,
   probeMcpLaunch,
@@ -33,6 +34,20 @@ try {
   const launch = { command: path.join(fixtureDir, "bigtreeviewer-mcp"), args: ["--helper-version=2"] };
   assert.equal(agentRegistrationMatches({ error: null, stdout: `command: ${launch.command}\nargs: ${launch.args.join(" ")}\n` }, launch), true);
   assert.equal(agentRegistrationMatches({ error: null, stdout: "command: /old/Big Tree Viewer\nargs: --mcp\n" }, launch), false);
+  const registrationLaunch = { ...launch, env: { BTV_CACHE: path.join(fixtureDir, "agent cache") } };
+  assert.deepEqual(agentClientRegistrationArguments("codex", registrationLaunch), {
+    statusArgs: ["mcp", "get", "bigtreeviewer"],
+    removeArgs: ["mcp", "remove", "bigtreeviewer"],
+    addArgs: ["mcp", "add", "bigtreeviewer", "--env", `BTV_CACHE=${registrationLaunch.env.BTV_CACHE}`, "--", launch.command, ...launch.args],
+  });
+  assert.deepEqual(agentClientRegistrationArguments("claude", registrationLaunch), {
+    statusArgs: ["mcp", "get", "bigtreeviewer"],
+    removeArgs: ["mcp", "remove", "bigtreeviewer", "--scope", "user"],
+    addArgs: [
+      "mcp", "add", "--env", `BTV_CACHE=${registrationLaunch.env.BTV_CACHE}`, "--transport", "stdio", "--scope", "user",
+      "bigtreeviewer", "--", launch.command, ...launch.args,
+    ],
+  });
   const migrated = await ensureAgentClientRegistration(commandName, {
     status: { error: null, stdout: "command: /old/Big Tree Viewer\nargs: --mcp\n", stderr: "" },
     removeArgs: ["mcp", "remove", "bigtreeviewer"],

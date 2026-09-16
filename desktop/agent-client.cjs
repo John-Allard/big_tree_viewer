@@ -115,6 +115,33 @@ function agentRegistrationMatches(status, launch) {
   return launch.args.every((argument) => status.stdout.includes(argument));
 }
 
+function environmentArguments(environment) {
+  return Object.entries(environment).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
+}
+
+function agentClientRegistrationArguments(client, launch) {
+  if (client === "codex") {
+    return {
+      statusArgs: ["mcp", "get", "bigtreeviewer"],
+      removeArgs: ["mcp", "remove", "bigtreeviewer"],
+      addArgs: ["mcp", "add", "bigtreeviewer", ...environmentArguments(launch.env), "--", launch.command, ...launch.args],
+    };
+  }
+  if (client === "claude") {
+    return {
+      statusArgs: ["mcp", "get", "bigtreeviewer"],
+      removeArgs: ["mcp", "remove", "bigtreeviewer", "--scope", "user"],
+      addArgs: [
+        "mcp", "add",
+        ...environmentArguments(launch.env),
+        "--transport", "stdio", "--scope", "user",
+        "bigtreeviewer", "--", launch.command, ...launch.args,
+      ],
+    };
+  }
+  throw new Error(`Unsupported agent client: ${client}`);
+}
+
 async function ensureAgentClientRegistration(command, { status, removeArgs, addArgs, launch, env }) {
   if (agentRegistrationMatches(status, launch)) return { state: "current", result: status };
   const replacing = !status.error;
@@ -177,6 +204,7 @@ function probeMcpLaunch(launch, options = {}) {
 
 module.exports = {
   agentClientEnvironment,
+  agentClientRegistrationArguments,
   agentRegistrationMatches,
   ensureAgentClientRegistration,
   findAgentClientCommand,

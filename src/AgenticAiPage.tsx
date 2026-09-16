@@ -40,6 +40,11 @@ export default function AgenticAiPage() {
             the agent's supported setup command and confirms when the connection is ready.
             The server runs locally through the installed BTV executable; no Python,
             external Chrome installation, or live BTV website is required.</p>
+          <p>The bundled server uses the standard local MCP <code>stdio</code> transport,
+            so it is not limited to Codex or Claude Code. BTV currently provides
+            one-click registration for those two clients. Another agent can use the
+            same server if its MCP client supports local <code>stdio</code> servers,
+            but the registration steps depend on that client.</p>
           <p>Ask your agent to open a local Newick, NEXUS, or BTV session with the
             layout, metadata, and taxonomy ribbons you want. It can update that
             tree, inspect the applied settings, export PNG/SVG, and save an editable
@@ -86,7 +91,7 @@ export default function AgenticAiPage() {
             Claude Agent Skills documentation is available from{" "}
             <a href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview" rel="noreferrer" target="_blank">Anthropic</a>,
             and Claude Code documentation is available from{" "}
-            <a href="https://docs.anthropic.com/en/docs/claude-code/overview" rel="noreferrer" target="_blank">Anthropic Docs</a>.
+            <a href="https://code.claude.com/docs/en/overview" rel="noreferrer" target="_blank">Anthropic Docs</a>.
           </p>
           <pre><code>{`curl -L -o bigtreeviewer-agent-skill.zip ${skillZipUrl}
 sha256sum bigtreeviewer-agent-skill.zip

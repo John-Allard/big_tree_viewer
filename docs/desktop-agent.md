@@ -11,6 +11,12 @@ the connection with that client's supported setup command, verifies a real MCP
 handshake and tool listing, and reports success. Users do not copy paths or edit
 configuration files. Restart the selected client after connecting it.
 
+The bundled server uses the standard local MCP `stdio` transport and is not tied
+to either client. BTV currently automates registration for Codex and Claude Code.
+Other MCP clients can launch the same server if they support local `stdio`
+servers, but their registration interface and configuration format are
+client-specific.
+
 The installed configuration runs a small bundled helper in Electron's Node mode.
 The helper preserves standard input/output on Windows, creates a private local
 socket or named pipe, and starts an isolated rendering backend. Each connection

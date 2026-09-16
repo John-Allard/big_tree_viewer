@@ -5,7 +5,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const v8 = require("node:v8");
 const { pathToFileURL } = require("node:url");
-const { agentClientEnvironment, ensureAgentClientRegistration, findAgentClientCommand, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
+const { agentClientEnvironment, agentClientRegistrationArguments, ensureAgentClientRegistration, findAgentClientCommand, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -128,10 +128,6 @@ async function writeSharedTaxonomyValue(store, key, value) {
   await replaceCacheFile(filePath, v8.serialize(value));
 }
 
-function environmentArguments(environment) {
-  return Object.entries(environment).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
-}
-
 async function connectAgentClient({ name, command, statusArgs, removeArgs, addArgs, launch }) {
   const clientEnv = await agentClientEnvironment();
   let clientCommand = command;
@@ -221,9 +217,7 @@ async function showAgentConnectionDialog() {
     await connectAgentClient({
       name: "Codex",
       command: "codex",
-      statusArgs: ["mcp", "get", "bigtreeviewer"],
-      removeArgs: ["mcp", "remove", "bigtreeviewer"],
-      addArgs: ["mcp", "add", "bigtreeviewer", ...environmentArguments(launch.env), "--", launch.command, ...launch.args],
+      ...agentClientRegistrationArguments("codex", launch),
       launch,
     });
   } else if (choice.response === 1) {
@@ -231,9 +225,7 @@ async function showAgentConnectionDialog() {
     await connectAgentClient({
       name: "Claude Code",
       command: "claude",
-      statusArgs: ["mcp", "get", "bigtreeviewer"],
-      removeArgs: ["mcp", "remove", "--scope", "user", "bigtreeviewer"],
-      addArgs: ["mcp", "add", "--scope", "user", "bigtreeviewer", ...environmentArguments(launch.env), "--", launch.command, ...launch.args],
+      ...agentClientRegistrationArguments("claude", launch),
       launch,
     });
   }

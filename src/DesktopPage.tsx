@@ -106,6 +106,23 @@ export default function DesktopPage() {
           </p>
         </section>
 
+        <section className="api-doc-section" aria-labelledby="desktop-agent-title">
+          <h2 id="desktop-agent-title">Connect an AI agent</h2>
+          <p>
+            The desktop app includes a local MCP server that lets an agent open,
+            style, inspect, and export trees without using a browser tab. Choose
+            Help → Connect an AI Agent in Big Tree Viewer for automatic setup
+            with Codex or Claude Code; no configuration files need to be edited.
+          </p>
+          <p>
+            Other AI clients can use the bundled server when they support local
+            MCP servers over the standard <code>stdio</code> transport. Their setup
+            steps are client-specific. See the{" "}
+            <a href={`${import.meta.env.BASE_URL}#agentic-ai`}>Agentic AI guide</a>{" "}
+            for details about the tools and workflow.
+          </p>
+        </section>
+
       </div>
     </main>
   );
