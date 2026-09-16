@@ -34,11 +34,12 @@ export default function AgenticAiPage() {
 
         <section className="api-doc-section">
           <h2>Connect the desktop app to an agent</h2>
-          <p>In a desktop build with MCP support, choose Help → Connect an AI Agent.
-            Copy the configuration for Codex or Claude Code into your agent's MCP
-            settings and restart the agent. The server runs locally through the
-            installed BTV executable with <code>--mcp</code>; no Python, external
-            Chrome installation, or live BTV website is required.</p>
+          <p>In the desktop app, choose Help → Connect an AI Agent, select Codex
+            or Claude Code, and Big Tree Viewer connects it automatically. No
+            configuration files need to be located or edited. Big Tree Viewer uses
+            the agent's supported setup command and confirms when the connection is ready.
+            The server runs locally through the installed BTV executable; no Python,
+            external Chrome installation, or live BTV website is required.</p>
           <p>Ask your agent to open a local Newick, NEXUS, or BTV session with the
             layout, metadata, and taxonomy ribbons you want. It can update that
             tree, inspect the applied settings, export PNG/SVG, and save an editable

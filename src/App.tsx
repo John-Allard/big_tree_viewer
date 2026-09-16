@@ -7639,24 +7639,15 @@ export default function App() {
         <div className="panel-title-row">
           <div className="panel-title-block">
             <h1>Big Tree Viewer</h1>
-            <p>by <a className="panel-author-link" href="http://allardjb.com/" target="_blank" rel="noopener noreferrer">John B. Allard</a></p>
-            {window.bigTreeViewerDesktop ? (
-              <p className="panel-title-desktop-link">
-                <a
-                  className="panel-title-link"
-                  href="https://bigtreeviewer.net/#about"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Learn more
-                </a>
-              </p>
-            ) : (
+            {!window.bigTreeViewerDesktop ? (
+              <p>by <a className="panel-author-link" href="http://allardjb.com/" target="_blank" rel="noopener noreferrer">John B. Allard</a></p>
+            ) : null}
+            {!window.bigTreeViewerDesktop ? (
               <p className="panel-title-description">
                 {HOME_DESCRIPTION}{" "}
                 <a className="panel-title-link" href={`${import.meta.env.BASE_URL}#about`}>Learn more</a>
               </p>
-            )}
+            ) : null}
           </div>
         </div>
 

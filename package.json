@@ -1,7 +1,7 @@
 {
   "name": "big-tree-viewer",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Interactive viewer for very large phylogenetic trees",
   "author": {
     "name": "John B Allard",
@@ -20,6 +20,7 @@
     "desktop:pack": "npm run build:desktop:web && electron-builder --dir",
     "desktop:dist": "npm run build:desktop:web && electron-builder",
     "test:desktop:smoke": "node scripts/smoke-test-desktop.mjs",
+    "test:agent-connect": "node scripts/test-agent-client-runner.mjs",
     "preview": "vite preview",
     "bench:pan": "node scripts/benchmark-circular-pan.mjs",
     "test:e2e": "playwright test",
@@ -31,6 +32,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "cross-spawn": "^7.0.6",
     "electron-updater": "^6.8.9",
     "fflate": "^0.8.2",
     "lucide-react": "^0.468.0",

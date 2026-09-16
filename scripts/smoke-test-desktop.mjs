@@ -1,4 +1,6 @@
 import { _electron as electron } from "playwright";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const executablePath = process.argv[2];
@@ -7,9 +9,11 @@ if (!executablePath) {
 }
 
 const fixturePath = path.resolve("tests/fixtures/agent-skill-tree.nwk");
+const profileDir = await mkdtemp(path.join(os.tmpdir(), "btv-desktop-smoke-"));
+const desktopEnv = { ...process.env, ELECTRON_DISABLE_SANDBOX: "1", BTV_USER_DATA_DIR: profileDir };
 const emptyApp = await electron.launch({
   executablePath: path.resolve(executablePath),
-  env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
+  env: desktopEnv,
 });
 
 try {
@@ -28,12 +32,19 @@ try {
   if (await emptyPage.locator(".panel-title-description").count() !== 0) {
     throw new Error("The desktop application exposed the web-only descriptive header text.");
   }
-  const learnMore = emptyPage.getByRole("link", { name: "Learn more", exact: true });
-  if (await learnMore.getAttribute("href") !== "https://bigtreeviewer.net/#about") {
-    throw new Error("The desktop Learn More link does not target the public website.");
+  if (await emptyPage.getByText("John B. Allard", { exact: true }).count() !== 0) {
+    throw new Error("The desktop application exposed the web-only author line.");
   }
-  if (await learnMore.getAttribute("target") !== "_blank") {
-    throw new Error("The desktop Learn More link would navigate inside the application window.");
+  if (await emptyPage.getByRole("link", { name: "Learn more", exact: true }).count() !== 0) {
+    throw new Error("The desktop application exposed a duplicate Learn More link in the side panel.");
+  }
+  const hasLearnMoreHelpItem = await emptyApp.evaluate(({ Menu }) => {
+    const applicationMenu = Menu.getApplicationMenu();
+    const helpMenu = applicationMenu?.items.find((item) => item.role === "help" || item.label === "Help");
+    return Boolean(helpMenu?.submenu?.items.some((item) => item.label === "Learn More"));
+  });
+  if (!hasLearnMoreHelpItem) {
+    throw new Error("The desktop application is missing Learn More from its Help menu.");
   }
   const taxonomyStorageCapabilities = await emptyPage.evaluate(() => ({
     indexedDb: typeof indexedDB !== "undefined",
@@ -50,7 +61,7 @@ try {
 const app = await electron.launch({
   executablePath: path.resolve(executablePath),
   args: [fixturePath],
-  env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
+  env: desktopEnv,
 });
 
 try {
@@ -96,4 +107,5 @@ try {
   }
 } finally {
   await app.close();
+  await rm(profileDir, { recursive: true, force: true });
 }

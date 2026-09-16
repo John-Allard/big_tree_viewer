@@ -1,9 +1,10 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { findAgentClientCommand, runAgentClientCommand } = require("./agent-client.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -36,6 +37,93 @@ const grantedFiles = new Map();
 let updateCheckIsManual = false;
 let updateCheckInProgress = false;
 let updateDownloadInProgress = false;
+
+function agentServerLaunch(profile) {
+  return {
+    command: process.env.APPIMAGE || process.execPath,
+    args: [...(app.isPackaged ? [] : [path.join(__dirname, "main.cjs")]), "--mcp"],
+    env: { BTV_AGENT_PROFILE: profile },
+  };
+}
+
+async function connectAgentClient({ name, command, statusArgs, addArgs }) {
+  let clientCommand = command;
+  let status = await runAgentClientCommand(clientCommand, statusArgs);
+  if (status.error?.code === "ENOENT") {
+    clientCommand = await findAgentClientCommand(command);
+    if (clientCommand) status = await runAgentClientCommand(clientCommand, statusArgs);
+  }
+  if (status.error?.code === "ENOENT") {
+    await dialog.showMessageBox(activeWindow(), {
+      type: "error",
+      title: `${name} Was Not Found`,
+      message: `Big Tree Viewer could not find ${name} on this computer.`,
+      detail: `Make sure ${name} is installed, then restart Big Tree Viewer and try again. No settings files need to be edited.`,
+      buttons: ["OK"],
+    });
+    return;
+  }
+  if (!status.error) {
+    await dialog.showMessageBox(activeWindow(), {
+      type: "info",
+      title: `${name} Is Connected`,
+      message: `Big Tree Viewer is already available in ${name}.`,
+      detail: `If ${name} is currently open and does not show the Big Tree Viewer tools, close and reopen it.`,
+      buttons: ["Done"],
+    });
+    return;
+  }
+
+  const added = await runAgentClientCommand(clientCommand, addArgs);
+  if (added.error) {
+    await dialog.showMessageBox(activeWindow(), {
+      type: "error",
+      title: `Could Not Connect ${name}`,
+      message: `Big Tree Viewer could not connect to ${name}.`,
+      detail: `Close and reopen both applications, make sure they are up to date, and try again. You do not need to edit a settings file.`,
+      buttons: ["OK"],
+    });
+    return;
+  }
+
+  await dialog.showMessageBox(activeWindow(), {
+    type: "info",
+    title: `${name} Connected`,
+    message: `Big Tree Viewer is now available in ${name}.`,
+    detail: `Close and reopen ${name} if it is currently running. You can then ask it to open, style, inspect, or export a tree with Big Tree Viewer.`,
+    buttons: ["Done"],
+  });
+}
+
+async function showAgentConnectionDialog() {
+  const choice = await dialog.showMessageBox(activeWindow(), {
+    type: "question",
+    title: "Connect an AI Agent",
+    message: "Which AI app would you like to connect?",
+    detail: "Big Tree Viewer can give an AI agent local tools for opening, styling, inspecting, and exporting phylogenetic trees.",
+    buttons: ["Codex", "Claude Code", "Cancel"],
+    defaultId: 0,
+    cancelId: 2,
+  });
+
+  if (choice.response === 0) {
+    const launch = agentServerLaunch("codex");
+    await connectAgentClient({
+      name: "Codex",
+      command: "codex",
+      statusArgs: ["mcp", "get", "bigtreeviewer"],
+      addArgs: ["mcp", "add", "bigtreeviewer", "--env", "BTV_AGENT_PROFILE=codex", "--", launch.command, ...launch.args],
+    });
+  } else if (choice.response === 1) {
+    const launch = agentServerLaunch("claude");
+    await connectAgentClient({
+      name: "Claude Code",
+      command: "claude",
+      statusArgs: ["mcp", "get", "bigtreeviewer"],
+      addArgs: ["mcp", "add", "--scope", "user", "bigtreeviewer", "--env", "BTV_AGENT_PROFILE=claude", "--", launch.command, ...launch.args],
+    });
+  }
+}
 
 function activeWindow() {
   return BrowserWindow.getFocusedWindow() || mainWindow;
@@ -285,16 +373,7 @@ function installApplicationMenu() {
           { label: "Check for Updates...", click: () => void checkForUpdates(true) },
           { type: "separator" },
         ]),
-        { label: "Connect an AI Agent...", click: async () => {
-          const args = [...(app.isPackaged ? [] : [path.join(__dirname, "main.cjs")]), "--mcp"];
-          const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow() || mainWindow, {
-            type: "info", title: "Connect an AI agent", message: "Use Big Tree Viewer from Codex or Claude Code",
-            detail: "Copy configuration for your agent, add it to its MCP settings, and restart the agent. The local server can open configured trees and export images using this installed app. No separate browser or Python is required. For Claude Code, merge the copied entry into .mcp.json; for Codex, append it to ~/.codex/config.toml. Use absolute paths for tree inputs and outputs.",
-            buttons: ["Copy Codex configuration", "Copy Claude / MCP configuration", "Cancel"], cancelId: 2,
-          });
-          if (result.response === 0) clipboard.writeText(`[mcp_servers.bigtreeviewer]\ncommand = ${JSON.stringify(process.env.APPIMAGE || process.execPath)}\nargs = ${JSON.stringify(args)}\ntool_timeout_sec = 240\n[mcp_servers.bigtreeviewer.env]\nBTV_AGENT_PROFILE = "codex"\n`);
-          if (result.response === 1) clipboard.writeText(JSON.stringify({ mcpServers: { bigtreeviewer: { command: process.env.APPIMAGE || process.execPath, args, env: { BTV_AGENT_PROFILE: "claude" } } } }, null, 2));
-        } },
+        { label: "Connect an AI Agent...", click: () => void showAgentConnectionDialog() },
         { label: "Big Tree Viewer Website", click: () => void shell.openExternal("https://bigtreeviewer.net/") },
         { label: "Learn More", click: () => void shell.openExternal("https://bigtreeviewer.net/#about") },
       ],
