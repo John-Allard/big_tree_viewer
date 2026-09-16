@@ -1,35 +1,22 @@
 # Local desktop agent interface
 
-The app executable accepts `--mcp` to run the bundled MCP server. No Python,
-separately installed Chrome, HTTP server, or live BTV site is used. Rendering runs
-in the bundled Electron renderer through a private preload IPC bridge, reusing
-BTV's loader, taxonomy mapping, visual settings, session, and export operations.
-The website's URL/postMessage API remains separate and unchanged.
+The desktop app bundles a local MCP server. No Python, separately installed
+Chrome, HTTP server, or live BTV site is used. Rendering runs in the bundled
+Electron renderer through a private local transport, reusing BTV's loader,
+taxonomy mapping, visual settings, session, and export operations. The website's
+URL/postMessage API remains separate and unchanged.
 
-In the app, **Help → Connect an AI Agent** copies configuration using the actual
-executable path. Merge the Codex TOML into `~/.codex/config.toml`, or the Claude
-JSON into `.mcp.json`, then restart the client. Use `tool_timeout_sec = 240` in
-Codex; allow equivalent time for long calls in other clients.
+In the app, **Help → Connect an AI Agent** finds Codex or Claude Code, installs
+the connection with that client's supported setup command, verifies a real MCP
+handshake and tool listing, and reports success. Users do not copy paths or edit
+configuration files. Restart the selected client after connecting it.
 
-Example generic MCP configuration (replace the executable path):
-
-```json
-{
-  "mcpServers": {
-    "bigtreeviewer": {
-      "command": "/absolute/path/to/big-tree-viewer",
-      "args": ["--mcp"],
-      "env": { "BTV_AGENT_PROFILE": "claude" }
-    }
-  }
-}
-```
-
-On macOS use the executable inside `Big Tree Viewer.app/Contents/MacOS/`;
-on Windows use the installed `.exe`. AppImage users should use their stable
-AppImage path in configuration rather than a temporary mounted executable path.
-In development, run the local Electron executable with arguments
-`desktop/main.cjs --mcp` after `npm run build:desktop:web`.
+The installed configuration runs a small bundled helper in Electron's Node mode.
+The helper preserves standard input/output on Windows, creates a private local
+socket or named pipe, and starts an isolated rendering backend. Each connection
+therefore avoids Chromium profile locks, while taxonomy archives and completed
+mappings are retained in a shared desktop-agent cache. Temporary renderer
+profiles are deleted after disconnect.
 
 ## Tools
 
@@ -60,13 +47,12 @@ normalized (spiral PNG is square); exported dimensions are returned.
 
 Metadata is local `metadataPath` plus typed `metadata` column/encoding settings.
 Taxonomy example: `{ "source": "ncbi", "ranks": ["class", "order"],
-"allowDownload": false }`. Each named agent profile has its own persistent
-cache, separate from the interactive app's cache. Missing archives fail with an
-explanation; opt into downloads explicitly or open a session with a saved map.
-No tree/metadata upload is required. Mapping downloads still require network.
+"allowDownload": false }`. Agent connections share a persistent cache that is
+separate from the interactive app's browser-profile cache. Missing archives fail
+with an explanation; opt into a first download explicitly or open a session with
+a saved map. No tree or metadata upload is required. Mapping downloads still
+require network.
 
-Profiles must contain letters, digits, underscores, or hyphens. Only one process
-may use a profile at a time. Use distinct profiles for simultaneous clients.
 Output files are written atomically and existing files are protected unless
 `overwrite: true`. Calls time out at 180 seconds; cancellation/timeouts close the
 affected tree so no background mutation continues after a failed operation.
@@ -108,15 +94,13 @@ background desktop rendering, not a display-server-free rendering engine.
 Pass a packaged executable to test the packaged runtime. No user browser or
 cursor is used. Pack with `npx electron-builder --dir`.
 
-Implementation validation (Linux, September 2026): a packaged build passed
+Implementation validation (Linux and Windows, September 2026): packaged builds passed
 19 MCP operations, including visible opening, settings/metadata/camera updates,
 PNG and SVG exports, editable-session roundtrip, NEXUS and extensionless Newick loading, validation and
 existing-file errors, and independent GUI handoff surviving MCP disconnect.
 The same run rendered the retained 50,033-tip example as a spiral with its saved
-taxonomy (>49,000 mapped tips). A single-command background PNG export and the
-normal desktop smoke test passed. All 30 website launch API regression tests
-passed. These are functional checks, not new performance benchmarks; tests used
-Xvfb and software rendering. Fresh full taxonomy archive downloads and macOS/
-Windows execution were not exercised in these checks. The Linux preview is in
-`release/agent-preview/linux-unpacked/`; it has not been published or installed
-as the user's default app.
+taxonomy (>49,000 mapped tips). The shared agent taxonomy cache was verified
+across separate temporary renderer profiles. On Windows, the installed Codex CLI
+discovered all seven tools and invoked `render_tree` through the helper to produce
+a valid SVG. Fresh full taxonomy archive downloads and macOS execution were not
+exercised in these checks.

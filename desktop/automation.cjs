@@ -6,6 +6,7 @@ const { z } = require('zod');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const net = require('node:net');
 const { spawn } = require('node:child_process');
 
 const object = z.record(z.string(), z.unknown());
@@ -66,7 +67,7 @@ async function writeArtifact(destination, bytes, overwrite) {
   return target;
 }
 
-async function startAutomation({ grantFile, commandFile, showApplication, hideApplication }) {
+async function startAutomation({ grantFile, commandFile, mcpSocket, showApplication, hideApplication }) {
   const sessions = new Map();
   let keepAlive = true;
   app.on('window-all-closed', () => { if (!keepAlive) app.quit(); });
@@ -216,7 +217,14 @@ async function startAutomation({ grantFile, commandFile, showApplication, hideAp
         const directory = path.join(app.getPath('userData'), 'handoffs');
         await fs.mkdir(directory, { recursive: true });
         const result = await exportArtifact(getSession(args.sessionId), { outputPath: path.join(directory, `${crypto.randomUUID()}.btvsession`), overwrite: false }, signal);
-        const child = spawn(process.env.APPIMAGE || process.execPath, [...(app.isPackaged ? [] : [path.join(__dirname, 'main.cjs')]), result.outputPath], { detached: true, stdio: 'ignore' });
+        const childEnv = { ...process.env };
+        if (childEnv.BTV_HANDOFF_USER_DATA_DIR) childEnv.BTV_USER_DATA_DIR = childEnv.BTV_HANDOFF_USER_DATA_DIR;
+        else delete childEnv.BTV_USER_DATA_DIR;
+        delete childEnv.BTV_AGENT_PROFILE;
+        delete childEnv.BTV_HANDOFF_USER_DATA_DIR;
+        const child = spawn(process.env.APPIMAGE || process.execPath, [...(app.isPackaged ? [] : [path.join(__dirname, 'main.cjs')]), result.outputPath], {
+          detached: true, env: childEnv, stdio: 'ignore',
+        });
         await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
         child.unref();
         return { ...result, openedInIndependentApp: true };
@@ -254,7 +262,21 @@ async function startAutomation({ grantFile, commandFile, showApplication, hideAp
       return { content, structuredContent: result };
     } catch (error) { return { isError: true, content: [{ type: 'text', text: error.message }] }; }
   });
-  const transport = new StdioServerTransport();
+  let transport;
+  if (mcpSocket) {
+    const socket = net.createConnection(mcpSocket);
+    await new Promise((resolve, reject) => {
+      const fail = (error) => { socket.destroy(); reject(error); };
+      socket.once('error', fail);
+      socket.once('connect', () => { socket.off('error', fail); resolve(); });
+    });
+    transport = new StdioServerTransport(socket, socket);
+    socket.once('close', () => { void transport.close(); });
+  } else {
+    transport = new StdioServerTransport();
+    process.stdin.once('end', () => { void transport.close(); });
+    process.stdin.once('close', () => { void transport.close(); });
+  }
   await server.connect(transport);
   transport.onclose = () => { for (const s of sessions.values()) s.window.destroy(); app.quit(); }; // handoff_tree windows belong to the independent GUI process.
 }

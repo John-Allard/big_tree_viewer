@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+RESOURCES_DIR=$(dirname -- "$SCRIPT_DIR")
+APP_EXECUTABLE="$RESOURCES_DIR/../MacOS/Big Tree Viewer"
+
+export ELECTRON_RUN_AS_NODE=1
+export BTV_APP_EXECUTABLE="$APP_EXECUTABLE"
+exec "$APP_EXECUTABLE" "$RESOURCES_DIR/app.asar/desktop/mcp-helper.cjs" "$@"

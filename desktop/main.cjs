@@ -3,8 +3,9 @@ const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const v8 = require("node:v8");
 const { pathToFileURL } = require("node:url");
-const { agentClientEnvironment, findAgentClientCommand, runAgentClientCommand } = require("./agent-client.cjs");
+const { agentClientEnvironment, ensureAgentClientRegistration, findAgentClientCommand, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -24,10 +25,12 @@ if (process.env.BTV_USER_DATA_DIR) {
   app.setPath("userData", process.env.BTV_USER_DATA_DIR);
 }
 const commandIndex = process.argv.indexOf("--command");
-const automationMode = process.argv.includes("--mcp") || commandIndex !== -1;
+const mcpSocketArgument = process.argv.find((argument) => argument.startsWith("--mcp-socket="));
+const mcpSocket = mcpSocketArgument?.slice("--mcp-socket=".length);
+const automationMode = process.argv.includes("--mcp") || Boolean(mcpSocket) || commandIndex !== -1;
 app.setName("Big Tree Viewer");
 if (automationMode && process.platform === "darwin") app.setActivationPolicy("accessory");
-if (automationMode) {
+if (automationMode && !process.env.BTV_USER_DATA_DIR) {
   const profile = process.env.BTV_AGENT_PROFILE || "default";
   if (!/^[a-zA-Z0-9_-]+$/.test(profile)) throw new Error("BTV_AGENT_PROFILE must contain only letters, digits, hyphens, or underscores.");
   app.setPath("userData", path.join(app.getPath("userData"), "agent-profiles", profile));
@@ -43,15 +46,93 @@ let updateProgressWindow = null;
 let recentPaths = [];
 const MAX_RECENT_PATHS = 10;
 
-function agentServerLaunch(profile) {
+async function agentServerLaunch() {
+  const executable = process.env.APPIMAGE || process.execPath;
+  const sharedCache = path.join(app.getPath("userData"), "agent-cache");
+  if (app.isPackaged && process.platform === "darwin") {
+    return {
+      command: path.join(process.resourcesPath, "bin", "bigtreeviewer-mcp"),
+      args: ["--helper-version=2"],
+      env: { BTV_SHARED_USER_DATA_DIR: sharedCache },
+    };
+  }
+  let helperPath = path.join(__dirname, "mcp-helper.cjs");
+  if (process.env.APPIMAGE) {
+    const helperDirectory = path.join(app.getPath("userData"), "agent");
+    helperPath = path.join(helperDirectory, "mcp-helper.cjs");
+    await fs.mkdir(helperDirectory, { recursive: true });
+    await fs.copyFile(path.join(__dirname, "mcp-helper.cjs"), helperPath);
+  }
   return {
-    command: process.env.APPIMAGE || process.execPath,
-    args: [...(app.isPackaged ? [] : [path.join(__dirname, "main.cjs")]), "--mcp"],
-    env: { BTV_AGENT_PROFILE: profile },
+    command: executable,
+    args: [helperPath, "--helper-version=2"],
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+      BTV_APP_EXECUTABLE: executable,
+      BTV_SHARED_USER_DATA_DIR: sharedCache,
+      ...(app.isPackaged ? {} : { BTV_APP_MAIN: path.join(__dirname, "main.cjs") }),
+    },
   };
 }
 
-async function connectAgentClient({ name, command, statusArgs, addArgs }) {
+function sharedTaxonomyCacheDirectory() {
+  const directory = process.env.BTV_SHARED_USER_DATA_DIR;
+  if (!directory) return null;
+  if (!path.isAbsolute(directory)) throw new Error("BTV_SHARED_USER_DATA_DIR must be absolute.");
+  return path.join(directory, "taxonomy");
+}
+
+function taxonomyCacheValuePath(store, key) {
+  const directory = sharedTaxonomyCacheDirectory();
+  if (!directory) return null;
+  const digest = crypto.createHash("sha256").update(`${store}\0${key}`).digest("hex");
+  return path.join(directory, "values", `${digest}.bin`);
+}
+
+function taxonomyArchivePath(source) {
+  const directory = sharedTaxonomyCacheDirectory();
+  if (!directory) return null;
+  if (source !== "ncbi" && source !== "catalogue-of-life") throw new Error("Unsupported taxonomy source.");
+  return path.join(directory, "archives", source === "ncbi" ? "ncbi-taxdmp.zip" : "catalogue-of-life-texttree.zip");
+}
+
+async function replaceCacheFile(filePath, data) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(temporaryPath, data);
+  try {
+    await fs.rename(temporaryPath, filePath);
+  } catch (error) {
+    if (error?.code !== "EEXIST" && error?.code !== "EPERM") throw error;
+    await fs.rm(filePath, { force: true });
+    await fs.rename(temporaryPath, filePath);
+  } finally {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+}
+
+async function readSharedTaxonomyValue(store, key) {
+  const filePath = taxonomyCacheValuePath(store, key);
+  if (!filePath) return null;
+  try {
+    return v8.deserialize(await fs.readFile(filePath));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function writeSharedTaxonomyValue(store, key, value) {
+  const filePath = taxonomyCacheValuePath(store, key);
+  if (!filePath) throw new Error("The shared taxonomy cache is unavailable.");
+  await replaceCacheFile(filePath, v8.serialize(value));
+}
+
+function environmentArguments(environment) {
+  return Object.entries(environment).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
+}
+
+async function connectAgentClient({ name, command, statusArgs, removeArgs, addArgs, launch }) {
   const clientEnv = await agentClientEnvironment();
   let clientCommand = command;
   let status = await runAgentClientCommand(clientCommand, statusArgs, { env: clientEnv });
@@ -69,7 +150,22 @@ async function connectAgentClient({ name, command, statusArgs, addArgs }) {
     });
     return;
   }
-  if (!status.error) {
+  const probe = await probeMcpLaunch(launch);
+  if (probe.error) {
+    await dialog.showMessageBox(activeWindow(), {
+      type: "error",
+      title: `Could Not Start Big Tree Viewer Tools`,
+      message: `Big Tree Viewer could not start its local AI tools.`,
+      detail: probe.stderr || probe.error.message,
+      buttons: ["OK"],
+    });
+    return;
+  }
+
+  const registration = await ensureAgentClientRegistration(clientCommand, {
+    status, removeArgs, addArgs, launch, env: clientEnv,
+  });
+  if (registration.state === "current") {
     await dialog.showMessageBox(activeWindow(), {
       type: "info",
       title: `${name} Is Connected`,
@@ -79,14 +175,22 @@ async function connectAgentClient({ name, command, statusArgs, addArgs }) {
     });
     return;
   }
-
-  const added = await runAgentClientCommand(clientCommand, addArgs, { env: clientEnv });
-  if (added.error) {
+  if (registration.state === "remove-failed") {
+    await dialog.showMessageBox(activeWindow(), {
+      type: "error",
+      title: `Could Not Update ${name}`,
+      message: `Big Tree Viewer found an older ${name} connection but could not replace it.`,
+      detail: registration.result.stderr || registration.result.error.message,
+      buttons: ["OK"],
+    });
+    return;
+  }
+  if (registration.state === "add-failed") {
     await dialog.showMessageBox(activeWindow(), {
       type: "error",
       title: `Could Not Connect ${name}`,
       message: `Big Tree Viewer could not connect to ${name}.`,
-      detail: `Close and reopen both applications, make sure they are up to date, and try again. You do not need to edit a settings file.`,
+      detail: registration.result.stderr || `Close and reopen both applications, make sure they are up to date, and try again. You do not need to edit a settings file.`,
       buttons: ["OK"],
     });
     return;
@@ -94,8 +198,8 @@ async function connectAgentClient({ name, command, statusArgs, addArgs }) {
 
   await dialog.showMessageBox(activeWindow(), {
     type: "info",
-    title: `${name} Connected`,
-    message: `Big Tree Viewer is now available in ${name}.`,
+    title: registration.state === "updated" ? `${name} Connection Updated` : `${name} Connected`,
+    message: registration.state === "updated" ? `Big Tree Viewer updated its ${name} connection.` : `Big Tree Viewer is now available in ${name}.`,
     detail: `Close and reopen ${name} if it is currently running. You can then ask it to open, style, inspect, or export a tree with Big Tree Viewer.`,
     buttons: ["Done"],
   });
@@ -113,20 +217,24 @@ async function showAgentConnectionDialog() {
   });
 
   if (choice.response === 0) {
-    const launch = agentServerLaunch("codex");
+    const launch = await agentServerLaunch();
     await connectAgentClient({
       name: "Codex",
       command: "codex",
       statusArgs: ["mcp", "get", "bigtreeviewer"],
-      addArgs: ["mcp", "add", "bigtreeviewer", "--env", "BTV_AGENT_PROFILE=codex", "--", launch.command, ...launch.args],
+      removeArgs: ["mcp", "remove", "bigtreeviewer"],
+      addArgs: ["mcp", "add", "bigtreeviewer", ...environmentArguments(launch.env), "--", launch.command, ...launch.args],
+      launch,
     });
   } else if (choice.response === 1) {
-    const launch = agentServerLaunch("claude");
+    const launch = await agentServerLaunch();
     await connectAgentClient({
       name: "Claude Code",
       command: "claude",
       statusArgs: ["mcp", "get", "bigtreeviewer"],
-      addArgs: ["mcp", "add", "--scope", "user", "bigtreeviewer", "--env", "BTV_AGENT_PROFILE=claude", "--", launch.command, ...launch.args],
+      removeArgs: ["mcp", "remove", "--scope", "user", "bigtreeviewer"],
+      addArgs: ["mcp", "add", "--scope", "user", "bigtreeviewer", ...environmentArguments(launch.env), "--", launch.command, ...launch.args],
+      launch,
     });
   }
 }
@@ -694,11 +802,37 @@ if (!app.requestSingleInstanceLock()) {
       pendingOpenPaths = [];
       return paths;
     });
+    if (sharedTaxonomyCacheDirectory()) {
+      ipcMain.handle("btv:taxonomy-cache-read-archive", async (_event, source) => {
+        const filePath = taxonomyArchivePath(source);
+        try {
+          const bytes = await fs.readFile(filePath);
+          return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        } catch (error) {
+          if (error?.code === "ENOENT") return null;
+          throw error;
+        }
+      });
+      ipcMain.handle("btv:taxonomy-cache-write-archive", async (_event, source, data) => {
+        if (!(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) throw new Error("Invalid taxonomy archive data.");
+        const bytes = data instanceof ArrayBuffer
+          ? Buffer.from(data)
+          : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+        await replaceCacheFile(taxonomyArchivePath(source), bytes);
+      });
+      ipcMain.handle("btv:taxonomy-cache-read-value", (_event, store, key) => readSharedTaxonomyValue(store, key));
+      ipcMain.handle("btv:taxonomy-cache-write-value", (_event, store, key, value) => writeSharedTaxonomyValue(store, key, value));
+      ipcMain.handle("btv:taxonomy-cache-delete-value", async (_event, store, key) => {
+        const filePath = taxonomyCacheValuePath(store, key);
+        if (filePath) await fs.rm(filePath, { force: true });
+      });
+    }
     if (automationMode) {
       if (commandIndex !== -1 && !process.argv[commandIndex + 1]) throw new Error("--command requires an absolute JSON request file path.");
       await require("./automation.cjs").startAutomation({
         grantFile: filePath => grantFile(filePath, true),
         commandFile: commandIndex !== -1 ? process.argv[commandIndex + 1] : undefined,
+        mcpSocket,
         showApplication: async () => {
           installApplicationMenu({ allowNewWindow: false });
           if (process.platform === "darwin") {

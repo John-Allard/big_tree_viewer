@@ -1,6 +1,6 @@
 export default function AgenticAiPage() {
   const skillZipUrl = "https://bigtreeviewer.net/agentic-ai/bigtreeviewer-agent-skill.zip";
-  const skillZipSha256 = "ccb1af967a3588a50045c7c3289b0d9d21a52e88849fcd6045608e6c30e33deb";
+  const skillZipSha256 = "540468b155a82bc72b3752f090c6aa988c4525faa652e688d32f7e1aa80ece07";
 
   return (
     <main className="about-page api-page">
@@ -46,9 +46,10 @@ export default function AgenticAiPage() {
             session. Background rendering does not open a visible window.</p>
           <p>Use <code>handoff_tree</code> to move a configured tree into the independent
             desktop app before ending the agent session. Agent-controlled windows
-            close when the MCP connection ends. Each client uses its own named
-            profile and taxonomy cache. First-time taxonomy downloads must be enabled
-            explicitly; saved sessions can carry their existing mapping.</p>
+            close when the MCP connection ends. Each connection uses an isolated
+            temporary renderer profile, while downloaded taxonomy archives and completed
+            mappings remain available in a shared desktop-agent cache. First-time taxonomy
+            downloads must be enabled explicitly; saved sessions can carry their existing mapping.</p>
           <p>For scripts, <code>--command /absolute/path/request.json</code> calls the
             same operations once. This is a thin alternative to MCP, with the same
             settings and results.</p>

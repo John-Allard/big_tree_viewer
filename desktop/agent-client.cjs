@@ -76,10 +76,7 @@ async function findAgentClientCommand(command, options = {}) {
           "/Applications/Codex.app/Contents/Resources/codex",
           "/Applications/ChatGPT.app/Contents/Resources/codex",
         ]
-        : [
-          process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Programs", "ChatGPT", "resources", "codex.exe"),
-          process.env.ProgramFiles && path.join(process.env.ProgramFiles, "ChatGPT", "resources", "codex.exe"),
-        ].filter(Boolean))
+        : await windowsCodexCandidates(env))
     : [];
   for (const candidate of packagedCandidates) {
     try {
@@ -92,4 +89,98 @@ async function findAgentClientCommand(command, options = {}) {
   return null;
 }
 
-module.exports = { agentClientEnvironment, findAgentClientCommand, runAgentClientCommand };
+async function windowsCodexCandidates(env) {
+  const candidates = [
+    env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "Programs", "ChatGPT", "resources", "codex.exe"),
+    env.ProgramFiles && path.join(env.ProgramFiles, "ChatGPT", "resources", "codex.exe"),
+  ].filter(Boolean);
+  const versionedRoot = env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "OpenAI", "Codex", "bin");
+  if (versionedRoot) {
+    try {
+      const directories = await fs.readdir(versionedRoot, { withFileTypes: true });
+      const versioned = await Promise.all(directories.filter(entry => entry.isDirectory()).map(async (entry) => {
+        const candidate = path.join(versionedRoot, entry.name, "codex.exe");
+        try { return { candidate, modified: (await fs.stat(candidate)).mtimeMs }; } catch { return null; }
+      }));
+      candidates.unshift(...versioned.filter(Boolean).sort((a, b) => b.modified - a.modified).map(item => item.candidate));
+    } catch {
+      // Codex is not installed in the desktop runtime location.
+    }
+  }
+  return candidates;
+}
+
+function agentRegistrationMatches(status, launch) {
+  if (status.error || !status.stdout.includes(launch.command)) return false;
+  return launch.args.every((argument) => status.stdout.includes(argument));
+}
+
+async function ensureAgentClientRegistration(command, { status, removeArgs, addArgs, launch, env }) {
+  if (agentRegistrationMatches(status, launch)) return { state: "current", result: status };
+  const replacing = !status.error;
+  if (replacing) {
+    const removed = await runAgentClientCommand(command, removeArgs, { env });
+    if (removed.error) return { state: "remove-failed", result: removed };
+  }
+  const added = await runAgentClientCommand(command, addArgs, { env });
+  return { state: added.error ? "add-failed" : (replacing ? "updated" : "added"), result: added };
+}
+
+function probeMcpLaunch(launch, options = {}) {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let readBuffer = "";
+    let stderr = "";
+    let settled = false;
+    const child = spawn(launch.command, launch.args, {
+      env: { ...process.env, ...launch.env }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+    });
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdin?.end();
+      setTimeout(() => { if (child.exitCode === null) child.kill(); }, 500).unref();
+      resolve({ error, stdout, stderr });
+    };
+    const inspect = (chunk) => {
+      stdout += chunk;
+      readBuffer += chunk;
+      const lines = readBuffer.split(/\r?\n/);
+      readBuffer = lines.pop() || "";
+      for (const line of lines) {
+        try {
+          const message = JSON.parse(line);
+          if (message.id === 1 && message.result) {
+            child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`);
+            child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
+          } else if (message.id === 2 && Array.isArray(message.result?.tools)) {
+            const names = message.result.tools.map(tool => tool.name);
+            const missing = ["open_tree", "render_tree", "inspect_tree", "update_tree", "export_tree", "handoff_tree", "close_tree"].filter(name => !names.includes(name));
+            finish(missing.length ? new Error(`MCP probe did not expose: ${missing.join(", ")}`) : null);
+          }
+        } catch {
+          // Wait for a complete valid JSON-RPC line.
+        }
+      }
+    };
+    child.stdout?.on("data", inspect);
+    child.stderr?.on("data", chunk => { stderr = `${stderr}${chunk}`.slice(-100_000); });
+    child.once("error", finish);
+    child.once("exit", (code, signal) => {
+      if (!settled) finish(new Error(`MCP helper exited before discovery (${code ?? signal ?? "unknown"}).`));
+    });
+    child.stdin?.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "big-tree-viewer-connection-check", version: "1.0" } } })}\n`);
+    const timer = setTimeout(() => finish(new Error("MCP helper did not complete discovery within 30 seconds.")), options.timeoutMs || 30_000);
+  });
+}
+
+module.exports = {
+  agentClientEnvironment,
+  agentRegistrationMatches,
+  ensureAgentClientRegistration,
+  findAgentClientCommand,
+  probeMcpLaunch,
+  runAgentClientCommand,
+  windowsCodexCandidates,
+};

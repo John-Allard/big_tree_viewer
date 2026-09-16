@@ -8,13 +8,68 @@ import { _electron as electron, expect } from 'playwright/test';
 const root = path.resolve('.');
 const dir = await mkdtemp(path.join(os.tmpdir(), 'btv-agent-test-'));
 const executable = process.argv[2] || path.join(root, 'node_modules/electron/dist/electron');
-const args = process.argv[2] ? ['--mcp', '--no-sandbox', '--disable-gpu'] : [path.join(root, 'desktop/main.cjs'), '--mcp', '--no-sandbox', '--disable-gpu'];
-const transport = new StdioClientTransport({ command: executable, args,
-  env: { ...process.env, BTV_AGENT_PROFILE: `test-${process.pid}`, ELECTRON_DISABLE_SANDBOX: '1', BTV_USER_DATA_DIR: path.join(dir, 'profile') }, stderr: 'pipe' });
+const packagedLauncher = process.argv[3];
+const resources = process.argv[2]
+  ? (process.platform === 'darwin' ? path.resolve(path.dirname(executable), '..', 'Resources') : path.join(path.dirname(executable), 'resources'))
+  : root;
+const helperPath = process.argv[2] ? path.join(resources, 'app.asar', 'desktop', 'mcp-helper.cjs') : path.join(root, 'desktop/mcp-helper.cjs');
+const helperEnv = {
+  ...process.env,
+  ELECTRON_RUN_AS_NODE: '1',
+  BTV_APP_EXECUTABLE: executable,
+  BTV_HANDOFF_USER_DATA_DIR: path.join(dir, 'profile'),
+  BTV_SHARED_USER_DATA_DIR: path.join(dir, 'shared-agent-cache'),
+  ...(process.argv[2] ? {} : { BTV_APP_MAIN: path.join(root, 'desktop/main.cjs') }),
+};
+const args = packagedLauncher ? ['--helper-version=2'] : [helperPath, '--helper-version=2'];
+const transport = new StdioClientTransport({ command: packagedLauncher || executable, args,
+  env: { ...helperEnv, ELECTRON_DISABLE_SANDBOX: '1' }, stderr: 'pipe' });
 transport.stderr?.on('data', data => process.stderr.write(data));
 const client = new Client({ name: 'btv-integration-test', version: '1.0.0' });
 let count = 0;
 let gui;
+async function testSharedTaxonomyCache() {
+  const archive = [1, 3, 5, 7, 9];
+  for (let pass = 0; pass < 2; pass++) {
+    const cacheApp = await electron.launch({
+      executablePath: path.resolve(executable),
+      args: process.argv[2]
+        ? ['--no-sandbox', '--disable-gpu']
+        : [path.join(root, 'desktop/main.cjs'), '--no-sandbox', '--disable-gpu'],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SANDBOX: '1',
+        BTV_USER_DATA_DIR: path.join(dir, `cache-profile-${pass}`),
+        BTV_SHARED_USER_DATA_DIR: helperEnv.BTV_SHARED_USER_DATA_DIR,
+      },
+    });
+    try {
+      const page = await cacheApp.firstWindow();
+      await page.waitForFunction(() => Boolean(window.bigTreeViewerDesktop?.taxonomyCache));
+      if (pass === 0) {
+        await page.evaluate(async (bytes) => {
+          const cache = window.bigTreeViewerDesktop?.taxonomyCache;
+          if (!cache) throw new Error('Shared taxonomy cache bridge is unavailable.');
+          await cache.writeArchive('ncbi', Uint8Array.from(bytes).buffer);
+          await cache.writeValue('archives', 'test-metadata', { source: 'ncbi', revision: 7 });
+        }, archive);
+      } else {
+        const cached = await page.evaluate(async () => {
+          const cache = window.bigTreeViewerDesktop?.taxonomyCache;
+          if (!cache) throw new Error('Shared taxonomy cache bridge is unavailable.');
+          return {
+            archive: [...new Uint8Array(await cache.readArchive('ncbi') ?? new ArrayBuffer(0))],
+            metadata: await cache.readValue('archives', 'test-metadata'),
+          };
+        });
+        assert.deepEqual(cached.archive, archive);
+        assert.deepEqual(cached.metadata, { source: 'ncbi', revision: 7 });
+      }
+    } finally {
+      await cacheApp.close();
+    }
+  }
+}
 async function call(name, args, error = false) {
   const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 60000 });
   if (error) { assert.equal(result.isError, true, JSON.stringify(result)); count++; return result; }
@@ -22,6 +77,7 @@ async function call(name, args, error = false) {
   return result.structuredContent || JSON.parse(result.content[0].text);
 }
 try {
+  await testSharedTaxonomyCache();
   await client.connect(transport);
   const tools = await client.listTools(); assert.equal(tools.tools.length, 7);
   const opened = await call('open_tree', { treePath: path.join(root, 'tests/fixtures/agent-skill-tree.nwk'), layout: 'circular', settings: { showTipLabels: false } });

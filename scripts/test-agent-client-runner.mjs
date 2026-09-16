@@ -5,7 +5,14 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { agentClientEnvironment, runAgentClientCommand } = require("../desktop/agent-client.cjs");
+const {
+  agentClientEnvironment,
+  agentRegistrationMatches,
+  ensureAgentClientRegistration,
+  probeMcpLaunch,
+  runAgentClientCommand,
+  windowsCodexCandidates,
+} = require("../desktop/agent-client.cjs");
 const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "btv-agent-client-"));
 const commandName = "btv-test-agent";
 const commandPath = path.join(fixtureDir, process.platform === "win32" ? `${commandName}.cmd` : commandName);
@@ -23,8 +30,43 @@ try {
   assert.equal(result.error, null, result.stderr || result.error?.message);
   for (const argument of args) assert.match(result.stdout, new RegExp(argument.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
+  const launch = { command: path.join(fixtureDir, "bigtreeviewer-mcp"), args: ["--helper-version=2"] };
+  assert.equal(agentRegistrationMatches({ error: null, stdout: `command: ${launch.command}\nargs: ${launch.args.join(" ")}\n` }, launch), true);
+  assert.equal(agentRegistrationMatches({ error: null, stdout: "command: /old/Big Tree Viewer\nargs: --mcp\n" }, launch), false);
+  const migrated = await ensureAgentClientRegistration(commandName, {
+    status: { error: null, stdout: "command: /old/Big Tree Viewer\nargs: --mcp\n", stderr: "" },
+    removeArgs: ["mcp", "remove", "bigtreeviewer"],
+    addArgs: ["mcp", "add", "bigtreeviewer", "--", launch.command, ...launch.args],
+    launch,
+    env,
+  });
+  assert.equal(migrated.state, "updated", migrated.result.stderr);
+
   const missing = await runAgentClientCommand("btv-client-that-does-not-exist", [], { env, timeoutMs: 5_000 });
   assert.equal(missing.error?.code, "ENOENT");
+
+  const probeServer = path.join(fixtureDir, "probe-server.cjs");
+  await fs.writeFile(probeServer, `
+    const readline = require("node:readline").createInterface({ input: process.stdin });
+    readline.on("line", line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "test", version: "1" } } }) + "\\n");
+      if (message.id === 2) process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { tools: ["open_tree","render_tree","inspect_tree","update_tree","export_tree","handoff_tree","close_tree"].map(name => ({ name })) } }) + "\\n");
+    });
+  `);
+  const probe = await probeMcpLaunch({ command: process.execPath, args: [probeServer], env: {} }, { timeoutMs: 5_000 });
+  assert.equal(probe.error, null, probe.stderr || probe.error?.message);
+
+  const versionedCodexRoot = path.join(fixtureDir, "OpenAI", "Codex", "bin");
+  const olderCodex = path.join(versionedCodexRoot, "older", "codex.exe");
+  const newerCodex = path.join(versionedCodexRoot, "newer", "codex.exe");
+  await fs.mkdir(path.dirname(olderCodex), { recursive: true });
+  await fs.mkdir(path.dirname(newerCodex), { recursive: true });
+  await fs.writeFile(olderCodex, "older");
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await fs.writeFile(newerCodex, "newer");
+  const candidates = await windowsCodexCandidates({ LOCALAPPDATA: fixtureDir });
+  assert.equal(candidates[0], newerCodex);
 
   if (process.platform !== "win32") {
     const nodeShim = path.join(fixtureDir, "node");

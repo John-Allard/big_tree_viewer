@@ -12,6 +12,10 @@ const MAX_CACHED_TAXONOMY_MAPPINGS = 6;
 const cachedArchiveInMemory = new Map<TaxonomySource, Blob | ArrayBuffer>();
 const linkedArchiveHandleInMemory = new Map<TaxonomySource, TaxonomyArchiveFileHandle | null>();
 
+function desktopTaxonomyCache() {
+  return typeof window === "undefined" ? undefined : window.bigTreeViewerDesktop?.taxonomyCache;
+}
+
 export interface TaxonomyArchiveFileHandle {
   kind: "file";
   name: string;
@@ -118,6 +122,8 @@ function isTaxonomyArchiveFileHandle(value: unknown): value is TaxonomyArchiveFi
 }
 
 async function readArchiveStoreValue(key: string): Promise<unknown> {
+  const desktop = desktopTaxonomyCache();
+  if (desktop) return desktop.readValue(ARCHIVE_STORE_NAME, key);
   const db = await openTaxonomyDb();
   return await new Promise((resolve, reject) => {
     const transaction = db.transaction(ARCHIVE_STORE_NAME, "readonly");
@@ -129,6 +135,11 @@ async function readArchiveStoreValue(key: string): Promise<unknown> {
 }
 
 async function persistArchiveStoreValue(key: string, value: unknown): Promise<void> {
+  const desktop = desktopTaxonomyCache();
+  if (desktop) {
+    await desktop.writeValue(ARCHIVE_STORE_NAME, key, value);
+    return;
+  }
   const db = await openTaxonomyDb();
   return new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(ARCHIVE_STORE_NAME, "readwrite");
@@ -141,6 +152,11 @@ async function persistArchiveStoreValue(key: string, value: unknown): Promise<vo
 }
 
 async function persistTaxonomyArchive(source: TaxonomySource, archive: Blob | ArrayBuffer): Promise<void> {
+  const desktop = desktopTaxonomyCache();
+  if (desktop) {
+    await desktop.writeArchive(source, archive instanceof Blob ? await archive.arrayBuffer() : cloneArchiveBuffer(archive));
+    return;
+  }
   await persistArchiveStoreValue(archiveKey(source), archive);
 }
 
@@ -265,6 +281,11 @@ export async function getCachedTaxonomyArchive(source: TaxonomySource = "ncbi"):
   if (linkedArchive) {
     return linkedArchive;
   }
+  const desktopArchive = await desktopTaxonomyCache()?.readArchive(source);
+  if (desktopArchive) {
+    cachedArchiveInMemory.set(source, desktopArchive);
+    return desktopArchive.slice(0);
+  }
   const archive = await readArchiveStoreValue(archiveKey(source));
   if (archive instanceof Blob) {
     cachedArchiveInMemory.set(source, archive);
@@ -311,6 +332,8 @@ export async function putCachedTaxonomyArchive(
 }
 
 async function readMappingStoreValue(key: string): Promise<unknown> {
+  const desktop = desktopTaxonomyCache();
+  if (desktop) return desktop.readValue(MAPPING_STORE_NAME, key);
   const db = await openTaxonomyDb();
   return await new Promise((resolve, reject) => {
     const transaction = db.transaction(MAPPING_STORE_NAME, "readonly");
@@ -322,6 +345,11 @@ async function readMappingStoreValue(key: string): Promise<unknown> {
 }
 
 async function deleteMappingStoreValue(key: string): Promise<void> {
+  const desktop = desktopTaxonomyCache();
+  if (desktop) {
+    await desktop.deleteValue(MAPPING_STORE_NAME, key);
+    return;
+  }
   const db = await openTaxonomyDb();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(MAPPING_STORE_NAME, "readwrite");
@@ -388,6 +416,28 @@ export async function getCachedTaxonomyMapping(treeSignature: string, source: Ta
 }
 
 export async function putCachedTaxonomyMapping(treeSignature: string, payload: TaxonomyMapPayload, source: TaxonomySource = payload.source ?? "ncbi"): Promise<void> {
+  const desktop = desktopTaxonomyCache();
+  if (desktop) {
+    const key = mappingKey(treeSignature, source);
+    const index = parseMappingIndex(await desktop.readValue(MAPPING_STORE_NAME, MAPPING_CACHE_INDEX_KEY));
+    const entries = index.entries.filter((entry) => entry.key !== key);
+    entries.push({ key, treeSignature, source, lastUsedAt: Date.now() });
+    entries.sort((left, right) => right.lastUsedAt - left.lastUsedAt);
+    await Promise.all(entries.slice(MAX_CACHED_TAXONOMY_MAPPINGS).map((expired) => (
+      desktop.deleteValue(MAPPING_STORE_NAME, expired.key)
+    )));
+    await desktop.writeValue(MAPPING_STORE_NAME, key, {
+      version: mappingCacheVersion(source),
+      treeSignature,
+      source,
+      payload,
+    } satisfies CachedTaxonomyMappingRecord);
+    await desktop.writeValue(MAPPING_STORE_NAME, MAPPING_CACHE_INDEX_KEY, {
+      version: 1,
+      entries: entries.slice(0, MAX_CACHED_TAXONOMY_MAPPINGS),
+    } satisfies CachedTaxonomyMappingIndex);
+    return;
+  }
   const db = await openTaxonomyDb();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(MAPPING_STORE_NAME, "readwrite");
@@ -428,6 +478,19 @@ export async function putCachedTaxonomyMapping(treeSignature: string, payload: T
 }
 
 export async function touchCachedTaxonomyMapping(treeSignature: string, source: TaxonomySource): Promise<void> {
+  const desktop = desktopTaxonomyCache();
+  if (desktop) {
+    const key = mappingKey(treeSignature, source);
+    const index = parseMappingIndex(await desktop.readValue(MAPPING_STORE_NAME, MAPPING_CACHE_INDEX_KEY));
+    const entry = index.entries.find((candidate) => candidate.key === key);
+    if (!entry) return;
+    const entries = index.entries
+      .filter((candidate) => candidate.key !== key)
+      .concat({ ...entry, lastUsedAt: Date.now() })
+      .sort((left, right) => right.lastUsedAt - left.lastUsedAt);
+    await desktop.writeValue(MAPPING_STORE_NAME, MAPPING_CACHE_INDEX_KEY, { version: 1, entries } satisfies CachedTaxonomyMappingIndex);
+    return;
+  }
   const db = await openTaxonomyDb();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(MAPPING_STORE_NAME, "readwrite");

@@ -36,6 +36,8 @@ jobs:
       - run: npx electron-builder --linux AppImage deb --x64 --publish never
       - name: Smoke-test packaged app and file association launch
         run: xvfb-run -a npm run test:desktop:smoke -- release/linux-unpacked/big-tree-viewer
+      - name: Test packaged MCP helper and desktop tools
+        run: xvfb-run -a npm run test:desktop:agent -- release/linux-unpacked/big-tree-viewer
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux
@@ -91,6 +93,8 @@ jobs:
           xcrun stapler validate "release/mac-universal/Big Tree Viewer.app"
           spctl --assess --type execute --verbose=4 "release/mac-universal/Big Tree Viewer.app"
           hdiutil verify "release/Big-Tree-Viewer-macOS-universal.dmg"
+      - name: Test packaged MCP helper and desktop tools
+        run: npm run test:desktop:agent -- "release/mac-universal/Big Tree Viewer.app/Contents/MacOS/Big Tree Viewer" "release/mac-universal/Big Tree Viewer.app/Contents/Resources/bin/bigtreeviewer-mcp"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-macos
@@ -148,6 +152,8 @@ jobs:
           }
       - name: Verify updater configuration in signed application payload
         run: npm run test:windows-updater-package -- release/win-unpacked
+      - name: Test packaged MCP helper and desktop tools
+        run: npm run test:desktop:agent -- "release/win-unpacked/Big Tree Viewer.exe"
       - name: Package signed Windows application
         run: npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
       - name: Sign Windows installer

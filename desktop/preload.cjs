@@ -30,6 +30,14 @@ ipcRenderer.on("btv:agent-request", (_event, request) => {
   else for (const listener of agentListeners) listener(request);
 });
 
+const sharedTaxonomyCache = process.env.BTV_SHARED_USER_DATA_DIR ? {
+  readArchive: (source) => ipcRenderer.invoke("btv:taxonomy-cache-read-archive", source),
+  writeArchive: (source, data) => ipcRenderer.invoke("btv:taxonomy-cache-write-archive", source, data),
+  readValue: (store, key) => ipcRenderer.invoke("btv:taxonomy-cache-read-value", store, key),
+  writeValue: (store, key, value) => ipcRenderer.invoke("btv:taxonomy-cache-write-value", store, key, value),
+  deleteValue: (store, key) => ipcRenderer.invoke("btv:taxonomy-cache-delete-value", store, key),
+} : undefined;
+
 contextBridge.exposeInMainWorld("bigTreeViewerDesktop", {
   async consumePendingOpenPaths() {
     const mainPaths = await ipcRenderer.invoke("btv:consume-pending-open-paths");
@@ -54,5 +62,6 @@ contextBridge.exposeInMainWorld("bigTreeViewerDesktop", {
     return () => agentListeners.delete(callback);
   },
   agentResult: (result) => ipcRenderer.send("btv:agent-result", result),
+  taxonomyCache: sharedTaxonomyCache,
   platform: process.platform,
 });
