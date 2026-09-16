@@ -37,6 +37,7 @@ const grantedFiles = new Map();
 let updateCheckIsManual = false;
 let updateCheckInProgress = false;
 let updateDownloadInProgress = false;
+let updateProgressWindow = null;
 
 function agentServerLaunch(profile) {
   return {
@@ -136,6 +137,83 @@ function setUpdateProgress(value) {
   }
 }
 
+function formatUpdateBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let amount = value;
+  let unitIndex = 0;
+  while (amount >= 1024 && unitIndex < units.length - 1) {
+    amount /= 1024;
+    unitIndex += 1;
+  }
+  const digits = amount >= 100 || unitIndex === 0 ? 0 : 1;
+  return `${amount.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function closeUpdateProgressWindow() {
+  if (updateProgressWindow && !updateProgressWindow.isDestroyed()) updateProgressWindow.close();
+  updateProgressWindow = null;
+}
+
+function showUpdateProgressWindow(version) {
+  closeUpdateProgressWindow();
+  const parent = activeWindow();
+  updateProgressWindow = new BrowserWindow({
+    width: 440,
+    height: 180,
+    parent: parent && !parent.isDestroyed() ? parent : undefined,
+    modal: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    show: false,
+    backgroundColor: "#f7f8fa",
+    title: "Downloading Big Tree Viewer Update",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  updateProgressWindow.on("closed", () => { updateProgressWindow = null; });
+  const safeVersion = String(version || "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  })[character]);
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { margin: 0; padding: 24px; background: #f7f8fa; color: #172033; }
+  h1 { margin: 0 0 17px; font-size: 17px; font-weight: 650; letter-spacing: 0; }
+  progress { display: block; width: 100%; height: 14px; accent-color: #2563eb; }
+  .status { display: flex; justify-content: space-between; gap: 16px; margin-top: 10px; font-size: 13px; color: #536078; }
+</style></head><body>
+  <h1>Downloading Big Tree Viewer${safeVersion ? ` ${safeVersion}` : ""}</h1>
+  <progress id="progress" max="100" value="0"></progress>
+  <div class="status"><span id="amount">Preparing download...</span><span id="percent">0%</span></div>
+  <script>
+    window.setDownloadProgress = ({ percent, amount }) => {
+      document.getElementById("progress").value = percent;
+      document.getElementById("percent").textContent = percent + "%";
+      document.getElementById("amount").textContent = amount || "Downloading update...";
+    };
+  </script>
+</body></html>`;
+  void updateProgressWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  updateProgressWindow.once("ready-to-show", () => updateProgressWindow?.show());
+}
+
+function updateDownloadProgressWindow(progress) {
+  if (!updateProgressWindow || updateProgressWindow.isDestroyed()) return;
+  const percent = Math.max(0, Math.min(100, Math.round(progress.percent || 0)));
+  const transferred = formatUpdateBytes(progress.transferred);
+  const total = formatUpdateBytes(progress.total);
+  const amount = transferred && total ? `${transferred} of ${total}` : transferred;
+  const payload = JSON.stringify({ percent, amount });
+  void updateProgressWindow.webContents.executeJavaScript(`window.setDownloadProgress(${payload})`).catch(() => {});
+}
+
 async function checkForUpdates(manual = true) {
   if (!app.isPackaged) {
     if (manual) {
@@ -210,11 +288,13 @@ function configureAutoUpdates() {
     if (result.response !== 0) return;
     updateDownloadInProgress = true;
     setUpdateProgress(0);
+    showUpdateProgressWindow(info.version);
     try {
       await autoUpdater.downloadUpdate();
     } catch (error) {
       updateDownloadInProgress = false;
       setUpdateProgress(-1);
+      closeUpdateProgressWindow();
       await dialog.showMessageBox(activeWindow(), {
         type: "error",
         title: "Update Download Failed",
@@ -226,16 +306,18 @@ function configureAutoUpdates() {
   });
   autoUpdater.on("download-progress", (progress) => {
     setUpdateProgress(Math.max(0, Math.min(1, progress.percent / 100)));
+    updateDownloadProgressWindow(progress);
   });
   autoUpdater.on("update-downloaded", async (info) => {
     updateDownloadInProgress = false;
     setUpdateProgress(-1);
+    closeUpdateProgressWindow();
     const result = await dialog.showMessageBox(activeWindow(), {
       type: "info",
       title: "Update Ready",
       message: `Big Tree Viewer ${info.version} has been downloaded.`,
-      detail: "Restart Big Tree Viewer to install the update. Unsaved work will be lost.",
-      buttons: ["Restart and Install", "Later"],
+      detail: "Relaunch Big Tree Viewer to install the update. Unsaved work will be lost.",
+      buttons: ["Relaunch Big Tree Viewer and Install", "Later"],
       defaultId: 0,
       cancelId: 1,
     });
@@ -246,6 +328,7 @@ function configureAutoUpdates() {
     updateCheckInProgress = false;
     updateDownloadInProgress = false;
     setUpdateProgress(-1);
+    closeUpdateProgressWindow();
   });
 
   const initialCheck = setTimeout(() => void checkForUpdates(false), 15_000);
