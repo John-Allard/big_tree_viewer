@@ -4,13 +4,16 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { _electron as electron, expect } from 'playwright/test';
+const require = createRequire(import.meta.url);
 const root = path.resolve('.');
 const dir = await mkdtemp(path.join(os.tmpdir(), 'btv-agent-test-'));
-const executable = process.argv[2] || path.join(root, 'node_modules/electron/dist/electron');
+const guiProfile = path.join(dir, 'gui-profile');
+const executable = process.argv[2] || require('electron');
 const args = process.argv[2] ? ['--mcp', '--no-sandbox', '--disable-gpu'] : [path.join(root, 'desktop/main.cjs'), '--mcp', '--no-sandbox', '--disable-gpu'];
 const transport = new StdioClientTransport({ command: executable, args,
-  env: { ...process.env, BTV_AGENT_PROFILE: `test-${process.pid}`, ELECTRON_DISABLE_SANDBOX: '1', BTV_USER_DATA_DIR: path.join(dir, 'profile') }, stderr: 'pipe' });
+  env: { ...process.env, ELECTRON_DISABLE_SANDBOX: '1', BTV_USER_DATA_DIR: path.join(dir, 'mcp-profile'), BTV_TEST_HANDOFF_USER_DATA_DIR: guiProfile }, stderr: 'pipe' });
 transport.stderr?.on('data', data => process.stderr.write(data));
 const client = new Client({ name: 'btv-integration-test', version: '1.0.0' });
 let count = 0;
@@ -29,7 +32,7 @@ try {
   const sessionId = opened.sessionId;
   gui = await electron.launch({ executablePath: path.resolve(executable),
     args: process.argv[2] ? ['--no-sandbox','--disable-gpu'] : [path.join(root,'desktop/main.cjs'),'--no-sandbox','--disable-gpu'],
-    env: { ...process.env, ELECTRON_DISABLE_SANDBOX: '1', BTV_USER_DATA_DIR: path.join(dir, 'profile') } });
+    env: { ...process.env, ELECTRON_DISABLE_SANDBOX: '1', BTV_USER_DATA_DIR: guiProfile } });
   const guiPage = await gui.firstWindow();
   await expect(guiPage.getByText('Drag a tree file here to load', { exact: true })).toBeVisible();
   const updated = await call('update_tree', { sessionId, layout: 'rectangular', settings: { showTipLabels: true, branchThicknessScale: 1.8 } });

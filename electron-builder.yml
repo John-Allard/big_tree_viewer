@@ -17,6 +17,8 @@ files:
 extraResources:
   - from: desktop/app-update.yml
     to: app-update.yml
+  - from: desktop/bigtreeviewer-mcp
+    to: bin/bigtreeviewer-mcp
 fileAssociations:
   - ext:
       - btvsession

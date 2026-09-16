@@ -92,4 +92,26 @@ async function findAgentClientCommand(command, options = {}) {
   return null;
 }
 
-module.exports = { agentClientEnvironment, findAgentClientCommand, runAgentClientCommand };
+function agentRegistrationMatches(status, launch) {
+  if (status.error || !status.stdout.includes(launch.command)) return false;
+  return launch.args.every((argument) => status.stdout.includes(argument));
+}
+
+async function ensureAgentClientRegistration(command, { status, removeArgs, addArgs, launch, env }) {
+  if (agentRegistrationMatches(status, launch)) return { state: "current", result: status };
+  const replacing = !status.error;
+  if (replacing) {
+    const removed = await runAgentClientCommand(command, removeArgs, { env });
+    if (removed.error) return { state: "remove-failed", result: removed };
+  }
+  const added = await runAgentClientCommand(command, addArgs, { env });
+  return { state: added.error ? "add-failed" : (replacing ? "updated" : "added"), result: added };
+}
+
+module.exports = {
+  agentClientEnvironment,
+  agentRegistrationMatches,
+  ensureAgentClientRegistration,
+  findAgentClientCommand,
+  runAgentClientCommand,
+};

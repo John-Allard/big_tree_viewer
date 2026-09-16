@@ -1,10 +1,12 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { agentClientEnvironment, findAgentClientCommand, runAgentClientCommand } = require("./agent-client.cjs");
+const { agentClientEnvironment, ensureAgentClientRegistration, findAgentClientCommand, runAgentClientCommand } = require("./agent-client.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -19,19 +21,19 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
 }]);
 
+const commandIndex = process.argv.indexOf("--command");
+const automationMode = process.argv.includes("--mcp") || process.argv.includes("--mcp-child") || commandIndex !== -1;
+let temporaryAutomationDirectory = null;
 if (process.env.BTV_USER_DATA_DIR) {
   if (!path.isAbsolute(process.env.BTV_USER_DATA_DIR)) throw new Error("BTV_USER_DATA_DIR must be absolute.");
   app.setPath("userData", process.env.BTV_USER_DATA_DIR);
+} else if (automationMode) {
+  temporaryAutomationDirectory = fsSync.mkdtempSync(path.join(os.tmpdir(), "big-tree-viewer-mcp-"));
+  app.setPath("userData", temporaryAutomationDirectory);
 }
-const commandIndex = process.argv.indexOf("--command");
-const automationMode = process.argv.includes("--mcp") || commandIndex !== -1;
 app.setName("Big Tree Viewer");
 if (automationMode && process.platform === "darwin") app.setActivationPolicy("accessory");
-if (automationMode) {
-  const profile = process.env.BTV_AGENT_PROFILE || "default";
-  if (!/^[a-zA-Z0-9_-]+$/.test(profile)) throw new Error("BTV_AGENT_PROFILE must contain only letters, digits, hyphens, or underscores.");
-  app.setPath("userData", path.join(app.getPath("userData"), "agent-profiles", profile));
-}
+if (temporaryAutomationDirectory) process.once("exit", () => fsSync.rmSync(temporaryAutomationDirectory, { recursive: true, force: true }));
 
 let mainWindow = null;
 let pendingOpenPaths = [];
@@ -43,15 +45,29 @@ let updateProgressWindow = null;
 let recentPaths = [];
 const MAX_RECENT_PATHS = 10;
 
-function agentServerLaunch(profile) {
+function agentServerLaunch() {
+  if (app.isPackaged && process.platform === "darwin") {
+    return { command: path.join(process.resourcesPath, "bin", "bigtreeviewer-mcp"), args: [], env: {} };
+  }
+  if (app.isPackaged) {
+    return {
+      command: process.execPath,
+      args: [path.join(process.resourcesPath, "app.asar", "desktop", "mcp-launcher.cjs")],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+    };
+  }
   return {
-    command: process.env.APPIMAGE || process.execPath,
-    args: [...(app.isPackaged ? [] : [path.join(__dirname, "main.cjs")]), "--mcp"],
-    env: { BTV_AGENT_PROFILE: profile },
+    command: process.execPath,
+    args: [path.join(__dirname, "mcp-launcher.cjs")],
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+      BTV_ELECTRON_EXECUTABLE: process.execPath,
+      BTV_ELECTRON_MAIN: path.join(__dirname, "main.cjs"),
+    },
   };
 }
 
-async function connectAgentClient({ name, command, statusArgs, addArgs }) {
+async function connectAgentClient({ name, command, statusArgs, removeArgs, addArgs, launch }) {
   const clientEnv = await agentClientEnvironment();
   let clientCommand = command;
   let status = await runAgentClientCommand(clientCommand, statusArgs, { env: clientEnv });
@@ -69,7 +85,10 @@ async function connectAgentClient({ name, command, statusArgs, addArgs }) {
     });
     return;
   }
-  if (!status.error) {
+  const registration = await ensureAgentClientRegistration(clientCommand, {
+    status, removeArgs, addArgs, launch, env: clientEnv,
+  });
+  if (registration.state === "current") {
     await dialog.showMessageBox(activeWindow(), {
       type: "info",
       title: `${name} Is Connected`,
@@ -79,14 +98,22 @@ async function connectAgentClient({ name, command, statusArgs, addArgs }) {
     });
     return;
   }
-
-  const added = await runAgentClientCommand(clientCommand, addArgs, { env: clientEnv });
-  if (added.error) {
+  if (registration.state === "remove-failed") {
+    await dialog.showMessageBox(activeWindow(), {
+      type: "error",
+      title: `Could Not Update ${name}`,
+      message: `Big Tree Viewer found an older ${name} connection but could not replace it.`,
+      detail: registration.result.stderr || registration.result.error.message,
+      buttons: ["OK"],
+    });
+    return;
+  }
+  if (registration.state === "add-failed") {
     await dialog.showMessageBox(activeWindow(), {
       type: "error",
       title: `Could Not Connect ${name}`,
       message: `Big Tree Viewer could not connect to ${name}.`,
-      detail: `Close and reopen both applications, make sure they are up to date, and try again. You do not need to edit a settings file.`,
+      detail: registration.result.stderr || `Close and reopen both applications, make sure they are up to date, and try again. You do not need to edit a settings file.`,
       buttons: ["OK"],
     });
     return;
@@ -94,8 +121,8 @@ async function connectAgentClient({ name, command, statusArgs, addArgs }) {
 
   await dialog.showMessageBox(activeWindow(), {
     type: "info",
-    title: `${name} Connected`,
-    message: `Big Tree Viewer is now available in ${name}.`,
+    title: registration.state === "updated" ? `${name} Connection Updated` : `${name} Connected`,
+    message: registration.state === "updated" ? `Big Tree Viewer updated its ${name} connection.` : `Big Tree Viewer is now available in ${name}.`,
     detail: `Close and reopen ${name} if it is currently running. You can then ask it to open, style, inspect, or export a tree with Big Tree Viewer.`,
     buttons: ["Done"],
   });
@@ -113,20 +140,24 @@ async function showAgentConnectionDialog() {
   });
 
   if (choice.response === 0) {
-    const launch = agentServerLaunch("codex");
+    const launch = agentServerLaunch();
     await connectAgentClient({
       name: "Codex",
       command: "codex",
       statusArgs: ["mcp", "get", "bigtreeviewer"],
-      addArgs: ["mcp", "add", "bigtreeviewer", "--env", "BTV_AGENT_PROFILE=codex", "--", launch.command, ...launch.args],
+      removeArgs: ["mcp", "remove", "bigtreeviewer"],
+      addArgs: ["mcp", "add", "bigtreeviewer", ...Object.entries(launch.env).flatMap(([key, value]) => ["--env", `${key}=${value}`]), "--", launch.command, ...launch.args],
+      launch,
     });
   } else if (choice.response === 1) {
-    const launch = agentServerLaunch("claude");
+    const launch = agentServerLaunch();
     await connectAgentClient({
       name: "Claude Code",
       command: "claude",
       statusArgs: ["mcp", "get", "bigtreeviewer"],
-      addArgs: ["mcp", "add", "--scope", "user", "bigtreeviewer", "--env", "BTV_AGENT_PROFILE=claude", "--", launch.command, ...launch.args],
+      removeArgs: ["mcp", "remove", "--scope", "user", "bigtreeviewer"],
+      addArgs: ["mcp", "add", "--scope", "user", "bigtreeviewer", ...Object.entries(launch.env).flatMap(([key, value]) => ["--env", `${key}=${value}`]), "--", launch.command, ...launch.args],
+      launch,
     });
   }
 }
@@ -643,9 +674,9 @@ function createWindow() {
   mainWindow = window;
 }
 
-if (!app.requestSingleInstanceLock()) {
-  if (automationMode) process.stderr.write("This BTV agent profile is already in use. Set BTV_AGENT_PROFILE to a different name for another client.\n");
-  app.exit(automationMode ? 1 : 0);
+const singleInstanceLockAcquired = automationMode || app.requestSingleInstanceLock();
+if (!singleInstanceLockAcquired) {
+  app.exit(0);
 } else {
   app.on("second-instance", (_event, argv) => {
     if (automationMode) return;

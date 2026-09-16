@@ -69,6 +69,7 @@ async function writeArtifact(destination, bytes, overwrite) {
 async function startAutomation({ grantFile, commandFile, showApplication, hideApplication }) {
   const sessions = new Map();
   let keepAlive = true;
+  let shuttingDown = false;
   app.on('window-all-closed', () => { if (!keepAlive) app.quit(); });
   const pending = new Map();
   const ready = new Map();
@@ -216,7 +217,16 @@ async function startAutomation({ grantFile, commandFile, showApplication, hideAp
         const directory = path.join(app.getPath('userData'), 'handoffs');
         await fs.mkdir(directory, { recursive: true });
         const result = await exportArtifact(getSession(args.sessionId), { outputPath: path.join(directory, `${crypto.randomUUID()}.btvsession`), overwrite: false }, signal);
-        const child = spawn(process.env.APPIMAGE || process.execPath, [...(app.isPackaged ? [] : [path.join(__dirname, 'main.cjs')]), result.outputPath], { detached: true, stdio: 'ignore' });
+        const handoffEnvironment = { ...process.env };
+        delete handoffEnvironment.BTV_MCP_LAUNCHED;
+        delete handoffEnvironment.BTV_USER_DATA_DIR;
+        if (handoffEnvironment.BTV_TEST_HANDOFF_USER_DATA_DIR) {
+          handoffEnvironment.BTV_USER_DATA_DIR = handoffEnvironment.BTV_TEST_HANDOFF_USER_DATA_DIR;
+          delete handoffEnvironment.BTV_TEST_HANDOFF_USER_DATA_DIR;
+        }
+        const child = spawn(process.env.APPIMAGE || process.execPath, [...(app.isPackaged ? [] : [path.join(__dirname, 'main.cjs')]), result.outputPath], {
+          detached: true, env: handoffEnvironment, stdio: 'ignore',
+        });
         await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
         child.unref();
         return { ...result, openedInIndependentApp: true };
@@ -255,7 +265,24 @@ async function startAutomation({ grantFile, commandFile, showApplication, hideAp
     } catch (error) { return { isError: true, content: [{ type: 'text', text: error.message }] }; }
   });
   const transport = new StdioServerTransport();
+  const shutdown = async (exitCode = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    keepAlive = false;
+    for (const session of sessions.values()) {
+      if (!session.window.isDestroyed()) session.window.destroy();
+    }
+    sessions.clear();
+    const forceTimer = setTimeout(() => app.exit(exitCode), 3_000);
+    forceTimer.unref();
+    try { await server.close(); } catch {}
+    app.quit();
+  };
   await server.connect(transport);
-  transport.onclose = () => { for (const s of sessions.values()) s.window.destroy(); app.quit(); }; // handoff_tree windows belong to the independent GUI process.
+  transport.onclose = () => { void shutdown(0); };
+  process.stdin.once('end', () => { void shutdown(0); });
+  process.stdin.once('close', () => { void shutdown(0); });
+  process.once('SIGINT', () => { void shutdown(0); });
+  process.once('SIGTERM', () => { void shutdown(0); });
 }
 module.exports = { startAutomation, writeArtifact };
