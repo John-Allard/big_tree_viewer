@@ -46,6 +46,28 @@ try {
   if (!hasLearnMoreHelpItem) {
     throw new Error("The desktop application is missing Learn More from its Help menu.");
   }
+  const desktopMenu = await emptyApp.evaluate(({ app, Menu }) => {
+    const applicationMenu = Menu.getApplicationMenu();
+    const fileMenu = applicationMenu?.items.find((item) => item.label === "File");
+    return {
+      appName: app.getName(),
+      fileItems: fileMenu?.submenu?.items.map((item) => item.label).filter(Boolean) ?? [],
+    };
+  });
+  if (desktopMenu.appName !== "Big Tree Viewer") {
+    throw new Error(`The desktop runtime name is incorrect: ${desktopMenu.appName}`);
+  }
+  for (const expectedItem of ["New Window", "Open Tree or Session...", "Open Recent", "Save Session...", "Save Tree as Newick...", "Load Settings...", "Export View..."]) {
+    if (!desktopMenu.fileItems.includes(expectedItem)) throw new Error(`The File menu is missing ${expectedItem}.`);
+  }
+  const newWindowPromise = emptyApp.waitForEvent("window");
+  await emptyApp.evaluate(({ Menu }) => {
+    const fileMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "File");
+    fileMenu?.submenu?.items.find((item) => item.label === "New Window")?.click();
+  });
+  const newWindowPage = await newWindowPromise;
+  await newWindowPage.getByText("Drag a tree file here to load", { exact: true }).waitFor({ timeout: 15_000 });
+  await newWindowPage.close();
   const taxonomyStorageCapabilities = await emptyPage.evaluate(() => ({
     indexedDb: typeof indexedDB !== "undefined",
     openPicker: typeof window.showOpenFilePicker === "function",
@@ -73,6 +95,14 @@ try {
   }, undefined, { timeout: 15_000 });
   if (!await page.getByRole("button", { name: "Spiral", exact: true }).isDisabled()) {
     throw new Error("The loaded fixture did not produce the expected 16-tip tree state.");
+  }
+  const recentItems = await app.evaluate(({ Menu }) => {
+    const fileMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "File");
+    const recentMenu = fileMenu?.submenu?.items.find((item) => item.label === "Open Recent");
+    return recentMenu?.submenu?.items.map((item) => item.label).filter(Boolean) ?? [];
+  });
+  if (!recentItems.includes(path.basename(fixturePath))) {
+    throw new Error("The command-line-opened tree was not added to Open Recent.");
   }
   const subtreeKey = `big-tree-viewer:subtree:desktop-smoke-${Date.now()}`;
   await page.evaluate((key) => {

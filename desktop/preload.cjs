@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("bigTreeViewerDesktop", {
     for (const command of queuedMenuCommands.splice(0, queuedMenuCommands.length)) callback(command);
     return () => menuCommandListeners.delete(callback);
   },
+  openFiles: () => ipcRenderer.invoke("btv:choose-tree-files"),
   grantFile: (filePath) => ipcRenderer.invoke("btv:grant-file", filePath),
   saveFile: (suggestedName, data) => ipcRenderer.invoke("btv:save-file", suggestedName, data),
   onAgentRequest(callback) {

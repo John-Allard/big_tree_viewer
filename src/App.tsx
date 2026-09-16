@@ -4291,15 +4291,19 @@ export default function App() {
     return true;
   }, [applySharedSubtreeVisualSettings, parseText]);
 
-  const downloadCurrentTreeNewick = useCallback((): void => {
+  const downloadCurrentTreeNewick = useCallback(async (): Promise<void> => {
     if (!tree || typeof window === "undefined") {
       return;
     }
     const newick = serializeSubtreeToNewick(tree, tree.root);
+    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
+    if (window.bigTreeViewerDesktop) {
+      await window.bigTreeViewerDesktop.saveFile(`${baseLabel}.nwk`, new TextEncoder().encode(newick).buffer);
+      return;
+    }
     const blob = new Blob([newick], { type: "text/plain;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
     const link = window.document.createElement("a");
-    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
     link.href = url;
     link.download = `${baseLabel}.nwk`;
     window.document.body.appendChild(link);
@@ -5374,6 +5378,10 @@ export default function App() {
   }, [parseText]);
 
   const loadSession = useCallback(async (mode: "full" | "settings"): Promise<void> => {
+    if (mode === "full" && window.bigTreeViewerDesktop) {
+      await window.bigTreeViewerDesktop.openFiles();
+      return;
+    }
     try {
       setSessionError(null);
       setSessionLoading(true);
@@ -7536,6 +7544,12 @@ export default function App() {
         case "save-session":
           void saveSession();
           break;
+        case "save-newick":
+          void downloadCurrentTreeNewick();
+          break;
+        case "load-settings":
+          void loadSession("settings");
+          break;
         case "export-view":
           setDataOpen(true);
           setShowExportOptions(true);
@@ -7556,7 +7570,7 @@ export default function App() {
           break;
       }
     });
-  }, [fitCurrentView, hideSidebar, saveSession, setDataOpen, showSidebar, sidebarVisible, toggleViewerFullscreen]);
+  }, [downloadCurrentTreeNewick, fitCurrentView, hideSidebar, loadSession, saveSession, setDataOpen, showSidebar, sidebarVisible, toggleViewerFullscreen]);
 
   return (
     <div
@@ -7661,7 +7675,13 @@ export default function App() {
             <button
               type="button"
               className="secondary"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                if (window.bigTreeViewerDesktop) {
+                  void window.bigTreeViewerDesktop.openFiles();
+                } else {
+                  fileInputRef.current?.click();
+                }
+              }}
               disabled={loadState.loading || sessionLoading}
               title="Open a Newick, NEXUS, or Big Tree Viewer session file from your computer."
             >
@@ -7727,7 +7747,7 @@ export default function App() {
                 type="button"
                 className="secondary"
                 disabled={!tree}
-                onClick={downloadCurrentTreeNewick}
+                onClick={() => void downloadCurrentTreeNewick()}
                 title="Download the currently loaded tree topology as a Newick file."
               >
                 Download Newick

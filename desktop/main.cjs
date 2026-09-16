@@ -25,6 +25,8 @@ if (process.env.BTV_USER_DATA_DIR) {
 }
 const commandIndex = process.argv.indexOf("--command");
 const automationMode = process.argv.includes("--mcp") || commandIndex !== -1;
+app.setName("Big Tree Viewer");
+if (automationMode && process.platform === "darwin") app.setActivationPolicy("accessory");
 if (automationMode) {
   const profile = process.env.BTV_AGENT_PROFILE || "default";
   if (!/^[a-zA-Z0-9_-]+$/.test(profile)) throw new Error("BTV_AGENT_PROFILE must contain only letters, digits, hyphens, or underscores.");
@@ -38,6 +40,8 @@ let updateCheckIsManual = false;
 let updateCheckInProgress = false;
 let updateDownloadInProgress = false;
 let updateProgressWindow = null;
+let recentPaths = [];
+const MAX_RECENT_PATHS = 10;
 
 function agentServerLaunch(profile) {
   return {
@@ -128,7 +132,7 @@ async function showAgentConnectionDialog() {
 }
 
 function activeWindow() {
-  return BrowserWindow.getFocusedWindow() || mainWindow;
+  return BrowserWindow.getFocusedWindow() || mainWindow || BrowserWindow.getAllWindows()[0] || null;
 }
 
 function setUpdateProgress(value) {
@@ -345,10 +349,71 @@ function collectTreePaths(argv) {
   return argv.filter(isSupportedTreePath).map((filePath) => path.resolve(filePath));
 }
 
+function recentPathsFile() {
+  return path.join(app.getPath("userData"), "recent-files.json");
+}
+
+async function loadRecentPaths() {
+  try {
+    const parsed = JSON.parse(await fs.readFile(recentPathsFile(), "utf8"));
+    recentPaths = Array.isArray(parsed)
+      ? [...new Set(parsed.filter(isSupportedTreePath).map((filePath) => path.resolve(filePath)))].slice(0, MAX_RECENT_PATHS)
+      : [];
+  } catch (error) {
+    if (error.code !== "ENOENT") process.stderr.write(`Could not read recent files: ${error.message}\n`);
+    recentPaths = [];
+  }
+}
+
+async function saveRecentPaths() {
+  try {
+    await fs.mkdir(path.dirname(recentPathsFile()), { recursive: true });
+    await fs.writeFile(recentPathsFile(), `${JSON.stringify(recentPaths, null, 2)}\n`);
+  } catch (error) {
+    process.stderr.write(`Could not save recent files: ${error.message}\n`);
+  }
+}
+
+async function rememberRecentPaths(paths) {
+  if (automationMode) return;
+  const supported = paths.filter(isSupportedTreePath).map((filePath) => path.resolve(filePath));
+  if (supported.length === 0) return;
+  recentPaths = [...new Set([...supported, ...recentPaths])].slice(0, MAX_RECENT_PATHS);
+  for (const filePath of supported) app.addRecentDocument(filePath);
+  await saveRecentPaths();
+  installApplicationMenu();
+}
+
+async function clearRecentPaths() {
+  recentPaths = [];
+  app.clearRecentDocuments();
+  await saveRecentPaths();
+  installApplicationMenu();
+}
+
+async function openRecentPath(filePath) {
+  try {
+    await fs.access(filePath);
+    sendOpenPaths([filePath]);
+  } catch {
+    recentPaths = recentPaths.filter((candidate) => candidate !== filePath);
+    await saveRecentPaths();
+    installApplicationMenu();
+    await dialog.showMessageBox(activeWindow(), {
+      type: "warning",
+      title: "File Not Found",
+      message: `${path.basename(filePath)} could not be opened.`,
+      detail: "The file may have been moved, renamed, or deleted. It has been removed from Open Recent.",
+      buttons: ["OK"],
+    });
+  }
+}
+
 function sendOpenPaths(paths) {
   const uniquePaths = [...new Set(paths.filter(isSupportedTreePath))];
   if (uniquePaths.length === 0) return;
-  const target = automationMode ? BrowserWindow.getFocusedWindow() : mainWindow;
+  if (!automationMode) void rememberRecentPaths(uniquePaths);
+  const target = activeWindow();
   if (!target || target.isDestroyed() || target.webContents.isLoading()) {
     pendingOpenPaths.push(...uniquePaths);
     return;
@@ -397,8 +462,8 @@ async function showDefaultApplicationHelp() {
   });
 }
 
-async function chooseTreeFiles() {
-  const result = await dialog.showOpenDialog(mainWindow, {
+async function chooseTreeFiles(parent = activeWindow()) {
+  const result = await dialog.showOpenDialog(parent, {
     title: "Open tree or Big Tree Viewer session",
     properties: ["openFile", "multiSelections"],
     filters: [
@@ -412,7 +477,18 @@ async function chooseTreeFiles() {
   if (!result.canceled) sendOpenPaths(result.filePaths);
 }
 
-function installApplicationMenu() {
+function installApplicationMenu({ allowNewWindow = !automationMode } = {}) {
+  const recentSubmenu = recentPaths.length > 0
+    ? [
+      ...recentPaths.map((filePath) => ({
+        label: path.basename(filePath),
+        toolTip: filePath,
+        click: () => void openRecentPath(filePath),
+      })),
+      { type: "separator" },
+      { label: "Clear Menu", click: () => void clearRecentPaths() },
+    ]
+    : [{ label: "No Recent Files", enabled: false }];
   const template = [
     ...(process.platform === "darwin" ? [{
       label: app.name,
@@ -426,8 +502,14 @@ function installApplicationMenu() {
     {
       label: "File",
       submenu: [
+        ...(allowNewWindow ? [{ label: "New Window", accelerator: "CmdOrCtrl+N", click: () => createWindow() }] : []),
         { label: "Open Tree or Session...", accelerator: "CmdOrCtrl+O", click: () => void chooseTreeFiles() },
+        { label: "Open Recent", submenu: recentSubmenu },
+        { type: "separator" },
         { label: "Save Session...", accelerator: "CmdOrCtrl+S", click: () => sendMenuCommand("save-session") },
+        { label: "Save Tree as Newick...", click: () => sendMenuCommand("save-newick") },
+        { label: "Load Settings...", click: () => sendMenuCommand("load-settings") },
+        { type: "separator" },
         { label: "Export View...", accelerator: "CmdOrCtrl+Shift+E", click: () => sendMenuCommand("export-view") },
         { type: "separator" },
         { label: "Set as Default for Tree Files...", click: () => void showDefaultApplicationHelp() },
@@ -582,16 +664,20 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     registerAppProtocol();
-    installApplicationMenu();
     ipcMain.handle("btv:grant-file", (_event, filePath) => grantFile(filePath));
-    ipcMain.handle("btv:save-file", async (_event, suggestedName, data) => {
+    ipcMain.handle("btv:choose-tree-files", (event) => chooseTreeFiles(BrowserWindow.fromWebContents(event.sender) || activeWindow()));
+    ipcMain.handle("btv:save-file", async (event, suggestedName, data) => {
       const safeName = typeof suggestedName === "string" && suggestedName.trim()
         ? path.basename(suggestedName.trim())
         : "big-tree-viewer.btvsession";
-      const result = await dialog.showSaveDialog(mainWindow, {
-        title: "Save Big Tree Viewer session",
+      const isNewick = [".nwk", ".newick", ".tree", ".tre"].includes(path.extname(safeName).toLowerCase());
+      const parent = BrowserWindow.fromWebContents(event.sender) || activeWindow();
+      const result = await dialog.showSaveDialog(parent, {
+        title: isNewick ? "Save tree as Newick" : "Save Big Tree Viewer session",
         defaultPath: safeName,
-        filters: [{ name: "Big Tree Viewer session", extensions: ["btvsession"] }],
+        filters: isNewick
+          ? [{ name: "Newick tree", extensions: ["nwk", "newick", "tree", "tre"] }]
+          : [{ name: "Big Tree Viewer session", extensions: ["btvsession"] }],
       });
       if (result.canceled || !result.filePath) return false;
       if (!(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
@@ -610,10 +696,28 @@ if (!app.requestSingleInstanceLock()) {
     });
     if (automationMode) {
       if (commandIndex !== -1 && !process.argv[commandIndex + 1]) throw new Error("--command requires an absolute JSON request file path.");
-      await require("./automation.cjs").startAutomation({ grantFile: filePath => grantFile(filePath, true), commandFile: commandIndex !== -1 ? process.argv[commandIndex + 1] : undefined });
+      await require("./automation.cjs").startAutomation({
+        grantFile: filePath => grantFile(filePath, true),
+        commandFile: commandIndex !== -1 ? process.argv[commandIndex + 1] : undefined,
+        showApplication: async () => {
+          installApplicationMenu({ allowNewWindow: false });
+          if (process.platform === "darwin") {
+            app.setActivationPolicy("regular");
+            await app.dock.show();
+          }
+        },
+        hideApplication: () => {
+          Menu.setApplicationMenu(null);
+          if (process.platform === "darwin") app.setActivationPolicy("accessory");
+        },
+      });
       return;
     }
-    pendingOpenPaths.push(...collectTreePaths(process.argv));
+    await loadRecentPaths();
+    const initialPaths = collectTreePaths(process.argv);
+    pendingOpenPaths.push(...initialPaths);
+    await rememberRecentPaths(initialPaths);
+    installApplicationMenu();
     createWindow();
     configureAutoUpdates();
     app.on("activate", () => {

@@ -66,12 +66,19 @@ async function writeArtifact(destination, bytes, overwrite) {
   return target;
 }
 
-async function startAutomation({ grantFile, commandFile }) {
+async function startAutomation({ grantFile, commandFile, showApplication, hideApplication }) {
   const sessions = new Map();
   let keepAlive = true;
   app.on('window-all-closed', () => { if (!keepAlive) app.quit(); });
   const pending = new Map();
   const ready = new Map();
+  function hideApplicationIfIdle() {
+    setImmediate(() => {
+      if (![...sessions.values()].some((session) => !session.window.isDestroyed() && session.window.isVisible())) {
+        hideApplication?.();
+      }
+    });
+  }
   function reply(event, data) {
     const item = pending.get(data?.id);
     if (!item || item.webContents !== event.sender) return;
@@ -99,6 +106,7 @@ async function startAutomation({ grantFile, commandFile }) {
       for (const [key, item] of pending) if (item.webContents === contents) {
         clearTimeout(item.timer); pending.delete(key); item.reject(new Error('Tree window closed.'));
       }
+      hideApplicationIfIdle();
     });
     try {
       await new Promise((resolve, reject) => {
@@ -181,7 +189,13 @@ async function startAutomation({ grantFile, commandFile }) {
       run: async (args, signal) => {
         if (!args.treePath && !args.newick) throw new Error('Supply treePath or newick.');
         const payload = await payloadFor(args); const session = await createSession();
-        try { await request(session, 'load', payload, signal); session.window.show(); session.window.focus(); return { sessionId: session.sessionId, windowVisible: session.window.isVisible(), ...await request(session, 'inspect', {}, signal) }; }
+        try {
+          await request(session, 'load', payload, signal);
+          await showApplication?.();
+          session.window.show();
+          session.window.focus();
+          return { sessionId: session.sessionId, windowVisible: session.window.isVisible(), ...await request(session, 'inspect', {}, signal) };
+        }
         catch (error) { session.window.destroy(); throw error; }
       } },
     render_tree: { description: 'Render a local tree to PNG/SVG or save a configured .btvsession in the background using bundled Electron. No external Chrome, Python, or website. The temporary tree closes after export; use open_tree for interactive work.', shape: { ...input, ...output },
