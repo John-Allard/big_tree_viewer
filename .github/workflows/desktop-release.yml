@@ -167,6 +167,8 @@ jobs:
           if ($signature.Status -ne "Valid") {
             throw "Installer signature verification failed with status $($signature.Status)."
           }
+      - name: Verify updater configuration in signed installer
+        run: npm run test:windows-updater-package -- release/Big-Tree-Viewer-Windows-x64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows

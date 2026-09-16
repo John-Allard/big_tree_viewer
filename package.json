@@ -1,7 +1,7 @@
 {
   "name": "big-tree-viewer",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Interactive viewer for very large phylogenetic trees",
   "author": {
     "name": "John B Allard",
@@ -21,6 +21,7 @@
     "desktop:dist": "npm run build:desktop:web && electron-builder",
     "test:desktop:smoke": "node scripts/smoke-test-desktop.mjs",
     "test:agent-connect": "node scripts/test-agent-client-runner.mjs",
+    "test:windows-updater-package": "node scripts/verify-windows-updater-config.mjs",
     "preview": "vite preview",
     "bench:pan": "node scripts/benchmark-circular-pan.mjs",
     "test:e2e": "playwright test",

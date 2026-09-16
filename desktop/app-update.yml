@@ -1,0 +1,4 @@
+provider: github
+owner: John-Allard
+repo: big_tree_viewer
+updaterCacheDirName: big-tree-viewer-updater

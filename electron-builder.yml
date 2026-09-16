@@ -14,6 +14,9 @@ files:
   - "!dist/example_tree.btvsession"
   - desktop/**/*
   - package.json
+extraResources:
+  - from: desktop/app-update.yml
+    to: app-update.yml
 fileAssociations:
   - ext:
       - btvsession
