@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { findAgentClientCommand, runAgentClientCommand } = require("./agent-client.cjs");
+const { agentClientEnvironment, findAgentClientCommand, runAgentClientCommand } = require("./agent-client.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -47,11 +47,12 @@ function agentServerLaunch(profile) {
 }
 
 async function connectAgentClient({ name, command, statusArgs, addArgs }) {
+  const clientEnv = await agentClientEnvironment();
   let clientCommand = command;
-  let status = await runAgentClientCommand(clientCommand, statusArgs);
+  let status = await runAgentClientCommand(clientCommand, statusArgs, { env: clientEnv });
   if (status.error?.code === "ENOENT") {
-    clientCommand = await findAgentClientCommand(command);
-    if (clientCommand) status = await runAgentClientCommand(clientCommand, statusArgs);
+    clientCommand = await findAgentClientCommand(command, { env: clientEnv });
+    if (clientCommand) status = await runAgentClientCommand(clientCommand, statusArgs, { env: clientEnv });
   }
   if (status.error?.code === "ENOENT") {
     await dialog.showMessageBox(activeWindow(), {
@@ -74,7 +75,7 @@ async function connectAgentClient({ name, command, statusArgs, addArgs }) {
     return;
   }
 
-  const added = await runAgentClientCommand(clientCommand, addArgs);
+  const added = await runAgentClientCommand(clientCommand, addArgs, { env: clientEnv });
   if (added.error) {
     await dialog.showMessageBox(activeWindow(), {
       type: "error",

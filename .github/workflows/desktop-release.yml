@@ -146,6 +146,8 @@ jobs:
           if ($signature.Status -ne "Valid") {
             throw "Application signature verification failed with status $($signature.Status)."
           }
+      - name: Verify updater configuration in signed application payload
+        run: npm run test:windows-updater-package -- release/win-unpacked
       - name: Package signed Windows application
         run: npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
       - name: Sign Windows installer
@@ -167,8 +169,6 @@ jobs:
           if ($signature.Status -ne "Valid") {
             throw "Installer signature verification failed with status $($signature.Status)."
           }
-      - name: Verify updater configuration in signed installer
-        run: npm run test:windows-updater-package -- release/Big-Tree-Viewer-Windows-x64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows

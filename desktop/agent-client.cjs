@@ -42,11 +42,28 @@ function runAgentClientCommand(command, args, options = {}) {
   });
 }
 
-async function findAgentClientCommand(command) {
+async function agentClientEnvironment(baseEnv = process.env) {
+  if (process.platform === "win32") return { ...baseEnv };
+  const shell = baseEnv.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/sh");
+  const marker = "__BTV_LOGIN_PATH__";
+  const loginPath = await runAgentClientCommand(shell, ["-lc", `printf '${marker}%s' "$PATH"`], {
+    env: baseEnv,
+    timeoutMs: 5_000,
+  });
+  const markerIndex = loginPath.stdout.lastIndexOf(marker);
+  if (loginPath.error || markerIndex === -1) return { ...baseEnv };
+  const discoveredPath = loginPath.stdout.slice(markerIndex + marker.length).trim();
+  const pathEntries = [...discoveredPath.split(path.delimiter), ...(baseEnv.PATH || "").split(path.delimiter)]
+    .filter((entry, index, entries) => entry && entries.indexOf(entry) === index);
+  return { ...baseEnv, PATH: pathEntries.join(path.delimiter) };
+}
+
+async function findAgentClientCommand(command, options = {}) {
   if (!/^[a-z0-9-]+$/i.test(command)) return null;
+  const env = options.env || await agentClientEnvironment();
   const lookup = process.platform === "win32"
-    ? await runAgentClientCommand("where.exe", [command])
-    : await runAgentClientCommand(process.env.SHELL || "/bin/sh", ["-lc", `command -v ${command}`]);
+    ? await runAgentClientCommand("where.exe", [command], { env })
+    : await runAgentClientCommand(env.SHELL || "/bin/sh", ["-lc", `command -v ${command}`], { env });
   if (!lookup.error) {
     const resolved = lookup.stdout.split(/\r?\n/, 1)[0].trim();
     if (resolved) return resolved;
@@ -75,4 +92,4 @@ async function findAgentClientCommand(command) {
   return null;
 }
 
-module.exports = { findAgentClientCommand, runAgentClientCommand };
+module.exports = { agentClientEnvironment, findAgentClientCommand, runAgentClientCommand };
