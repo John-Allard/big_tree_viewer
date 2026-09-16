@@ -7,6 +7,8 @@ publish:
   provider: github
   owner: John-Allard
   repo: big_tree_viewer
+toolsets:
+  appimage: "1.0.3"
 files:
   - dist/**/*
   - "!dist/example_tree.btvsession"
