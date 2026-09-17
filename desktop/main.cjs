@@ -29,6 +29,7 @@ const mcpSocketArgument = process.argv.find((argument) => argument.startsWith("-
 const mcpSocket = mcpSocketArgument?.slice("--mcp-socket=".length);
 const automationMode = process.argv.includes("--mcp") || Boolean(mcpSocket) || commandIndex !== -1;
 app.setName("Big Tree Viewer");
+if (process.platform === "linux") app.setDesktopName("BigTreeViewer.desktop");
 if (automationMode && process.platform === "darwin") app.setActivationPolicy("accessory");
 if (automationMode && !process.env.BTV_USER_DATA_DIR) {
   const profile = process.env.BTV_AGENT_PROFILE || "default";
