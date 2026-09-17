@@ -10,6 +10,7 @@ const {
   agentClientRegistrationArguments,
   agentRegistrationMatches,
   ensureAgentClientRegistration,
+  genericAgentSetupInstructions,
   probeMcpLaunch,
   runAgentClientCommand,
   windowsCodexCandidates,
@@ -48,6 +49,12 @@ try {
       "bigtreeviewer", "--", launch.command, ...launch.args,
     ],
   });
+  const genericInstructions = genericAgentSetupInstructions(registrationLaunch);
+  assert.match(genericInstructions, /local Big Tree Viewer MCP server/);
+  assert.match(genericInstructions, /user or global scope/);
+  assert.match(genericInstructions, new RegExp(launch.command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(genericInstructions, /BTV_CACHE/);
+  assert.match(genericInstructions, /launch this command on demand/);
   const migrated = await ensureAgentClientRegistration(commandName, {
     status: { error: null, stdout: "command: /old/Big Tree Viewer\nargs: --mcp\n", stderr: "" },
     removeArgs: ["mcp", "remove", "bigtreeviewer"],

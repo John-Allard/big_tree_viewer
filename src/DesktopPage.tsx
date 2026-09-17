@@ -116,8 +116,9 @@ export default function DesktopPage() {
           </p>
           <p>
             Other AI clients can use the bundled server when they support local
-            MCP servers over the standard <code>stdio</code> transport. Their setup
-            steps are client-specific. See the{" "}
+            MCP servers over the standard <code>stdio</code> transport. Choose Copy
+            Setup Instructions and paste the resulting message into your agent so
+            it can perform the client-specific registration. See the{" "}
             <a href={`${import.meta.env.BASE_URL}#agentic-ai`}>Agentic AI guide</a>{" "}
             for details about the tools and workflow.
           </p>

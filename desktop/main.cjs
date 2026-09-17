@@ -1,11 +1,11 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const v8 = require("node:v8");
 const { pathToFileURL } = require("node:url");
-const { agentClientEnvironment, agentClientRegistrationArguments, ensureAgentClientRegistration, findAgentClientCommand, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
+const { agentClientEnvironment, agentClientRegistrationArguments, ensureAgentClientRegistration, findAgentClientCommand, genericAgentSetupInstructions, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -205,11 +205,11 @@ async function showAgentConnectionDialog() {
   const choice = await dialog.showMessageBox(activeWindow(), {
     type: "question",
     title: "Connect an AI Agent",
-    message: "Which AI app would you like to connect?",
+    message: "How would you like to connect an AI agent?",
     detail: "Big Tree Viewer can give an AI agent local tools for opening, styling, inspecting, and exporting phylogenetic trees.",
-    buttons: ["Codex", "Claude Code", "Cancel"],
+    buttons: ["Codex", "Claude Code", "Copy Setup Instructions", "Cancel"],
     defaultId: 0,
-    cancelId: 2,
+    cancelId: 3,
   });
 
   if (choice.response === 0) {
@@ -227,6 +227,16 @@ async function showAgentConnectionDialog() {
       command: "claude",
       ...agentClientRegistrationArguments("claude", launch),
       launch,
+    });
+  } else if (choice.response === 2) {
+    const launch = await agentServerLaunch();
+    clipboard.writeText(genericAgentSetupInstructions(launch));
+    await dialog.showMessageBox(activeWindow(), {
+      type: "info",
+      title: "Agent Setup Instructions Copied",
+      message: "Paste the copied instructions into your preferred agent.",
+      detail: "The instructions contain the local Big Tree Viewer MCP launch details for this installation. They do not contain tree data or credentials.",
+      buttons: ["Done"],
     });
   }
 }

@@ -14,8 +14,10 @@ configuration files. Restart the selected client after connecting it.
 The bundled server uses the standard local MCP `stdio` transport and is not tied
 to either client. BTV currently automates registration for Codex and Claude Code.
 Other MCP clients can launch the same server if they support local `stdio`
-servers, but their registration interface and configuration format are
-client-specific.
+servers. **Copy Setup Instructions** puts a self-contained message on the
+clipboard with the exact command, arguments, and environment for the installed
+copy of BTV. Paste that message into the preferred agent so it can perform the
+client-specific registration and connection check.
 
 The installed configuration runs a small bundled helper in Electron's Node mode.
 The helper preserves standard input/output on Windows, creates a private local

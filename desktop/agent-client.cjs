@@ -142,6 +142,23 @@ function agentClientRegistrationArguments(client, launch) {
   throw new Error(`Unsupported agent client: ${client}`);
 }
 
+function genericAgentSetupInstructions(launch) {
+  const connection = {
+    name: "bigtreeviewer",
+    transport: "stdio",
+    command: launch.command,
+    args: launch.args,
+    env: launch.env,
+  };
+  return `Connect your agent client to the local Big Tree Viewer MCP server described below.
+
+Use the client's supported command or user interface for adding a local MCP server. Register it at user or global scope so it is available in every project. Prefer the client's setup command or UI over editing configuration files directly. Preserve the command, arguments, and environment exactly, including spaces in paths.
+
+${JSON.stringify(connection, null, 2)}
+
+After registering it, verify that the server connects and exposes the Big Tree Viewer tools. If this client is already running, reload its MCP servers or close and reopen it. Do not start a separate persistent Big Tree Viewer process; the MCP client should launch this command on demand.`;
+}
+
 async function ensureAgentClientRegistration(command, { status, removeArgs, addArgs, launch, env }) {
   if (agentRegistrationMatches(status, launch)) return { state: "current", result: status };
   const replacing = !status.error;
@@ -208,6 +225,7 @@ module.exports = {
   agentRegistrationMatches,
   ensureAgentClientRegistration,
   findAgentClientCommand,
+  genericAgentSetupInstructions,
   probeMcpLaunch,
   runAgentClientCommand,
   windowsCodexCandidates,

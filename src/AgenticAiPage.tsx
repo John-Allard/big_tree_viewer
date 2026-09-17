@@ -42,9 +42,10 @@ export default function AgenticAiPage() {
             external Chrome installation, or live BTV website is required.</p>
           <p>The bundled server uses the standard local MCP <code>stdio</code> transport,
             so it is not limited to Codex or Claude Code. BTV currently provides
-            one-click registration for those two clients. Another agent can use the
-            same server if its MCP client supports local <code>stdio</code> servers,
-            but the registration steps depend on that client.</p>
+            one-click registration for those two clients. For another client, choose
+            Copy Setup Instructions and paste the resulting message into your agent.
+            It contains the exact local <code>stdio</code> connection details for that
+            installation and asks the agent to register and verify the server.</p>
           <p>Ask your agent to open a local Newick, NEXUS, or BTV session with the
             layout, metadata, and taxonomy ribbons you want. It can update that
             tree, inspect the applied settings, export PNG/SVG, and save an editable
