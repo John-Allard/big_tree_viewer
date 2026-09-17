@@ -20,11 +20,16 @@ copy of BTV. Paste that message into the preferred agent so it can perform the
 client-specific registration and connection check.
 
 The installed configuration runs a small bundled helper in Electron's Node mode.
-The helper preserves standard input/output on Windows, creates a private local
-socket or named pipe, and starts an isolated rendering backend. Each connection
-therefore avoids Chromium profile locks, while taxonomy archives and completed
-mappings are retained in a shared desktop-agent cache. Temporary renderer
-profiles are deleted after disconnect.
+It answers MCP initialization and tool discovery without launching the desktop
+application. On the first tool call it creates a private local socket or named
+pipe and starts an isolated rendering backend. The backend remains available
+while agent tree sessions are open and exits when it becomes idle, so opening an
+MCP client does not put Big Tree Viewer in the macOS Dock, intercept normal app
+launches, or block application updates. Each rendering session avoids Chromium
+profile locks, while taxonomy archives and completed mappings are retained in a
+shared desktop-agent cache. Temporary renderer profiles are deleted after use.
+The AppImage keeps the prior dependency-free eager launcher because its temporary
+mount disappears when the GUI exits; its behavior is otherwise unchanged.
 
 ## Tools
 
@@ -102,7 +107,7 @@ background desktop rendering, not a display-server-free rendering engine.
 Pass a packaged executable to test the packaged runtime. No user browser or
 cursor is used. Pack with `npx electron-builder --dir`.
 
-Implementation validation (Linux and Windows, September 2026): packaged builds passed
+Implementation validation (macOS, Linux, and Windows, September 2026): packaged builds passed
 19 MCP operations, including visible opening, settings/metadata/camera updates,
 PNG and SVG exports, editable-session roundtrip, NEXUS and extensionless Newick loading, validation and
 existing-file errors, and independent GUI handoff surviving MCP disconnect.
@@ -110,5 +115,7 @@ The same run rendered the retained 50,033-tip example as a spiral with its saved
 taxonomy (>49,000 mapped tips). The shared agent taxonomy cache was verified
 across separate temporary renderer profiles. On Windows, the installed Codex CLI
 discovered all seven tools and invoked `render_tree` through the helper to produce
-a valid SVG. Fresh full taxonomy archive downloads and macOS execution were not
-exercised in these checks.
+a valid SVG. On macOS, a packaged helper was also verified to list tools without
+starting Electron, open a visible tree on demand, render an SVG, and stop its
+renderer after the last session closed. Fresh full taxonomy archive downloads
+were not exercised in these checks.

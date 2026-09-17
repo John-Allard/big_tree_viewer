@@ -2,6 +2,7 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, she
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const v8 = require("node:v8");
 const { pathToFileURL } = require("node:url");
@@ -52,7 +53,7 @@ async function agentServerLaunch() {
   if (app.isPackaged && process.platform === "darwin") {
     return {
       command: path.join(process.resourcesPath, "bin", "bigtreeviewer-mcp"),
-      args: ["--helper-version=2"],
+      args: ["--helper-version=3"],
       env: { BTV_SHARED_USER_DATA_DIR: sharedCache },
     };
   }
@@ -61,14 +62,16 @@ async function agentServerLaunch() {
     const helperDirectory = path.join(app.getPath("userData"), "agent");
     helperPath = path.join(helperDirectory, "mcp-helper.cjs");
     await fs.mkdir(helperDirectory, { recursive: true });
-    await fs.copyFile(path.join(__dirname, "mcp-helper.cjs"), helperPath);
+    // AppImage mounts are ephemeral, so keep its dependency-free launcher external.
+    await fs.copyFile(path.join(__dirname, "mcp-appimage-helper.cjs"), helperPath);
   }
   return {
     command: executable,
-    args: [helperPath, "--helper-version=2"],
+    args: [helperPath, "--helper-version=3"],
     env: {
       ELECTRON_RUN_AS_NODE: "1",
       BTV_APP_EXECUTABLE: executable,
+      BTV_APP_VERSION: app.getVersion(),
       BTV_SHARED_USER_DATA_DIR: sharedCache,
       ...(app.isPackaged ? {} : { BTV_APP_MAIN: path.join(__dirname, "main.cjs") }),
     },
@@ -264,13 +267,22 @@ function formatUpdateBytes(value) {
   return `${amount.toFixed(digits)} ${units[unitIndex]}`;
 }
 
-function closeUpdateProgressWindow() {
-  if (updateProgressWindow && !updateProgressWindow.isDestroyed()) updateProgressWindow.close();
+async function closeUpdateProgressWindow() {
+  const window = updateProgressWindow;
   updateProgressWindow = null;
+  if (!window || window.isDestroyed()) return;
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (!window.isDestroyed()) window.destroy();
+      resolve();
+    }, 2_000);
+    window.once("closed", () => { clearTimeout(timer); resolve(); });
+    window.close();
+  });
 }
 
-function showUpdateProgressWindow(version) {
-  closeUpdateProgressWindow();
+async function showUpdateProgressWindow(version) {
+  await closeUpdateProgressWindow();
   const parent = activeWindow();
   updateProgressWindow = new BrowserWindow({
     width: 440,
@@ -291,7 +303,8 @@ function showUpdateProgressWindow(version) {
       sandbox: true,
     },
   });
-  updateProgressWindow.on("closed", () => { updateProgressWindow = null; });
+  const window = updateProgressWindow;
+  window.on("closed", () => { if (updateProgressWindow === window) updateProgressWindow = null; });
   const safeVersion = String(version || "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
   })[character]);
@@ -316,6 +329,46 @@ function showUpdateProgressWindow(version) {
 </body></html>`;
   void updateProgressWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
   updateProgressWindow.once("ready-to-show", () => updateProgressWindow?.show());
+}
+
+function agentUpdateLockPath() {
+  return path.join(app.getPath("userData"), "agent-cache", "update-in-progress.json");
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function stopAgentRenderingBackends() {
+  let entries = [];
+  try { entries = await fs.readdir(os.tmpdir(), { withFileTypes: true }); } catch { return; }
+  const owners = await Promise.all(entries.filter(entry => entry.isDirectory() && entry.name.startsWith("bigtreeviewer-mcp-")).map(async (entry) => {
+    try { return JSON.parse(await fs.readFile(path.join(os.tmpdir(), entry.name, "owner.json"), "utf8")); }
+    catch { return null; }
+  }));
+  for (const owner of owners.filter(item => item?.kind === "bigtreeviewer-mcp")) {
+    if (processIsAlive(owner?.pid)) {
+      try { process.kill(owner.pid, "SIGTERM"); } catch {}
+    } else if (processIsAlive(owner?.childPid)) {
+      try { process.kill(owner.childPid, "SIGTERM"); } catch {}
+    }
+  }
+  const childPids = owners.filter(item => item?.kind === "bigtreeviewer-mcp").map(owner => owner.childPid).filter(Number.isInteger);
+  const deadline = Date.now() + 5_000;
+  while (childPids.some(processIsAlive) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  for (const pid of childPids.filter(processIsAlive)) {
+    try { process.kill(pid, "SIGKILL"); } catch {}
+  }
+}
+
+async function prepareAgentBackendsForUpdate() {
+  const lockPath = agentUpdateLockPath();
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+  await fs.writeFile(lockPath, JSON.stringify({ startedAt: Date.now(), version: app.getVersion() }));
+  await stopAgentRenderingBackends();
 }
 
 function updateDownloadProgressWindow(progress) {
@@ -375,7 +428,7 @@ async function checkForUpdates(manual = true) {
 
 function configureAutoUpdates() {
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on("update-not-available", async () => {
     updateCheckInProgress = false;
     if (!updateCheckIsManual) return;
@@ -402,13 +455,13 @@ function configureAutoUpdates() {
     if (result.response !== 0) return;
     updateDownloadInProgress = true;
     setUpdateProgress(0);
-    showUpdateProgressWindow(info.version);
+    await showUpdateProgressWindow(info.version);
     try {
       await autoUpdater.downloadUpdate();
     } catch (error) {
       updateDownloadInProgress = false;
       setUpdateProgress(-1);
-      closeUpdateProgressWindow();
+      await closeUpdateProgressWindow();
       await dialog.showMessageBox(activeWindow(), {
         type: "error",
         title: "Update Download Failed",
@@ -425,24 +478,44 @@ function configureAutoUpdates() {
   autoUpdater.on("update-downloaded", async (info) => {
     updateDownloadInProgress = false;
     setUpdateProgress(-1);
-    closeUpdateProgressWindow();
-    const result = await dialog.showMessageBox(activeWindow(), {
+    await closeUpdateProgressWindow();
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const updateReadyOptions = {
       type: "info",
       title: "Update Ready",
       message: `Big Tree Viewer ${info.version} has been downloaded.`,
       detail: "Relaunch Big Tree Viewer to install the update. Unsaved work will be lost.",
       buttons: ["Relaunch Big Tree Viewer and Install", "Later"],
-      defaultId: 0,
+      defaultId: 1,
       cancelId: 1,
-    });
-    if (result.response === 0) autoUpdater.quitAndInstall();
+    };
+    const result = parent
+      ? await dialog.showMessageBox(parent, updateReadyOptions)
+      : await dialog.showMessageBox(updateReadyOptions);
+    if (result.response === 0) {
+      try {
+        await prepareAgentBackendsForUpdate();
+        autoUpdater.quitAndInstall();
+      } catch (error) {
+        await fs.rm(agentUpdateLockPath(), { force: true }).catch(() => {});
+        const options = {
+          type: "error",
+          title: "Update Could Not Start",
+          message: "Big Tree Viewer could not prepare the app for updating.",
+          detail: error instanceof Error ? error.message : String(error),
+          buttons: ["OK"],
+        };
+        if (parent) await dialog.showMessageBox(parent, options);
+        else await dialog.showMessageBox(options);
+      }
+    }
   });
-  autoUpdater.on("error", () => {
+  autoUpdater.on("error", async () => {
     updateCheckIsManual = false;
     updateCheckInProgress = false;
     updateDownloadInProgress = false;
     setUpdateProgress(-1);
-    closeUpdateProgressWindow();
+    await closeUpdateProgressWindow();
   });
 
   const initialCheck = setTimeout(() => void checkForUpdates(false), 15_000);
@@ -849,6 +922,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       return;
     }
+    await fs.rm(agentUpdateLockPath(), { force: true });
     await loadRecentPaths();
     const initialPaths = collectTreePaths(process.argv);
     pendingOpenPaths.push(...initialPaths);
