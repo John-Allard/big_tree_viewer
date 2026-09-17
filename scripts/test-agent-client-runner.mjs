@@ -52,7 +52,15 @@ try {
   const genericInstructions = genericAgentSetupInstructions(registrationLaunch);
   assert.match(genericInstructions, /local Big Tree Viewer MCP server/);
   assert.match(genericInstructions, /user or global scope/);
-  assert.match(genericInstructions, new RegExp(launch.command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const setupJson = genericInstructions.match(/\n(\{[\s\S]*\})\n\nAfter registering it,/)?.[1];
+  assert.ok(setupJson, "Generic setup instructions must contain a JSON connection description.");
+  assert.deepEqual(JSON.parse(setupJson), {
+    name: "bigtreeviewer",
+    transport: "stdio",
+    command: registrationLaunch.command,
+    args: registrationLaunch.args,
+    env: registrationLaunch.env,
+  });
   assert.match(genericInstructions, /BTV_CACHE/);
   assert.match(genericInstructions, /launch this command on demand/);
   const migrated = await ensureAgentClientRegistration(commandName, {
