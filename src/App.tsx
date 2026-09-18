@@ -5427,6 +5427,14 @@ export default function App() {
   ]);
 
   const loadFileAsTreeOrSession = useCallback(async (file: File): Promise<void> => {
+    const rememberDesktopFile = async (): Promise<void> => {
+      if (!window.bigTreeViewerDesktop) return;
+      try {
+        await window.bigTreeViewerDesktop.rememberOpenedFile(file);
+      } catch {
+        // Loading the file is more important than updating the convenience menu.
+      }
+    };
     setSessionError(null);
     setLoadState((current) => ({ ...current, error: null }));
     if (fileLooksLikeSession(file)) {
@@ -5438,6 +5446,7 @@ export default function App() {
         if (!await loadFullSessionFromObject(session, file.name)) {
           throw new Error("The session file did not include a tree.");
         }
+        await rememberDesktopFile();
         setSessionStatus(`Loaded session from ${file.name}.`);
       } catch (error) {
         setSessionStatus("");
@@ -5450,6 +5459,7 @@ export default function App() {
     const text = await file.text();
     try {
       await parseText(text, file.name);
+      await rememberDesktopFile();
       setHideDownloadNewick(false);
     } catch {
       // parseText has already populated the user-facing load error.

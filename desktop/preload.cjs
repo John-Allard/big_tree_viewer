@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const queuedPaths = [];
 const listeners = new Set();
@@ -54,6 +54,10 @@ contextBridge.exposeInMainWorld("bigTreeViewerDesktop", {
   },
   openFiles: () => ipcRenderer.invoke("btv:choose-tree-files"),
   grantFile: (filePath) => ipcRenderer.invoke("btv:grant-file", filePath),
+  rememberOpenedFile: (file) => {
+    const filePath = webUtils.getPathForFile(file);
+    return filePath ? ipcRenderer.invoke("btv:remember-opened-file", filePath) : Promise.resolve(false);
+  },
   saveFile: (suggestedName, data) => ipcRenderer.invoke("btv:save-file", suggestedName, data),
   onAgentRequest(callback) {
     agentListeners.add(callback);

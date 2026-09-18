@@ -76,6 +76,31 @@ try {
   if (!taxonomyStorageCapabilities.indexedDb || !taxonomyStorageCapabilities.openPicker || !taxonomyStorageCapabilities.savePicker) {
     throw new Error(`The desktop taxonomy file/cache APIs are unavailable: ${JSON.stringify(taxonomyStorageCapabilities)}`);
   }
+  await emptyPage.evaluate(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.id = "desktop-smoke-drop-input";
+    document.body.appendChild(input);
+  });
+  await emptyPage.locator("#desktop-smoke-drop-input").setInputFiles(fixturePath);
+  await emptyPage.evaluate(() => {
+    const input = document.querySelector("#desktop-smoke-drop-input");
+    const viewer = document.querySelector(".viewer-panel");
+    const file = input instanceof HTMLInputElement ? input.files?.[0] : null;
+    if (!file || !viewer) throw new Error("Could not prepare the desktop drop test.");
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    viewer.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+  });
+  await emptyPage.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true, undefined, { timeout: 15_000 });
+  const droppedRecentItems = await emptyApp.evaluate(({ Menu }) => {
+    const fileMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "File");
+    const recentMenu = fileMenu?.submenu?.items.find((item) => item.label === "Open Recent");
+    return recentMenu?.submenu?.items.map((item) => item.label).filter(Boolean) ?? [];
+  });
+  if (!droppedRecentItems.includes(path.basename(fixturePath))) {
+    throw new Error("The drag-and-dropped tree was not added to Open Recent.");
+  }
 } finally {
   await emptyApp.close();
 }

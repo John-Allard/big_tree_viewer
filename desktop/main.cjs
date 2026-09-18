@@ -795,6 +795,14 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     registerAppProtocol();
     ipcMain.handle("btv:grant-file", (_event, filePath) => grantFile(filePath));
+    ipcMain.handle("btv:remember-opened-file", async (_event, filePath) => {
+      if (!isSupportedTreePath(filePath)) return false;
+      const resolvedPath = path.resolve(filePath);
+      const fileInfo = await fs.stat(resolvedPath);
+      if (!fileInfo.isFile()) return false;
+      await rememberRecentPaths([resolvedPath]);
+      return true;
+    });
     ipcMain.handle("btv:choose-tree-files", (event) => chooseTreeFiles(BrowserWindow.fromWebContents(event.sender) || activeWindow()));
     ipcMain.handle("btv:save-file", async (event, suggestedName, data) => {
       const safeName = typeof suggestedName === "string" && suggestedName.trim()
