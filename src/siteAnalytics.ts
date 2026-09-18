@@ -1,20 +1,3 @@
-type GoatCounterOptions = {
-  endpoint?: string;
-  no_events?: boolean;
-  no_onload?: boolean;
-  count?: (values?: {
-    path?: string;
-    title?: string;
-    referrer?: string;
-  }) => void;
-};
-
-declare global {
-  interface Window {
-    goatcounter?: GoatCounterOptions;
-  }
-}
-
 const PRODUCTION_HOSTS = new Set(["bigtreeviewer.net", "www.bigtreeviewer.net"]);
 
 function analyticsPath(): string {
@@ -50,38 +33,42 @@ function analyticsReferrer(): string {
   }
 }
 
+function sendPageView(endpoint: string, path: string): void {
+  const url = new URL(endpoint);
+  url.searchParams.set("p", path);
+  url.searchParams.set("t", document.title);
+  const referrer = analyticsReferrer();
+  if (referrer) url.searchParams.set("r", referrer);
+  url.searchParams.set("rnd", Math.random().toString(36).slice(2, 7));
+
+  if (navigator.sendBeacon(url.toString())) return;
+
+  const fallback = new Image(1, 1);
+  fallback.alt = "";
+  fallback.src = url.toString();
+}
+
 export function startSiteAnalytics(): void {
   const endpoint = import.meta.env.VITE_GOATCOUNTER_ENDPOINT?.trim();
-  if (!endpoint || !PRODUCTION_HOSTS.has(window.location.hostname)) return;
+  if (
+    !endpoint
+    || !PRODUCTION_HOSTS.has(window.location.hostname)
+    || navigator.webdriver
+    || (document.visibilityState as string) === "prerender"
+    || window.self !== window.top
+  ) {
+    return;
+  }
 
   let lastCountedPath = "";
   const countCurrentPage = (): void => {
     const path = analyticsPath();
-    if (path === lastCountedPath || !window.goatcounter?.count) return;
+    if (path === lastCountedPath) return;
     lastCountedPath = path;
-    window.goatcounter.count({
-      path,
-      title: document.title,
-      referrer: analyticsReferrer(),
-    });
+    sendPageView(endpoint, path);
   };
 
-  window.goatcounter = {
-    ...window.goatcounter,
-    endpoint,
-    no_events: true,
-    no_onload: true,
-  };
-
-  const script = document.createElement("script");
-  script.async = true;
-  script.src = "https://gc.zgo.at/count.v5.js";
-  script.crossOrigin = "anonymous";
-  script.integrity = "sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ";
-  script.dataset.goatcounter = endpoint;
-  script.addEventListener("load", countCurrentPage, { once: true });
-  document.head.append(script);
-
+  window.requestAnimationFrame(countCurrentPage);
   window.addEventListener("hashchange", () => {
     window.requestAnimationFrame(countCurrentPage);
   });
