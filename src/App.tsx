@@ -7652,7 +7652,17 @@ export default function App() {
         </button>
         <div className="panel-title-row">
           <div className="panel-title-block">
-            <h1>Big Tree Viewer</h1>
+            <div className="panel-title-heading">
+              {!window.bigTreeViewerDesktop ? (
+                <img
+                  className="panel-app-icon"
+                  src={`${import.meta.env.BASE_URL}icon-192.png`}
+                  alt=""
+                  aria-hidden="true"
+                />
+              ) : null}
+              <h1>Big Tree Viewer</h1>
+            </div>
             {!window.bigTreeViewerDesktop ? (
               <p>by <a className="panel-author-link" href="http://allardjb.com/" target="_blank" rel="noopener noreferrer">John B. Allard</a></p>
             ) : null}

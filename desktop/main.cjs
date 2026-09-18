@@ -573,6 +573,21 @@ async function showDefaultApplicationHelp() {
   });
 }
 
+async function showAboutDialog() {
+  const result = await dialog.showMessageBox(activeWindow(), {
+    type: "info",
+    title: "About Big Tree Viewer",
+    message: "Big Tree Viewer",
+    detail: `Version ${app.getVersion()}\n\nInteractive viewer for very large phylogenetic trees.`,
+    buttons: ["Visit Website", "OK"],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (result.response === 0) {
+    void shell.openExternal("https://bigtreeviewer.net/");
+  }
+}
+
 async function chooseTreeFiles(parent = activeWindow()) {
   const result = await dialog.showOpenDialog(parent, {
     title: "Open tree or Big Tree Viewer session",
@@ -653,6 +668,10 @@ function installApplicationMenu({ allowNewWindow = !automationMode } = {}) {
         { label: "Connect an AI Agent...", click: () => void showAgentConnectionDialog() },
         { label: "Big Tree Viewer Website", click: () => void shell.openExternal("https://bigtreeviewer.net/") },
         { label: "Learn More", click: () => void shell.openExternal("https://bigtreeviewer.net/#about") },
+        ...(process.platform === "darwin" ? [] : [
+          { type: "separator" },
+          { label: "About Big Tree Viewer", click: () => void showAboutDialog() },
+        ]),
       ],
     },
   ];

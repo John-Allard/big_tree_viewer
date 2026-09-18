@@ -304,6 +304,19 @@ button.secondary {
   min-width: 0;
 }
 
+.panel-title-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.panel-app-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
 .panel-title-block p {
   margin: 0.32rem 0 0;
   font-size: 0.82rem;
