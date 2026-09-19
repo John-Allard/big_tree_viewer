@@ -7663,14 +7663,12 @@ export default function App() {
         <div className="panel-title-row">
           <div className="panel-title-block">
             <div className="panel-title-heading">
-              {!window.bigTreeViewerDesktop ? (
-                <img
-                  className="panel-app-icon"
-                  src={`${import.meta.env.BASE_URL}icon-192.png`}
-                  alt=""
-                  aria-hidden="true"
-                />
-              ) : null}
+              <img
+                className="panel-app-icon"
+                src={`${import.meta.env.BASE_URL}icon-192.png`}
+                alt=""
+                aria-hidden="true"
+              />
               <h1>Big Tree Viewer</h1>
             </div>
             {!window.bigTreeViewerDesktop ? (
