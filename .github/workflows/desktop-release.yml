@@ -57,6 +57,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:agent-connect
+      - run: npm run test:update-dialog
       - run: npm run build:desktop:web
       - name: Validate Apple signing secrets
         env:

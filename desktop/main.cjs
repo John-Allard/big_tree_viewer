@@ -7,6 +7,7 @@ const path = require("node:path");
 const v8 = require("node:v8");
 const { pathToFileURL } = require("node:url");
 const { agentClientEnvironment, agentClientRegistrationArguments, ensureAgentClientRegistration, findAgentClientCommand, genericAgentSetupInstructions, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
+const { showUpdateReadyDialog } = require("./update-ready-dialog.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -479,21 +480,13 @@ function configureAutoUpdates() {
   autoUpdater.on("update-downloaded", async (info) => {
     updateDownloadInProgress = false;
     setUpdateProgress(-1);
-    await closeUpdateProgressWindow();
-    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const updateReadyOptions = {
-      type: "info",
-      title: "Update Ready",
-      message: `Big Tree Viewer ${info.version} has been downloaded.`,
-      detail: "Relaunch Big Tree Viewer to install the update. Unsaved work will be lost.",
-      buttons: ["Relaunch Big Tree Viewer and Install", "Later"],
-      defaultId: 1,
-      cancelId: 1,
-    };
-    const result = parent
-      ? await dialog.showMessageBox(parent, updateReadyOptions)
-      : await dialog.showMessageBox(updateReadyOptions);
-    if (result.response === 0) {
+    const confirmed = await showUpdateReadyDialog({
+      dialog,
+      mainWindow,
+      closeProgressWindow: closeUpdateProgressWindow,
+      version: info.version,
+    });
+    if (confirmed) {
       try {
         await prepareAgentBackendsForUpdate();
         autoUpdater.quitAndInstall();
@@ -506,7 +499,7 @@ function configureAutoUpdates() {
           detail: error instanceof Error ? error.message : String(error),
           buttons: ["OK"],
         };
-        if (parent) await dialog.showMessageBox(parent, options);
+        if (mainWindow && !mainWindow.isDestroyed()) await dialog.showMessageBox(mainWindow, options);
         else await dialog.showMessageBox(options);
       }
     }
