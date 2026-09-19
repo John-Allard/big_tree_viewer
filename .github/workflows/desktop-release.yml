@@ -32,6 +32,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:agent-connect
+      - run: npm run test:update-dialog
       - run: npm run build:desktop:web
       - run: npx electron-builder --linux AppImage deb --x64 --publish never
       - name: Smoke-test packaged app and file association launch
@@ -57,6 +58,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:agent-connect
+      - run: npm run test:update-dialog
       - run: npm run build:desktop:web
       - name: Validate Apple signing secrets
         env:
@@ -93,8 +95,10 @@ jobs:
           xcrun stapler validate "release/mac-universal/Big Tree Viewer.app"
           spctl --assess --type execute --verbose=4 "release/mac-universal/Big Tree Viewer.app"
           hdiutil verify "release/Big-Tree-Viewer-macOS-universal.dmg"
-      - name: Test packaged MCP helper and desktop tools
-        run: npm run test:desktop:agent -- "release/mac-universal/Big Tree Viewer.app/Contents/MacOS/Big Tree Viewer" "release/mac-universal/Big Tree Viewer.app/Contents/Resources/bin/bigtreeviewer-mcp"
+      - name: Test packaged desktop tools
+        run: npm run test:desktop:agent -- "release/mac-universal/Big Tree Viewer.app/Contents/MacOS/Big Tree Viewer"
+      - name: Test headless MCP and macOS application lifecycle
+        run: npm run test:mcp-lifecycle -- "release/mac-universal/Big Tree Viewer.app"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-macos
@@ -121,6 +125,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:agent-connect
+      - run: npm run test:update-dialog
       - run: npm run build:desktop:web
       - name: Build unpacked Windows application
         run: npx electron-builder --win --x64 --dir --publish never
