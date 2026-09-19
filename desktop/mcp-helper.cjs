@@ -16,6 +16,7 @@ const version = process.env.BTV_APP_VERSION || require("../package.json").versio
 const connectionId = crypto.randomUUID();
 const ownerStartedAt = Date.now();
 const activeSessions = new Set();
+let activeCalls = 0;
 let runtimeDirectory;
 let socketServer;
 let backendSocket;
@@ -123,7 +124,7 @@ async function stopBackend() {
 
 function scheduleIdleBackendStop() {
   clearTimeout(idleTimer);
-  if (activeSessions.size > 0 || !backendChild) return;
+  if (activeSessions.size > 0 || activeCalls > 0 || !backendChild) return;
   idleTimer = setTimeout(() => { void stopBackend(); }, 5_000);
   idleTimer.unref();
 }
@@ -189,7 +190,6 @@ function trackSessions(name, args, result) {
   const data = result?.structuredContent;
   if (name === "open_tree" && data?.sessionId) activeSessions.add(data.sessionId);
   if (name === "close_tree" && result?.isError !== true) activeSessions.delete(args.sessionId);
-  scheduleIdleBackendStop();
 }
 
 async function shutdown(exitCode = 0) {
@@ -208,6 +208,8 @@ async function main() {
   const server = new McpServer({ name: "big-tree-viewer", version });
   for (const [name, definition] of Object.entries(toolDefinitions)) {
     server.registerTool(name, { description: definition.description, inputSchema: definition.shape }, async (args, extra) => {
+      clearTimeout(idleTimer);
+      activeCalls += 1;
       try {
         const client = await startBackend();
         const result = await client.callTool({ name, arguments: args }, undefined, {
@@ -221,8 +223,10 @@ async function main() {
         trackSessions(name, args, result);
         return result;
       } catch (error) {
-        scheduleIdleBackendStop();
         return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
+      } finally {
+        activeCalls -= 1;
+        scheduleIdleBackendStop();
       }
     });
   }
