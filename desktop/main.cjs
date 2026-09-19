@@ -30,6 +30,7 @@ const mcpSocketArgument = process.argv.find((argument) => argument.startsWith("-
 const mcpSocket = mcpSocketArgument?.slice("--mcp-socket=".length);
 const automationMode = process.argv.includes("--mcp") || Boolean(mcpSocket) || commandIndex !== -1;
 app.setName("Big Tree Viewer");
+if (process.platform === "linux") app.setDesktopName("BigTreeViewer.desktop");
 if (automationMode && process.platform === "darwin") app.setActivationPolicy("accessory");
 if (automationMode && !process.env.BTV_USER_DATA_DIR) {
   const profile = process.env.BTV_AGENT_PROFILE || "default";
@@ -645,6 +646,21 @@ async function showDefaultApplicationHelp() {
   });
 }
 
+async function showAboutDialog() {
+  const result = await dialog.showMessageBox(activeWindow(), {
+    type: "info",
+    title: "About Big Tree Viewer",
+    message: "Big Tree Viewer",
+    detail: `Version ${app.getVersion()}\n\nInteractive viewer for very large phylogenetic trees.`,
+    buttons: ["Visit Website", "OK"],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (result.response === 0) {
+    void shell.openExternal("https://bigtreeviewer.net/");
+  }
+}
+
 async function chooseTreeFiles(parent = activeWindow()) {
   const result = await dialog.showOpenDialog(parent, {
     title: "Open tree or Big Tree Viewer session",
@@ -725,6 +741,10 @@ function installApplicationMenu({ allowNewWindow = !automationMode } = {}) {
         { label: "Connect an AI Agent...", click: () => void showAgentConnectionDialog() },
         { label: "Big Tree Viewer Website", click: () => void shell.openExternal("https://bigtreeviewer.net/") },
         { label: "Learn More", click: () => void shell.openExternal("https://bigtreeviewer.net/#about") },
+        ...(process.platform === "darwin" ? [] : [
+          { type: "separator" },
+          { label: "About Big Tree Viewer", click: () => void showAboutDialog() },
+        ]),
       ],
     },
   ];
@@ -848,6 +868,14 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     registerAppProtocol();
     ipcMain.handle("btv:grant-file", (_event, filePath) => grantFile(filePath));
+    ipcMain.handle("btv:remember-opened-file", async (_event, filePath) => {
+      if (!isSupportedTreePath(filePath)) return false;
+      const resolvedPath = path.resolve(filePath);
+      const fileInfo = await fs.stat(resolvedPath);
+      if (!fileInfo.isFile()) return false;
+      await rememberRecentPaths([resolvedPath]);
+      return true;
+    });
     ipcMain.handle("btv:choose-tree-files", (event) => chooseTreeFiles(BrowserWindow.fromWebContents(event.sender) || activeWindow()));
     ipcMain.handle("btv:save-file", async (event, suggestedName, data) => {
       const safeName = typeof suggestedName === "string" && suggestedName.trim()

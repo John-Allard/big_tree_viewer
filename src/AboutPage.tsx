@@ -197,7 +197,7 @@ const capabilities = [
   },
   {
     label: "Privacy",
-    text: "Everything runs in the browser. Trees, metadata, and taxonomy mappings stay on your machine.",
+    text: "Trees, metadata, and taxonomy mappings stay on your machine. The website records anonymous aggregate visit statistics without sending tree data, URL parameters, or persistent identifiers.",
   },
 ] as const;
 

@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BIG_TREE_VIEWER_BASE: /
+      VITE_GOATCOUNTER_ENDPOINT: ${{ vars.GOATCOUNTER_ENDPOINT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
