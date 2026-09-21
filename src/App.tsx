@@ -7685,11 +7685,6 @@ export default function App() {
 
         <PanelSection title="Data" isOpen={dataOpen} onToggle={() => setDataOpen(!dataOpen)} tourId="data">
           <div className="button-row">
-            {!window.bigTreeViewerDesktop ? (
-              <button type="button" onClick={() => void loadExample()} disabled={loadState.loading || sessionLoading} title="Load the bundled example tree and reset the current tree view.">
-                Load Example
-              </button>
-            ) : null}
             <button
               type="button"
               className="secondary"
@@ -7714,6 +7709,11 @@ export default function App() {
             >
               Paste Newick
             </button>
+            {!window.bigTreeViewerDesktop ? (
+              <button type="button" className="secondary" onClick={() => void loadExample()} disabled={loadState.loading || sessionLoading} title="Load the bundled example tree and reset the current tree view.">
+                Load Example
+              </button>
+            ) : null}
             <input
               ref={fileInputRef}
               type="file"
