@@ -222,6 +222,54 @@ test("Y-only zoom preserves connector width while tip labels displace both trees
   expect(Number(after?.comparisonTipX)).toBeGreaterThan(Number(before?.comparisonTipX) + 50);
 });
 
+test("fit view contains both trees when a small comparison shows long tip labels", async ({ page }) => {
+  const labels = Array.from(
+    { length: 32 },
+    (_, index) => `Species_${index.toString().padStart(2, "0")}_with_a_long_descriptive_name`,
+  );
+  const primaryNewick = `(${labels.map((label) => `${label}:1`).join(",")})Primary;`;
+  const comparisonNewick = `(${[...labels].reverse().map((label) => `${label}:1`).join(",")})Comparison;`;
+
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(primaryNewick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill(comparisonNewick);
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+
+  const canvas = page.getByLabel("Tree comparison view");
+  await expect(canvas).toBeVisible();
+  await page.getByRole("button", { name: "Fit View" }).click();
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState();
+    const camera = state?.camera as { zoom?: number; zoomX?: number; panX?: number; panY?: number } | undefined;
+    return state?.labelsVisible === true
+      && camera?.zoom === 1
+      && camera?.zoomX === 1
+      && camera?.panX === 0
+      && camera?.panY === 0;
+  });
+
+  const [state, bounds] = await Promise.all([
+    page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState()),
+    canvas.boundingBox(),
+  ]);
+  expect(bounds).not.toBeNull();
+  const width = bounds!.width;
+  expect(Number(state?.primaryRootX)).toBeGreaterThanOrEqual(0);
+  expect(Number(state?.primaryTipX)).toBeGreaterThan(Number(state?.primaryRootX));
+  expect(Number(state?.primaryLabelStartX)).toBeGreaterThanOrEqual(0);
+  expect(Number(state?.connectorStartX)).toBeLessThan(Number(state?.connectorEndX));
+  expect(Number(state?.comparisonLabelEndX)).toBeLessThanOrEqual(width);
+  expect(Number(state?.comparisonTipX)).toBeLessThan(Number(state?.comparisonRootX));
+  expect(Number(state?.comparisonRootX)).toBeLessThanOrEqual(width);
+});
+
 test("comparison tree can be dropped without opening the native file picker", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));

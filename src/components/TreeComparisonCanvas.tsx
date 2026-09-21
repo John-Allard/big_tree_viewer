@@ -563,6 +563,18 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const centerWidth = comparisonCenterWidth(size.width, effectiveCenterWidthScale);
     const fitPrimaryTipX = (size.width - centerWidth) / 2;
     const fitComparisonTipX = size.width - fitPrimaryTipX;
+    const fitPrimaryRootX = 24;
+    const fitComparisonRootX = size.width - 24;
+    const fitTreeWidth = Math.max(1, fitPrimaryTipX - fitPrimaryRootX);
+    const minimumFitBranchWidth = Math.min(64, fitTreeWidth * 0.3);
+    const maximumPrimaryLabelWidth = Math.max(
+      8,
+      fitTreeWidth - ribbonsWidth - minimumFitBranchWidth - 4,
+    );
+    const maximumComparisonLabelWidth = Math.max(
+      8,
+      fitTreeWidth - minimumFitBranchWidth - 4,
+    );
     const viewportCenterX = size.width / 2;
     const transformX = (x: number) => viewportCenterX + ((x - viewportCenterX) * camera.zoomX) + camera.panX;
     const unshiftedPrimaryTipX = transformX(fitPrimaryTipX);
@@ -577,7 +589,12 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const tipFontSize = Math.max(9, Math.min(15, 11 * figureStyles.tip.sizeScale));
     context.font = `${figureStyles.tip.italic ? "italic " : ""}${figureStyles.tip.bold ? "700 " : ""}${tipFontSize}px ${fontFamilyCss(figureStyles.tip.fontFamily)}`;
     context.textBaseline = "middle";
-    const maximumLabelWidth = (tree: TreeModel, leaves: number[], yForNode: (node: number) => number): number => {
+    const maximumLabelWidth = (
+      tree: TreeModel,
+      leaves: number[],
+      yForNode: (node: number) => number,
+      availableWidth: number,
+    ): number => {
       let maximum = 8;
       for (const node of leaves) {
         if (!visible(yForNode(node))) {
@@ -587,15 +604,16 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
           (tree.names[node] || "Unnamed tip").replaceAll("_", " "),
         ).width);
       }
-      return figureStyles.tip.limitWidth
+      const configuredMaximum = figureStyles.tip.limitWidth
         ? Math.min(maximum, Math.max(40, figureStyles.tip.maxWidthPx ?? 240))
         : maximum;
+      return Math.min(configuredMaximum, availableWidth);
     };
     const primaryLabelWidth = labelSpaceProgress > 0
-      ? maximumLabelWidth(primaryTree, comparison.primaryLeaves, primaryY)
+      ? maximumLabelWidth(primaryTree, comparison.primaryLeaves, primaryY, maximumPrimaryLabelWidth)
       : 0;
     const comparisonLabelWidth = labelSpaceProgress > 0
-      ? maximumLabelWidth(comparisonTree, comparison.comparisonLeaves, secondaryY)
+      ? maximumLabelWidth(comparisonTree, comparison.comparisonLeaves, secondaryY, maximumComparisonLabelWidth)
       : 0;
     const primaryTreeDisplacement = ribbonsWidth + ((primaryLabelWidth + 4) * labelSpaceProgress);
     const comparisonTreeDisplacement = (comparisonLabelWidth + 4) * labelSpaceProgress;
@@ -609,10 +627,8 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     const primaryLabelStartX = primaryLabelEndX - primaryLabelWidth;
     const comparisonLabelStartX = connectorEndX + 3;
     const comparisonLabelEndX = comparisonLabelStartX + comparisonLabelWidth;
-    const fitPrimaryRootX = 24;
-    const fitComparisonRootX = size.width - 24;
-    const primaryRootX = transformX(fitPrimaryRootX) - primaryTreeDisplacement;
-    const comparisonRootX = transformX(fitComparisonRootX) + comparisonTreeDisplacement;
+    const primaryRootX = transformX(fitPrimaryRootX);
+    const comparisonRootX = transformX(fitComparisonRootX);
     const branchWidth = Math.max(0.45, branchThicknessScale);
     const primaryDepthSpan = Math.max(1e-12, primaryTree.maxDepth - primaryTree.buffers.depth[primaryTree.root]);
     const comparisonDepthSpan = Math.max(1e-12, comparisonTree.maxDepth - comparisonTree.buffers.depth[comparisonTree.root]);
@@ -620,8 +636,18 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       + ((primaryTree.buffers.depth[node] - primaryTree.buffers.depth[primaryTree.root]) / primaryDepthSpan) * (fitPrimaryTipX - fitPrimaryRootX);
     const fitComparisonX = (node: number) => fitComparisonRootX
       - ((comparisonTree.buffers.depth[node] - comparisonTree.buffers.depth[comparisonTree.root]) / comparisonDepthSpan) * (fitComparisonRootX - fitComparisonTipX);
-    const primaryX = (node: number) => transformX(fitPrimaryX(node)) - primaryTreeDisplacement;
-    const comparisonX = (node: number) => transformX(fitComparisonX(node)) + comparisonTreeDisplacement;
+    const primaryX = (node: number) => {
+      const depthProgress = Math.max(0, Math.min(1,
+        (primaryTree.buffers.depth[node] - primaryTree.buffers.depth[primaryTree.root]) / primaryDepthSpan,
+      ));
+      return transformX(fitPrimaryX(node)) - (primaryTreeDisplacement * depthProgress);
+    };
+    const comparisonX = (node: number) => {
+      const depthProgress = Math.max(0, Math.min(1,
+        (comparisonTree.buffers.depth[node] - comparisonTree.buffers.depth[comparisonTree.root]) / comparisonDepthSpan,
+      ));
+      return transformX(fitComparisonX(node)) + (comparisonTreeDisplacement * depthProgress);
+    };
 
     const drawTree = (
       tree: TreeModel,
