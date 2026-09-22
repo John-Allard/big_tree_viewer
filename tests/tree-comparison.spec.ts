@@ -270,6 +270,62 @@ test("fit view contains both trees when a small comparison shows long tip labels
   expect(Number(state?.comparisonRootX)).toBeLessThanOrEqual(width);
 });
 
+test("fit view contains the reported 34-tip comparison on a HiDPI display", async ({ browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 720 },
+    deviceScaleFactor: 1.5,
+  });
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    window.localStorage.setItem("big-tree-viewer-tutorial-dismissed", "true");
+  });
+  const [primaryNewick, comparisonNewick] = await Promise.all([
+    readFile(path.join(process.cwd(), "tests/fixtures/comparison-34-reference.nwk"), "utf8"),
+    readFile(path.join(process.cwd(), "tests/fixtures/comparison-34-alternative.nwk"), "utf8"),
+  ]);
+
+  await page.goto("http://127.0.0.1:4173/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(primaryNewick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded));
+  await page.getByRole("button", { name: "Tree Comparison" }).click();
+  const panel = page.locator(".panel-section").filter({ has: page.getByRole("button", { name: "Tree Comparison" }) });
+  await panel.getByRole("button", { name: "Paste Newick" }).click();
+  await panel.getByPlaceholder("Paste the comparison tree in Newick or NEXUS format").fill(comparisonNewick);
+  await panel.getByRole("button", { name: "Load Comparison" }).click();
+
+  const canvas = page.getByLabel("Tree comparison view");
+  await expect(canvas).toBeVisible();
+  await page.getByRole("button", { name: "Fit View" }).click();
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState().labelsVisible === true);
+
+  const [state, bounds, shellBounds, canvasDimensions] = await Promise.all([
+    page.evaluate(() => window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState()),
+    canvas.boundingBox(),
+    page.locator(".tree-comparison-shell").boundingBox(),
+    canvas.evaluate((element) => ({
+      backingWidth: (element as HTMLCanvasElement).width,
+      clientWidth: (element as HTMLCanvasElement).clientWidth,
+    })),
+  ]);
+  expect(bounds).not.toBeNull();
+  expect(shellBounds).not.toBeNull();
+  expect(bounds!.width).toBeCloseTo(shellBounds!.width, 5);
+  expect(bounds!.height).toBeCloseTo(shellBounds!.height, 5);
+  expect(canvasDimensions.backingWidth).toBeGreaterThan(canvasDimensions.clientWidth);
+  expect(Number(state?.sharedTipCount)).toBe(34);
+  expect(Number(state?.primaryRootX)).toBeGreaterThanOrEqual(0);
+  expect(Number(state?.primaryTipX)).toBeGreaterThan(Number(state?.primaryRootX));
+  expect(Number(state?.primaryLabelStartX)).toBeGreaterThanOrEqual(0);
+  expect(Number(state?.connectorStartX)).toBeLessThan(Number(state?.connectorEndX));
+  expect(Number(state?.comparisonLabelEndX)).toBeLessThanOrEqual(bounds!.width);
+  expect(Number(state?.comparisonTipX)).toBeLessThan(Number(state?.comparisonRootX));
+  expect(Number(state?.comparisonRootX)).toBeLessThanOrEqual(bounds!.width);
+  await context.close();
+});
+
 test("comparison tree can be dropped without opening the native file picker", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
