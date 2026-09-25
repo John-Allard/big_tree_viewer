@@ -709,6 +709,18 @@ button.secondary {
   padding: 0 0 2rem;
 }
 
+.about-demo {
+  margin: 0 0 2rem;
+}
+
+.about-demo video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
 .site-doc-nav {
   display: flex;
   flex-wrap: wrap;

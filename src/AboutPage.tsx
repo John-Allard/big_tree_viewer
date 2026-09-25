@@ -202,6 +202,8 @@ const capabilities = [
 ] as const;
 
 export default function AboutPage() {
+  const [autoplayDemo] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
   return (
     <main className="about-page">
       <div className="about-page-frame">
@@ -237,6 +239,24 @@ export default function AboutPage() {
             </a>
           </div>
         </header>
+
+        <section className="about-demo" aria-label="Feature demonstration">
+          <video
+            controls
+            autoPlay={autoplayDemo}
+            loop
+            muted
+            playsInline
+            preload="metadata"
+            width={1920}
+            height={1200}
+            poster={`${import.meta.env.BASE_URL}about/feature-demo-v12.jpg`}
+            aria-label="Big Tree Viewer feature demonstration"
+          >
+            <source src={`${import.meta.env.BASE_URL}about/feature-demo-v12.mp4`} type="video/mp4" />
+            <a href={`${import.meta.env.BASE_URL}about/feature-demo-v12.mp4`}>Watch the feature demonstration</a>
+          </video>
+        </section>
 
         <section className="about-intro">
           <div className="about-intro-copy">
