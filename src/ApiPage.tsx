@@ -147,6 +147,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <div><dt>btv_taxonomy_branch_colors</dt><dd>Color branches from taxonomy mapping.</dd></div>
             <div><dt>btv_map_taxonomy</dt><dd>Run standard taxonomy mapping after launch using the selected cached taxonomy archive.</dd></div>
             <div><dt>btv_taxonomy_source</dt><dd>`ncbi` (default) or `catalogue-of-life`.</dd></div>
+            <div><dt>btv_taxonomy_identifier_mode</dt><dd>`scientific-name` or `ncbi-taxid`. When omitted, BTV detects explicit TaxID labels automatically. TaxID mode accepts forms such as `taxid=9606`, `_taxid_9606`, or a bare numeric ID and requires NCBI Taxonomy.</dd></div>
             <div><dt>btv_taxonomy_allow_download</dt><dd>`true` explicitly allows launch/API taxonomy mapping to download the selected official archive if it is not already available.</dd></div>
             <div><dt>btv_palette</dt><dd>Taxonomy color palette key.</dd></div>
             <div><dt>btv_branch_thickness</dt><dd>Branch thickness scale, for example `1.5`.</dd></div>
@@ -213,11 +214,12 @@ window.addEventListener("message", (event) => {
           </p>
           <p>
             Taxon records may include species, unranked, or intermediate nodes.
-            Big Tree Viewer follows `parentTaxId` links and extracts superkingdom,
-            kingdom, phylum, class, order, family, and genus. A parent link may also skip
-            omitted intermediate nodes and point directly to the next supplied
-            ancestor. End a lineage with a null, omitted, or self-referencing
-            parent.
+            Big Tree Viewer follows `parentTaxId` links and extracts the standard
+            ranks by default. Supported intermediate ranks such as superfamily,
+            tribe, and subgenus are retrieved only when explicitly requested in
+            taxonomy overlay settings or the API. A parent link may skip omitted intermediate nodes and point
+            directly to the next supplied ancestor. End a lineage with a null,
+            omitted, or self-referencing parent.
           </p>
           <pre><code>{`viewer.postMessage({
   type: "big-tree-viewer:load",
@@ -281,6 +283,8 @@ window.addEventListener("message", (event) => {
     },
     runMapping?: boolean,
     source?: "ncbi" | "catalogue-of-life",
+    identifierMode?: "scientific-name" | "ncbi-taxid",
+    ranks?: string[],
     lowMemoryMode?: boolean,
     allowDownload?: boolean
   },
@@ -318,7 +322,7 @@ window.addEventListener("message", (event) => {
     taxonomyEnabled?: boolean,
     taxonomyBranchColoringEnabled?: boolean,
     useAutomaticTaxonomyRankVisibility?: boolean,
-    taxonomyRankVisibility?: { superkingdom?: boolean, kingdom?: boolean, phylum?: boolean, class?: boolean, order?: boolean, family?: boolean, genus?: boolean },
+    taxonomyRankVisibility?: { [rank: string]: boolean | undefined },
     taxonomyRankDisplayModes?: { kingdom?: "hidden" | "label-only" | "ribbon", [rank: string]: "hidden" | "label-only" | "ribbon" | undefined },
     figureStyles?: {
       tip?: { sizeScale?: number, limitWidth?: boolean, maxWidthPx?: number, overflowMode?: "truncate" | "scale" },

@@ -1,7 +1,7 @@
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
 import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
 import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./timeAxis";
-import type { TaxonomyCollapseFallback, TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank, TaxonomySource } from "../types/taxonomy";
+import type { TaxonomyCollapseFallback, TaxonomyCollapseRank, TaxonomyIdentifierMode, TaxonomyMapPayload, TaxonomyRank, TaxonomySource } from "../types/taxonomy";
 import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
@@ -10,6 +10,7 @@ import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, 
 
 export type SharedSubtreeTaxonomyEntry = {
   name: string;
+  sourceTaxId?: number;
   ranks: Partial<Record<TaxonomyRank, string>>;
   taxIds?: Partial<Record<TaxonomyRank, number>>;
   collapseFallbacks?: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
@@ -18,10 +19,12 @@ export type SharedSubtreeTaxonomyEntry = {
 export type SharedSubtreeTaxonomyPayload = {
   version?: number;
   source?: TaxonomySource;
+  identifierMode?: TaxonomyIdentifierMode;
   sourceVersion?: string;
   sourceDoi?: string;
   mappedCount: number;
   totalTips: number;
+  resolvedRanks?: TaxonomyRank[];
   activeRanks: TaxonomyRank[];
   tipEntries: SharedSubtreeTaxonomyEntry[];
 };
@@ -266,6 +269,7 @@ export function parseSharedSubtreeStoragePayload(raw: string): SharedSubtreeStor
           ? {
             version: parsed.taxonomy.version,
             source: parsed.taxonomy.source === "catalogue-of-life" ? "catalogue-of-life" : parsed.taxonomy.source === "ncbi" ? "ncbi" : undefined,
+            identifierMode: parsed.taxonomy.identifierMode === "ncbi-taxid" ? "ncbi-taxid" : "scientific-name",
             sourceVersion: typeof parsed.taxonomy.sourceVersion === "string" ? parsed.taxonomy.sourceVersion : undefined,
             sourceDoi: typeof parsed.taxonomy.sourceDoi === "string" ? parsed.taxonomy.sourceDoi : undefined,
             mappedCount: Number(parsed.taxonomy.mappedCount ?? 0),
@@ -330,6 +334,7 @@ export function rebuildSharedSubtreeTaxonomyMap(
     }
     tipRanks.push({
       node,
+      sourceTaxId: entry.sourceTaxId,
       ranks: entry.ranks,
       taxIds: entry.taxIds,
       collapseFallbacks: entry.collapseFallbacks,
@@ -363,10 +368,12 @@ export function rebuildSharedSubtreeTaxonomyMap(
   return {
     version: payload.version,
     source: payload.source,
+    identifierMode: payload.identifierMode,
     sourceVersion: payload.sourceVersion,
     sourceDoi: payload.sourceDoi,
     mappedCount: tipRanks.length,
     totalTips: tree.leafNodes.length,
+    resolvedRanks: payload.resolvedRanks,
     activeRanks: derivedActiveRanks,
     tipRanks,
   };

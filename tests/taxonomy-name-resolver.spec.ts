@@ -2,12 +2,16 @@ import { expect, test } from "@playwright/test";
 import {
   addTaxonomyIndexEntry,
   candidateSpeciesNames,
+  enrichTaxonomyMapRanks,
+  extractNcbiTaxId,
+  extractNcbiTaxIdSuffix,
   mapTipsWithContext,
   normalizeTaxonomyName,
   type ParsedTaxonomyForMapping,
   type TaxonomyNodeInfo,
 } from "../src/lib/taxonomyNameResolver";
-import type { TaxonomyRank } from "../src/types/taxonomy";
+import { filterTaxonomyMapToRanks } from "../src/lib/taxonomyActiveRanks";
+import { DEFAULT_TAXONOMY_RANKS, type TaxonomyRank } from "../src/types/taxonomy";
 
 const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "superkingdom"];
 
@@ -33,9 +37,11 @@ function buildParsedTaxonomy(): ParsedTaxonomyForMapping {
   addNode(12, 11, "order", "Carnivora");
   addNode(13, 12, "family", "Felidae");
   addNode(14, 13, "genus", "Felis");
-  addNode(15, 14, "species");
+  addNode(140, 14, "subgenus", "Felis (Felis)");
+  addNode(15, 140, "species");
   addNode(16, 13, "genus", "Panthera");
-  addNode(17, 16, "species");
+  addNode(160, 16, "subgenus", "Panthera (Panthera)");
+  addNode(17, 160, "species");
 
   addNode(20, 2, "phylum", "Tracheophyta");
   addNode(21, 20, "class", "Magnoliopsida");
@@ -80,6 +86,70 @@ test("species-name candidates support leading binomials with trailing identifier
     "homo sapiens sample-a",
     "homo sapiens",
   ]);
+});
+
+test("NCBI TaxIDs support explicit suffixes and complete TaxID labels", async () => {
+  expect(extractNcbiTaxIdSuffix("sequence_1_taxid_9606")).toBe(9606);
+  expect(extractNcbiTaxIdSuffix("sequence_1_tx9606")).toBe(9606);
+  expect(extractNcbiTaxIdSuffix("sequence_1_tx_9606")).toBe(9606);
+  expect(extractNcbiTaxIdSuffix("sequence_1|taxid=9606")).toBe(9606);
+  expect(extractNcbiTaxIdSuffix("sequence_taxid_9606_extra")).toBeNull();
+  expect(extractNcbiTaxIdSuffix("sequence_9606")).toBeNull();
+  expect(extractNcbiTaxIdSuffix("sequence_taxid_0")).toBeNull();
+  expect(extractNcbiTaxId("taxid=9606")).toBe(9606);
+  expect(extractNcbiTaxId("tax_id:9606")).toBe(9606);
+  expect(extractNcbiTaxId("tx9606")).toBe(9606);
+  expect(extractNcbiTaxId("9606")).toBe(9606);
+  expect(extractNcbiTaxId("'Tax ID 9606'")).toBe(9606);
+});
+
+test("resolver maps direct NCBI TaxIDs without falling back to tip names", async () => {
+  const taxonomy = buildParsedTaxonomy();
+  const payload = mapTipsWithContext([
+    { node: 610, name: "unrelated_gene_identifier_taxid_17" },
+    { node: 611, name: "Malus_domestica_without_a_taxid" },
+    { node: 612, name: "another_identifier|taxid=27" },
+    { node: 613, name: "unknown_taxid_999999" },
+    { node: 614, name: "taxid=15" },
+    { node: 615, name: "27" },
+  ], taxonomy, TARGET_RANKS, 99, { identifierMode: "ncbi-taxid" });
+
+  const byNode = new Map(payload.tipRanks.map((tip) => [tip.node, tip]));
+  expect(payload.identifierMode).toBe("ncbi-taxid");
+  expect(payload.mappedCount).toBe(4);
+  expect(byNode.get(610)?.ranks.genus).toBe("Panthera");
+  expect(byNode.get(612)?.ranks.genus).toBe("Malus");
+  expect(byNode.has(611)).toBe(false);
+  expect(byNode.has(613)).toBe(false);
+  expect(byNode.get(614)?.ranks.genus).toBe("Felis");
+  expect(byNode.get(615)?.ranks.genus).toBe("Malus");
+});
+
+test("optional ranks are added on demand without remapping existing tips", async () => {
+  const taxonomy = buildParsedTaxonomy();
+  const payload = mapTipsWithContext([
+    { node: 620, name: "first_taxid_15" },
+    { node: 621, name: "second_taxid_15" },
+    { node: 622, name: "third_taxid_17" },
+    { node: 623, name: "fourth_taxid_17" },
+  ], taxonomy, [...DEFAULT_TAXONOMY_RANKS], 100, { identifierMode: "ncbi-taxid" });
+
+  const originalTips = structuredClone(payload.tipRanks);
+  expect(payload.resolvedRanks).toEqual(DEFAULT_TAXONOMY_RANKS);
+  expect(payload.tipRanks.every((tip) => tip.ranks.subgenus === undefined)).toBe(true);
+  expect(payload.tipRanks.map((tip) => tip.sourceTaxId)).toEqual([15, 15, 17, 17]);
+
+  const enriched = enrichTaxonomyMapRanks(payload, taxonomy, ["subgenus"], 101);
+
+  expect(enriched.activeRanks).toContain("subgenus");
+  expect(enriched.resolvedRanks).toEqual([...DEFAULT_TAXONOMY_RANKS, "subgenus"]);
+  expect(enriched.tipRanks.map((tip) => tip.ranks.subgenus)).toEqual([
+    "Felis (Felis)",
+    "Felis (Felis)",
+    "Panthera (Panthera)",
+    "Panthera (Panthera)",
+  ]);
+  expect(filterTaxonomyMapToRanks(enriched, DEFAULT_TAXONOMY_RANKS)?.tipRanks).toEqual(originalTips);
 });
 
 test("resolver maps leading species names before gene or specimen identifiers", async () => {

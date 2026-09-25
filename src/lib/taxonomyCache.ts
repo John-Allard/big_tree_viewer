@@ -1,12 +1,12 @@
-import type { TaxonomyMapPayload, TaxonomySource } from "../types/taxonomy";
+import type { TaxonomyIdentifierMode, TaxonomyMapPayload, TaxonomySource } from "../types/taxonomy";
 import type { SharedSubtreeStoragePayload } from "./sharedSubtreePayload";
 
 const DB_NAME = "big-tree-viewer-taxonomy";
 const ARCHIVE_STORE_NAME = "archives";
 const MAPPING_STORE_NAME = "mappings";
 const SUBTREE_STORE_NAME = "shared-subtrees";
-const TAXONOMY_MAPPING_CACHE_VERSION = 9;
-const CATALOGUE_OF_LIFE_MAPPING_CACHE_VERSION = 11;
+const TAXONOMY_MAPPING_CACHE_VERSION = 14;
+const CATALOGUE_OF_LIFE_MAPPING_CACHE_VERSION = 14;
 const MAPPING_CACHE_INDEX_KEY = "tree-mapping-cache-index";
 const MAX_CACHED_TAXONOMY_MAPPINGS = 6;
 const cachedArchiveInMemory = new Map<TaxonomySource, Blob | ArrayBuffer>();
@@ -47,6 +47,7 @@ interface CachedTaxonomyMappingIndexEntry {
   key: string;
   treeSignature: string;
   source: TaxonomySource;
+  identifierMode?: TaxonomyIdentifierMode;
   lastUsedAt: number;
 }
 
@@ -77,8 +78,14 @@ function legacyMappingKey(source: TaxonomySource): string {
   return source === "ncbi" ? "latest-tree-mapping" : `latest-tree-mapping:${source}`;
 }
 
-function mappingKey(treeSignature: string, source: TaxonomySource): string {
-  return `tree-mapping:${source}:${treeSignature}`;
+function mappingKey(treeSignature: string, source: TaxonomySource, identifierMode: TaxonomyIdentifierMode): string {
+  return identifierMode === "scientific-name"
+    ? `tree-mapping:${source}:${treeSignature}`
+    : `tree-mapping:${source}:${identifierMode}:${treeSignature}`;
+}
+
+function mappingIdentifierMode(payload: TaxonomyMapPayload): TaxonomyIdentifierMode {
+  return payload.identifierMode === "ncbi-taxid" ? "ncbi-taxid" : "scientific-name";
 }
 
 function mappingCacheVersion(source: TaxonomySource): number {
@@ -400,12 +407,23 @@ function parseMappingIndex(value: unknown): CachedTaxonomyMappingIndex {
   };
 }
 
-export async function getCachedTaxonomyMapping(treeSignature: string, source: TaxonomySource = "ncbi"): Promise<TaxonomyMapPayload | null> {
-  const exactRecord = await readMappingStoreValue(mappingKey(treeSignature, source));
-  if (validMappingRecordForSource(exactRecord, source) && exactRecord.treeSignature === treeSignature) {
+export async function getCachedTaxonomyMapping(
+  treeSignature: string,
+  source: TaxonomySource = "ncbi",
+  identifierMode: TaxonomyIdentifierMode = "scientific-name",
+): Promise<TaxonomyMapPayload | null> {
+  const exactRecord = await readMappingStoreValue(mappingKey(treeSignature, source, identifierMode));
+  if (
+    validMappingRecordForSource(exactRecord, source)
+    && exactRecord.treeSignature === treeSignature
+    && mappingIdentifierMode(exactRecord.payload) === identifierMode
+  ) {
     return exactRecord.payload;
   }
 
+  if (identifierMode !== "scientific-name") {
+    return null;
+  }
   const legacyRecord = await readMappingStoreValue(legacyMappingKey(source));
   if (!validMappingRecordForSource(legacyRecord, source)) {
     return null;
@@ -416,12 +434,13 @@ export async function getCachedTaxonomyMapping(treeSignature: string, source: Ta
 }
 
 export async function putCachedTaxonomyMapping(treeSignature: string, payload: TaxonomyMapPayload, source: TaxonomySource = payload.source ?? "ncbi"): Promise<void> {
+  const identifierMode = mappingIdentifierMode(payload);
   const desktop = desktopTaxonomyCache();
   if (desktop) {
-    const key = mappingKey(treeSignature, source);
+    const key = mappingKey(treeSignature, source, identifierMode);
     const index = parseMappingIndex(await desktop.readValue(MAPPING_STORE_NAME, MAPPING_CACHE_INDEX_KEY));
     const entries = index.entries.filter((entry) => entry.key !== key);
-    entries.push({ key, treeSignature, source, lastUsedAt: Date.now() });
+    entries.push({ key, treeSignature, source, identifierMode, lastUsedAt: Date.now() });
     entries.sort((left, right) => right.lastUsedAt - left.lastUsedAt);
     await Promise.all(entries.slice(MAX_CACHED_TAXONOMY_MAPPINGS).map((expired) => (
       desktop.deleteValue(MAPPING_STORE_NAME, expired.key)
@@ -442,13 +461,13 @@ export async function putCachedTaxonomyMapping(treeSignature: string, payload: T
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(MAPPING_STORE_NAME, "readwrite");
     const store = transaction.objectStore(MAPPING_STORE_NAME);
-    const key = mappingKey(treeSignature, source);
+    const key = mappingKey(treeSignature, source, identifierMode);
     const indexRequest = store.get(MAPPING_CACHE_INDEX_KEY);
     indexRequest.onsuccess = () => {
       const index = parseMappingIndex(indexRequest.result);
       const lastUsedAt = Date.now();
       const entries = index.entries.filter((entry) => entry.key !== key);
-      entries.push({ key, treeSignature, source, lastUsedAt });
+      entries.push({ key, treeSignature, source, identifierMode, lastUsedAt });
       entries.sort((left, right) => right.lastUsedAt - left.lastUsedAt);
       for (const expired of entries.slice(MAX_CACHED_TAXONOMY_MAPPINGS)) {
         store.delete(expired.key);
@@ -477,10 +496,14 @@ export async function putCachedTaxonomyMapping(treeSignature: string, payload: T
   });
 }
 
-export async function touchCachedTaxonomyMapping(treeSignature: string, source: TaxonomySource): Promise<void> {
+export async function touchCachedTaxonomyMapping(
+  treeSignature: string,
+  source: TaxonomySource,
+  identifierMode: TaxonomyIdentifierMode = "scientific-name",
+): Promise<void> {
   const desktop = desktopTaxonomyCache();
   if (desktop) {
-    const key = mappingKey(treeSignature, source);
+    const key = mappingKey(treeSignature, source, identifierMode);
     const index = parseMappingIndex(await desktop.readValue(MAPPING_STORE_NAME, MAPPING_CACHE_INDEX_KEY));
     const entry = index.entries.find((candidate) => candidate.key === key);
     if (!entry) return;
@@ -495,7 +518,7 @@ export async function touchCachedTaxonomyMapping(treeSignature: string, source: 
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(MAPPING_STORE_NAME, "readwrite");
     const store = transaction.objectStore(MAPPING_STORE_NAME);
-    const key = mappingKey(treeSignature, source);
+    const key = mappingKey(treeSignature, source, identifierMode);
     const indexRequest = store.get(MAPPING_CACHE_INDEX_KEY);
     indexRequest.onsuccess = () => {
       const index = parseMappingIndex(indexRequest.result);
@@ -531,7 +554,11 @@ export async function getMostRecentCachedTaxonomyMapping(treeSignature: string):
     .filter((entry) => entry.treeSignature === treeSignature)
     .sort((left, right) => right.lastUsedAt - left.lastUsedAt);
   for (const candidate of candidates) {
-    const payload = await getCachedTaxonomyMapping(treeSignature, candidate.source);
+    const payload = await getCachedTaxonomyMapping(
+      treeSignature,
+      candidate.source,
+      candidate.identifierMode ?? "scientific-name",
+    );
     if (payload) {
       return { source: candidate.source, payload, lastUsedAt: candidate.lastUsedAt };
     }

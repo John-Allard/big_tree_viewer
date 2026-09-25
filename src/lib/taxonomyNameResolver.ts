@@ -1,5 +1,5 @@
 import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
-import type { TaxonomyCollapseFallback, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
+import type { TaxonomyCollapseFallback, TaxonomyIdentifierMode, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 
 export type TaxonomyNodeInfo = { parentId: number; rank: string };
 
@@ -73,12 +73,14 @@ export type TipTaxonomyRequest = {
 
 export interface TaxonomyMappingOptions {
   enableCollapseFallbacks?: boolean;
+  identifierMode?: TaxonomyIdentifierMode;
   rejectEmbeddedBroadRankRuns?: boolean;
   requireContextForGenusFallback?: boolean;
 }
 
 type ResolvedTipMapping = {
   node: number;
+  sourceTaxId: number;
   ranks: Partial<Record<TaxonomyRank, string>>;
   taxIds: Partial<Record<TaxonomyRank, number>>;
   collapseFallbacks?: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>>;
@@ -111,6 +113,22 @@ export function normalizeTaxonomyName(name: string): string {
     .replace(/[[\]()"']/g, " ")
     .replace(/\s+/g, " ");
 }
+
+export function extractNcbiTaxId(name: string): number | null {
+  const normalized = name.trim().replace(/^["']+|["']+$/g, "");
+  const bareMatch = normalized.match(/^([1-9]\d*)$/);
+  if (!bareMatch && !/(?:tax|tx)/i.test(normalized)) {
+    return null;
+  }
+  const match = bareMatch ?? normalized.match(/(?:^|[_|\s])(?:tax(?:[_\s-]?id)|tx)(?:[_=:\s-]?)([1-9]\d*)$/i);
+  if (!match) {
+    return null;
+  }
+  const taxId = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(taxId) ? taxId : null;
+}
+
+export const extractNcbiTaxIdSuffix = extractNcbiTaxId;
 
 export function addTaxonomyIndexEntry(index: Map<string, number[]>, name: string, taxId: number): void {
   const existing = index.get(name);
@@ -155,39 +173,11 @@ export function candidateExactTaxonName(name: string): string | null {
   return parts.length === 1 ? parts[0] : null;
 }
 
-function ancestorAtRank(
-  taxId: number,
-  rank: TaxonomyRank,
-  taxonomy: ParsedTaxonomyForMapping,
-  memo: Map<string, number | null>,
-): number | null {
-  const key = `${taxId}:${rank}`;
-  if (memo.has(key)) {
-    return memo.get(key) ?? null;
-  }
-  let current = taxId;
-  const seen = new Set<number>();
-  while (current > 0 && !seen.has(current)) {
-    seen.add(current);
-    const node = taxonomy.nodes.get(current);
-    if (!node) {
-      break;
-    }
-    if (node.rank === rank) {
-      memo.set(key, current);
-      return current;
-    }
-    current = node.parentId;
-  }
-  memo.set(key, null);
-  return null;
-}
-
 function buildCandidateLineage(
   taxId: number,
   taxonomy: ParsedTaxonomyForMapping,
   targetRanks: TaxonomyRank[],
-  ancestorMemo: Map<string, number | null>,
+  targetRankSet: Set<string>,
   lineageMemo: Map<number, CandidateLineage | null>,
   enableCollapseFallbacks: boolean,
 ): CandidateLineage | null {
@@ -198,37 +188,36 @@ function buildCandidateLineage(
   const ranks: Partial<Record<TaxonomyRank, string>> = {};
   const taxIds: Partial<Record<TaxonomyRank, number>> = {};
   const collapseFallbacks: Partial<Record<TaxonomyRank, TaxonomyCollapseFallback>> = {};
+  const lineageAncestors: Array<{ taxId: number; rank: string; label: string }> = [];
   let anyRank = false;
-  for (let rankIndex = 0; rankIndex < targetRanks.length; rankIndex += 1) {
-    const rank = targetRanks[rankIndex];
-    const ancestor = ancestorAtRank(taxId, rank, taxonomy, ancestorMemo);
-    if (!ancestor) {
-      continue;
+  let current = taxId;
+  const seen = new Set<number>();
+  while (current > 0 && !seen.has(current)) {
+    seen.add(current);
+    const node = taxonomy.nodes.get(current);
+    if (!node) {
+      break;
     }
-    const label = taxonomy.rankNames.get(ancestor);
-    if (!label) {
-      continue;
+    const label = taxonomy.rankNames.get(current);
+    if (label) {
+      lineageAncestors.push({ taxId: current, rank: node.rank, label });
+      if (targetRankSet.has(node.rank)) {
+        const rank = node.rank as TaxonomyRank;
+        ranks[rank] = label;
+        taxIds[rank] = current;
+        anyRank = true;
+      }
     }
-    ranks[rank] = label;
-    taxIds[rank] = ancestor;
-    anyRank = true;
+    current = node.parentId;
   }
   if (anyRank && enableCollapseFallbacks) {
-    const lineageAncestors: Array<{ taxId: number; rank: string; label: string }> = [];
-    let current = taxId;
-    const seen = new Set<number>();
-    while (current > 0 && !seen.has(current)) {
-      seen.add(current);
-      const node = taxonomy.nodes.get(current);
-      const label = taxonomy.rankNames.get(current);
-      if (!node) {
-        break;
-      }
-      if (label) {
-        lineageAncestors.push({ taxId: current, rank: node.rank, label });
-      }
-      current = node.parentId;
-    }
+    const rankedAncestors = lineageAncestors
+      .map((ancestor) => ({
+        ...ancestor,
+        precedence: TAXONOMY_COLLAPSE_RANK_PRECEDENCE.get(ancestor.rank),
+      }))
+      .filter((ancestor): ancestor is typeof ancestor & { precedence: number } => ancestor.precedence !== undefined)
+      .sort((left, right) => left.precedence - right.precedence);
     for (let rankIndex = 0; rankIndex < targetRanks.length; rankIndex += 1) {
       const targetRank = targetRanks[rankIndex];
       if (taxIds[targetRank]) {
@@ -238,19 +227,17 @@ function buildCandidateLineage(
       if (targetPrecedence === undefined) {
         continue;
       }
-      let bestFallback: { taxId: number; rank: string; label: string } | null = null;
-      let bestPrecedence = Number.POSITIVE_INFINITY;
-      for (let ancestorIndex = 0; ancestorIndex < lineageAncestors.length; ancestorIndex += 1) {
-        const ancestor = lineageAncestors[ancestorIndex];
-        const ancestorPrecedence = TAXONOMY_COLLAPSE_RANK_PRECEDENCE.get(ancestor.rank);
-        if (ancestorPrecedence === undefined || ancestorPrecedence <= targetPrecedence) {
-          continue;
-        }
-        if (ancestorPrecedence < bestPrecedence) {
-          bestPrecedence = ancestorPrecedence;
-          bestFallback = ancestor;
+      let lower = 0;
+      let upper = rankedAncestors.length;
+      while (lower < upper) {
+        const middle = (lower + upper) >>> 1;
+        if (rankedAncestors[middle].precedence <= targetPrecedence) {
+          lower = middle + 1;
+        } else {
+          upper = middle;
         }
       }
+      const bestFallback = rankedAncestors[lower] ?? null;
       if (bestFallback) {
         collapseFallbacks[targetRank] = {
           label: bestFallback.label,
@@ -477,11 +464,27 @@ function collectCandidatesForTip(
   tip: TipTaxonomyRequest,
   taxonomy: ParsedTaxonomyForMapping,
   targetRanks: TaxonomyRank[],
-  ancestorMemo: Map<string, number | null>,
+  targetRankSet: Set<string>,
   lineageMemo: Map<number, CandidateLineage | null>,
   enableCollapseFallbacks: boolean,
   requireContextForGenusFallback: boolean,
+  identifierMode: TaxonomyIdentifierMode,
 ): CandidateLineage[] {
+  if (identifierMode === "ncbi-taxid") {
+    const taxId = extractNcbiTaxId(tip.name);
+    if (taxId === null) {
+      return [];
+    }
+    const lineage = buildCandidateLineage(
+      taxId,
+      taxonomy,
+      targetRanks,
+      targetRankSet,
+      lineageMemo,
+      enableCollapseFallbacks,
+    );
+    return lineage ? [lineage] : [];
+  }
   const speciesNameCandidates = candidateSpeciesNames(tip.name);
   let speciesCandidates: number[] = [];
   for (let candidateIndex = 0; candidateIndex < speciesNameCandidates.length; candidateIndex += 1) {
@@ -517,7 +520,7 @@ function collectCandidatesForTip(
   const unique = [...new Set(source)];
   const candidates: CandidateLineage[] = [];
   for (let index = 0; index < unique.length; index += 1) {
-    const lineage = buildCandidateLineage(unique[index], taxonomy, targetRanks, ancestorMemo, lineageMemo, enableCollapseFallbacks);
+    const lineage = buildCandidateLineage(unique[index], taxonomy, targetRanks, targetRankSet, lineageMemo, enableCollapseFallbacks);
     if (lineage) {
       const genusFallback = directGenusCandidateIds.has(unique[index]) || contextualGenusCandidateIds.has(unique[index]);
       const requiresContext = (
@@ -542,17 +545,19 @@ export function mapTipsWithContext(
   options: TaxonomyMappingOptions = {},
 ): TaxonomyMapPayload {
   const enableCollapseFallbacks = options.enableCollapseFallbacks ?? true;
+  const identifierMode = options.identifierMode ?? "scientific-name";
   const requireContextForGenusFallback = options.requireContextForGenusFallback ?? false;
-  const ancestorMemo = new Map<string, number | null>();
+  const targetRankSet = new Set<string>(targetRanks);
   const lineageMemo = new Map<number, CandidateLineage | null>();
   const candidatesByTip = tips.map((tip) => collectCandidatesForTip(
     tip,
     taxonomy,
     targetRanks,
-    ancestorMemo,
+    targetRankSet,
     lineageMemo,
     enableCollapseFallbacks,
     requireContextForGenusFallback,
+    identifierMode,
   ));
   const resolved: Array<ResolvedTipMapping | null> = new Array(tips.length).fill(null);
   const trustedResolved = new Array<boolean>(tips.length).fill(false);
@@ -562,6 +567,7 @@ export function mapTipsWithContext(
     if (candidates.length === 1 && !candidates[0].requiresContext) {
       resolved[index] = {
         node: tips[index].node,
+        sourceTaxId: candidates[0].taxId,
         ranks: candidates[0].ranks,
         taxIds: candidates[0].taxIds,
         collapseFallbacks: candidates[0].collapseFallbacks,
@@ -598,6 +604,7 @@ export function mapTipsWithContext(
         const candidate = contextIndependentCandidates[0];
         resolved[index] = {
           node: tips[index].node,
+          sourceTaxId: candidate.taxId,
           ranks: candidate.ranks,
           taxIds: candidate.taxIds,
           collapseFallbacks: candidate.collapseFallbacks,
@@ -620,6 +627,7 @@ export function mapTipsWithContext(
         ) {
           resolved[index] = {
             node: tips[index].node,
+            sourceTaxId: candidate.taxId,
             ranks: candidate.ranks,
             taxIds: candidate.taxIds,
             collapseFallbacks: candidate.collapseFallbacks,
@@ -664,6 +672,7 @@ export function mapTipsWithContext(
       ) {
         resolved[index] = {
           node: tips[index].node,
+          sourceTaxId: best.taxId,
           ranks: best.ranks,
           taxIds: best.taxIds,
           collapseFallbacks: best.collapseFallbacks,
@@ -696,6 +705,7 @@ export function mapTipsWithContext(
     }
     resolved[index] = {
       node: tips[index].node,
+      sourceTaxId: candidates[0].taxId,
       ranks: candidates[0].ranks,
       taxIds: candidates[0].taxIds,
       collapseFallbacks: candidates[0].collapseFallbacks,
@@ -710,8 +720,65 @@ export function mapTipsWithContext(
 
   return {
     version: mappingVersion,
+    identifierMode,
     mappedCount: tipRanks.length,
     totalTips: tips.length,
+    resolvedRanks: [...targetRanks],
+    activeRanks: deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks)),
+    tipRanks,
+  };
+}
+
+export function enrichTaxonomyMapRanks(
+  taxonomyMap: TaxonomyMapPayload,
+  taxonomy: ParsedTaxonomyForMapping,
+  requestedRanks: TaxonomyRank[],
+  mappingVersion: number,
+  enableCollapseFallbacks = true,
+): TaxonomyMapPayload {
+  const ranksToResolve = [...new Set(requestedRanks)];
+  const targetRankSet = new Set<string>(ranksToResolve);
+  const lineageMemo = new Map<number, CandidateLineage | null>();
+  const tipRanks = taxonomyMap.tipRanks.map((tip) => {
+    if (!tip.sourceTaxId) {
+      return tip;
+    }
+    const lineage = buildCandidateLineage(
+      tip.sourceTaxId,
+      taxonomy,
+      ranksToResolve,
+      targetRankSet,
+      lineageMemo,
+      enableCollapseFallbacks,
+    );
+    if (!lineage) {
+      return tip;
+    }
+    const ranks = { ...tip.ranks };
+    const taxIds = { ...tip.taxIds };
+    const collapseFallbacks = { ...tip.collapseFallbacks };
+    for (const rank of ranksToResolve) {
+      if (lineage.ranks[rank]) {
+        ranks[rank] = lineage.ranks[rank];
+      }
+      if (lineage.taxIds[rank]) {
+        taxIds[rank] = lineage.taxIds[rank];
+      }
+      if (lineage.collapseFallbacks[rank]) {
+        collapseFallbacks[rank] = lineage.collapseFallbacks[rank];
+      }
+    }
+    return {
+      ...tip,
+      ranks,
+      taxIds,
+      collapseFallbacks,
+    };
+  });
+  return {
+    ...taxonomyMap,
+    version: mappingVersion,
+    resolvedRanks: [...new Set([...(taxonomyMap.resolvedRanks ?? taxonomyMap.activeRanks), ...ranksToResolve])],
     activeRanks: deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks)),
     tipRanks,
   };

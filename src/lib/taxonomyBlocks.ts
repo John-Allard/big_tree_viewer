@@ -44,6 +44,7 @@ export function buildTaxonomyBlocksForOrderedLeaves(
   taxonomyMap: TaxonomyMapPayload,
   colorsByRank: TaxonomyColorByRank | null,
   indexedTips?: Array<TaxonomyTipRanks | undefined>,
+  includedRanks: readonly TaxonomyRank[] = TAXONOMY_RANKS,
 ): Record<TaxonomyRank, TaxonomyBlock[]> {
   let tipByNode = indexedTips;
   if (!tipByNode) {
@@ -66,8 +67,8 @@ export function buildTaxonomyBlocksForOrderedLeaves(
     taxId: number | null;
   } | null>(orderedLeaves.length).fill(null);
 
-  for (let rankIndex = 0; rankIndex < TAXONOMY_RANKS.length; rankIndex += 1) {
-    const rank = TAXONOMY_RANKS[rankIndex];
+  for (let rankIndex = 0; rankIndex < includedRanks.length; rankIndex += 1) {
+    const rank = includedRanks[rankIndex];
     assignments.fill(null);
     let mappedCount = 0;
     let firstMappedIndex = -1;

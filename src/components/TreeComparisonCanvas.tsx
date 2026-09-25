@@ -3,7 +3,7 @@ import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyCol
 import { fontFamilyCss, type FigureStyleSettings } from "../lib/figureStyles";
 import { buildComparisonLayout, normalizeComparisonTipName } from "../lib/treeComparison";
 import { deriveDefaultVisibleTaxonomyRanks } from "../lib/taxonomyActiveRanks";
-import { isAutomaticTaxonomyRank, TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
+import { isAutomaticTaxonomyRank, isDefaultTaxonomyRank, TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 import type { LayoutOrder, TreeModel, ZoomAxisMode } from "../types/tree";
 import type { TaxonomyRankDisplayMode } from "./treeCanvasTypes";
 import { buildTaxonomyColorMap, taxonomyVisibleRanksForZoom } from "./TreeCanvas";
@@ -339,17 +339,25 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       )
       : [],
   ), [taxonomyMap]);
-  const availableRanks = useMemo(() => {
+  const exposedRanks = useMemo(() => {
     if (!taxonomyEnabled || !taxonomyMap) {
       return [] as TaxonomyRank[];
     }
-    return [...taxonomyMap.activeRanks]
+    return TAXONOMY_RANKS
+      .filter((rank) => (
+        (isDefaultTaxonomyRank(rank) && taxonomyMap.activeRanks.includes(rank))
+        || taxonomyRankDisplayModes[rank] !== undefined
+      ))
+      .sort((left, right) => TAXONOMY_RANKS.indexOf(right) - TAXONOMY_RANKS.indexOf(left));
+  }, [taxonomyEnabled, taxonomyMap, taxonomyRankDisplayModes]);
+  const availableRanks = useMemo(() => {
+    return exposedRanks
       .filter((rank) => useAutomaticTaxonomyRankVisibility
         ? (isAutomaticTaxonomyRank(rank) && defaultAutomaticRankSet.has(rank))
-          || (taxonomyRankDisplayModes.kingdom ?? "hidden") === "ribbon"
+          || (!isAutomaticTaxonomyRank(rank) && (taxonomyRankDisplayModes[rank] ?? "hidden") === "ribbon")
         : (taxonomyRankDisplayModes[rank] ?? (taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) === "ribbon")
       .sort((left, right) => TAXONOMY_RANKS.indexOf(right) - TAXONOMY_RANKS.indexOf(left));
-  }, [defaultAutomaticRankSet, taxonomyEnabled, taxonomyMap, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
+  }, [defaultAutomaticRankSet, exposedRanks, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility]);
   const activeRanks = useMemo(() => {
     if (!useAutomaticTaxonomyRankVisibility || availableRanks.length === 0) {
       return availableRanks;
@@ -367,6 +375,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
       taxonomyCustomPaletteColors,
       taxonomyColorRootRank,
       taxonomyColorJitterRank,
+      exposedRanks,
     )
     : null, [
     taxonomyColorJitter,
@@ -375,11 +384,12 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     taxonomyColorRootRank,
     taxonomyCustomPaletteColors,
     taxonomyMap,
+    exposedRanks,
   ]);
   const taxonomyColors = suppliedTaxonomyColors ?? fallbackTaxonomyColors;
   const taxonomyBlocks = useMemo(() => taxonomyMap
-    ? buildTaxonomyBlocksForOrderedLeaves(comparison.primaryLeaves, taxonomyMap, taxonomyColors)
-    : null, [comparison.primaryLeaves, taxonomyColors, taxonomyMap]);
+    ? buildTaxonomyBlocksForOrderedLeaves(comparison.primaryLeaves, taxonomyMap, taxonomyColors, undefined, exposedRanks)
+    : null, [comparison.primaryLeaves, exposedRanks, taxonomyColors, taxonomyMap]);
   const primaryTipTaxonomy = useMemo(() => new Map(
     taxonomyMap?.tipRanks.map((tip) => [tip.node, tip] as const) ?? [],
   ), [taxonomyMap]);

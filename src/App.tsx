@@ -85,9 +85,10 @@ import {
   type TaxonomyColorPaletteKey,
 } from "./lib/taxonomyPalettes";
 import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./lib/timeAxis";
-import { deriveCollapsibleTaxonomyRanks } from "./lib/taxonomyActiveRanks";
+import { deriveCollapsibleTaxonomyRanks, filterTaxonomyMapToRanks } from "./lib/taxonomyActiveRanks";
 import { buildTaxonomyCollapsedTreePayload } from "./lib/taxonomyCollapse";
 import { buildTaxonomyBlocksForOrderedLeaves, taxonomyEntityKey } from "./lib/taxonomyBlocks";
+import { extractNcbiTaxId } from "./lib/taxonomyNameResolver";
 import {
   getCachedTaxonomyArchive,
   getCachedTaxonomyMapping,
@@ -109,9 +110,14 @@ import { rerootTreePayload, rerootTreePayloadAtNode, type RerootMode } from "./l
 import { looksLikeTreeText, normalizeImportedTreeText } from "./lib/treeImport";
 import type { WorkerResponse } from "./types/messages";
 import {
+  DEFAULT_TAXONOMY_RANKS,
+  isAutomaticTaxonomyRank,
+  isDefaultTaxonomyRank,
+  OPTIONAL_TAXONOMY_RANKS,
   TAXONOMY_RANKS,
   type CompactTaxonomyPayload,
   type TaxonomyCollapseRank,
+  type TaxonomyIdentifierMode,
   type TaxonomyMapPayload,
   type TaxonomyRank,
   type TaxonomySource,
@@ -231,6 +237,8 @@ type BigTreeViewerLaunchPayload = {
     lowMemoryMode?: boolean;
     allowDownload?: boolean;
     source?: TaxonomySource;
+    identifierMode?: TaxonomyIdentifierMode;
+    ranks?: TaxonomyRank[];
   };
   export?: {
     format?: AutomationExportFormat;
@@ -680,7 +688,13 @@ function buildTaxonomyMappingWarning(tree: TreeModel | null, taxonomyMap: Taxono
     }
   }
   const sourceName = taxonomyMap.source === "catalogue-of-life" ? "Catalogue of Life" : "NCBI taxonomy";
-  const base = `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips (${Math.round(unmappedFraction * 100).toLocaleString()}%) were not mapped to ${sourceName}. Big Tree Viewer maps binomial species names, including labels that begin with Genus_species or Genus species before additional identifiers, and exact single-token taxa such as genus, family, or order names.`;
+  const mappingExplanation = taxonomyMap.identifierMode === "ncbi-taxid"
+    ? "Big Tree Viewer maps explicit NCBI Taxonomy IDs in labels, such as _taxid_9606, taxid=9606, or a bare numeric TaxID. Tips without a recognized TaxID or with an ID absent from the loaded archive remain unmapped."
+    : "Big Tree Viewer maps binomial species names, including labels that begin with Genus_species or Genus species before additional identifiers, and exact single-token taxa such as genus, family, or order names.";
+  const base = `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips (${Math.round(unmappedFraction * 100).toLocaleString()}%) were not mapped to ${sourceName}. ${mappingExplanation}`;
+  if (taxonomyMap.identifierMode === "ncbi-taxid") {
+    return base;
+  }
   const singleTokenNote = singleTokenUnmappedCount > 0
     ? ` ${singleTokenUnmappedCount.toLocaleString()} unmapped single-token labels did not exactly match a supported taxon name.`
     : "";
@@ -688,6 +702,19 @@ function buildTaxonomyMappingWarning(tree: TreeModel | null, taxonomyMap: Taxono
     return `${base}${singleTokenNote} At least ${labelsOutsideSupportedShapeCount.toLocaleString()} unmapped labels do not look like either binomial species names or single-token taxon names${examples.length > 0 ? `, for example: ${examples.join(", ")}.` : "."} If your tips combine species names with accession numbers, sample IDs, strain labels, or other identifiers, place the genus and species first, separated by an underscore or space.`;
   }
   return `${base}${singleTokenNote} If your tips combine species names with accession numbers, sample IDs, strain labels, or other identifiers, place the genus and species first, separated by an underscore or space.`;
+}
+
+function treeHasNcbiTaxIdLabels(tree: TreeModel | null): boolean {
+  if (!tree || tree.leafNodes.length === 0) {
+    return false;
+  }
+  for (let leafIndex = 0; leafIndex < tree.leafNodes.length; leafIndex += 1) {
+    const node = tree.leafNodes[leafIndex];
+    if (extractNcbiTaxId(tree.names[node] ?? "") !== null) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function readLaunchNumberParam(params: URLSearchParams, key: string): number | undefined {
@@ -1167,7 +1194,7 @@ const TUTORIAL_STEPS: Array<{
     id: "taxonomy",
     target: "taxonomy",
     title: "Map taxonomy",
-    body: "Map binomial tip names with NCBI Taxonomy or Catalogue of Life, then display ribbons, color branches, or collapse mapped groups. Additional identifiers may follow a leading Genus_species or Genus species name. The viewer selects ordinary visible ranks automatically; kingdom is an optional manual ribbon when several kingdoms are present.",
+    body: "Map binomial tip names with NCBI Taxonomy or Catalogue of Life, then display ribbons, color branches, or collapse mapped groups. Additional identifiers may follow a leading Genus_species or Genus species name. When BTV detects explicit NCBI Taxonomy IDs, including labels such as taxid=9606, _taxid_9606, or a bare numeric ID, the Taxonomy panel shows a checked option to use those IDs. The viewer selects ordinary visible ranks automatically. In Taxonomy overlay settings, Additional ranks can expose mapped levels such as superfamily, tribe, or subgenus without cluttering the standard rank controls.",
   },
   {
     id: "branchMenu",
@@ -1261,6 +1288,10 @@ function taxonomyMapSourceLabel(map: TaxonomyMapPayload): string {
 
 function taxonomyMapSource(map: TaxonomyMapPayload): TaxonomySource {
   return map.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi";
+}
+
+function taxonomyMapIdentifierMode(map: TaxonomyMapPayload): TaxonomyIdentifierMode {
+  return map.identifierMode === "ncbi-taxid" ? "ncbi-taxid" : "scientific-name";
 }
 
 type VisualPopoverId =
@@ -1810,18 +1841,8 @@ const EMPTY_METADATA_PIE_OVERLAY: MetadataPieOverlayResult = {
 
 const MAX_EAGER_SESSION_TAXONOMY_CACHE_TIPS = 100_000;
 
-const SEARCH_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
-  "superkingdom",
-  "kingdom",
-  "phylum",
-  "class",
-  "order",
-  "family",
-  "genus",
-];
-
 function taxonomySearchRankPriority(rank: TaxonomyRank): number {
-  return SEARCH_TAXONOMY_RANK_ORDER.indexOf(rank);
+  return TAXONOMY_RANKS.indexOf(rank);
 }
 
 function lowestCommonAncestor(tree: TreeModel, leftNode: number, rightNode: number): number {
@@ -1981,6 +2002,8 @@ export default function App() {
     lowMemoryMode: boolean;
     allowDownload: boolean;
     source: TaxonomySource;
+    identifierMode: TaxonomyIdentifierMode | null;
+    ranks: TaxonomyRank[];
     resolve: (payload: TaxonomyMapPayload | null) => void;
   } | null>(null);
   const pendingSessionPhyloPicRef = useRef<BigTreeViewerSessionFile["phylopic"] | undefined>(undefined);
@@ -2058,6 +2081,7 @@ export default function App() {
   const [taxonomyColorRootRank, setTaxonomyColorRootRank] = useState<TaxonomyRank | "auto">(DEFAULT_TAXONOMY_COLOR_ROOT_RANK);
   const [taxonomyColorJitterRank, setTaxonomyColorJitterRank] = useState<TaxonomyRank>(DEFAULT_TAXONOMY_COLOR_JITTER_RANK);
   const [taxonomyRankDisplayModes, setTaxonomyRankDisplayModes] = useState<Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>>>({});
+  const [additionalTaxonomyRankDraft, setAdditionalTaxonomyRankDraft] = useState<TaxonomyRank | "">("");
   const [taxonomyBranchColoringEnabled, setTaxonomyBranchColoringEnabled] = useState(DEFAULT_TAXONOMY_BRANCH_COLORING_ENABLED);
   const [branchThicknessScale, setBranchThicknessScale] = useState(DEFAULT_BRANCH_THICKNESS_SCALE);
   const [searchQuery, setSearchQuery] = useState("");
@@ -2170,6 +2194,7 @@ export default function App() {
   const [metadataOverlayCompletionRequest, setMetadataOverlayCompletionRequest] = useState(0);
   const [metadataReadProgress, setMetadataReadProgress] = useState<number | null>(null);
   const [taxonomySource, setTaxonomySource] = useState<TaxonomySource>("ncbi");
+  const [taxonomyIdentifierMode, setTaxonomyIdentifierMode] = useState<TaxonomyIdentifierMode>("scientific-name");
   const [taxonomyCached, setTaxonomyCached] = useState<boolean | null>(null);
   const [taxonomyArchiveFileName, setTaxonomyArchiveFileName] = useState("");
   const [taxonomyLinkedFilePermission, setTaxonomyLinkedFilePermission] = useState<PermissionState | null>(null);
@@ -2206,6 +2231,7 @@ export default function App() {
   const diagnosticsSessionIdRef = useRef<string>(createDiagnosticsSessionId());
   const showDiagnosticsPanel = useMemo(() => diagnosticsPanelEnabled(), []);
   const useLowMemoryTaxonomyMapping = useMemo(() => useLowMemoryTaxonomyMode(), []);
+  const hasDetectedNcbiTaxIds = useMemo(() => treeHasNcbiTaxIdLabels(tree), [tree]);
   const shouldShowTutorialPrompt = useMemo(() => {
     if (typeof window === "undefined") {
       return false;
@@ -2254,6 +2280,13 @@ export default function App() {
       });
     };
   }, []);
+  useEffect(() => {
+    setTaxonomyIdentifierMode(
+      taxonomySource === "ncbi" && hasDetectedNcbiTaxIds
+        ? "ncbi-taxid"
+        : "scientific-name",
+    );
+  }, [hasDetectedNcbiTaxIds, taxonomySource, tree]);
   useEffect(() => {
     if (!tutorialSuppressedForMobile) {
       return;
@@ -2435,8 +2468,12 @@ export default function App() {
     setDiagnosticsRevision((value) => value + 1);
   }, []);
   const collapsibleTaxonomyRanks = useMemo<TaxonomyRank[]>(
-    () => taxonomyMap ? deriveCollapsibleTaxonomyRanks(taxonomyMap.tipRanks) : [],
-    [taxonomyMap],
+    () => taxonomyMap
+      ? deriveCollapsibleTaxonomyRanks(taxonomyMap.tipRanks).filter((rank) => (
+        isDefaultTaxonomyRank(rank) || taxonomyRankDisplayModes[rank] !== undefined
+      ))
+      : [],
+    [taxonomyMap, taxonomyRankDisplayModes],
   );
   const taxonomyCollapseActiveRank = useMemo<TaxonomyRank | null>(() => {
     if (!taxonomyMap || taxonomyCollapseRank === "species") {
@@ -3115,6 +3152,7 @@ export default function App() {
       ? rebuildSharedSubtreeTaxonomyMap(nextTree, {
         version: taxonomyMap.version,
         source: taxonomyMap.source,
+        identifierMode: taxonomyMap.identifierMode,
         sourceVersion: taxonomyMap.sourceVersion,
         sourceDoi: taxonomyMap.sourceDoi,
         mappedCount: taxonomyMap.tipRanks.length,
@@ -3217,10 +3255,19 @@ export default function App() {
 
     if (taxonomyEnabled && viewTaxonomyMap) {
       const orderedLeaves = computeOrderedLeaves(viewTree, order);
-      const taxonomyBlocks = buildTaxonomyBlocksForOrderedLeaves(orderedLeaves, viewTaxonomyMap, null);
+      const searchTaxonomyRanks = TAXONOMY_RANKS.filter((rank) => (
+        isDefaultTaxonomyRank(rank) || taxonomyRankDisplayModes[rank] !== undefined
+      ));
+      const taxonomyBlocks = buildTaxonomyBlocksForOrderedLeaves(
+        orderedLeaves,
+        viewTaxonomyMap,
+        null,
+        undefined,
+        searchTaxonomyRanks,
+      );
       const taxonomyTipByNode = new Map(viewTaxonomyMap.tipRanks.map((tip) => [tip.node, tip] as const));
-      for (let rankIndex = 0; rankIndex < SEARCH_TAXONOMY_RANK_ORDER.length; rankIndex += 1) {
-        const rank = SEARCH_TAXONOMY_RANK_ORDER[rankIndex];
+      for (let rankIndex = 0; rankIndex < searchTaxonomyRanks.length; rankIndex += 1) {
+        const rank = searchTaxonomyRanks[rankIndex];
         const blocks = [...(taxonomyBlocks[rank] ?? [])].sort((left, right) => (
           (left.labelStartIndex ?? left.startIndex ?? 0) - (right.labelStartIndex ?? right.startIndex ?? 0)
         ));
@@ -3372,7 +3419,7 @@ export default function App() {
       });
     }
     return results;
-  }, [order, searchQuery, taxonomyEnabled, viewTaxonomyMap, viewTree]);
+  }, [order, searchQuery, taxonomyEnabled, taxonomyRankDisplayModes, viewTaxonomyMap, viewTree]);
 
   const searchMatches = useMemo(
     () => searchResults.filter((result) => result.kind === "node").map((result) => result.node),
@@ -3655,11 +3702,26 @@ export default function App() {
     );
   }, [metadataKeyColumn, metadataPieColorOverrides, metadataPieColumns, metadataPiePalette, metadataPiesEnabled, metadataTable, tree]);
   const metadataOverlaysSuppressed = taxonomyCollapseIsSynthetic;
-  const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
+  const mappedTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(viewTaxonomyMap?.activeRanks ?? [])].sort(
       (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
     ),
     [viewTaxonomyMap],
+  );
+  const optionalMappedTaxonomyRanks = useMemo<TaxonomyRank[]>(
+    () => [...OPTIONAL_TAXONOMY_RANKS],
+    [],
+  );
+  const selectedAdditionalTaxonomyRanks = useMemo<TaxonomyRank[]>(
+    () => optionalMappedTaxonomyRanks.filter((rank) => taxonomyRankDisplayModes[rank] !== undefined),
+    [optionalMappedTaxonomyRanks, taxonomyRankDisplayModes],
+  );
+  const availableTaxonomyRanks = useMemo<TaxonomyRank[]>(
+    () => TAXONOMY_RANKS.filter((rank) => (
+      (isDefaultTaxonomyRank(rank) && mappedTaxonomyRanks.includes(rank))
+      || taxonomyRankDisplayModes[rank] !== undefined
+    )),
+    [mappedTaxonomyRanks, taxonomyRankDisplayModes],
   );
   const phylopicSelectableRanks = useMemo<TaxonomyRank[]>(
     () => availableTaxonomyRanks.filter((rank) => {
@@ -4068,7 +4130,11 @@ export default function App() {
     await parseDone;
   }, [ensureWorker]);
 
-  const runTaxonomyWorker = useCallback((request: { type: "download-taxonomy"; source?: TaxonomySource } | { type: "map-taxonomy"; source?: TaxonomySource; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean }): Promise<TaxonomyWorkerResponse> => {
+  const runTaxonomyWorker = useCallback((request:
+    | { type: "download-taxonomy"; source?: TaxonomySource }
+    | { type: "map-taxonomy"; source?: TaxonomySource; identifierMode?: TaxonomyIdentifierMode; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean; ranks?: TaxonomyRank[] }
+    | { type: "enrich-taxonomy"; source?: TaxonomySource; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; existingMap: TaxonomyMapPayload; lowMemoryMode?: boolean; ranks: TaxonomyRank[] }
+  ): Promise<TaxonomyWorkerResponse> => {
     return new Promise((resolve, reject) => {
       const worker = new Worker(new URL("./workers/taxonomyWorker.ts", import.meta.url), { type: "module" });
       const cleanup = (): void => {
@@ -4092,7 +4158,7 @@ export default function App() {
       });
       worker.postMessage(
         request,
-        request.type === "map-taxonomy" && request.archive instanceof ArrayBuffer ? [request.archive] : [],
+        request.type !== "download-taxonomy" && request.archive instanceof ArrayBuffer ? [request.archive] : [],
       );
     });
   }, [appendDiagnostic]);
@@ -4188,8 +4254,14 @@ export default function App() {
     lowMemoryMode: boolean,
     allowDownload = true,
     source: TaxonomySource = "ncbi",
+    identifierMode: TaxonomyIdentifierMode = "scientific-name",
+    requestedRanks: TaxonomyRank[] = [...DEFAULT_TAXONOMY_RANKS],
   ): Promise<TaxonomyMapPayload | null> => {
+    if (source !== "ncbi" && identifierMode === "ncbi-taxid") {
+      throw new Error("NCBI TaxID tip labels can only be mapped with NCBI Taxonomy.");
+    }
     setTaxonomySource(source);
+    setTaxonomyIdentifierMode(identifierMode);
     setTaxonomyLoading(true);
     setTaxonomyError(null);
     taxonomyMappingFailureMessageRef.current = "";
@@ -4199,6 +4271,8 @@ export default function App() {
       treeSignature: targetTreeSignature,
       lowMemoryMode,
       source,
+      identifierMode,
+      requestedRanks,
     });
     const sourceConfig = TAXONOMY_SOURCE_CONFIG[source];
     try {
@@ -4213,9 +4287,11 @@ export default function App() {
       const response = await runTaxonomyWorker({
         type: "map-taxonomy",
         source,
+        identifierMode,
         archive,
         tips,
         lowMemoryMode,
+        ranks: requestedRanks,
       });
       if (response.type !== "taxonomy-mapped" || !response.payload) {
         throw new Error(response.message || "Taxonomy mapping did not complete.");
@@ -4259,6 +4335,83 @@ export default function App() {
       setTaxonomyLoading(false);
     }
   }, [appendDiagnostic, ensureTaxonomyArchive, runTaxonomyWorker]);
+
+  const enrichCurrentTaxonomyRanks = useCallback(async (
+    requestedRanks: TaxonomyRank[],
+  ): Promise<TaxonomyMapPayload | null> => {
+    if (!tree || !taxonomyMap) {
+      return null;
+    }
+    const uniqueRanks = TAXONOMY_RANKS.filter((rank) => requestedRanks.includes(rank));
+    const alreadyResolved = new Set(taxonomyMap.resolvedRanks ?? taxonomyMap.activeRanks);
+    if (uniqueRanks.every((rank) => alreadyResolved.has(rank))) {
+      return taxonomyMap;
+    }
+    setTaxonomyLoading(true);
+    setTaxonomyError(null);
+    try {
+      const source = taxonomyMapSource(taxonomyMap);
+      const archive = await ensureTaxonomyArchive(false, source);
+      const tips = Array.from(tree.leafNodes)
+        .sort((left, right) => tree.layouts.input.center[left] - tree.layouts.input.center[right])
+        .map((node) => ({ node, name: tree.names[node] || "" }));
+      setTaxonomyStatus(`Adding ${uniqueRanks.filter((rank) => !alreadyResolved.has(rank)).map(taxonomyRankLabel).join(", ")} from ${TAXONOMY_SOURCE_CONFIG[source].label}...`);
+      const response = await runTaxonomyWorker({
+        type: "enrich-taxonomy",
+        source,
+        archive,
+        tips,
+        existingMap: taxonomyMap,
+        lowMemoryMode: useLowMemoryTaxonomyMapping,
+        ranks: uniqueRanks,
+      });
+      if (response.type !== "taxonomy-mapped" || !response.payload) {
+        throw new Error(response.message || "The additional taxonomy rank could not be mapped.");
+      }
+      if (treeSignature && !useLowMemoryTaxonomyMapping) {
+        await putCachedTaxonomyMapping(treeSignature, response.payload, source);
+      }
+      setTaxonomyMap(response.payload);
+      setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, response.payload));
+      setTaxonomyStatus(`Added taxonomy rank data from ${TAXONOMY_SOURCE_CONFIG[source].label}.`);
+      return response.payload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTaxonomyError(message);
+      return null;
+    } finally {
+      setTaxonomyLoading(false);
+    }
+  }, [ensureTaxonomyArchive, runTaxonomyWorker, taxonomyMap, tree, treeSignature, useLowMemoryTaxonomyMapping]);
+
+  const addAdditionalTaxonomyRank = useCallback(async (): Promise<void> => {
+    const rank = additionalTaxonomyRankDraft;
+    if (!rank || !OPTIONAL_TAXONOMY_RANKS.includes(rank as typeof OPTIONAL_TAXONOMY_RANKS[number])) {
+      return;
+    }
+    const requestedRanks = [...DEFAULT_TAXONOMY_RANKS, ...selectedAdditionalTaxonomyRanks, rank];
+    const enriched = await enrichCurrentTaxonomyRanks(requestedRanks);
+    if (!enriched) {
+      return;
+    }
+    setTaxonomyRankDisplayModes((current) => ({ ...current, [rank]: current[rank] ?? "hidden" }));
+    setTaxonomyRankVisibility((current) => ({ ...current, [rank]: current[rank] ?? false }));
+    setAdditionalTaxonomyRankDraft("");
+  }, [additionalTaxonomyRankDraft, enrichCurrentTaxonomyRanks, selectedAdditionalTaxonomyRanks]);
+
+  const removeAdditionalTaxonomyRank = useCallback((rank: TaxonomyRank): void => {
+    setTaxonomyRankDisplayModes((current) => {
+      const next = { ...current };
+      delete next[rank];
+      return next;
+    });
+    setTaxonomyRankVisibility((current) => {
+      const next = { ...current };
+      delete next[rank];
+      return next;
+    });
+    setAdditionalTaxonomyRankDraft((current) => current === rank ? "" : current);
+  }, []);
 
   const loadSubtreeFromUrl = useCallback(async (): Promise<boolean> => {
     if (typeof window === "undefined") {
@@ -4927,7 +5080,12 @@ export default function App() {
         label: metadataFileName || "metadata.csv",
         firstRowIsHeader: metadataFirstRowIsHeader,
       } : undefined,
-      taxonomy: tree ? { map: taxonomyMap } : undefined,
+      taxonomy: tree ? {
+        map: filterTaxonomyMapToRanks(taxonomyMap, [
+          ...DEFAULT_TAXONOMY_RANKS,
+          ...selectedAdditionalTaxonomyRanks,
+        ]),
+      } : undefined,
       phylopic: phylopicSilhouettes.length > 0 ? {
         enabled: phylopicEnabled,
         silhouettes: phylopicSilhouettes,
@@ -4961,6 +5119,7 @@ export default function App() {
     phylopicSilhouettes,
     showIncompatibleComparisonSplits,
     requestCanvasSessionState,
+    selectedAdditionalTaxonomyRanks,
     taxonomyMap,
     tree,
     treeSignature,
@@ -5002,7 +5161,17 @@ export default function App() {
         return false;
       }
       pendingLaunchTaxonomyMappingRef.current = null;
-      void runStandardTaxonomyMappingForTree(tree, treeSignature, pending.lowMemoryMode, pending.allowDownload, pending.source)
+      void runStandardTaxonomyMappingForTree(
+        tree,
+        treeSignature,
+        pending.lowMemoryMode,
+        pending.allowDownload,
+        pending.source,
+        pending.source === "ncbi"
+          ? pending.identifierMode ?? (treeHasNcbiTaxIdLabels(tree) ? "ncbi-taxid" : "scientific-name")
+          : "scientific-name",
+        pending.ranks,
+      )
         .then((payload) => pending.resolve(payload));
       return true;
     };
@@ -5033,6 +5202,7 @@ export default function App() {
       if (sessionTaxonomy) {
         const source = taxonomyMapSource(sessionTaxonomy);
         setTaxonomySource(source);
+        setTaxonomyIdentifierMode(taxonomyMapIdentifierMode(sessionTaxonomy));
         if (sessionTaxonomy.totalTips <= MAX_EAGER_SESSION_TAXONOMY_CACHE_TIPS) {
           void putCachedTaxonomyMapping(treeSignature, sessionTaxonomy, source).catch(() => {
             // Session loading must still succeed if browser storage is unavailable or full.
@@ -5066,6 +5236,8 @@ export default function App() {
       pendingSharedSubtreeVisualRef.current = null;
       const rebuilt = rebuildSharedSubtreeTaxonomyMap(tree, inheritedSubtreeTaxonomy);
       if (rebuilt) {
+        setTaxonomySource(taxonomyMapSource(rebuilt));
+        setTaxonomyIdentifierMode(taxonomyMapIdentifierMode(rebuilt));
         setTaxonomyMap(rebuilt);
         setTaxonomyEnabled(inheritedSubtreeVisual?.taxonomyEnabled ?? true);
         setTaxonomyStatus(`Loaded shared ${taxonomyMapSourceLabel(rebuilt)} mapping for this subtree (${rebuilt.mappedCount.toLocaleString()} mapped tips).`);
@@ -5091,12 +5263,13 @@ export default function App() {
         return;
       }
       setTaxonomySource(cached.source);
+      setTaxonomyIdentifierMode(taxonomyMapIdentifierMode(cached.payload));
       setTaxonomyMap(cached.payload);
       setTaxonomyEnabled(inheritedTaxonomyEnabled ?? true);
       setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(cached.payload)} mapping for this tree (${cached.payload.mappedCount.toLocaleString()} mapped tips).`);
       setTaxonomyError(null);
       setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, cached.payload));
-      void touchCachedTaxonomyMapping(treeSignature, cached.source).catch(() => {
+      void touchCachedTaxonomyMapping(treeSignature, cached.source, taxonomyMapIdentifierMode(cached.payload)).catch(() => {
         // A failed recency update does not invalidate a readable cached mapping.
       });
     })();
@@ -5113,11 +5286,15 @@ export default function App() {
       setSelectedSourceMappingCacheChecked(true);
       return;
     }
-    if (taxonomyMap && taxonomyMapSource(taxonomyMap) === taxonomySource) {
+    if (
+      taxonomyMap
+      && taxonomyMapSource(taxonomyMap) === taxonomySource
+      && taxonomyMapIdentifierMode(taxonomyMap) === taxonomyIdentifierMode
+    ) {
       setSelectedSourceMappingCacheChecked(true);
       return;
     }
-    void getCachedTaxonomyMapping(treeSignature, taxonomySource)
+    void getCachedTaxonomyMapping(treeSignature, taxonomySource, taxonomyIdentifierMode)
       .then((cached) => {
         if (!cancelled) {
           setSelectedSourceCachedTaxonomyMap(cached);
@@ -5132,7 +5309,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [taxonomyMap, taxonomySource, treeSignature]);
+  }, [taxonomyIdentifierMode, taxonomyMap, taxonomySource, treeSignature]);
 
   const clearMetadata = useCallback((): void => {
     setMetadataTable(null);
@@ -5632,6 +5809,17 @@ export default function App() {
     const launchTaxonomySource: TaxonomySource = payload.taxonomy?.source === "catalogue-of-life"
       ? "catalogue-of-life"
       : "ncbi";
+    const launchTaxonomyIdentifierMode: TaxonomyIdentifierMode | null = launchTaxonomySource === "ncbi"
+      ? payload.taxonomy?.identifierMode === "ncbi-taxid"
+        ? "ncbi-taxid"
+        : payload.taxonomy?.identifierMode === "scientific-name"
+          ? "scientific-name"
+          : null
+      : "scientific-name";
+    const launchTaxonomyRanks = TAXONOMY_RANKS.filter((rank) => (
+      DEFAULT_TAXONOMY_RANKS.includes(rank as typeof DEFAULT_TAXONOMY_RANKS[number])
+      || payload.taxonomy?.ranks?.includes(rank)
+    ));
     const waitForLaunchTaxonomyMapping = (): Promise<TaxonomyMapPayload | null> | null => {
       if (!launchTaxonomyRunMapping) {
         return null;
@@ -5641,6 +5829,8 @@ export default function App() {
           lowMemoryMode: launchTaxonomyLowMemoryMode,
           allowDownload: launchTaxonomyAllowDownload,
           source: launchTaxonomySource,
+          identifierMode: launchTaxonomyIdentifierMode,
+          ranks: launchTaxonomyRanks,
           resolve,
         };
       });
@@ -5664,6 +5854,10 @@ export default function App() {
         const suppliedTaxonomyMap = launchCompactTaxonomyProvided
           ? compactTaxonomyToMap(restoredTree!, launchCompactTaxonomy)
           : launchTaxonomyMap ?? null;
+        if (suppliedTaxonomyMap) {
+          setTaxonomySource(taxonomyMapSource(suppliedTaxonomyMap));
+          setTaxonomyIdentifierMode(taxonomyMapIdentifierMode(suppliedTaxonomyMap));
+        }
         setTaxonomyMap(suppliedTaxonomyMap);
         setTaxonomyEnabled(suppliedTaxonomyMap ? payload.visual?.taxonomyEnabled ?? true : false);
         setTaxonomyStatus(suppliedTaxonomyMap
@@ -5683,7 +5877,15 @@ export default function App() {
       if (launchTaxonomyRunMapping) {
         const restoredTree = currentTreeRef.current;
         if (restoredTree) {
-          const taxonomyPayload = await runStandardTaxonomyMappingForTree(restoredTree, currentTreeSignatureRef.current, launchTaxonomyLowMemoryMode, launchTaxonomyAllowDownload, launchTaxonomySource);
+          const taxonomyPayload = await runStandardTaxonomyMappingForTree(
+            restoredTree,
+            currentTreeSignatureRef.current,
+            launchTaxonomyLowMemoryMode,
+            launchTaxonomyAllowDownload,
+            launchTaxonomySource,
+            launchTaxonomyIdentifierMode ?? (treeHasNcbiTaxIdLabels(restoredTree) ? "ncbi-taxid" : "scientific-name"),
+            launchTaxonomyRanks,
+          );
           if (!taxonomyPayload) {
             throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping did not complete.");
           }
@@ -5817,7 +6019,8 @@ export default function App() {
     const mapTaxonomy = readLaunchBoolParam(params, "btv_map_taxonomy");
     const allowTaxonomyDownload = readLaunchBoolParam(params, "btv_taxonomy_allow_download");
     const taxonomySourceParam = params.get("btv_taxonomy_source");
-    if (mapTaxonomy !== undefined || params.has("btv_taxonomy_low_memory") || allowTaxonomyDownload !== undefined || taxonomySourceParam !== null) {
+    const taxonomyIdentifierModeParam = params.get("btv_taxonomy_identifier_mode");
+    if (mapTaxonomy !== undefined || params.has("btv_taxonomy_low_memory") || allowTaxonomyDownload !== undefined || taxonomySourceParam !== null || taxonomyIdentifierModeParam !== null) {
       payload.taxonomy = {
         ...payload.taxonomy,
         runMapping: mapTaxonomy ?? payload.taxonomy?.runMapping,
@@ -5828,6 +6031,11 @@ export default function App() {
           : taxonomySourceParam === "ncbi"
             ? "ncbi"
             : payload.taxonomy?.source,
+        identifierMode: taxonomyIdentifierModeParam === "ncbi-taxid"
+          ? "ncbi-taxid"
+          : taxonomyIdentifierModeParam === "scientific-name"
+            ? "scientific-name"
+            : payload.taxonomy?.identifierMode,
       };
     }
     const newick = readLaunchTextParam(params, "btv_newick", "btv_newick_b64");
@@ -6128,7 +6336,7 @@ export default function App() {
       return undefined;
     }
     const handleMessage = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload | BigTreeViewerLaunchPayload["export"] | { lowMemoryMode?: boolean; allowDownload?: boolean; source?: TaxonomySource } } | null;
+      const data = event.data as { type?: string; payload?: BigTreeViewerLaunchPayload | BigTreeViewerLaunchPayload["export"] | { lowMemoryMode?: boolean; allowDownload?: boolean; source?: TaxonomySource; identifierMode?: TaxonomyIdentifierMode } } | null;
       if (!data || typeof data !== "object") {
         return;
       }
@@ -6162,7 +6370,7 @@ export default function App() {
       if (data.type === "big-tree-viewer:map-taxonomy") {
         const replyOrigin = event.origin && event.origin !== "null" ? event.origin : "*";
         const request = data.payload && typeof data.payload === "object"
-          ? data.payload as { lowMemoryMode?: boolean; allowDownload?: boolean; source?: TaxonomySource }
+          ? data.payload as { lowMemoryMode?: boolean; allowDownload?: boolean; source?: TaxonomySource; identifierMode?: TaxonomyIdentifierMode; ranks?: TaxonomyRank[] }
           : {};
         if (!tree) {
           (event.source as Window | null)?.postMessage(
@@ -6177,6 +6385,13 @@ export default function App() {
           request.lowMemoryMode ?? useLowMemoryTaxonomyMapping,
           request.allowDownload === true,
           request.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi",
+          request.source === "catalogue-of-life"
+            ? "scientific-name"
+            : request.identifierMode ?? (treeHasNcbiTaxIdLabels(tree) ? "ncbi-taxid" : "scientific-name"),
+          TAXONOMY_RANKS.filter((rank) => (
+            DEFAULT_TAXONOMY_RANKS.includes(rank as typeof DEFAULT_TAXONOMY_RANKS[number])
+            || request.ranks?.includes(rank)
+          )),
         )
           .then((taxonomyMap) => {
             (event.source as Window | null)?.postMessage(
@@ -6279,7 +6494,14 @@ export default function App() {
               const mapped = await runStandardTaxonomyMappingForTree(tree, treeSignature,
                 payload.taxonomy.lowMemoryMode ?? useLowMemoryTaxonomyMapping,
                 payload.taxonomy.allowDownload === true,
-                payload.taxonomy.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi");
+                payload.taxonomy.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi",
+                payload.taxonomy.source === "catalogue-of-life"
+                  ? "scientific-name"
+                  : payload.taxonomy.identifierMode ?? (treeHasNcbiTaxIdLabels(tree) ? "ncbi-taxid" : "scientific-name"),
+                TAXONOMY_RANKS.filter((rank) => (
+                  DEFAULT_TAXONOMY_RANKS.includes(rank as typeof DEFAULT_TAXONOMY_RANKS[number])
+                  || payload.taxonomy?.ranks?.includes(rank)
+                )));
               if (!mapped) throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping failed.");
             }
             if (payload.canvas) {
@@ -6672,18 +6894,19 @@ export default function App() {
     if (!tree) {
       return null;
     }
-    return await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, taxonomySource);
-  }, [runStandardTaxonomyMappingForTree, taxonomySource, tree, treeSignature, useLowMemoryTaxonomyMapping]);
+    return await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, taxonomySource, taxonomyIdentifierMode);
+  }, [runStandardTaxonomyMappingForTree, taxonomyIdentifierMode, taxonomySource, tree, treeSignature, useLowMemoryTaxonomyMapping]);
 
   const canLoadSelectedCachedTaxonomyMapping = Boolean(
     tree
     && selectedSourceCachedTaxonomyMap
-    && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource),
+    && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource || taxonomyMapIdentifierMode(taxonomyMap) !== taxonomyIdentifierMode),
   );
   const selectedSourceTaxonomyLoaded = Boolean(
     tree
     && taxonomyMap
-    && taxonomyMapSource(taxonomyMap) === taxonomySource,
+    && taxonomyMapSource(taxonomyMap) === taxonomySource
+    && taxonomyMapIdentifierMode(taxonomyMap) === taxonomyIdentifierMode,
   );
   const taxonomyArchiveIsStale = Boolean(
     taxonomyCached
@@ -6695,30 +6918,42 @@ export default function App() {
     if (!tree || !treeSignature) {
       return null;
     }
-    if (selectedSourceCachedTaxonomyMap && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource)) {
+    if (selectedSourceCachedTaxonomyMap && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource || taxonomyMapIdentifierMode(taxonomyMap) !== taxonomyIdentifierMode)) {
       setTaxonomyMap(selectedSourceCachedTaxonomyMap);
       setTaxonomyEnabled(true);
       setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(selectedSourceCachedTaxonomyMap)} mapping for this tree (${selectedSourceCachedTaxonomyMap.mappedCount.toLocaleString()} mapped tips).`);
       setTaxonomyError(null);
       setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, selectedSourceCachedTaxonomyMap));
-      void touchCachedTaxonomyMapping(treeSignature, taxonomySource).catch(() => {
+      void touchCachedTaxonomyMapping(treeSignature, taxonomySource, taxonomyIdentifierMode).catch(() => {
         // A failed recency update does not invalidate a readable cached mapping.
       });
       return selectedSourceCachedTaxonomyMap;
     }
     return await runTaxonomyMapping();
-  }, [runTaxonomyMapping, selectedSourceCachedTaxonomyMap, taxonomyMap, taxonomySource, tree, treeSignature]);
+  }, [runTaxonomyMapping, selectedSourceCachedTaxonomyMap, taxonomyIdentifierMode, taxonomyMap, taxonomySource, tree, treeSignature]);
 
   const selectTaxonomySource = useCallback((source: TaxonomySource): void => {
     if (source === taxonomySource) {
       return;
     }
     setTaxonomySource(source);
+    if (source !== "ncbi") {
+      setTaxonomyIdentifierMode("scientific-name");
+    }
     setTaxonomyCached(null);
     setTaxonomyArchiveFileName("");
     setTaxonomyLinkedFilePermission(null);
     setTaxonomyError(null);
   }, [taxonomySource]);
+
+  const selectTaxonomyIdentifierMode = useCallback((identifierMode: TaxonomyIdentifierMode): void => {
+    if (identifierMode === taxonomyIdentifierMode) {
+      return;
+    }
+    setTaxonomyIdentifierMode(identifierMode);
+    setTaxonomyError(null);
+    setTaxonomyStatus("");
+  }, [taxonomyIdentifierMode]);
 
   const retrievePhyloPicForVisibleTaxa = useCallback(async (): Promise<void> => {
     if (!taxonomyEnabled || !viewTaxonomyMap) {
@@ -8371,6 +8606,57 @@ export default function App() {
                       </label>
                       {taxonomyMap && availableTaxonomyRanks.length > 0 ? (
                         <>
+                          {optionalMappedTaxonomyRanks.length > 0 ? (
+                            <div className="taxonomy-additional-ranks">
+                              <div className="taxonomy-rank-controls-title" title="Add an intermediate rank. Big Tree Viewer retrieves that rank from the loaded taxonomy archive when needed, then keeps it hidden until you choose Label only or Ribbon.">
+                                Additional ranks
+                              </div>
+                              <div className="taxonomy-additional-rank-picker">
+                                <select
+                                  aria-label="Additional taxonomy rank"
+                                  value={additionalTaxonomyRankDraft}
+                                  onChange={(event) => setAdditionalTaxonomyRankDraft(event.target.value as TaxonomyRank | "")}
+                                >
+                                  <option value="">Choose a rank</option>
+                                  {optionalMappedTaxonomyRanks.map((rank) => (
+                                    <option
+                                      key={rank}
+                                      value={rank}
+                                      disabled={selectedAdditionalTaxonomyRanks.includes(rank)}
+                                    >
+                                      {taxonomyRankLabel(rank)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  disabled={taxonomyLoading || !additionalTaxonomyRankDraft || selectedAdditionalTaxonomyRanks.includes(additionalTaxonomyRankDraft as TaxonomyRank)}
+                                  onClick={addAdditionalTaxonomyRank}
+                                >
+                                  Add
+                                </button>
+                              </div>
+                              {selectedAdditionalTaxonomyRanks.length > 0 ? (
+                                <div className="taxonomy-additional-rank-list" aria-label="Added taxonomy ranks">
+                                  {selectedAdditionalTaxonomyRanks.map((rank) => (
+                                    <div key={rank} className="taxonomy-additional-rank-item">
+                                      <span>{taxonomyRankLabel(rank)}</span>
+                                      <button
+                                        type="button"
+                                        className="taxonomy-additional-rank-remove"
+                                        aria-label={`Remove ${taxonomyRankLabel(rank)}`}
+                                        title={`Remove ${taxonomyRankLabel(rank)} from the display controls.`}
+                                        onClick={() => removeAdditionalTaxonomyRank(rank)}
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
                           <label className="label-style-inline-toggle" title="Let Big Tree Viewer choose which taxonomy ranks are visible based on zoom and layout. Kingdom remains an optional manual rank; turn this off to choose all ranks manually.">
                             <input
                               type="checkbox"
@@ -8380,7 +8666,7 @@ export default function App() {
                             Automatic visible ranks
                           </label>
                           <div className="taxonomy-rank-controls">
-                            <div className="taxonomy-rank-controls-title" title="Rank display controls which mapped taxonomy levels are drawn. Kingdom can be enabled independently; turn off automatic visible ranks to choose all other ranks manually. Label only draws black labels and a thin center strand without affecting branch colors.">Visible taxonomy ranks</div>
+                            <div className="taxonomy-rank-controls-title" title="Rank display controls which mapped taxonomy levels are drawn. Kingdom and added ranks can be enabled independently; turn off automatic visible ranks to choose the default ranks manually. Label only draws black labels and a thin center strand without affecting branch colors.">Visible taxonomy ranks</div>
                             <div className="taxonomy-rank-mode-grid">
                               <div className="taxonomy-rank-mode-heading">Rank</div>
                               <div className="taxonomy-rank-mode-heading">Hidden</div>
@@ -8393,7 +8679,7 @@ export default function App() {
                                     const selectedMode = taxonomyRankDisplayModes[rank]
                                       ?? (rank === "kingdom" ? "hidden" : taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon");
                                     const radioLabel = `${taxonomyRankLabel(rank)} ${mode === "label-only" ? "label only" : mode}`;
-                                    const automaticControlDisabled = useAutomaticTaxonomyRankVisibility && rank !== "kingdom";
+                                    const automaticControlDisabled = useAutomaticTaxonomyRankVisibility && isAutomaticTaxonomyRank(rank);
                                     return (
                                       <label
                                         key={mode}
@@ -8847,6 +9133,22 @@ export default function App() {
                 <option value="catalogue-of-life">Catalogue of Life</option>
               </select>
             </label>
+            {taxonomySource === "ncbi" && hasDetectedNcbiTaxIds ? (
+              <label className="label-style-inline-toggle" title="Use the NCBI Taxonomy IDs detected in the loaded tree's tip labels instead of interpreting the labels as scientific names.">
+                <input
+                  type="checkbox"
+                  checked={taxonomyIdentifierMode === "ncbi-taxid"}
+                  disabled={taxonomyLoading}
+                  onChange={(event) => selectTaxonomyIdentifierMode(event.target.checked ? "ncbi-taxid" : "scientific-name")}
+                />
+                Use Taxonomy IDs to map taxonomy
+              </label>
+            ) : null}
+            {taxonomySource === "ncbi" && hasDetectedNcbiTaxIds && taxonomyIdentifierMode === "ncbi-taxid" ? (
+              <p className="status-line">
+                Detected explicit NCBI Taxonomy IDs. Supported forms include <code>taxid=9606</code>, <code>_taxid_9606</code>, <code>_tx9606</code>, <code>|taxid=9606</code>, and a bare numeric ID such as <code>9606</code>.
+              </p>
+            ) : null}
             {!selectedSourceMappingCacheChecked && tree ? (
               <p className="status-line">Checking for a saved mapping for this tree...</p>
             ) : canLoadSelectedCachedTaxonomyMapping ? (
@@ -8916,7 +9218,9 @@ export default function App() {
                         : undefined,
                   ) ?? (canLoadSelectedCachedTaxonomyMapping
                     ? `Restore the saved ${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} mapping for this exact tree.`
-                    : `Match complete species names or leading Genus_species labels to ${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} so taxonomy labels, coloring, and silhouettes can be used.`)}
+                    : taxonomyIdentifierMode === "ncbi-taxid"
+                      ? "Map explicit NCBI TaxID suffixes at the ends of tip labels."
+                      : `Match complete species names or leading Genus_species labels to ${TAXONOMY_SOURCE_CONFIG[taxonomySource].label} so taxonomy labels, coloring, and silhouettes can be used.`)}
                   onClick={() => void loadOrRunTaxonomyMapping()}
                 >
                   {selectedSourceTaxonomyLoaded

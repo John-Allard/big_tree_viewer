@@ -1587,6 +1587,58 @@ test("taxonomy rank controls in taxonomy visual settings filter visible ranks", 
   await expect(page.getByRole("radio", { name: "Family ribbon" })).toBeChecked();
 });
 
+test("mapped intermediate ranks stay out of the controls until explicitly added", async ({ page }) => {
+  await waitForViewer(page);
+  await page.evaluate(async () => {
+    const leafNodes = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!leafNodes || leafNodes.length < 60) {
+      throw new Error("Leaf nodes unavailable for additional taxonomy rank test.");
+    }
+    const blockSize = Math.max(2, Math.ceil(leafNodes.length / 4));
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setTaxonomyMapForTest({
+      version: 13,
+      mappedCount: leafNodes.length,
+      totalTips: leafNodes.length,
+      resolvedRanks: ["superkingdom", "kingdom", "phylum", "class", "order", "family", "genus", "subgenus"],
+      activeRanks: ["subgenus", "genus", "family"],
+      tipRanks: leafNodes.map((node, index) => ({
+        node,
+        ranks: {
+          family: index < leafNodes.length / 2 ? "Family A" : "Family B",
+          genus: `Genus ${Math.floor(index / blockSize) + 1}`,
+          subgenus: `Subgenus ${Math.floor(index / blockSize) + 1}`,
+        },
+      })),
+    });
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Taxonomy overlays settings" }).click();
+  await expect(page.getByText("Additional ranks")).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Subgenus ribbon" })).toHaveCount(0);
+
+  await page.getByRole("combobox", { name: "Additional taxonomy rank" }).selectOption("subgenus");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByRole("radio", { name: "Subgenus hidden" })).toBeChecked();
+  await expect(page.getByLabel("Added taxonomy ranks").getByText("Subgenus", { exact: true })).toBeVisible();
+
+  await page.getByRole("radio", { name: "Subgenus ribbon" }).check();
+  await page.waitForFunction(() => (
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined)
+      ?.taxonomyVisibleRanks?.includes("subgenus")
+  ));
+
+  await page.getByRole("button", { name: "Remove Subgenus" }).click();
+  await expect(page.getByRole("radio", { name: "Subgenus ribbon" })).toHaveCount(0);
+  await page.waitForFunction(() => !(
+    (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect as { taxonomyVisibleRanks?: string[] } | undefined)
+      ?.taxonomyVisibleRanks?.includes("subgenus")
+  ));
+});
+
 test("kingdom ribbons are available manually but excluded from automatic ranks", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(async () => {

@@ -126,6 +126,7 @@ export function compactTaxonomyToMap(
     version: 1,
     mappedCount: tipRanks.length,
     totalTips: tree.leafCount,
+    resolvedRanks: [...TAXONOMY_RANKS],
     activeRanks: deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks)),
     tipRanks,
   };

@@ -4,16 +4,16 @@ import {
   candidateSpeciesNames,
   extractGenus,
   extractSpeciesEpithet,
+  enrichTaxonomyMapRanks,
   mapTipsWithContext,
   normalizeTaxonomyName,
   TAXONOMY_NAMED_LINEAGE_RANKS,
   type ParsedTaxonomyForMapping,
   type TipTaxonomyRequest,
 } from "./taxonomyNameResolver";
-import type { TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
+import { DEFAULT_TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
 
-const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "kingdom", "superkingdom"];
-const COL_MAPPING_VERSION = 5;
+const COL_MAPPING_VERSION = 6;
 
 interface LineageEntry {
   rank: string;
@@ -24,7 +24,7 @@ interface LineageEntry {
 
 export interface CatalogueOfLifeTextTreeParser {
   consumeLine: (line: string) => void;
-  finish: () => TaxonomyMapPayload;
+  finish: (targetRanks?: TaxonomyRank[], existingMap?: TaxonomyMapPayload) => TaxonomyMapPayload;
   parsedLineCount: () => number;
 }
 
@@ -236,7 +236,10 @@ export function createCatalogueOfLifeTextTreeParser(
         addTaxonomyIndexEntry(namedTaxonIndex, normalizedLabel, taxId);
       }
     },
-    finish(): TaxonomyMapPayload {
+    finish(
+      targetRanks: TaxonomyRank[] = [...DEFAULT_TAXONOMY_RANKS],
+      existingMap?: TaxonomyMapPayload,
+    ): TaxonomyMapPayload {
       const taxonomy: ParsedTaxonomyForMapping = {
         nodes,
         rankNames,
@@ -246,7 +249,16 @@ export function createCatalogueOfLifeTextTreeParser(
         contextualGenusIndex,
         namedTaxonIndex,
       };
-      return mapTipsWithContext(tips, taxonomy, TARGET_RANKS, COL_MAPPING_VERSION, {
+      if (existingMap && existingMap.tipRanks.every((tip) => Boolean(tip.sourceTaxId))) {
+        return enrichTaxonomyMapRanks(
+          existingMap,
+          taxonomy,
+          targetRanks,
+          COL_MAPPING_VERSION,
+          !lowMemoryMode,
+        );
+      }
+      return mapTipsWithContext(tips, taxonomy, targetRanks, COL_MAPPING_VERSION, {
         enableCollapseFallbacks: !lowMemoryMode,
         rejectEmbeddedBroadRankRuns: true,
         requireContextForGenusFallback: true,

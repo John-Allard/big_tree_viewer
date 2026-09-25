@@ -1,14 +1,6 @@
-import { isAutomaticTaxonomyRank, type TaxonomyRank, type TaxonomyTipRanks } from "../types/taxonomy";
+import { isAutomaticTaxonomyRank, TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank, type TaxonomyTipRanks } from "../types/taxonomy";
 
-export const ACTIVE_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [
-  "genus",
-  "family",
-  "order",
-  "class",
-  "phylum",
-  "kingdom",
-  "superkingdom",
-];
+export const ACTIVE_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [...TAXONOMY_RANKS].reverse();
 
 function collapseLabelForRank(
   entry: Partial<Record<TaxonomyRank, string>> | TaxonomyTipRanks,
@@ -100,4 +92,41 @@ export function deriveDefaultVisibleTaxonomyRanks(
     break;
   }
   return defaultRanks;
+}
+
+export function filterTaxonomyMapToRanks(
+  taxonomyMap: TaxonomyMapPayload | null,
+  includedRanks: readonly TaxonomyRank[],
+): TaxonomyMapPayload | null {
+  if (!taxonomyMap) {
+    return null;
+  }
+  const included = new Set(includedRanks);
+  const filterRecord = <T>(record: Partial<Record<TaxonomyRank, T>> | undefined): Partial<Record<TaxonomyRank, T>> | undefined => {
+    if (!record) {
+      return undefined;
+    }
+    const filtered: Partial<Record<TaxonomyRank, T>> = {};
+    for (const rank of TAXONOMY_RANKS) {
+      if (included.has(rank) && record[rank] !== undefined) {
+        filtered[rank] = record[rank];
+      }
+    }
+    return Object.keys(filtered).length > 0 ? filtered : undefined;
+  };
+  const tipRanks = taxonomyMap.tipRanks.map((tip) => ({
+    node: tip.node,
+    sourceTaxId: tip.sourceTaxId,
+    ranks: filterRecord(tip.ranks) ?? {},
+    taxIds: filterRecord(tip.taxIds),
+    collapseFallbacks: filterRecord(tip.collapseFallbacks),
+  }));
+  const activeRanks = deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
+  const resolvedSource = taxonomyMap.resolvedRanks ?? taxonomyMap.activeRanks;
+  return {
+    ...taxonomyMap,
+    resolvedRanks: TAXONOMY_RANKS.filter((rank) => included.has(rank) && resolvedSource.includes(rank)),
+    activeRanks,
+    tipRanks,
+  };
 }

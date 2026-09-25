@@ -53,9 +53,10 @@ async function routeTinyTaxdump(page: Page): Promise<void> {
     "4\t|\t3\t|\tclass\t|",
     "5\t|\t4\t|\torder\t|",
     "6\t|\t5\t|\tfamily\t|",
-    "7\t|\t6\t|\tgenus\t|",
+    "13\t|\t6\t|\tsubfamily\t|",
+    "7\t|\t13\t|\tgenus\t|",
     "8\t|\t7\t|\tspecies\t|",
-    "9\t|\t6\t|\tgenus\t|",
+    "9\t|\t13\t|\tgenus\t|",
     "10\t|\t9\t|\tspecies\t|",
     "11\t|\t8\t|\tvarietas\t|",
   ].join("\n");
@@ -67,6 +68,7 @@ async function routeTinyTaxdump(page: Page): Promise<void> {
     "4\t|\tTestclass\t|\t\t|\tscientific name\t|",
     "5\t|\tTestorder\t|\t\t|\tscientific name\t|",
     "6\t|\tTestaceae\t|\t\t|\tscientific name\t|",
+    "13\t|\tTestinae\t|\t\t|\tscientific name\t|",
     "7\t|\tA\t|\t\t|\tscientific name\t|",
     "8\t|\tA species\t|\t\t|\tscientific name\t|",
     "8\t|\tA oldspecies\t|\t\t|\tsynonym\t|",
@@ -949,6 +951,63 @@ test("postMessage launch API can run the standard taxonomy mapper", async ({ pag
   expect(result.state?.taxonomyEnabled).toBe(true);
   expect(result.state?.taxonomyMappedCount).toBe(2);
   expect(result.taxonomy?.tipRanks[0]?.ranks.family).toBe("Testaceae");
+  expect(result.taxonomy?.tipRanks[0]?.ranks.subfamily).toBeUndefined();
+});
+
+test("postMessage launch API maps explicitly requested optional ranks", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(A_species:1,B_species:1)Root;",
+        taxonomy: {
+          runMapping: true,
+          allowDownload: true,
+          ranks: ["subfamily"],
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+  expect(taxonomy?.resolvedRanks).toContain("subfamily");
+  expect(taxonomy?.tipRanks.map((tip) => tip.ranks.subfamily)).toEqual(["Testinae", "Testinae"]);
+});
+
+test("taxonomy rank chooser enriches an existing core mapping from the cached archive", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "((A_species:1,A_species:1):1,(B_species:1,B_species:1):1)Root;",
+        taxonomy: { runMapping: true, allowDownload: true },
+      },
+    }, "*");
+  });
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 4);
+  const before = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+  expect(before?.tipRanks.every((tip) => tip.ranks.subfamily === undefined)).toBe(true);
+
+  await page.getByRole("button", { name: "Visual Options" }).click();
+  await page.getByRole("button", { name: "Taxonomy overlays settings" }).click();
+  await page.getByRole("combobox", { name: "Additional taxonomy rank" }).selectOption("subfamily");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.waitForFunction(() => (
+    window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.()?.resolvedRanks?.includes("subfamily")
+  ));
+  const after = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+  expect(after?.tipRanks.map((tip) => tip.ranks.subfamily)).toEqual(["Testinae", "Testinae", "Testinae", "Testinae"]);
+  expect(after?.tipRanks.map((tip) => tip.sourceTaxId)).toEqual(before?.tipRanks.map((tip) => tip.sourceTaxId));
+  expect(after?.tipRanks.map((tip) => tip.ranks.family)).toEqual(before?.tipRanks.map((tip) => tip.ranks.family));
 });
 
 test("standard taxonomy mapping recognizes leading species names in decorated tip labels", async ({ page }) => {
@@ -974,7 +1033,7 @@ test("standard taxonomy mapping recognizes leading species names in decorated ti
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
   const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
 
-  expect(taxonomy?.version).toBe(11);
+  expect(taxonomy?.version).toBe(14);
   expect(taxonomy?.mappedCount).toBe(2);
   expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
 });
@@ -1084,6 +1143,79 @@ test("postMessage API can map taxonomy for the current loaded tree", async ({ pa
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
   const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
   expect(taxonomy?.tipRanks.every((tip) => tip.ranks.kingdom === "Testanimalia")).toBeTruthy();
+});
+
+test("postMessage API can map NCBI TaxID suffixes", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "(gene_alpha_taxid_8:1,gene_beta|taxid=10:1,name_only_A_species:1)Root;",
+        label: "taxid-suffix-tree",
+        taxonomy: {
+          runMapping: true,
+          allowDownload: true,
+          source: "ncbi",
+          identifierMode: "ncbi-taxid",
+        },
+      },
+    }, "*");
+  });
+
+  await waitForLoadedTree(page);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+
+  expect(taxonomy?.identifierMode).toBe("ncbi-taxid");
+  expect(taxonomy?.mappedCount).toBe(2);
+  expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
+});
+
+test("TaxID-only labels are detected automatically and expose an opt-out checkbox", async ({ page }) => {
+  await routeTinyTaxdump(page);
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: {
+        newick: "('taxid=8':1,'10':1)Root;",
+        taxonomy: { runMapping: true, allowDownload: true },
+      },
+    }, "*");
+  });
+
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount === 2);
+  const taxonomy = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest?.() ?? null);
+  expect(taxonomy?.identifierMode).toBe("ncbi-taxid");
+  expect(taxonomy?.tipRanks.map((tip) => tip.ranks.genus).sort()).toEqual(["A", "B"]);
+
+  await page.getByRole("button", { name: "Taxonomy" }).click();
+  const checkbox = page.getByRole("checkbox", { name: "Use Taxonomy IDs to map taxonomy" });
+  await expect(checkbox).toBeVisible();
+  await expect(checkbox).toBeChecked();
+  await checkbox.uncheck();
+  await expect(checkbox).not.toBeChecked();
+});
+
+test("scientific-name trees do not show the Taxonomy ID control", async ({ page }) => {
+  await page.goto("/?btv_api=1");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.evaluate(() => {
+    window.postMessage({
+      type: "big-tree-viewer:load",
+      payload: { newick: "(Homo_sapiens:1,Pan_troglodytes:1)Root;" },
+    }, "*");
+  });
+  await waitForLoadedTree(page);
+  await page.getByRole("button", { name: "Taxonomy" }).click();
+  await expect(page.getByRole("checkbox", { name: "Use Taxonomy IDs to map taxonomy" })).toHaveCount(0);
+  await expect(page.getByText("Tip identifier", { exact: true })).toHaveCount(0);
 });
 
 test("postMessage taxonomy mapping does not download taxdump without explicit permission", async ({ page }) => {

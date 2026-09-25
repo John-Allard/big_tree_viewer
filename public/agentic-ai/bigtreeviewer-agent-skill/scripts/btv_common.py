@@ -70,6 +70,8 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--taxonomy-branch-colors", type=parse_bool, help="Color branches using taxonomy mapping.")
     parser.add_argument("--map-taxonomy", action="store_true", help="Run Big Tree Viewer's standard taxonomy mapper after loading the tree using an already cached taxonomy archive.")
     parser.add_argument("--taxonomy-source", choices=["ncbi", "catalogue-of-life"], default="ncbi", help="Taxonomy source used by --map-taxonomy. Default: ncbi.")
+    parser.add_argument("--taxonomy-identifier-mode", choices=["scientific-name", "ncbi-taxid"], help="Override automatic detection and interpret tip labels as scientific names or explicit NCBI Taxonomy IDs.")
+    parser.add_argument("--taxonomy-ranks", help="Comma-separated taxonomy ranks to expose. Intermediate ranks are retrieved on demand.")
     parser.add_argument("--allow-taxonomy-download", action="store_true", help="Allow Big Tree Viewer to download the selected official taxonomy archive if --map-taxonomy is enabled and no cached archive is available.")
     parser.add_argument("--taxonomy-low-memory", action="store_true", help="Use low-memory mode when --map-taxonomy is enabled.")
     parser.add_argument("--time-stripes", type=parse_bool, help="Show time stripes: true or false.")
@@ -132,6 +134,10 @@ def load_payload(args: argparse.Namespace, *, require_source: bool = True) -> di
         taxonomy = dict(payload.get("taxonomy") or {})
         taxonomy["runMapping"] = True
         taxonomy["source"] = args.taxonomy_source
+        if args.taxonomy_identifier_mode:
+            taxonomy["identifierMode"] = args.taxonomy_identifier_mode
+        if args.taxonomy_ranks:
+            taxonomy["ranks"] = [rank.strip() for rank in args.taxonomy_ranks.split(",") if rank.strip()]
         if args.allow_taxonomy_download:
             taxonomy["allowDownload"] = True
         if args.taxonomy_low_memory:

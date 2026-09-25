@@ -106,12 +106,20 @@ async function startAutomation({ grantFile, commandFile, mcpSocket, showApplicat
     } else if (args.newick) payload.newick = args.newick;
     if (args.metadataPath) payload.metadata = { ...payload.metadata, text: await fs.readFile(absolute(args.metadataPath), 'utf8'), label: path.basename(args.metadataPath) };
     if (args.taxonomy) {
-      payload.taxonomy = { runMapping: true, source: args.taxonomy.source, allowDownload: args.taxonomy.allowDownload };
+      payload.taxonomy = {
+        runMapping: true,
+        source: args.taxonomy.source,
+        identifierMode: args.taxonomy.identifierMode,
+        allowDownload: args.taxonomy.allowDownload,
+        ranks: args.taxonomy.ranks,
+      };
       payload.visual.taxonomyEnabled = true;
       if (args.taxonomy.ranks) {
         payload.visual.useAutomaticTaxonomyRankVisibility = false;
         payload.visual.taxonomyOverlayStyle = "ribbons";
-        payload.visual.taxonomyRankVisibility = Object.fromEntries(['superkingdom','kingdom','phylum','class','order','family','genus'].map(rank => [rank, args.taxonomy.ranks.includes(rank)]));
+        const coreRanks = ['superkingdom','kingdom','phylum','class','order','family','genus'];
+        payload.visual.taxonomyRankVisibility = Object.fromEntries(coreRanks.map(rank => [rank, args.taxonomy.ranks.includes(rank)]));
+        payload.visual.taxonomyRankDisplayModes = Object.fromEntries(args.taxonomy.ranks.map(rank => [rank, 'ribbon']));
       }
     }
     return payload;

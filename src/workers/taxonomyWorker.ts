@@ -6,6 +6,7 @@ import {
   addTaxonomyIndexEntry,
   candidateExactTaxonName,
   candidateSpeciesNames,
+  enrichTaxonomyMapRanks,
   extractGenus,
   mapTipsWithContext,
   normalizeTaxonomyName,
@@ -13,11 +14,12 @@ import {
   TAXONOMY_SPECIES_INDEX_NAME_CLASSES,
   TAXONOMY_SPECIES_INDEX_RANKS,
 } from "../lib/taxonomyNameResolver";
-import type { TaxonomyMapPayload, TaxonomyRank, TaxonomySource } from "../types/taxonomy";
+import { DEFAULT_TAXONOMY_RANKS, type TaxonomyIdentifierMode, type TaxonomyMapPayload, type TaxonomyRank, type TaxonomySource } from "../types/taxonomy";
 
 type TaxonomyWorkerRequest =
   | { type: "download-taxonomy"; source?: TaxonomySource }
-  | { type: "map-taxonomy"; source?: TaxonomySource; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean };
+  | { type: "map-taxonomy"; source?: TaxonomySource; identifierMode?: TaxonomyIdentifierMode; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean; ranks?: TaxonomyRank[] }
+  | { type: "enrich-taxonomy"; source?: TaxonomySource; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; existingMap: TaxonomyMapPayload; lowMemoryMode?: boolean; ranks: TaxonomyRank[] };
 
 type TaxonomyWorkerResponse =
   | { type: "taxonomy-progress"; message: string }
@@ -29,8 +31,7 @@ const TAXONOMY_URLS: Record<TaxonomySource, string> = {
   ncbi: "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip",
   "catalogue-of-life": "https://download.checklistbank.org/col/latest_txtree.zip",
 };
-const TAXONOMY_MAPPING_VERSION = 11;
-const TARGET_RANKS: TaxonomyRank[] = ["genus", "family", "order", "class", "phylum", "kingdom", "superkingdom"];
+const TAXONOMY_MAPPING_VERSION = 14;
 
 type NodeInfo = { parentId: number; rank: string };
 type ParsedTaxonomy = {
@@ -79,6 +80,7 @@ function parseTaxonomyNameLine(
   namedTaxonIndex: Map<string, number[]>,
   lowMemoryMode: boolean,
   lookupFilters: TaxonomyLookupFilters,
+  targetRanks: readonly TaxonomyRank[],
 ): void {
   const parts = line.split("|").map((part) => part.trim());
   if (parts.length < 4) {
@@ -112,7 +114,7 @@ function parseTaxonomyNameLine(
     }
   }
   const shouldCacheRankName = lowMemoryMode
-    ? (TARGET_RANKS as string[]).includes(rank)
+    ? (targetRanks as readonly string[]).includes(rank)
     : TAXONOMY_NAMED_LINEAGE_RANKS.has(rank);
   if (nameClass === "scientific name" && shouldCacheRankName) {
     rankNames.set(taxId, scientificName);
@@ -239,6 +241,7 @@ async function parseArchive(
   archive: Blob | ArrayBuffer,
   lowMemoryMode: boolean,
   lookupFilters: TaxonomyLookupFilters,
+  targetRanks: readonly TaxonomyRank[],
 ): Promise<ParsedTaxonomy> {
   if (parsedCache && !lowMemoryMode) {
     return parsedCache;
@@ -255,7 +258,7 @@ async function parseArchive(
     parseNodeLine(line, nodes);
   });
   await parseZipFileLines(archiveBlob, "names.dmp", "Parsing taxonomy names...", (line) => {
-    parseTaxonomyNameLine(line, nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex, lowMemoryMode, lookupFilters);
+    parseTaxonomyNameLine(line, nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex, lowMemoryMode, lookupFilters, targetRanks);
   });
 
   const parsed = { nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex };
@@ -269,10 +272,13 @@ function mapTips(
   tips: Array<{ node: number; name: string }>,
   taxonomy: ParsedTaxonomy,
   lowMemoryMode: boolean,
+  identifierMode: TaxonomyIdentifierMode,
+  targetRanks: TaxonomyRank[],
 ): TaxonomyMapPayload {
   return {
-    ...mapTipsWithContext(tips, taxonomy, TARGET_RANKS, TAXONOMY_MAPPING_VERSION, {
+    ...mapTipsWithContext(tips, taxonomy, targetRanks, TAXONOMY_MAPPING_VERSION, {
       enableCollapseFallbacks: !lowMemoryMode,
+      identifierMode,
     }),
     source: "ncbi",
   };
@@ -282,6 +288,8 @@ async function mapCatalogueOfLifeTextTree(
   archive: Blob | ArrayBuffer,
   tips: Array<{ node: number; name: string }>,
   lowMemoryMode: boolean,
+  targetRanks: TaxonomyRank[],
+  existingMap?: TaxonomyMapPayload,
 ): Promise<TaxonomyMapPayload> {
   const archiveBlob = archive instanceof Blob ? archive : new Blob([archive], { type: "application/zip" });
   const parser = createCatalogueOfLifeTextTreeParser(tips, lowMemoryMode);
@@ -296,7 +304,7 @@ async function mapCatalogueOfLifeTextTree(
     message: `Mapping tree tips against ${parser.parsedLineCount().toLocaleString()} Catalogue of Life records...`,
   });
   return {
-    ...parser.finish(),
+    ...parser.finish(targetRanks, existingMap),
     source: "catalogue-of-life",
   };
 }
@@ -316,20 +324,51 @@ self.addEventListener("message", async (event: MessageEvent<TaxonomyWorkerReques
       return;
     }
     const source = request.source ?? "ncbi";
-    const lowMemoryMode = request.type === "map-taxonomy" ? Boolean(request.lowMemoryMode) : false;
+    const lowMemoryMode = request.type === "map-taxonomy" || request.type === "enrich-taxonomy"
+      ? Boolean(request.lowMemoryMode)
+      : false;
+    const identifierMode = request.type === "map-taxonomy"
+      ? request.identifierMode ?? "scientific-name"
+      : request.type === "enrich-taxonomy"
+        ? request.existingMap.identifierMode ?? "scientific-name"
+        : "scientific-name";
+    const targetRanks = request.type === "map-taxonomy" || request.type === "enrich-taxonomy"
+      ? [...new Set(request.ranks?.length ? request.ranks : DEFAULT_TAXONOMY_RANKS)]
+      : [...DEFAULT_TAXONOMY_RANKS];
     if (source === "catalogue-of-life") {
-      const payload = await mapCatalogueOfLifeTextTree(request.archive, request.tips, lowMemoryMode);
+      if (identifierMode === "ncbi-taxid") {
+        throw new Error("NCBI TaxID tip labels can only be mapped with NCBI Taxonomy.");
+      }
+      const payload = await mapCatalogueOfLifeTextTree(
+        request.archive,
+        request.tips,
+        lowMemoryMode,
+        targetRanks,
+        request.type === "enrich-taxonomy" ? request.existingMap : undefined,
+      );
       post({ type: "taxonomy-mapped", payload });
       return;
     }
-    const lookupFilters = buildLookupFilters(request.tips);
+    const canEnrich = request.type === "enrich-taxonomy"
+      && request.existingMap.tipRanks.every((tip) => Boolean(tip.sourceTaxId));
+    const lookupFilters = canEnrich || identifierMode === "ncbi-taxid"
+      ? { speciesNames: new Set<string>(), genera: new Set<string>(), namedTaxa: new Set<string>() }
+      : buildLookupFilters(request.tips);
     post({
       type: "taxonomy-progress",
       message: `Preparing taxonomy lookup filters (${lookupFilters.speciesNames.size.toLocaleString()} species names, ${lookupFilters.genera.size.toLocaleString()} genera, ${lookupFilters.namedTaxa.size.toLocaleString()} exact taxa)...`,
     });
-    const taxonomy = await parseArchive(request.archive, lowMemoryMode, lookupFilters);
+    const taxonomy = await parseArchive(request.archive, lowMemoryMode, lookupFilters, targetRanks);
     post({ type: "taxonomy-progress", message: "Mapping taxonomy to tree tips..." });
-    const payload = mapTips(request.tips, taxonomy, lowMemoryMode);
+    const payload = canEnrich
+      ? enrichTaxonomyMapRanks(
+        request.existingMap,
+        taxonomy,
+        targetRanks,
+        TAXONOMY_MAPPING_VERSION,
+        !lowMemoryMode,
+      )
+      : mapTips(request.tips, taxonomy, lowMemoryMode, identifierMode, targetRanks);
     post({ type: "taxonomy-mapped", payload });
   } catch (error) {
     post({

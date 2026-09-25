@@ -1,9 +1,17 @@
 const { z } = require("zod");
 
 const object = z.record(z.string(), z.unknown());
+const taxonomyRank = z.enum([
+  "superkingdom", "kingdom", "subkingdom", "infrakingdom", "superphylum", "phylum",
+  "subphylum", "infraphylum", "superclass", "class", "subclass", "infraclass", "cohort",
+  "subcohort", "superorder", "order", "suborder", "infraorder", "parvorder", "superfamily",
+  "family", "subfamily", "tribe", "subtribe", "genus", "subgenus", "section", "subsection",
+  "series", "subseries", "species group", "species subgroup",
+]);
 const taxonomy = z.object({
   source: z.enum(["ncbi", "catalogue-of-life"]).default("ncbi"),
-  ranks: z.array(z.enum(["superkingdom", "kingdom", "phylum", "class", "order", "family", "genus"])).optional(),
+  identifierMode: z.enum(["scientific-name", "ncbi-taxid"]).optional().describe("Optional override for how tip labels identify taxa. BTV otherwise detects explicit TaxID labels automatically. ncbi-taxid accepts taxid=9606, a trailing suffix such as _taxid_9606, or a bare numeric ID, and requires NCBI Taxonomy."),
+  ranks: z.array(taxonomyRank).optional().describe("Mapped ranks to expose. Core Linnaean ranks are conventional defaults; intermediate ranks such as superfamily, tribe, or subgenus are also supported."),
   allowDownload: z.boolean().default(false).describe("Allow a first-time taxonomy archive download. Otherwise use cached data only."),
 }).strict();
 const metadataOptions = z.object({

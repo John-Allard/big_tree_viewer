@@ -25,7 +25,8 @@ const FIXTURE = `Eukaryota Chatton, 1925 [domain]
         Rodentia Bowdich, 1821 [order]
           Muridae Illiger, 1811 [family]
             Mus Linnaeus, 1758 [genus]
-              Mus (Mus) musculus Linnaeus, 1758 [species]
+              Mus Linnaeus, 1758 [subgenus]
+                Mus (Mus) musculus Linnaeus, 1758 [species]
     Arthropoda von Siebold, 1848 [phylum]
       Malacostraca Latreille, 1802 [class]
         Amphipoda Latreille, 1816 [order]
@@ -181,6 +182,24 @@ test("parenthesized subgenera do not prevent an exact binomial match", () => {
   expect(payload.mappedCount).toBe(1);
   expect(payload.tipRanks[0]?.ranks.genus).toBe("Mus");
   expect(payload.tipRanks[0]?.ranks.family).toBe("Muridae");
+});
+
+test("Catalogue of Life intermediate ranks can be enriched on demand", () => {
+  const tips = [
+    { node: 16, name: "Mus musculus" },
+    { node: 17, name: "Mus musculus" },
+  ];
+  const parser = createCatalogueOfLifeTextTreeParser(tips);
+  for (const line of FIXTURE.split("\n")) {
+    parser.consumeLine(line);
+  }
+  const core = parser.finish();
+  expect(core.tipRanks.every((tip) => tip.ranks.subgenus === undefined)).toBe(true);
+
+  const enriched = parser.finish(["subgenus"], core);
+  expect(enriched.resolvedRanks).toContain("subgenus");
+  expect(enriched.tipRanks.map((tip) => tip.ranks.subgenus)).toEqual(["Mus", "Mus"]);
+  expect(enriched.tipRanks.map((tip) => tip.sourceTaxId)).toEqual(core.tipRanks.map((tip) => tip.sourceTaxId));
 });
 
 test("single-token higher taxa map without treating the authorship as part of the name", () => {

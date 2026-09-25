@@ -161,3 +161,43 @@ test("adjacent child taxa receive separated colors inherited from one parent", (
     expect(Math.min(difference, 360 - difference)).toBeGreaterThan(8);
   }
 });
+
+test("retained intermediate ranks do not alter colors until they are included", () => {
+  const taxonomyMap: TaxonomyMapPayload = {
+    mappedCount: 8,
+    totalTips: 8,
+    activeRanks: ["subgenus", "genus", "family", "order"],
+    tipRanks: Array.from({ length: 8 }, (_, node) => ({
+      node,
+      ranks: {
+        order: "Order A",
+        family: node < 4 ? "Family A" : "Family B",
+        genus: `Genus ${Math.floor(node / 2) + 1}`,
+        subgenus: `Subgenus ${Math.floor(node / 2) + 1}`,
+      },
+    })),
+  };
+  const coreRanks = ["genus", "family", "order"] as const;
+  const colorsWithRetainedRank = buildTaxonomyColorMap(
+    taxonomyMap,
+    new Map(),
+    1,
+    "classic",
+    [],
+    "order",
+    "genus",
+    coreRanks,
+  );
+  const colorsWithoutRetainedRank = buildTaxonomyColorMap(
+    { ...taxonomyMap, activeRanks: [...coreRanks] },
+    new Map(),
+    1,
+    "classic",
+    [],
+    "order",
+    "genus",
+  );
+
+  expect(colorsWithRetainedRank).toEqual(colorsWithoutRetainedRank);
+  expect(colorsWithRetainedRank.subgenus).toBeUndefined();
+});

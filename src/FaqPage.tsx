@@ -113,14 +113,21 @@ export default function FaqPage() {
                 <code>Genus species</code> followed by gene, specimen, or other
                 identifiers. It also maps exact single-token{" "}
                 taxon names, such as genus, family, or order names, when they
-                occur in the selected taxonomy. Once mapped,
+                occur in the selected taxonomy. For NCBI Taxonomy, explicit
+                NCBI Taxonomy IDs are detected automatically. Supported
+                labels include <code>taxid=9606</code>, <code>sample_taxid_9606</code>,
+                and a bare numeric ID such as <code>9606</code>. When detected,
+                the Taxonomy panel shows a checked option to use those IDs. Once mapped,
                 taxonomy can be used for ribbons, branch coloring, collapsed
                 taxonomic views, and{" "}
                 <a href="https://www.phylopic.org/" target="_blank" rel="noreferrer">PhyloPic</a>{" "}
-                silhouette retrieval.
+                silhouette retrieval. Mapping stores the standard ranks by default.
+                If you add an intermediate rank such as superfamily, tribe, or
+                subgenus in taxonomy overlay settings, Big Tree Viewer retrieves
+                that rank from the selected taxonomy archive only when needed.
               </p>
               <p>
-                Mappings are cached by tree and taxonomy source. Returning to a
+                Mappings are cached by tree, taxonomy source, and identifier mode. Returning to a
                 recently mapped tree can restore its latest mapping, and mappings
                 from more than one source can be retained for the same tree.
               </p>
