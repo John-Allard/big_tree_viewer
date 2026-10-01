@@ -75,6 +75,7 @@ import {
   pointInLabelHitbox,
   polarToCartesian,
   serializeSubtreeToNewick,
+  strokeRadialConnector,
   thetaFor,
   wrapPositive,
 } from "./treeCanvasUtils";
@@ -6324,6 +6325,7 @@ export default function TreeCanvas({
 
     ctx.strokeStyle = HOVER_COLOR;
     ctx.lineWidth = 2;
+    ctx.lineCap = "butt";
     ctx.beginPath();
     if (viewMode === "spiral" && camera.kind === "circular") {
       const visibleRankCount = spiralVisibleTaxonomyRanksForScale(camera.scale).length;
@@ -6412,12 +6414,17 @@ export default function TreeCanvas({
         );
         ctx.arc(camera.translateX, camera.translateY, radiusPx, arcSpan.start + camera.rotation, arcSpan.end + camera.rotation, false);
       }
+      strokeRadialConnector(ctx);
+      ctx.beginPath();
+      ctx.lineCap = "round";
       const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[hover.ownerNode]), childTheta);
       const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[hover.node]), childTheta);
       const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
       const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
       ctx.moveTo(start.x, start.y);
       ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      return;
     } else {
       const parentTheta = polarThetaFor(layout.center, parent);
       if (Math.abs(childTheta - parentTheta) > 1e-6) {
@@ -6435,14 +6442,18 @@ export default function TreeCanvas({
           ctx.arc(camera.translateX, camera.translateY, radiusPx, arcSpan.start + camera.rotation, arcSpan.end + camera.rotation, false);
         }
       }
+      strokeRadialConnector(ctx);
+      ctx.beginPath();
+      ctx.lineCap = "round";
       const startWorld = polarToCartesian(axisDepth(tree.buffers.depth[parent]), childTheta);
       const endWorld = polarToCartesian(axisDepth(tree.buffers.depth[hover.node]), childTheta);
       const start = worldToScreenCircular(camera, startWorld.x, startWorld.y);
       const end = worldToScreenCircular(camera, endWorld.x, endWorld.y);
       ctx.moveTo(start.x, start.y);
       ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      return;
     }
-    ctx.stroke();
   }, [axisDepth, collapsedView, order, polarThetaFor, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
 
   const clearDistanceMeasurement = useCallback((): void => {
@@ -7386,9 +7397,8 @@ export default function TreeCanvas({
       ctx.strokeStyle = color;
       ctx.lineWidth = (1.2 * branchStrokeScale) / Math.max(bitmapScale, 1e-6);
       ctx.globalAlpha = 0.95;
-      ctx.lineCap = "square";
-      ctx.stroke(pathCache.connectors);
-      ctx.lineCap = "butt";
+      strokeRadialConnector(ctx, pathCache.connectors);
+      ctx.lineCap = "round";
       ctx.stroke(pathCache.stems);
     });
     ctx.globalAlpha = 1;
@@ -12240,9 +12250,8 @@ export default function TreeCanvas({
           ctx.strokeStyle = color;
           ctx.lineWidth = (1.2 * circularBranchStrokeScale) / Math.max(camera.scale, 1e-6);
           ctx.globalAlpha = 0.95;
-          ctx.lineCap = "square";
-          ctx.stroke(pathCache.connectors);
-          ctx.lineCap = "butt";
+          strokeRadialConnector(ctx, pathCache.connectors);
+          ctx.lineCap = "round";
           ctx.stroke(pathCache.stems);
         });
         ctx.globalAlpha = 1;
@@ -12371,9 +12380,8 @@ export default function TreeCanvas({
             pushSceneLine(start.x, start.y, end.x, end.y, BRANCH_COLOR, circularBranchStrokeScale);
           }
         }
-        ctx.lineCap = "square";
-        ctx.stroke(connectorPath);
-        ctx.lineCap = "butt";
+        strokeRadialConnector(ctx, connectorPath);
+        ctx.lineCap = "round";
         ctx.stroke(stemPath);
       } else {
         if (largeMetadataCircularBasePath) {
@@ -12384,9 +12392,8 @@ export default function TreeCanvas({
           ctx.strokeStyle = BRANCH_COLOR;
           ctx.globalAlpha = 0.62;
           ctx.lineWidth = circularBranchStrokeScale / Math.max(camera.scale, 1e-6);
-          ctx.lineCap = "square";
-          ctx.stroke(largeMetadataCircularBasePath.connectors);
-          ctx.lineCap = "butt";
+          strokeRadialConnector(ctx, largeMetadataCircularBasePath.connectors);
+          ctx.lineCap = "round";
           ctx.stroke(largeMetadataCircularBasePath.stems);
           ctx.restore();
           ctx.globalAlpha = 1;
@@ -12675,14 +12682,13 @@ export default function TreeCanvas({
         colorArcPaths.forEach((path, color) => {
           branchCtx.strokeStyle = color;
           branchCtx.lineWidth = 1.2 * circularBranchStrokeScale;
-          branchCtx.lineCap = "square";
           branchCtx.globalAlpha = 0.95;
-          branchCtx.stroke(path);
+          strokeRadialConnector(branchCtx, path);
         });
         colorStemPaths.forEach((path, color) => {
           branchCtx.strokeStyle = color;
           branchCtx.lineWidth = 1.2 * circularBranchStrokeScale;
-          branchCtx.lineCap = "butt";
+          branchCtx.lineCap = "round";
           branchCtx.globalAlpha = 0.95;
           branchCtx.stroke(path);
         });

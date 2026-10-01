@@ -482,6 +482,20 @@ export function pickCircularConnectorChild(
   return bestChild;
 }
 
+export function strokeRadialConnector(ctx: CanvasRenderingContext2D, path?: Path2D): void {
+  const previousJoin = ctx.lineJoin;
+  ctx.lineCap = "butt";
+  // moveTo and arc can disagree slightly about the arc's first point. The
+  // resulting tiny segment produces a long spur with the default miter join.
+  ctx.lineJoin = "bevel";
+  if (path) {
+    ctx.stroke(path);
+  } else {
+    ctx.stroke();
+  }
+  ctx.lineJoin = previousJoin;
+}
+
 export function appendCircularArcSegments(
   segments: IndexedSegment[],
   node: number,
