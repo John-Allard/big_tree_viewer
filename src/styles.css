@@ -1434,29 +1434,54 @@ button.secondary {
   line-height: 1.5;
 }
 
-.api-option-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.7rem;
+.api-options-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
   margin: 0.95rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
-.api-option-list div {
-  padding: 0.75rem;
+.api-options-table col:nth-child(1) { width: 32%; }
+.api-options-table col:nth-child(2) { width: 23%; }
+.api-options-table col:nth-child(3) { width: 45%; }
+
+.api-options-table th,
+.api-options-table td {
+  padding: 0.65rem;
   border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 12px;
-  background: rgba(248, 250, 252, 0.78);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
-.api-option-list dt {
-  font-weight: 800;
+.api-options-table th {
+  font-weight: 700;
   color: #0f172a;
 }
 
-.api-option-list dd {
-  margin: 0.25rem 0 0;
+.api-options-table thead {
+  background: #f1f5f9;
+}
+
+.api-options-table tbody tr:nth-child(even) {
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.api-options-table td {
   color: #475569;
-  line-height: 1.4;
+}
+
+.api-options-table code {
+  white-space: normal;
+}
+
+@media (max-width: 600px) {
+  .api-options-table th,
+  .api-options-table td {
+    padding: 0.4rem;
+  }
 }
 
 .share-page .about-page-frame {

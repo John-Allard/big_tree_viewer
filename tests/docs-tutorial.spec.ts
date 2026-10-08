@@ -34,8 +34,9 @@ test("metadata guide presents the workflow with responsive images", async ({ pag
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
-test("API documentation page is linked and documents launch parameters", async ({ page }) => {
+test("API documentation presents launch parameters without text overflow", async ({ page }, testInfo) => {
   await page.goto("/#about");
+  await expect(page.getByRole("heading", { name: "A browser-based viewer for very large phylogenies", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "API" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Share sessions" }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Start tutorial" })).toBeVisible();
@@ -48,6 +49,34 @@ test("API documentation page is linked and documents launch parameters", async (
   await expect(page.getByRole("heading", { name: "Compact taxonomy handoff" })).toBeVisible();
   await expect(page.getByText("big-tree-viewer-compact-taxonomy").first()).toBeVisible();
   await expect(page.getByText("Metadata-driven branch colors")).toBeVisible();
+
+  const table = page.getByRole("table", { name: "Useful URL options" });
+  await expect(table.locator("thead th")).toHaveText(["Option", "Values", "Description"]);
+  await expect(table.locator("tbody tr")).toHaveCount(25);
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const overflow = await table.evaluate((element) => {
+      const overflowingText: string[] = [];
+      for (const code of element.querySelectorAll("code")) {
+        const cell = code.closest("th, td")!.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(code);
+        for (const bounds of range.getClientRects()) {
+          if (bounds.left < cell.left - 1 || bounds.right > cell.right + 1) {
+            overflowingText.push(code.textContent ?? "");
+          }
+        }
+      }
+      return {
+        overflowingText,
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    expect(overflow.overflowingText, `Text overflow at ${width}px`).toEqual([]);
+    expect(overflow.pageOverflow, `Page overflow at ${width}px`).toBeLessThanOrEqual(1);
+    await table.evaluate((element) => element.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: testInfo.outputPath(`api-options-${width}.png`) });
+  }
 });
 
 test("desktop download page recommends the current platform and lists every build", async ({ page }) => {

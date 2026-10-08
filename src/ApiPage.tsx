@@ -135,32 +135,37 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
 
         <section className="api-doc-section">
           <h2>Useful URL options</h2>
-          <dl className="api-option-list">
-            <div><dt>btv_view</dt><dd>`rectangular`, `radial`, or `spiral`. The legacy `circular` and `fan` values remain accepted. Spiral mode requires at least 1,000 tips.</dd></div>
-            <div><dt>btv_radial_span</dt><dd>Radial angular span in degrees from 30 to 360. Use 180 for a fan and 360 for a full circle.</dd></div>
-            <div><dt>btv_radial_opening</dt><dd>Radial inner radius as a fraction from 0 to 0.85.</dd></div>
-            <div><dt>btv_order</dt><dd>`asc`, `desc`, or `input`.</dd></div>
-            <div><dt>btv_tip_labels</dt><dd>`true` or `false`.</dd></div>
-            <div><dt>btv_align_tip_labels</dt><dd>Align tip labels at the rectangular tree edge with dotted leaders or at the radial outer radius.</dd></div>
-            <div><dt>btv_genus_labels</dt><dd>`true` or `false`.</dd></div>
-            <div><dt>btv_taxonomy</dt><dd>Show taxonomy overlays if taxonomy is loaded in the payload.</dd></div>
-            <div><dt>btv_taxonomy_branch_colors</dt><dd>Color branches from taxonomy mapping.</dd></div>
-            <div><dt>btv_map_taxonomy</dt><dd>Run standard taxonomy mapping after launch using the selected cached taxonomy archive.</dd></div>
-            <div><dt>btv_taxonomy_source</dt><dd>`ncbi` (default) or `catalogue-of-life`.</dd></div>
-            <div><dt>btv_taxonomy_identifier_mode</dt><dd>`scientific-name` or `ncbi-taxid`. When omitted, BTV detects explicit TaxID labels automatically. TaxID mode accepts forms such as `taxid=9606`, `_taxid_9606`, or a bare numeric ID and requires NCBI Taxonomy.</dd></div>
-            <div><dt>btv_taxonomy_allow_download</dt><dd>`true` explicitly allows launch/API taxonomy mapping to download the selected official archive if it is not already available.</dd></div>
-            <div><dt>btv_palette</dt><dd>Taxonomy color palette key.</dd></div>
-            <div><dt>btv_branch_thickness</dt><dd>Branch thickness scale, for example `1.5`.</dd></div>
-            <div><dt>btv_time_axis</dt><dd>`linear` or `log`.</dd></div>
-            <div><dt>btv_metadata_labels</dt><dd>Show metadata text labels.</dd></div>
-            <div><dt>btv_metadata_markers</dt><dd>Show metadata markers.</dd></div>
-            <div><dt>btv_newick_url</dt><dd>Public URL for a Newick or NEXUS file. Requires host CORS support.</dd></div>
-            <div><dt>btv_session_url</dt><dd>Public URL for a `.btvsession` file. Requires host CORS support.</dd></div>
-            <div><dt>btv_export</dt><dd>`svg` or `png`; exports after launch.</dd></div>
-            <div><dt>btv_export_delivery</dt><dd>`download` or `postMessage`.</dd></div>
-            <div><dt>btv_export_width / btv_export_height</dt><dd>PNG export dimensions in pixels. Spiral exports are square; rectangular and radial exports may use independent dimensions without distorting radial geometry.</dd></div>
-            <div><dt>btv_export_filename</dt><dd>Suggested filename for downloads and automation results.</dd></div>
-          </dl>
+          <table className="api-options-table" aria-label="Useful URL options">
+            <colgroup><col /><col /><col /></colgroup>
+            <thead><tr><th scope="col">Option</th><th scope="col">Values</th><th scope="col">Description</th></tr></thead>
+            <tbody>
+              <tr><th scope="row"><code>btv_view</code></th><td><code>rectangular</code>, <code>radial</code>, <code>spiral</code></td><td>The legacy <code>circular</code> and <code>fan</code> values remain accepted. Spiral mode requires at least 1,000 tips.</td></tr>
+              <tr><th scope="row"><code>btv_radial_span</code></th><td>30 to 360</td><td>Radial angular span in degrees. Use 180 for a fan and 360 for a full circle.</td></tr>
+              <tr><th scope="row"><code>btv_radial_opening</code></th><td>0 to 0.85</td><td>Radial inner radius as a fraction.</td></tr>
+              <tr><th scope="row"><code>btv_order</code></th><td><code>asc</code>, <code>desc</code>, <code>input</code></td><td>Sort by ascending or descending subtree size, or retain the input order.</td></tr>
+              <tr><th scope="row"><code>btv_tip_labels</code></th><td><code>true</code>, <code>false</code></td><td>Show tip labels.</td></tr>
+              <tr><th scope="row"><code>btv_align_tip_labels</code></th><td><code>true</code>, <code>false</code></td><td>Align tip labels at the rectangular tree edge with dotted leaders or at the radial outer radius.</td></tr>
+              <tr><th scope="row"><code>btv_genus_labels</code></th><td><code>true</code>, <code>false</code></td><td>Show genus labels.</td></tr>
+              <tr><th scope="row"><code>btv_taxonomy</code></th><td><code>true</code>, <code>false</code></td><td>Show taxonomy overlays if taxonomy is loaded in the payload.</td></tr>
+              <tr><th scope="row"><code>btv_taxonomy_branch_colors</code></th><td><code>true</code>, <code>false</code></td><td>Color branches from taxonomy mapping.</td></tr>
+              <tr><th scope="row"><code>btv_map_taxonomy</code></th><td><code>true</code>, <code>false</code></td><td>Run standard taxonomy mapping after launch using the selected cached taxonomy archive.</td></tr>
+              <tr><th scope="row"><code>btv_taxonomy_source</code></th><td><code>ncbi</code>, <code>catalogue-of-life</code></td><td>Choose the taxonomy source. The default is NCBI.</td></tr>
+              <tr><th scope="row"><code>btv_taxonomy_identifier_mode</code></th><td><code>scientific-name</code>, <code>ncbi-taxid</code></td><td>When omitted, BTV detects explicit TaxID labels automatically. TaxID mode accepts forms such as <code>taxid=9606</code>, <code>_taxid_9606</code>, or a bare numeric ID and requires NCBI Taxonomy.</td></tr>
+              <tr><th scope="row"><code>btv_taxonomy_allow_download</code></th><td><code>true</code>, <code>false</code></td><td>Set to <code>true</code> to allow launch/API taxonomy mapping to download the selected official archive if it is not already available.</td></tr>
+              <tr><th scope="row"><code>btv_palette</code></th><td>Palette key</td><td>Choose the taxonomy color palette.</td></tr>
+              <tr><th scope="row"><code>btv_branch_thickness</code></th><td>Number, e.g. 1.5</td><td>Scale branch thickness.</td></tr>
+              <tr><th scope="row"><code>btv_time_axis</code></th><td><code>linear</code>, <code>log</code></td><td>Choose the time-axis scale.</td></tr>
+              <tr><th scope="row"><code>btv_metadata_labels</code></th><td><code>true</code>, <code>false</code></td><td>Show metadata text labels.</td></tr>
+              <tr><th scope="row"><code>btv_metadata_markers</code></th><td><code>true</code>, <code>false</code></td><td>Show metadata markers.</td></tr>
+              <tr><th scope="row"><code>btv_newick_url</code></th><td>Public URL</td><td>Load a Newick or NEXUS file. Requires host CORS support.</td></tr>
+              <tr><th scope="row"><code>btv_session_url</code></th><td>Public URL</td><td>Load a <code>.btvsession</code> file. Requires host CORS support.</td></tr>
+              <tr><th scope="row"><code>btv_export</code></th><td><code>svg</code>, <code>png</code></td><td>Export after launch.</td></tr>
+              <tr><th scope="row"><code>btv_export_delivery</code></th><td><code>download</code>, <code>postMessage</code></td><td>Download the exported file or return it through postMessage.</td></tr>
+              <tr><th scope="row"><code>btv_export_width</code></th><td>Pixels</td><td>PNG width. Spiral exports are square; rectangular and radial exports may use independent dimensions without distorting radial geometry.</td></tr>
+              <tr><th scope="row"><code>btv_export_height</code></th><td>Pixels</td><td>PNG height, subject to the same geometry constraints as width.</td></tr>
+              <tr><th scope="row"><code>btv_export_filename</code></th><td>Filename</td><td>Suggested filename for downloads and automation results.</td></tr>
+            </tbody>
+          </table>
         </section>
 
         <section className="api-doc-section">

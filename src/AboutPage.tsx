@@ -260,7 +260,7 @@ export default function AboutPage() {
 
         <section className="about-intro">
           <div className="about-intro-copy">
-            <h2>A browser-based viewer for very large phylogenies.</h2>
+            <h2>A browser-based viewer for very large phylogenies</h2>
             <p className="about-lead">{HOME_DESCRIPTION}</p>
           </div>
           <figure className="about-hero-figure">
