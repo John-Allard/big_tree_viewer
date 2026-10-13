@@ -5,6 +5,113 @@ async function waitForViewer(page: import("@playwright/test").Page): Promise<voi
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
 }
 
+for (const view of ["rectangular", "circular"] as const) {
+  test(`panel visibility and resizing preserve colors and collapsed clades in ${view} view`, async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(Element.prototype, "requestFullscreen", { configurable: true, value: undefined });
+    });
+    const newick = "(((A_a:1,B_b:1):1,(C_c:1,D_d:1):1):1,((E_e:1,F_f:1):1,(G_g:1,H_h:1):1):1)Root;";
+    await page.goto(`/?btv_newick=${encodeURIComponent(newick)}&btv_view=${view}`);
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+    await page.evaluate(async () => {
+      const app = window.__BIG_TREE_VIEWER_APP_TEST__!;
+      const leaves = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__!.leafNodes;
+      app.setOrder("input");
+      app.setShowGenusLabels(false);
+      app.setShowTipLabels(false);
+      app.setShowBootstrapLabels(true);
+      app.setBranchThicknessScaleForTest(1.4);
+      app.setFigureStyleForTest("taxonomy", "bandThicknessScale", 0.75);
+      app.setTaxonomyColorRootRankForTest("phylum");
+      app.setTaxonomyColorJitterForTest(0);
+      app.setTaxonomyMapForTest({
+        version: 10, mappedCount: leaves.length, totalTips: leaves.length,
+        activeRanks: ["phylum"],
+        tipRanks: leaves.map((node, index) => ({ node, ranks: { phylum: index < 4 ? "Chordata" : "Arthropoda" } })),
+      });
+      app.setTaxonomyRankDisplayModeForTest("phylum", "ribbon");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__!.fitView();
+    });
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getLabelHitboxes().some(
+      (hit) => hit.labelKind === "taxonomy" && hit.text === "Chordata",
+    ));
+    const point = await page.evaluate(() => {
+      const hit = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getLabelHitboxes().find(
+        (candidate) => candidate.labelKind === "taxonomy" && candidate.text === "Chordata",
+      )!;
+      const bounds = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+      return { x: bounds.left + hit.x + hit.width / 2, y: bounds.top + hit.y + hit.height / 2 };
+    });
+    await page.mouse.click(point.x, point.y, { button: "right" });
+    await page.getByRole("button", { name: "Color Top-Level Group", exact: true }).click();
+    await page.getByRole("button", { name: "Set taxonomy-root color Red" }).click();
+    await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getTaxonomyRootColors()))
+      .toEqual([["Chordata", "#dc2626"]]);
+    await page.evaluate(() => {
+      const api = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__!;
+      api.setManualBranchColor(internal.leafNodes[4], "#00aa44");
+      api.setManualSubtreeColor(internal.parent![internal.leafNodes[6]], "#8844cc");
+      api.setCollapsedNodeMode(internal.parent![internal.leafNodes[0]], "minimize");
+    });
+    await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCollapsedNodeModes().length)).toBe(1);
+    const snapshot = () => page.evaluate(() => {
+      const api = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      const app = window.__BIG_TREE_VIEWER_APP_TEST__!.getState();
+      return {
+        rootColors: api.getTaxonomyRootColors(),
+        branchColors: api.getCurrentBranchColors(),
+        collapsedModes: api.getCollapsedNodeModes(),
+        figureStyles: app.figureStyles,
+        viewMode: app.viewMode,
+        order: app.order,
+        taxonomyEnabled: app.taxonomyEnabled,
+        showTipLabels: app.showTipLabels,
+        showBootstrapLabels: app.showBootstrapLabels,
+        branchThicknessScale: app.branchThicknessScale,
+      };
+    });
+    const before = await snapshot();
+    expect(before.branchColors).toContain("#dc2626");
+    expect(before.branchColors).toContain("#00aa44");
+    expect(before.branchColors).toContain("#8844cc");
+    const settle = () => page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }));
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      await page.getByRole("button", { name: "Hide side panel", exact: true }).click();
+      await settle();
+      expect(await snapshot()).toEqual(before);
+      await page.getByRole("button", { name: "Show side panel", exact: true }).click();
+      await settle();
+      expect(await snapshot()).toEqual(before);
+    }
+    for (const viewport of [{ width: 1500, height: 950 }, { width: 1100, height: 700 }]) {
+      await page.setViewportSize(viewport);
+      await settle();
+      expect(await snapshot()).toEqual(before);
+    }
+    await page.getByRole("button", { name: "Enter full screen", exact: true }).click();
+    await settle();
+    expect(await snapshot()).toEqual(before);
+    await page.getByRole("button", { name: "Exit full screen", exact: true }).click();
+    await settle();
+    expect(await snapshot()).toEqual(before);
+
+    // A replacement tree must still discard edits belonging to the old topology.
+    await page.getByRole("button", { name: "Paste Newick", exact: true }).click();
+    await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill("(New_a:2,New_b:2)NewRoot;");
+    await page.getByRole("button", { name: "Load Pasted Tree", exact: true }).click();
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes.length === 2);
+    await settle();
+    const replaced = await snapshot();
+    expect(replaced.rootColors).toEqual([]);
+    expect(replaced.collapsedModes).toEqual([]);
+    for (const color of ["#dc2626", "#00aa44", "#8844cc"]) expect(replaced.branchColors).not.toContain(color);
+  });
+}
+
 test("fit view uses the uncovered viewport after the side panel becomes an overlay", async ({ page }) => {
   await waitForViewer(page);
   await page.locator('.viewer-corner-controls button[aria-label="Hide side panel"]').click();

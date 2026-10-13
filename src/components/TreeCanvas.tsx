@@ -4641,6 +4641,13 @@ export default function TreeCanvas({
     return angularSpacingPx > CIRCULAR_BRANCH_HOVER_MIN_ANGULAR_SPACING_PX;
   }, [tree]);
 
+  const clearHoverTooltip = useCallback((): void => {
+    hoverTooltipBodyRef.current?.replaceChildren();
+    if (hoverTooltipRef.current) {
+      hoverTooltipRef.current.hidden = true;
+    }
+  }, []);
+
   const updateHoverTooltip = useCallback((hover: HoverInfo | null): void => {
     const tooltip = hoverTooltipRef.current;
     const label = hoverTooltipLabelRef.current;
@@ -4649,8 +4656,7 @@ export default function TreeCanvas({
       return;
     }
     if (!hover) {
-      body.replaceChildren();
-      tooltip.hidden = true;
+      clearHoverTooltip();
       return;
     }
     const appendLine = (text: string): void => {
@@ -4684,7 +4690,7 @@ export default function TreeCanvas({
     tooltip.style.left = `${Math.min(size.width - 220, hover.screenX + 16)}px`;
     tooltip.style.top = `${Math.min(size.height - 90, hover.screenY + 16)}px`;
     tooltip.hidden = false;
-  }, [size.height, size.width, tree]);
+  }, [clearHoverTooltip, size.height, size.width, tree]);
 
   const effectiveTimeAxisScale: TimeAxisScale = viewMode === "spiral" ? "log" : timeAxisScale;
   const effectiveTimeAxisLogBase = viewMode === "spiral"
@@ -4766,6 +4772,7 @@ export default function TreeCanvas({
   const axisDepth = useCallback((depth: number): number => (
     axisDepthForMode(depth, viewMode)
   ), [axisDepthForMode, viewMode]);
+  // Tree edits must not reset when viewport-dependent tooltip positioning changes.
   useEffect(() => {
     setCollapsedNodeModes(new Map());
     setManualBranchColorAssignments(new Map());
@@ -4779,7 +4786,7 @@ export default function TreeCanvas({
     distanceStartNodeRef.current = null;
     distanceStartAncestorsRef.current.clear();
     distanceMeasurementRef.current = null;
-    updateHoverTooltip(null);
+    clearHoverTooltip();
     if (distanceTooltipRef.current) {
       distanceTooltipRef.current.hidden = true;
     }
@@ -4791,7 +4798,7 @@ export default function TreeCanvas({
     if (hoverCanvas && ctx) {
       ctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
     }
-  }, [tree, updateHoverTooltip]);
+  }, [clearHoverTooltip, tree]);
 
   useEffect(() => {
     const allowedKeys = new Set(phylopicSilhouettes.map((silhouette) => phylopicImageElementKey(silhouette)));
