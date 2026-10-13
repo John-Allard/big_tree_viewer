@@ -93,6 +93,55 @@ try {
     viewer.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
   });
   await emptyPage.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true, undefined, { timeout: 15_000 });
+  await emptyPage.evaluate(async () => {
+    const controls = window.__BIG_TREE_VIEWER_APP_TEST__;
+    const leaves = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.leafNodes;
+    if (!controls || !leaves?.length) throw new Error("Desktop tree controls unavailable.");
+    controls.setOrder("input");
+    controls.setTaxonomyColorRootRankForTest("phylum");
+    controls.setTaxonomyColorJitterForTest(0);
+    controls.setTaxonomyMapForTest({
+      version: 10, mappedCount: leaves.length, totalTips: leaves.length, activeRanks: ["phylum"],
+      tipRanks: leaves.map((node, index) => ({ node, ranks: { phylum: index < leaves.length / 2 ? "Group A" : "Group B" } })),
+    });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    const parent = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__?.parent;
+    if (!canvas || !parent) throw new Error("Desktop canvas controls unavailable.");
+    canvas.setTaxonomyRootColor("Group A", "#dc2626");
+    canvas.setManualBranchColor(leaves[leaves.length - 1], "#00aa44");
+    canvas.setManualSubtreeColor(parent[leaves[leaves.length - 2]], "#8844cc");
+    canvas.setCollapsedNodeMode(parent[leaves[0]], "minimize");
+  });
+  await emptyPage.waitForFunction(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCollapsedNodeModes().length === 1);
+  const editSnapshot = () => emptyPage.evaluate(() => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__;
+    return {
+      taxonomyRootColors: canvas.getTaxonomyRootColors(),
+      branchColors: canvas.getCurrentBranchColors(),
+      collapsedNodeModes: canvas.getCollapsedNodeModes(),
+    };
+  });
+  const editsBefore = await editSnapshot();
+  if (!["#dc2626", "#00aa44", "#8844cc"].every(color => editsBefore.branchColors.includes(color))) {
+    throw new Error("Desktop manual color test did not apply all overrides.");
+  }
+  const assertEditsPreserved = async (action) => {
+    await emptyPage.evaluate(() => new Promise(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }));
+    if (JSON.stringify(await editSnapshot()) !== JSON.stringify(editsBefore)) {
+      throw new Error(`Desktop tree edits changed after ${action}.`);
+    }
+  };
+  for (let cycle = 0; cycle < 2; cycle += 1) {
+    await emptyPage.getByRole("button", { name: "Hide side panel", exact: true }).click();
+    await assertEditsPreserved("hiding the side panel");
+    await emptyPage.getByRole("button", { name: "Show side panel", exact: true }).click();
+    await assertEditsPreserved("showing the side panel");
+  }
+  await emptyApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1400, 900));
+  await assertEditsPreserved("resizing the window");
   const droppedRecentItems = await emptyApp.evaluate(({ Menu }) => {
     const fileMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "File");
     const recentMenu = fileMenu?.submenu?.items.find((item) => item.label === "Open Recent");
