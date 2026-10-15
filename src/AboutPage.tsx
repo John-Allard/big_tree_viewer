@@ -161,7 +161,7 @@ const capabilities = [
   },
   {
     label: "Layouts",
-    text: "Rectangular, radial, and spiral geometries, with adjustable radial span and inner radius, input-order and descendant-count tip orderings, and continuous rotation in radial modes.",
+    text: "Rectangular, radial, and spiral geometries, with cladogram display in rectangular and radial views, adjustable radial span and inner radius, input-order and descendant-count tip orderings, and continuous rotation in radial modes.",
   },
   {
     label: "Scale",

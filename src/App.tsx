@@ -6,8 +6,9 @@ import TreeComparisonCanvas, { type TreeComparisonCameraState } from "./componen
 import TreeStatisticsView from "./components/TreeStatisticsView";
 import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanvasCache";
 import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
-import { serializeSubtreeToNewick } from "./components/treeCanvasUtils";
+import { extractGenusToken, serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import { computeTreeStatistics } from "./lib/treeStatistics";
+import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLADOGRAM_LOG_STRENGTH, MIN_CLADOGRAM_LOG_STRENGTH, MAX_CLADOGRAM_LOG_STRENGTH, normalizeCladogramLogStrength, isUltrametricCladogramMethod, type UltrametricCladogramMethod } from "./lib/cladogram";
 import { computeTreeComparisonStatistics } from "./lib/treeComparisonStatistics";
 import { analyzeTreeComparisonTopology } from "./lib/treeComparisonTopology";
 import type { TaxonomyColorByRank } from "./lib/taxonomyBlocks";
@@ -332,6 +333,8 @@ type BigTreeViewerSessionSettings = {
   showScaleBars: boolean;
   showCladogram?: boolean;
   ultrametricCladogram?: boolean;
+  ultrametricCladogramMethod?: UltrametricCladogramMethod;
+  cladogramLogStrength?: number;
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
   showScaleZeroTick: boolean;
@@ -1407,6 +1410,34 @@ function useLowMemoryTaxonomyMode(): boolean {
   return isAppleMobileDevice && isWebKitBrowser;
 }
 
+function usePanelPopoverPosition(popoverRef: RefObject<HTMLDivElement | null>, enabled: boolean): void {
+  useLayoutEffect(() => {
+    const popover = popoverRef.current;
+    const panel = popover?.closest<HTMLElement>(".control-panel");
+    const anchor = popover?.parentElement;
+    if (!enabled || !popover || !panel || !anchor) return;
+    const positionPopover = () => {
+      const panelBounds = panel.getBoundingClientRect();
+      const anchorBounds = anchor.getBoundingClientRect();
+      const top = Math.max(8, panelBounds.top + 8);
+      const bottom = Math.min(window.innerHeight - 8, panelBounds.bottom - 8);
+      popover.style.maxHeight = `${Math.max(80, Math.min(640, bottom - top))}px`;
+      popover.style.top = `${Math.max(top, Math.min(anchorBounds.bottom + 7, bottom - popover.offsetHeight))}px`;
+      popover.style.left = `${Math.max(panelBounds.left + 8, Math.min(anchorBounds.right - popover.offsetWidth, panelBounds.right - popover.offsetWidth - 8))}px`;
+    };
+    positionPopover();
+    const observer = new ResizeObserver(positionPopover);
+    observer.observe(popover);
+    panel.addEventListener("scroll", positionPopover);
+    window.addEventListener("resize", positionPopover);
+    return () => {
+      observer.disconnect();
+      panel.removeEventListener("scroll", positionPopover);
+      window.removeEventListener("resize", positionPopover);
+    };
+  }, [enabled, popoverRef]);
+}
+
 function LabelStyleSection({
   labelClass,
   settings,
@@ -1441,28 +1472,7 @@ function LabelStyleSection({
     || labelClass === "nodeHeight";
   const usePolarOffsets = supportsAxisOffsets && viewMode !== "rectangular";
   const popoverRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const popover = popoverRef.current;
-    const panel = popover?.closest<HTMLElement>(".control-panel");
-    const anchor = popover?.parentElement;
-    if (!isScale || !isOpen || disabled || !popover || !panel || !anchor) return;
-    const positionPopover = () => {
-      const panelBounds = panel.getBoundingClientRect();
-      const anchorBounds = anchor.getBoundingClientRect();
-      const top = Math.max(8, panelBounds.top + 8);
-      const bottom = Math.min(window.innerHeight - 8, panelBounds.bottom - 8);
-      popover.style.maxHeight = `${Math.max(80, Math.min(640, bottom - top))}px`;
-      popover.style.top = `${Math.max(top, Math.min(anchorBounds.bottom + 7, bottom - popover.offsetHeight))}px`;
-      popover.style.left = `${Math.max(panelBounds.left + 8, Math.min(anchorBounds.right - popover.offsetWidth, panelBounds.right - popover.offsetWidth - 8))}px`;
-    };
-    positionPopover();
-    panel.addEventListener("scroll", positionPopover);
-    window.addEventListener("resize", positionPopover);
-    return () => {
-      panel.removeEventListener("scroll", positionPopover);
-      window.removeEventListener("resize", positionPopover);
-    };
-  }, [disabled, isOpen, isScale]);
+  usePanelPopoverPosition(popoverRef, isScale && isOpen && !disabled);
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -1478,7 +1488,7 @@ function LabelStyleSection({
         <span aria-hidden="true">⚙</span>
       </button>
       {disabled || !isOpen ? null : (
-        <div ref={popoverRef} className={`label-style-popover${isScale ? " scale-settings-popover" : ""}`} role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
+        <div ref={popoverRef} className={`label-style-popover${isScale ? " panel-settings-popover" : ""}`} role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
           <div className="label-style-popover-header">
             <strong>{LABEL_STYLE_CLASS_LABELS[labelClass]}</strong>
             <button
@@ -1709,6 +1719,7 @@ function SettingsPopoverButton({
   isOpen,
   disabled,
   disabledReason,
+  fitInPanel = false,
   onToggle,
   children,
 }: {
@@ -1716,9 +1727,12 @@ function SettingsPopoverButton({
   isOpen: boolean;
   disabled: boolean;
   disabledReason?: string;
+  fitInPanel?: boolean;
   onToggle: () => void;
   children: ReactNode;
 }): ReactNode {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  usePanelPopoverPosition(popoverRef, fitInPanel && isOpen && !disabled);
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -1734,7 +1748,7 @@ function SettingsPopoverButton({
         <span aria-hidden="true">⚙</span>
       </button>
       {disabled || !isOpen ? null : (
-        <div className="label-style-popover" role="dialog" aria-label={`${title} settings`}>
+        <div ref={popoverRef} className={`label-style-popover${fitInPanel ? " panel-settings-popover" : ""}`} role="dialog" aria-label={`${title} settings`}>
           <div className="label-style-popover-header">
             <strong>{title}</strong>
             <button
@@ -2014,6 +2028,7 @@ export default function App() {
   const pendingPasteHideRef = useRef(false);
   const pendingTreeSignatureRef = useRef<string | null>(null);
   const pendingTreeLabelRef = useRef("");
+  const pendingGenusLabelsOverrideRef = useRef<boolean | undefined>(undefined);
   const taxonomyMappingFailureMessageRef = useRef("");
   const pendingSharedSubtreeTaxonomyRef = useRef<SharedSubtreeTaxonomyPayload | null>(null);
   const pendingSharedSubtreeVisualRef = useRef<SharedSubtreeVisualPayload | null>(null);
@@ -2074,7 +2089,9 @@ export default function App() {
   const [timeAxisLogBaseDraft, setTimeAxisLogBaseDraft] = useState(DEFAULT_TIME_AXIS_LOG_BASE);
   const [showScaleBars, setShowScaleBars] = useState(true);
   const [showCladogram, setShowCladogram] = useState(false);
-  const [ultrametricCladogram, setUltrametricCladogram] = useState(true);
+  const [ultrametricCladogram, setUltrametricCladogram] = useState(false);
+  const [ultrametricCladogramMethod, setUltrametricCladogramMethod] = useState<UltrametricCladogramMethod>(DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD);
+  const [cladogramLogStrength, setCladogramLogStrength] = useState(DEFAULT_CLADOGRAM_LOG_STRENGTH);
   const [showIntermediateScaleTicks, setShowIntermediateScaleTicks] = useState(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
   const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
@@ -2792,7 +2809,9 @@ export default function App() {
     setTimeStripeLineWeight(visual.timeStripeLineWeight);
     setShowScaleBars(visual.showScaleBars);
     setShowCladogram(visual.showCladogram ?? false);
-    setUltrametricCladogram(visual.ultrametricCladogram ?? true);
+    setUltrametricCladogram(visual.ultrametricCladogram ?? false);
+    setUltrametricCladogramMethod(isUltrametricCladogramMethod(visual.ultrametricCladogramMethod) ? visual.ultrametricCladogramMethod : DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD);
+    setCladogramLogStrength(normalizeCladogramLogStrength(visual.cladogramLogStrength));
     setScaleTickIntervalInput(visual.scaleTickInterval === null ? "" : String(visual.scaleTickInterval));
     setShowIntermediateScaleTicks(visual.showIntermediateScaleTicks);
     setExtendRectScaleToTick(visual.extendRectScaleToTick);
@@ -2889,6 +2908,8 @@ export default function App() {
     }
     if (typeof visual.showCladogram === "boolean") setShowCladogram(visual.showCladogram);
     if (typeof visual.ultrametricCladogram === "boolean") setUltrametricCladogram(visual.ultrametricCladogram);
+    if (isUltrametricCladogramMethod(visual.ultrametricCladogramMethod)) setUltrametricCladogramMethod(visual.ultrametricCladogramMethod);
+    if (visual.cladogramLogStrength !== undefined) setCladogramLogStrength(normalizeCladogramLogStrength(visual.cladogramLogStrength));
     if (typeof visual.showIntermediateScaleTicks === "boolean") {
       setShowIntermediateScaleTicks(visual.showIntermediateScaleTicks);
     }
@@ -3995,6 +4016,7 @@ export default function App() {
       pendingPasteHideRef.current = false;
       pendingTreeSignatureRef.current = null;
       pendingTreeLabelRef.current = "";
+      pendingGenusLabelsOverrideRef.current = undefined;
       pendingSharedSubtreeTaxonomyRef.current = null;
       const rejectParse = pendingTreeParseRejecterRef.current;
       pendingTreeParseResolverRef.current = null;
@@ -4022,6 +4044,7 @@ export default function App() {
         pendingTreeParseRejecterRef.current = null;
         pendingTreeSignatureRef.current = null;
         pendingTreeLabelRef.current = "";
+        pendingGenusLabelsOverrideRef.current = undefined;
         setLoadState({
           loading: false,
           message: "Failed to apply compact taxonomy.",
@@ -4043,6 +4066,10 @@ export default function App() {
     setTaxonomyMappingWarning("");
     setSelectedSourceCachedTaxonomyMap(null);
     setSelectedSourceMappingCacheChecked(false);
+    // New raw trees get their own label defaults; saved views can override them.
+    setShowGenusLabels(pendingGenusLabelsOverrideRef.current
+      ?? nextTree.leafNodes.some((node) => extractGenusToken(nextTree.names[node] || "") !== null));
+    pendingGenusLabelsOverrideRef.current = undefined;
     currentTreeRef.current = nextTree;
     currentTreeSignatureRef.current = nextSignature;
     setTree(nextTree);
@@ -4074,6 +4101,7 @@ export default function App() {
     pendingPasteHideRef.current = false;
     pendingTreeSignatureRef.current = null;
     pendingTreeLabelRef.current = "";
+    pendingGenusLabelsOverrideRef.current = undefined;
     pendingSharedSubtreeTaxonomyRef.current = null;
     setLoadState({
       loading: false,
@@ -4090,6 +4118,7 @@ export default function App() {
     pendingPasteHideRef.current = false;
     pendingTreeSignatureRef.current = null;
     pendingTreeLabelRef.current = "";
+    pendingGenusLabelsOverrideRef.current = undefined;
     pendingSharedSubtreeTaxonomyRef.current = null;
     setLoadState({
       loading: false,
@@ -4120,7 +4149,7 @@ export default function App() {
     workerRef.current = null;
   }, []);
 
-  const parseText = useCallback(async (text: string, label: string): Promise<void> => {
+  const parseText = useCallback(async (text: string, label: string, genusLabelsOverride?: boolean): Promise<void> => {
     pendingTreeParseRejecterRef.current?.(new Error("Tree parsing was superseded by another load request."));
     pendingTreeParseResolverRef.current = null;
     pendingTreeParseRejecterRef.current = null;
@@ -4140,6 +4169,7 @@ export default function App() {
     }
     pendingTreeSignatureRef.current = await computeTreeSignature(normalizedText);
     pendingTreeLabelRef.current = label;
+    pendingGenusLabelsOverrideRef.current = genusLabelsOverride;
     setLoadState({
       loading: true,
       message: `Starting worker for ${label}...`,
@@ -4472,7 +4502,7 @@ export default function App() {
       applySharedSubtreeVisualSettings(payload.visual);
     }
     setHideDownloadNewick(payload.controls?.hideDownloadNewick === true);
-    await parseText(payload.newick, "shared subtree");
+    await parseText(payload.newick, "shared subtree", payload.visual?.showGenusLabels);
     return true;
   }, [applySharedSubtreeVisualSettings, parseText]);
 
@@ -4662,6 +4692,8 @@ export default function App() {
     spiralTurns,
     showCladogram,
     ultrametricCladogram,
+    ultrametricCladogramMethod,
+    cladogramLogStrength,
     showTimeStripes,
     timeStripeStyle,
     timeStripeLineWeight,
@@ -4813,7 +4845,9 @@ export default function App() {
     showScaleZeroTick,
     showCladogram,
     ultrametricCladogram,
+    ultrametricCladogramMethod,
     showMyaTimeUnit,
+    cladogramLogStrength,
     customTimeUnit,
     showTimeStripes,
     showTipLabels,
@@ -4869,7 +4903,9 @@ export default function App() {
     setTimeAxisLogBase(settings.timeAxisLogBase);
     setShowScaleBars(settings.showScaleBars);
     setShowCladogram(settings.showCladogram ?? false);
-    setUltrametricCladogram(settings.ultrametricCladogram ?? true);
+    setUltrametricCladogram(settings.ultrametricCladogram ?? false);
+    setUltrametricCladogramMethod(isUltrametricCladogramMethod(settings.ultrametricCladogramMethod) ? settings.ultrametricCladogramMethod : DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD);
+    setCladogramLogStrength(normalizeCladogramLogStrength(settings.cladogramLogStrength));
     setShowIntermediateScaleTicks(settings.showIntermediateScaleTicks);
     setExtendRectScaleToTick(settings.extendRectScaleToTick);
     setShowScaleZeroTick(settings.showScaleZeroTick);
@@ -5488,7 +5524,7 @@ export default function App() {
       setTree(null);
       setTreeSignature(null);
       try {
-        await parseText(session.tree.newick, session.tree.label || label);
+        await parseText(session.tree.newick, session.tree.label || label, session.settings.showGenusLabels);
         setSessionStatus(session.taxonomy?.map
           ? `Applying taxonomy mapping and saved view from ${label}...`
           : `Applying saved view from ${label}...`);
@@ -5965,7 +6001,7 @@ export default function App() {
         })
       : null;
     try {
-      await parseText(treeText, label);
+      await parseText(treeText, label, payload.visual?.showGenusLabels);
       if (restoreApplied) {
         await restoreApplied;
       }
@@ -6091,6 +6127,7 @@ export default function App() {
     const orderParam = params.get("btv_order");
     const zoomAxisModeParam = params.get("btv_zoom_axis");
     const timeAxisScaleParam = params.get("btv_time_axis");
+    const cladogramMethodParam = params.get("btv_cladogram_method");
     const paletteParam = params.get("btv_palette");
     const visualParamsPresent = Boolean(
       viewModeParam
@@ -6103,6 +6140,10 @@ export default function App() {
       || params.has("btv_genus_labels")
       || params.has("btv_time_stripes")
       || params.has("btv_scale_bars")
+      || params.has("btv_cladogram")
+      || params.has("btv_cladogram_ultrametric")
+      || params.has("btv_cladogram_method")
+      || params.has("btv_cladogram_log_strength")
       || params.has("btv_taxonomy")
       || params.has("btv_taxonomy_branch_colors")
       || params.has("btv_rotation")
@@ -6137,6 +6178,10 @@ export default function App() {
         showScaleBars: readLaunchBoolParam(params, "btv_scale_bars") ?? payload.visual?.showScaleBars,
         showCladogram: readLaunchBoolParam(params, "btv_cladogram") ?? payload.visual?.showCladogram,
         ultrametricCladogram: readLaunchBoolParam(params, "btv_cladogram_ultrametric") ?? payload.visual?.ultrametricCladogram,
+        ultrametricCladogramMethod: isUltrametricCladogramMethod(cladogramMethodParam) ? cladogramMethodParam : payload.visual?.ultrametricCladogramMethod,
+        cladogramLogStrength: params.has("btv_cladogram_log_strength")
+          ? normalizeCladogramLogStrength(Number(params.get("btv_cladogram_log_strength")))
+          : payload.visual?.cladogramLogStrength,
         timeAxisScale: timeAxisScaleParam === "linear" || timeAxisScaleParam === "log"
           ? timeAxisScaleParam
           : payload.visual?.timeAxisScale,
@@ -7286,7 +7331,9 @@ export default function App() {
     setShowNodeHeightLabels(false);
     setShowScaleBars(true);
     setShowCladogram(false);
-    setUltrametricCladogram(true);
+    setUltrametricCladogram(false);
+    setUltrametricCladogramMethod(DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD);
+    setCladogramLogStrength(DEFAULT_CLADOGRAM_LOG_STRENGTH);
     setShowTimeStripes(true);
     setTaxonomyColorJitter(DEFAULT_TAXONOMY_COLOR_JITTER);
     setTaxonomyColorPalette(DEFAULT_TAXONOMY_COLOR_PALETTE);
@@ -7411,6 +7458,8 @@ export default function App() {
         showNodeHeightLabels,
         showCladogram,
         ultrametricCladogram,
+        ultrametricCladogramMethod,
+        cladogramLogStrength,
         figureStyles,
         branchThicknessScale,
         showIntermediateScaleTicks,
@@ -7712,6 +7761,8 @@ export default function App() {
     metadataTable,
     showCladogram,
     ultrametricCladogram,
+    ultrametricCladogramMethod,
+    cladogramLogStrength,
     metadataValueColumn,
     order,
     radialAngularSpanDegrees,
@@ -9148,15 +9199,42 @@ export default function App() {
               <div className="visual-option-actions">
                 <SettingsPopoverButton
                   title="Cladogram"
+                  fitInPanel
                   isOpen={activeLabelStylePopover === "cladogram"}
                   disabled={!cladogramActive}
                   disabledReason={viewMode === "spiral" ? "Spiral mode uses input branch lengths." : "Enable cladogram display first."}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "cladogram" ? null : "cladogram")}
                 >
-                  <label className="label-style-inline-toggle" title="Extend terminal branches to the deepest root-to-tip node path. Turn off to give every branch one unit of display length.">
-                    <input type="checkbox" checked={ultrametricCladogram} onChange={(event) => setUltrametricCladogram(event.target.checked)} />
-                    Show as ultrametric cladogram
-                  </label>
+                  <div role="radiogroup" aria-label="Cladogram layout" className="cladogram-layout-options">
+                    {([
+                      ["standard", "Standard Cladogram", "Give every branch equal display length; tips need not align."],
+                      ["levels", "Branching Levels", "Align tips and place each parent one branching level above its highest child, working backward from the tips."],
+                      ["logarithmic", "Logarithmic Descendant Counts", "Align tips using logarithmic descendant-tip counts. Heights are for display only, not divergence times."],
+                      ["grafen", "Grafen Descendant Counts", "Align tips using Grafen's descendant-tip-count heights with power 1."],
+                    ] as const).map(([method, label, tooltip]) => (
+                      <label key={method} className="label-style-inline-toggle" title={tooltip}>
+                        <input
+                          type="radio"
+                          name="cladogram-layout"
+                          checked={method === "standard" ? !ultrametricCladogram : ultrametricCladogram && ultrametricCladogramMethod === method}
+                          onChange={() => {
+                            setUltrametricCladogram(method !== "standard");
+                            if (method !== "standard") setUltrametricCladogramMethod(method);
+                          }}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  {ultrametricCladogram && ultrametricCladogramMethod === "logarithmic" && (
+                    <div title="Adjust the logarithmic height curve from its standard strength of 1. Higher values move internal nodes toward the tips. Tips remain aligned.">
+                      <label>
+                        Logarithmic strength
+                        <input type="range" min={MIN_CLADOGRAM_LOG_STRENGTH} max={MAX_CLADOGRAM_LOG_STRENGTH} step={0.05} value={cladogramLogStrength} onChange={(event) => setCladogramLogStrength(Number(event.target.value))} />
+                      </label>
+                      <div className="figure-style-value">{cladogramLogStrength.toFixed(2)}</div>
+                    </div>
+                  )}
                 </SettingsPopoverButton>
               </div>
             </div>
@@ -10669,6 +10747,8 @@ export default function App() {
           visibleViewportLeftInsetPx={viewerLeftOcclusionPx}
           showCladogram={cladogramActive}
           ultrametricCladogram={ultrametricCladogram}
+          ultrametricCladogramMethod={ultrametricCladogramMethod}
+          cladogramLogStrength={cladogramLogStrength}
           order={order}
           viewMode={viewMode}
           zoomAxisMode={viewMode !== "rectangular" ? "both" : zoomAxisMode}

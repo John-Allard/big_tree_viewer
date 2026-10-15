@@ -1,6 +1,6 @@
 export default function AgenticAiPage() {
   const skillZipUrl = "https://bigtreeviewer.net/agentic-ai/bigtreeviewer-agent-skill.zip";
-  const skillZipSha256 = "1c1dbedfffcefefc23fcbe9b8f8c99a37853ea50808d408620124b438d08de01";
+  const skillZipSha256 = "b4bb6a056d0797fe41dac3f4828d0143518c070cb265fa432575a4d7f803d56e";
 
   return (
     <main className="about-page api-page">
@@ -70,6 +70,13 @@ export default function AgenticAiPage() {
           <p>The <a href={`${import.meta.env.BASE_URL}#api`}>website launch API</a> is
             a separate integration: a website can open BTV for its visitors with a
             tree and initial display settings. It does not require a local MCP connection.</p>
+          <p>For cladograms in rectangular or radial views, pass
+            <code> settings.showCladogram: true</code>. Standard cladograms use equal-length
+            branches. To align tips, also set <code>ultrametricCladogram: true</code> and
+            choose <code>ultrametricCladogramMethod</code>: <code>levels</code>,
+            <code> logarithmic</code>, or <code>grafen</code>. The logarithmic layout accepts
+            <code> cladogramLogStrength</code> from 1 to 10, with 1 as the default.
+            These settings change the display, not the original branch lengths.</p>
         </section>
 
         <section className="api-doc-section">
@@ -168,7 +175,7 @@ directory for this agent.`}</code></pre>
         </section>
 
         <section className="api-doc-section">
-          <h2>How it works</h2>
+          <h2>Browser helper workflow</h2>
           <p>
             `btv_render.py` uses only Python&apos;s standard library plus an
             installed Chromium-family browser. It starts an isolated headless

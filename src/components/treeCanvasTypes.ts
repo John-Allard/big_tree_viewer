@@ -3,6 +3,7 @@ import type { RectTreeIndex } from "../lib/rectTreeIndex";
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import type { FigureStyleSettings } from "../lib/figureStyles";
+import type { UltrametricCladogramMethod } from "../lib/cladogram";
 import type { MetadataMarkerStyle, MetadataPieDatum } from "../lib/metadataColors";
 import type { MetadataContinuousPalette } from "../lib/metadataColors";
 import type { MetadataTipTableCellStyle, MetadataTipTableData, MetadataTipTableMode } from "../lib/metadataTipTable";
@@ -49,6 +50,8 @@ export interface TreeCanvasProps {
   visibleViewportLeftInsetPx?: number;
   showCladogram?: boolean;
   ultrametricCladogram?: boolean;
+  ultrametricCladogramMethod?: UltrametricCladogramMethod;
+  cladogramLogStrength?: number;
   order: LayoutOrder;
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;

@@ -2531,7 +2531,7 @@ button.secondary {
   color: #0f172a;
 }
 
-.scale-settings-popover {
+.panel-settings-popover {
   position: fixed;
   right: auto;
   z-index: 46;
@@ -2541,11 +2541,11 @@ button.secondary {
   background: #fff;
 }
 
-.scale-settings-popover .label-style-popover-header {
+.panel-settings-popover .label-style-popover-header {
   flex-shrink: 0;
 }
 
-.scale-settings-popover .label-style-body {
+.panel-settings-popover .label-style-body {
   min-height: 0;
   overflow-y: auto;
 }
@@ -2585,7 +2585,13 @@ button.secondary {
   gap: 0.5rem;
 }
 
-.label-style-inline-toggle input[type="checkbox"] {
+.cladogram-layout-options {
+  display: grid;
+  gap: 8px;
+}
+
+.label-style-inline-toggle input[type="checkbox"],
+.label-style-inline-toggle input[type="radio"] {
   width: auto;
 }
 

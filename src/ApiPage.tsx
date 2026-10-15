@@ -154,6 +154,10 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
               <tr><th scope="row"><code>btv_taxonomy_allow_download</code></th><td><code>true</code>, <code>false</code></td><td>Set to <code>true</code> to allow launch/API taxonomy mapping to download the selected official archive if it is not already available.</td></tr>
               <tr><th scope="row"><code>btv_palette</code></th><td>Palette key</td><td>Choose the taxonomy color palette.</td></tr>
               <tr><th scope="row"><code>btv_branch_thickness</code></th><td>Number, e.g. 1.5</td><td>Scale branch thickness.</td></tr>
+              <tr><th scope="row"><code>btv_cladogram</code></th><td><code>true</code>, <code>false</code></td><td>Display topology with equal-length branches. Off by default; unavailable in spiral and comparison modes.</td></tr>
+              <tr><th scope="row"><code>btv_cladogram_ultrametric</code></th><td><code>true</code>, <code>false</code></td><td>Align tips using topology-only node heights when cladogram display is enabled. Off by default.</td></tr>
+              <tr><th scope="row"><code>btv_cladogram_method</code></th><td><code>levels</code>, <code>logarithmic</code>, <code>grafen</code></td><td>Choose branching levels (the default), logarithmic descendant counts, or Grafen descendant counts. Heights do not represent divergence times.</td></tr>
+              <tr><th scope="row"><code>btv_cladogram_log_strength</code></th><td>1 to 10; default 1</td><td>Adjust the logarithmic layout's height curve. Higher values move internal nodes toward the tips.</td></tr>
               <tr><th scope="row"><code>btv_time_axis</code></th><td><code>linear</code>, <code>log</code></td><td>Choose the time-axis scale.</td></tr>
               <tr><th scope="row"><code>btv_metadata_labels</code></th><td><code>true</code>, <code>false</code></td><td>Show metadata text labels.</td></tr>
               <tr><th scope="row"><code>btv_metadata_markers</code></th><td><code>true</code>, <code>false</code></td><td>Show metadata markers.</td></tr>
@@ -324,6 +328,8 @@ window.addEventListener("message", (event) => {
     showScaleBars?: boolean,
     showCladogram?: boolean,
     ultrametricCladogram?: boolean,
+    ultrametricCladogramMethod?: "levels" | "logarithmic" | "grafen",
+    cladogramLogStrength?: number, // 1 to 10; default 1, logarithmic layout only
     showMyaTimeUnit?: boolean,
     customTimeUnit?: string,
     taxonomyEnabled?: boolean,

@@ -91,6 +91,24 @@ try {
   await expect(guiPage.getByText('Drag a tree file here to load', { exact: true })).toBeVisible();
   const updated = await call('update_tree', { sessionId, layout: 'rectangular', settings: { showTipLabels: true, branchThicknessScale: 1.8 } });
   assert.equal(updated.layout, 'rectangular'); assert.equal(updated.settings.showTipLabels, true);
+  for (const method of ['levels', 'logarithmic', 'grafen']) {
+    const cladogram = await call('update_tree', { sessionId, settings: {
+      showCladogram: true, ultrametricCladogram: true, ultrametricCladogramMethod: method, cladogramLogStrength: 5,
+    } });
+    assert.equal(cladogram.settings.showCladogram, true);
+    assert.equal(cladogram.settings.ultrametricCladogram, true);
+    assert.equal(cladogram.settings.ultrametricCladogramMethod, method);
+    assert.equal(cladogram.settings.cladogramLogStrength, 5);
+    const svg = await call('export_tree', { sessionId, outputPath: path.join(dir, `cladogram-${method}.svg`) });
+    assert.match(await readFile(svg.outputPath, 'utf8'), /<svg/);
+  }
+  const cladogramSession = path.join(dir, 'cladogram.btvsession');
+  await call('export_tree', { sessionId, outputPath: cladogramSession });
+  const cladogramReopened = await call('open_tree', { treePath: cladogramSession });
+  assert.equal(cladogramReopened.settings.ultrametricCladogramMethod, 'grafen');
+  assert.equal(cladogramReopened.settings.cladogramLogStrength, 5);
+  await call('close_tree', { sessionId: cladogramReopened.sessionId });
+  await call('update_tree', { sessionId, settings: { showCladogram: false, ultrametricCladogram: false } });
   const meta = await call('update_tree', { sessionId, metadataPath: path.join(root, 'tests/fixtures/agent-skill-metadata.csv'), metadata: { enabled: true, keyColumn: 'name', valueColumn: 'group', colorMode: 'categorical' } });
   assert.equal(meta.metadata.error, null);
   await call('update_tree', { sessionId, canvas: { camera: { kind: 'rect', scaleX: 2, scaleY: 2, translateX: 0, translateY: 0 }, viewportWidth: 1600, viewportHeight: 1000 } });

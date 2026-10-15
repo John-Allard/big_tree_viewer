@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { createCladogramTree } from "../lib/cladogram";
+import { createCladogramTree, DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLADOGRAM_LOG_STRENGTH } from "../lib/cladogram";
 import {
   fontFamilyCss,
   fontStyleCss,
@@ -4311,7 +4311,9 @@ export default function TreeCanvas({
   treeRef,
   visibleViewportLeftInsetPx = 0,
   showCladogram = false,
-  ultrametricCladogram = true,
+  ultrametricCladogram = false,
+  ultrametricCladogramMethod = DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD,
+  cladogramLogStrength = DEFAULT_CLADOGRAM_LOG_STRENGTH,
   order,
   viewMode,
   zoomAxisMode,
@@ -4427,8 +4429,8 @@ export default function TreeCanvas({
   const sourceTree = treeRef.current;
   const cladogramActive = showCladogram && viewMode !== "spiral";
   const tree = useMemo(() => sourceTree && cladogramActive
-    ? createCladogramTree(sourceTree, ultrametricCladogram)
-    : sourceTree, [cladogramActive, sourceTree, ultrametricCladogram]);
+    ? createCladogramTree(sourceTree, ultrametricCladogram, ultrametricCladogramMethod, cladogramLogStrength)
+    : sourceTree, [cladogramActive, sourceTree, ultrametricCladogram, ultrametricCladogramMethod, cladogramLogStrength]);
   const taxonomyMap = taxonomyMapRef.current;
   const taxonomyColorSourceMap = taxonomyColorSourceMapRef.current;
   const sharedSubtreeSourceTree = sharedSubtreeSourceTreeRef.current;
@@ -4555,6 +4557,7 @@ export default function TreeCanvas({
   const previousSizeRef = useRef(size);
   const previousViewportCenterXRef = useRef(visibleViewportCenterX);
   const previousTreeRef = useRef<TreeModel | null>(tree);
+  const previousSourceTreeRef = useRef(sourceTree);
   const previousFitRequestRef = useRef(fitRequest);
   const pendingCircularTaxonomyRefitRef = useRef(false);
   const [collapsedNodeModes, setCollapsedNodeModes] = useState<Map<number, CollapsedNodeMode>>(() => new Map());
@@ -4794,6 +4797,7 @@ export default function TreeCanvas({
   const axisDepth = useCallback((depth: number): number => (
     axisDepthForMode(depth, viewMode)
   ), [axisDepthForMode, viewMode]);
+  const previousAxisDepthRef = useRef(axisDepth);
   // Tree edits must not reset when viewport-dependent tooltip positioning changes.
   useEffect(() => {
     setCollapsedNodeModes(new Map());
@@ -15944,13 +15948,72 @@ export default function TreeCanvas({
     previousViewportCenterXRef.current = visibleViewportCenterX;
     const previousTree = previousTreeRef.current;
     previousTreeRef.current = tree;
+    const previousSourceTree = previousSourceTreeRef.current;
+    previousSourceTreeRef.current = sourceTree;
+    const previousAxisDepth = previousAxisDepthRef.current;
+    previousAxisDepthRef.current = axisDepth;
     const previousFitRequest = previousFitRequestRef.current;
     previousFitRequestRef.current = fitRequest;
     const currentCamera = cameraRef.current;
     const sizeChanged = previousSize.width !== size.width || previousSize.height !== size.height;
-    const treeChanged = previousTree !== tree;
+    const treeChanged = previousSourceTree !== sourceTree;
+    const displayDepthsChanged = previousTree !== tree && !treeChanged;
     const fitRequested = previousFitRequest !== fitRequest;
     const viewportCenterChanged = previousViewportCenterX !== visibleViewportCenterX;
+    if (currentCamera && previousTree && displayDepthsChanged && !fitRequested
+      && previousViewMode === viewMode && viewMode !== "spiral") {
+      const layout = collapsedView?.layout ?? tree.layouts[order];
+      const centerY = size.height * 0.5;
+      const world = currentCamera.kind === "rect"
+        ? screenToWorldRect(currentCamera, visibleViewportCenterX, centerY)
+        : screenToWorldCircular(currentCamera, visibleViewportCenterX, centerY);
+      const targetRow = currentCamera.kind === "rect"
+        ? world.y
+        : polarLayoutValueForCurrentModeTheta(Math.atan2(world.y, world.x), viewMode);
+      const leaves = collapsedView?.visibleTerminalNodes ?? cache.orderedLeaves[order];
+      const insertion = lowerBoundLeaves(leaves, layout.center, targetRow);
+      const screenPoint = (node: number, geometry: TreeModel, projectDepth: (depth: number) => number) => {
+        const depth = projectDepth(geometry.buffers.depth[node]);
+        if (currentCamera.kind === "rect") {
+          return { x: currentCamera.translateX + depth * currentCamera.scaleX,
+            y: currentCamera.translateY + layout.center[node] * currentCamera.scaleY };
+        }
+        const point = polarToCartesian(depth, polarThetaFor(layout.center, node));
+        return worldToScreenCircular(currentCamera, point.x, point.y);
+      };
+      // Nearby tip rows and their ancestors identify the focused branch without
+      // scanning every node on each strength-slider update.
+      let anchor = tree.root;
+      let bestDistance = Infinity;
+      const visited = new Set<number>();
+      for (let index = Math.max(0, insertion - 1); index <= Math.min(leaves.length - 1, insertion + 1); index++) {
+        for (let node = leaves[index]; node >= 0 && !visited.has(node); node = tree.buffers.parent[node]) {
+          visited.add(node);
+          const point = screenPoint(node, previousTree, previousAxisDepth);
+          const distance = (point.x - visibleViewportCenterX) ** 2 + (point.y - centerY) ** 2;
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            anchor = node;
+          }
+        }
+      }
+      const before = screenPoint(anchor, previousTree, previousAxisDepth);
+      const previousExtent = previousAxisDepth(previousTree.maxDepth);
+      const nextExtent = axisDepth(tree.maxDepth);
+      const ratio = previousExtent > 0 && nextExtent > 0 ? previousExtent / nextExtent : 1;
+      if (currentCamera.kind === "rect") currentCamera.scaleX *= ratio;
+      else currentCamera.scale *= ratio;
+      const after = screenPoint(anchor, tree, axisDepth);
+      currentCamera.translateX += before.x - after.x;
+      currentCamera.translateY += before.y - after.y;
+      if (currentCamera.kind === "rect") {
+        clampRectCamera(currentCamera, tree, size.width, size.height, rectClampPadding(currentCamera));
+      } else {
+        finalizeCircularCamera(currentCamera);
+      }
+      draw();
+      return;
+    }
     if (currentCamera && !treeChanged && !fitRequested && previousViewMode === viewMode
       && (sizeChanged || viewportCenterChanged)) {
       const previousViewportWidth = Math.max(1, 2 * (previousSize.width - previousViewportCenterX));
@@ -15995,7 +16058,7 @@ export default function TreeCanvas({
       return;
     }
     draw();
-  }, [cache, convertCameraForViewMode, fitCamera, fitRequest, size, tree, viewMode, visibleViewportCenterX]);
+  }, [axisDepth, cache, collapsedView, convertCameraForViewMode, fitCamera, fitRequest, order, polarLayoutValueForCurrentModeTheta, polarThetaFor, size, sourceTree, tree, viewMode, visibleViewportCenterX]);
 
   useLayoutEffect(() => {
     if (!tree || handledSessionRestoreRequestRef.current === sessionRestoreRequest) {
@@ -17665,6 +17728,8 @@ export default function TreeCanvas({
       spiralTurns,
       showCladogram,
       ultrametricCladogram,
+      ultrametricCladogramMethod,
+      cladogramLogStrength,
       showTimeStripes,
       timeAxisScale,
       timeAxisLogBase,
@@ -17752,6 +17817,8 @@ export default function TreeCanvas({
     showScaleZeroTick,
     showCladogram,
     ultrametricCladogram,
+    ultrametricCladogramMethod,
+    cladogramLogStrength,
     showMyaTimeUnit,
     customTimeUnit,
     showTimeStripes,
@@ -18319,6 +18386,8 @@ export default function TreeCanvas({
           spiralTurns,
           showCladogram,
           ultrametricCladogram,
+          ultrametricCladogramMethod,
+          cladogramLogStrength,
           showTimeStripes,
           timeAxisScale,
           timeAxisLogBase,
@@ -18410,6 +18479,8 @@ export default function TreeCanvas({
     showScaleZeroTick,
     showCladogram,
     ultrametricCladogram,
+    ultrametricCladogramMethod,
+    cladogramLogStrength,
     showMyaTimeUnit,
     customTimeUnit,
     showTimeStripes,

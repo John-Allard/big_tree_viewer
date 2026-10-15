@@ -1,4 +1,5 @@
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
+import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, ULTRAMETRIC_CLADOGRAM_METHODS, normalizeCladogramLogStrength, type UltrametricCladogramMethod } from "./cladogram";
 import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
 import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./timeAxis";
 import type { TaxonomyCollapseFallback, TaxonomyCollapseRank, TaxonomyIdentifierMode, TaxonomyMapPayload, TaxonomyRank, TaxonomySource } from "../types/taxonomy";
@@ -55,6 +56,8 @@ export type SharedSubtreeVisualPayload = {
   showScaleBars: boolean;
   showCladogram?: boolean;
   ultrametricCladogram?: boolean;
+  ultrametricCladogramMethod?: UltrametricCladogramMethod;
+  cladogramLogStrength?: number;
   scaleTickInterval: number | null;
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
@@ -224,7 +227,9 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     timeStripeLineWeight: coerceFiniteNumber(source.timeStripeLineWeight, 1.1),
     showScaleBars: coerceBoolean(source.showScaleBars, true),
     showCladogram: coerceBoolean(source.showCladogram, false),
-    ultrametricCladogram: coerceBoolean(source.ultrametricCladogram, true),
+    ultrametricCladogram: coerceBoolean(source.ultrametricCladogram, false),
+    ultrametricCladogramMethod: coerceEnum(source.ultrametricCladogramMethod, ULTRAMETRIC_CLADOGRAM_METHODS, DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD),
+    cladogramLogStrength: normalizeCladogramLogStrength(source.cladogramLogStrength),
     scaleTickInterval: coerceNullableFiniteNumber(source.scaleTickInterval),
     showIntermediateScaleTicks: coerceBoolean(source.showIntermediateScaleTicks, true),
     extendRectScaleToTick: coerceBoolean(source.extendRectScaleToTick, false),

@@ -33,7 +33,7 @@ const metadataOptions = z.object({
 const style = {
   layout: z.enum(["rectangular", "circular", "fan", "spiral"]).optional(),
   canvas: object.optional().describe("Optional saved viewport state, e.g. camera with kind, scaleX, scaleY, translateX, translateY for rectangular zoom."),
-  settings: object.optional().describe("Saved BTV visual setting names; use inspect_tree to see current settings. Unknown keys are rejected."),
+  settings: object.optional().describe("Saved BTV visual setting names; inspect_tree returns current settings. Cladograms: showCladogram=true gives equal edges; add ultrametricCladogram=true and ultrametricCladogramMethod=levels|logarithmic|grafen to align tips. cladogramLogStrength=1..10 (default 1) adjusts logarithmic layout. Cladograms require rectangular/circular/fan layout. Unknown keys are rejected."),
   metadataPath: z.string().optional().describe("Absolute local CSV/TSV path."),
   metadata: metadataOptions.optional().describe("Metadata column and encoding settings. Use metadataPath for a local CSV/TSV file."),
   taxonomy: taxonomy.optional(),
