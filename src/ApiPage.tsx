@@ -338,7 +338,7 @@ window.addEventListener("message", (event) => {
     taxonomyRankVisibility?: { [rank: string]: boolean | undefined },
     taxonomyRankDisplayModes?: { kingdom?: "hidden" | "label-only" | "ribbon", [rank: string]: "hidden" | "label-only" | "ribbon" | undefined },
     figureStyles?: {
-      tip?: { sizeScale?: number, limitWidth?: boolean, maxWidthPx?: number, overflowMode?: "truncate" | "scale" },
+      tip?: { sizeScale?: number, showGuideTicks?: boolean, limitWidth?: boolean, maxWidthPx?: number, overflowMode?: "truncate" | "scale" },
       taxonomy?: { sizeScale?: number, bandThicknessScale?: number, taxonomyGap?: number, thickenOutermostRibbon?: boolean },
       bootstrap?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
       nodeHeight?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },

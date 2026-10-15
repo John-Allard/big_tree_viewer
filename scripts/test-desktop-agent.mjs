@@ -94,11 +94,13 @@ try {
   for (const method of ['levels', 'logarithmic', 'grafen']) {
     const cladogram = await call('update_tree', { sessionId, settings: {
       showCladogram: true, ultrametricCladogram: true, ultrametricCladogramMethod: method, cladogramLogStrength: 5,
+      figureStyles: { tip: { showGuideTicks: false } },
     } });
     assert.equal(cladogram.settings.showCladogram, true);
     assert.equal(cladogram.settings.ultrametricCladogram, true);
     assert.equal(cladogram.settings.ultrametricCladogramMethod, method);
     assert.equal(cladogram.settings.cladogramLogStrength, 5);
+    assert.equal(cladogram.settings.figureStyles.tip.showGuideTicks, false);
     const svg = await call('export_tree', { sessionId, outputPath: path.join(dir, `cladogram-${method}.svg`) });
     assert.match(await readFile(svg.outputPath, 'utf8'), /<svg/);
   }
@@ -107,6 +109,7 @@ try {
   const cladogramReopened = await call('open_tree', { treePath: cladogramSession });
   assert.equal(cladogramReopened.settings.ultrametricCladogramMethod, 'grafen');
   assert.equal(cladogramReopened.settings.cladogramLogStrength, 5);
+  assert.equal(cladogramReopened.settings.figureStyles.tip.showGuideTicks, false);
   await call('close_tree', { sessionId: cladogramReopened.sessionId });
   await call('update_tree', { sessionId, settings: { showCladogram: false, ultrametricCladogram: false } });
   const meta = await call('update_tree', { sessionId, metadataPath: path.join(root, 'tests/fixtures/agent-skill-metadata.csv'), metadata: { enabled: true, keyColumn: 'name', valueColumn: 'group', colorMode: 'categorical' } });

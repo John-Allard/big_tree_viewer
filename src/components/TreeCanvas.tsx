@@ -10178,7 +10178,7 @@ export default function TreeCanvas({
             }
           }
         }
-      } else if (tipLabelCueVisible && measuredLabels.length <= 9000) {
+      } else if (figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && measuredLabels.length <= 9000) {
         ctx.strokeStyle = "rgba(15,23,42,0.42)";
         ctx.lineWidth = 0.9;
         ctx.beginPath();
@@ -14396,7 +14396,7 @@ export default function TreeCanvas({
             );
           }
         }
-      } else if (tipLabelCueVisible && circularVisibleTipLabels.length <= 9000) {
+      } else if (figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && circularVisibleTipLabels.length <= 9000) {
         ctx.strokeStyle = "rgba(15,23,42,0.42)";
         ctx.lineWidth = 0.9;
         ctx.beginPath();

@@ -163,6 +163,7 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
       current.showTimeGuideLabels = coerceBoolean(source.showTimeGuideLabels, false);
     }
     if (labelClass === "tip") {
+      current.showGuideTicks = coerceBoolean(source.showGuideTicks, true);
       current.limitWidth = coerceBoolean(source.limitWidth, Boolean(current.limitWidth));
       current.maxWidthPx = Math.max(40, coerceFiniteNumber(source.maxWidthPx, current.maxWidthPx ?? 240));
       current.overflowMode = coerceEnum(source.overflowMode, ["truncate", "scale"] as const, "truncate");

@@ -1467,12 +1467,13 @@ function LabelStyleSection({
 }): ReactNode {
   const isTaxonomy = labelClass === "taxonomy";
   const isScale = labelClass === "scale";
+  const fitInPanel = isScale || labelClass === "tip";
   const supportsAxisOffsets = labelClass === "internalNode"
     || labelClass === "bootstrap"
     || labelClass === "nodeHeight";
   const usePolarOffsets = supportsAxisOffsets && viewMode !== "rectangular";
   const popoverRef = useRef<HTMLDivElement>(null);
-  usePanelPopoverPosition(popoverRef, isScale && isOpen && !disabled);
+  usePanelPopoverPosition(popoverRef, fitInPanel && isOpen && !disabled);
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -1488,7 +1489,7 @@ function LabelStyleSection({
         <span aria-hidden="true">⚙</span>
       </button>
       {disabled || !isOpen ? null : (
-        <div ref={popoverRef} className={`label-style-popover${isScale ? " panel-settings-popover" : ""}`} role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
+        <div ref={popoverRef} className={`label-style-popover${fitInPanel ? " panel-settings-popover" : ""}`} role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
           <div className="label-style-popover-header">
             <strong>{LABEL_STYLE_CLASS_LABELS[labelClass]}</strong>
             <button
@@ -1656,6 +1657,12 @@ function LabelStyleSection({
               <div className="figure-style-value">{settings.offsetPx}px</div>
             </>
           )}
+          {labelClass === "tip" ? (
+            <label className="label-style-inline-toggle" title="Show short dashes as a zoom cue before tip names become visible. Turn off to omit these dashes from the view and exported figures; tip names and alignment leaders are unchanged.">
+              <input type="checkbox" checked={settings.showGuideTicks !== false} onChange={(event) => onUpdate(labelClass, "showGuideTicks", event.target.checked)} />
+              Show tip-label guide ticks
+            </label>
+          ) : null}
           {labelClass === "tip" && viewMode === "rectangular" ? (
             <>
               <label
