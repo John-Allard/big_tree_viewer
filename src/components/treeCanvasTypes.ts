@@ -47,6 +47,8 @@ export interface AutomationExportResult {
 export interface TreeCanvasProps {
   treeRef: { current: TreeModel | null };
   visibleViewportLeftInsetPx?: number;
+  showCladogram?: boolean;
+  ultrametricCladogram?: boolean;
   order: LayoutOrder;
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;

@@ -322,6 +322,8 @@ window.addEventListener("message", (event) => {
     showTimeStripes?: boolean,
     timeStripeStyle?: "age-gradient" | "dashed" | "bands",
     showScaleBars?: boolean,
+    showCladogram?: boolean,
+    ultrametricCladogram?: boolean,
     showMyaTimeUnit?: boolean,
     customTimeUnit?: string,
     taxonomyEnabled?: boolean,
@@ -334,6 +336,7 @@ window.addEventListener("message", (event) => {
       taxonomy?: { sizeScale?: number, bandThicknessScale?: number, taxonomyGap?: number, thickenOutermostRibbon?: boolean },
       bootstrap?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
       nodeHeight?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
+      scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean },
       [labelClass: string]: object | undefined
     },
     metadataMarkersEnabled?: boolean,

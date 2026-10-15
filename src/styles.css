@@ -2531,6 +2531,25 @@ button.secondary {
   color: #0f172a;
 }
 
+.scale-settings-popover {
+  position: fixed;
+  right: auto;
+  z-index: 46;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70dvh, 640px);
+  background: #fff;
+}
+
+.scale-settings-popover .label-style-popover-header {
+  flex-shrink: 0;
+}
+
+.scale-settings-popover .label-style-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .label-style-popover-close {
   width: 1.9rem;
   height: 1.9rem;

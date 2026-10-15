@@ -708,12 +708,13 @@ test("label style popovers stay open while interacting with the tree and close o
   await expect(page.getByRole("dialog", { name: "Tip labels settings" })).toHaveCount(0);
 });
 
-test("time stripe settings live in a dedicated popover next to the toggle", async ({ page }) => {
+test("time stripe settings live inside the scale settings", async ({ page }) => {
   await waitForViewer(page);
 
   await page.getByRole("button", { name: "Visual Options" }).click();
-  await page.getByRole("button", { name: "Time stripes settings" }).click();
-  await expect(page.getByRole("dialog", { name: "Time stripes settings" })).toBeVisible();
+  await page.getByRole("button", { name: "Scale labels settings" }).click();
+  await expect(page.getByRole("dialog", { name: "Scale labels settings" })).toBeVisible();
+  await expect(page.getByLabel("Show time stripes", { exact: true })).toBeVisible();
   await expect(page.getByText("Stripe style")).toBeVisible();
 });
 
@@ -1927,8 +1928,11 @@ test("visual options only mark hidden label sections when they are actually disa
   }
   await page.getByLabel("Show internal node labels").check();
   await page.getByLabel("Show node height labels").check();
-  await page.getByLabel("Show scale bars").uncheck();
+  await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
   await page.getByLabel("Show time stripes").uncheck();
+  await page.getByRole("heading", { name: "Big Tree Viewer", exact: true }).click();
+  await page.getByLabel("Show scale bars").uncheck();
+  await page.getByLabel("Show cladogram").check();
   const bootstrapRow = page.locator(".visual-option-row").filter({ hasText: "Show bootstrap labels" });
   const nodeHeightRow = page.locator(".visual-option-row").filter({ hasText: "Show node height labels" });
   await expect(bootstrapRow).toBeVisible();
@@ -1942,8 +1946,11 @@ test("visual options only mark hidden label sections when they are actually disa
   await expect(page.getByLabel("Show internal node labels")).not.toBeChecked();
   await expect(page.getByLabel("Show bootstrap labels")).not.toBeChecked();
   await expect(page.getByLabel("Show node height labels")).not.toBeChecked();
+  await expect(page.getByLabel("Show cladogram")).not.toBeChecked();
   await expect(page.getByLabel("Show scale bars")).toBeChecked();
+  await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
   await expect(page.getByLabel("Show time stripes")).toBeChecked();
+  await page.getByRole("heading", { name: "Big Tree Viewer", exact: true }).click();
   expect(await page.getByLabel("Show taxonomy overlays").isChecked()).toBe(taxonomyWasEnabled);
 
   const state = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState() ?? null) as {

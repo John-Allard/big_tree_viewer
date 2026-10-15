@@ -330,6 +330,8 @@ type BigTreeViewerSessionSettings = {
   timeAxisScale: TimeAxisScale;
   timeAxisLogBase: number;
   showScaleBars: boolean;
+  showCladogram?: boolean;
+  ultrametricCladogram?: boolean;
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
   showScaleZeroTick: boolean;
@@ -1296,7 +1298,7 @@ function taxonomyMapIdentifierMode(map: TaxonomyMapPayload): TaxonomyIdentifierM
 
 type VisualPopoverId =
   | LabelStyleClass
-  | "timeStripes"
+  | "cladogram"
   | "nodeErrorBars"
   | "phylopic"
   | "metadataBranchColors"
@@ -1438,6 +1440,29 @@ function LabelStyleSection({
     || labelClass === "bootstrap"
     || labelClass === "nodeHeight";
   const usePolarOffsets = supportsAxisOffsets && viewMode !== "rectangular";
+  const popoverRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const popover = popoverRef.current;
+    const panel = popover?.closest<HTMLElement>(".control-panel");
+    const anchor = popover?.parentElement;
+    if (!isScale || !isOpen || disabled || !popover || !panel || !anchor) return;
+    const positionPopover = () => {
+      const panelBounds = panel.getBoundingClientRect();
+      const anchorBounds = anchor.getBoundingClientRect();
+      const top = Math.max(8, panelBounds.top + 8);
+      const bottom = Math.min(window.innerHeight - 8, panelBounds.bottom - 8);
+      popover.style.maxHeight = `${Math.max(80, Math.min(640, bottom - top))}px`;
+      popover.style.top = `${Math.max(top, Math.min(anchorBounds.bottom + 7, bottom - popover.offsetHeight))}px`;
+      popover.style.left = `${Math.max(panelBounds.left + 8, Math.min(anchorBounds.right - popover.offsetWidth, panelBounds.right - popover.offsetWidth - 8))}px`;
+    };
+    positionPopover();
+    panel.addEventListener("scroll", positionPopover);
+    window.addEventListener("resize", positionPopover);
+    return () => {
+      panel.removeEventListener("scroll", positionPopover);
+      window.removeEventListener("resize", positionPopover);
+    };
+  }, [disabled, isOpen, isScale]);
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -1453,7 +1478,7 @@ function LabelStyleSection({
         <span aria-hidden="true">⚙</span>
       </button>
       {disabled || !isOpen ? null : (
-        <div className="label-style-popover" role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
+        <div ref={popoverRef} className={`label-style-popover${isScale ? " scale-settings-popover" : ""}`} role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
           <div className="label-style-popover-header">
             <strong>{LABEL_STYLE_CLASS_LABELS[labelClass]}</strong>
             <button
@@ -2048,6 +2073,8 @@ export default function App() {
   const [timeAxisLogBase, setTimeAxisLogBase] = useState(DEFAULT_TIME_AXIS_LOG_BASE);
   const [timeAxisLogBaseDraft, setTimeAxisLogBaseDraft] = useState(DEFAULT_TIME_AXIS_LOG_BASE);
   const [showScaleBars, setShowScaleBars] = useState(true);
+  const [showCladogram, setShowCladogram] = useState(false);
+  const [ultrametricCladogram, setUltrametricCladogram] = useState(true);
   const [showIntermediateScaleTicks, setShowIntermediateScaleTicks] = useState(DEFAULT_SHOW_INTERMEDIATE_SCALE_TICKS);
   const [extendRectScaleToTick, setExtendRectScaleToTick] = useState(DEFAULT_EXTEND_RECT_SCALE_TO_TICK);
   const [showScaleZeroTick, setShowScaleZeroTick] = useState(DEFAULT_SHOW_SCALE_ZERO_TICK);
@@ -2503,6 +2530,7 @@ export default function App() {
     };
   }, [order, taxonomyCollapseActiveRank, taxonomyMap, tree]);
   const viewTree = collapsedTaxonomyView?.tree ?? tree;
+  const cladogramActive = showCladogram && viewMode !== "spiral" && !(comparisonEnabled && comparisonTree);
   const viewTreeStatistics = useMemo(
     () => viewTree ? computeTreeStatistics(viewTree) : null,
     [viewTree],
@@ -2763,6 +2791,8 @@ export default function App() {
     setTimeStripeStyle(visual.timeStripeStyle);
     setTimeStripeLineWeight(visual.timeStripeLineWeight);
     setShowScaleBars(visual.showScaleBars);
+    setShowCladogram(visual.showCladogram ?? false);
+    setUltrametricCladogram(visual.ultrametricCladogram ?? true);
     setScaleTickIntervalInput(visual.scaleTickInterval === null ? "" : String(visual.scaleTickInterval));
     setShowIntermediateScaleTicks(visual.showIntermediateScaleTicks);
     setExtendRectScaleToTick(visual.extendRectScaleToTick);
@@ -2857,6 +2887,8 @@ export default function App() {
     if (typeof visual.showScaleBars === "boolean") {
       setShowScaleBars(visual.showScaleBars);
     }
+    if (typeof visual.showCladogram === "boolean") setShowCladogram(visual.showCladogram);
+    if (typeof visual.ultrametricCladogram === "boolean") setUltrametricCladogram(visual.ultrametricCladogram);
     if (typeof visual.showIntermediateScaleTicks === "boolean") {
       setShowIntermediateScaleTicks(visual.showIntermediateScaleTicks);
     }
@@ -4628,6 +4660,8 @@ export default function App() {
     radialAngularSpanDegrees,
     radialCenterOpeningRatio,
     spiralTurns,
+    showCladogram,
+    ultrametricCladogram,
     showTimeStripes,
     timeStripeStyle,
     timeStripeLineWeight,
@@ -4777,6 +4811,8 @@ export default function App() {
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
+    showCladogram,
+    ultrametricCladogram,
     showMyaTimeUnit,
     customTimeUnit,
     showTimeStripes,
@@ -4832,6 +4868,8 @@ export default function App() {
     setTimeAxisScale(settings.timeAxisScale);
     setTimeAxisLogBase(settings.timeAxisLogBase);
     setShowScaleBars(settings.showScaleBars);
+    setShowCladogram(settings.showCladogram ?? false);
+    setUltrametricCladogram(settings.ultrametricCladogram ?? true);
     setShowIntermediateScaleTicks(settings.showIntermediateScaleTicks);
     setExtendRectScaleToTick(settings.extendRectScaleToTick);
     setShowScaleZeroTick(settings.showScaleZeroTick);
@@ -6097,6 +6135,8 @@ export default function App() {
         showGenusLabels: readLaunchBoolParam(params, "btv_genus_labels") ?? payload.visual?.showGenusLabels,
         showTimeStripes: readLaunchBoolParam(params, "btv_time_stripes") ?? payload.visual?.showTimeStripes,
         showScaleBars: readLaunchBoolParam(params, "btv_scale_bars") ?? payload.visual?.showScaleBars,
+        showCladogram: readLaunchBoolParam(params, "btv_cladogram") ?? payload.visual?.showCladogram,
+        ultrametricCladogram: readLaunchBoolParam(params, "btv_cladogram_ultrametric") ?? payload.visual?.ultrametricCladogram,
         timeAxisScale: timeAxisScaleParam === "linear" || timeAxisScaleParam === "log"
           ? timeAxisScaleParam
           : payload.visual?.timeAxisScale,
@@ -7245,6 +7285,8 @@ export default function App() {
     setShowBootstrapLabels(false);
     setShowNodeHeightLabels(false);
     setShowScaleBars(true);
+    setShowCladogram(false);
+    setUltrametricCladogram(true);
     setShowTimeStripes(true);
     setTaxonomyColorJitter(DEFAULT_TAXONOMY_COLOR_JITTER);
     setTaxonomyColorPalette(DEFAULT_TAXONOMY_COLOR_PALETTE);
@@ -7367,6 +7409,8 @@ export default function App() {
         showInternalNodeLabels,
         showBootstrapLabels,
         showNodeHeightLabels,
+        showCladogram,
+        ultrametricCladogram,
         figureStyles,
         branchThicknessScale,
         showIntermediateScaleTicks,
@@ -7666,6 +7710,8 @@ export default function App() {
     useAutomaticTaxonomyRankVisibility,
     showNodeErrorBars,
     metadataTable,
+    showCladogram,
+    ultrametricCladogram,
     metadataValueColumn,
     order,
     radialAngularSpanDegrees,
@@ -8794,7 +8840,7 @@ export default function App() {
             </div>
             <div className="visual-option-row">
               <label className="visual-option-checkbox" title={disabledControlTitle(
-                viewMode === "spiral"
+                cladogramActive ? "Node height intervals cannot be displayed on a cladogram." : viewMode === "spiral"
                   ? "Node error bars are not available in spiral mode."
                   : (tree?.nodeIntervalCount ?? 0) === 0
                     ? "This tree does not contain node interval annotations."
@@ -8802,8 +8848,8 @@ export default function App() {
               ) ?? "Show confidence or credibility intervals around node heights when interval annotations are present."}>
                 <input
                   type="checkbox"
-                  checked={showNodeErrorBars}
-                  disabled={comparisonEnabled && Boolean(comparisonTree) || viewMode === "spiral" || (tree?.nodeIntervalCount ?? 0) === 0}
+                  checked={showNodeErrorBars && !cladogramActive}
+                  disabled={cladogramActive || comparisonEnabled && Boolean(comparisonTree) || viewMode === "spiral" || (tree?.nodeIntervalCount ?? 0) === 0}
                   onChange={(event) => setShowNodeErrorBars(event.target.checked)}
                   title={disabledControlTitle(
                     viewMode === "spiral"
@@ -8819,8 +8865,8 @@ export default function App() {
                 <SettingsPopoverButton
                   title="Node error bars"
                   isOpen={activeLabelStylePopover === "nodeErrorBars"}
-                  disabled={comparisonEnabled && Boolean(comparisonTree) || viewMode === "spiral" || !showNodeErrorBars || (tree?.nodeIntervalCount ?? 0) === 0}
-                  disabledReason={comparisonEnabled && comparisonTree
+                  disabled={cladogramActive || comparisonEnabled && Boolean(comparisonTree) || viewMode === "spiral" || !showNodeErrorBars || (tree?.nodeIntervalCount ?? 0) === 0}
+                  disabledReason={cladogramActive ? "Node height intervals cannot be displayed on a cladogram." : comparisonEnabled && comparisonTree
                     ? "Node error bars are not shown in comparison mode."
                     : viewMode === "spiral"
                       ? "Node error bars are not available in spiral mode."
@@ -8901,11 +8947,11 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title={comparisonEnabled && comparisonTree ? "Scale bars are not shown in comparison mode." : "Show time or branch-length scale bars for the current view."}>
+              <label className="visual-option-checkbox" title={cladogramActive ? "Time and branch-length scales are not meaningful on a cladogram." : comparisonEnabled && comparisonTree ? "Scale bars are not shown in comparison mode." : "Show scale bars, tick marks, labels, and optional time stripes."}>
                 <input
                   type="checkbox"
-                  checked={showScaleBars}
-                  disabled={comparisonEnabled && Boolean(comparisonTree)}
+                  checked={showScaleBars && !cladogramActive}
+                  disabled={cladogramActive || comparisonEnabled && Boolean(comparisonTree)}
                   onChange={(event) => setShowScaleBars(event.target.checked)}
                 />
                 Show scale bars
@@ -8916,10 +8962,18 @@ export default function App() {
                   settings={figureStyles.scale}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "scale"}
-                  disabled={comparisonEnabled && Boolean(comparisonTree) || !showScaleBars}
-                  disabledReason={comparisonEnabled && comparisonTree ? "Scale bars are not shown in comparison mode." : "Enable scale bars first."}
+                  disabled={cladogramActive || comparisonEnabled && Boolean(comparisonTree) || !showScaleBars}
+                  disabledReason={cladogramActive ? "Scale bars are not available for cladograms." : comparisonEnabled && comparisonTree ? "Scale bars are not shown in comparison mode." : "Enable scale bars first."}
                   extraControls={(
                     <>
+                      <label className="label-style-inline-toggle" title="Draw the scale axis and its tick marks independently of its labels and the time guides.">
+                        <input type="checkbox" checked={figureStyles.scale.showScaleBar !== false} onChange={(event) => updateFigureStyle("scale", "showScaleBar", event.target.checked)} />
+                        Show scale bar and ticks
+                      </label>
+                      <label className="label-style-inline-toggle" title="Show numeric labels for the scale bar, independently of the axis line and ticks.">
+                        <input type="checkbox" checked={figureStyles.scale.showScaleBarLabels !== false} onChange={(event) => updateFigureStyle("scale", "showScaleBarLabels", event.target.checked)} />
+                        Show scale bar labels
+                      </label>
                       <label title="Set a fixed scale-bar tick interval. Leave blank to choose ticks automatically from the visible range.">
                         Tick interval
                         <input
@@ -9045,6 +9099,35 @@ export default function App() {
                         />
                         Show circular radial scale bar
                       </label>
+                      <label className="label-style-inline-toggle" title="Draw temporal guide bands or lines behind the tree.">
+                        <input type="checkbox" checked={showTimeStripes} onChange={(event) => setShowTimeStripes(event.target.checked)} />
+                        Show time stripes
+                      </label>
+                      <label className="label-style-inline-toggle" title="Label the time bands or guide lines independently of the scale bar.">
+                        <input type="checkbox" checked={figureStyles.scale.showTimeGuideLabels === true} disabled={!showTimeStripes} onChange={(event) => updateFigureStyle("scale", "showTimeGuideLabels", event.target.checked)} />
+                        Show time guide labels
+                      </label>
+                      {showTimeStripes ? (
+                        <>
+                          <label>
+                            Stripe style
+                            <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as TimeStripeStyle)}>
+                              <option value="bands">Shaded bands</option>
+                              <option value="age-gradient">Old-to-young gradient</option>
+                              <option value="dashed">Dashed guides</option>
+                            </select>
+                          </label>
+                          {timeStripeStyle === "dashed" ? (
+                            <>
+                              <label>
+                                Stripe line weight
+                                <input type="range" min={0.5} max={4} step={0.1} value={timeStripeLineWeight} onChange={(event) => setTimeStripeLineWeight(Number(event.target.value))} />
+                              </label>
+                              <div className="figure-style-value">{timeStripeLineWeight.toFixed(1)}px</div>
+                            </>
+                          ) : null}
+                        </>
+                      ) : null}
                     </>
                   )}
                   onToggle={() => setActiveLabelStylePopover((current) => current === "scale" ? null : "scale")}
@@ -9053,47 +9136,27 @@ export default function App() {
               </div>
             </div>
             <div className="visual-option-row">
-              <label className="visual-option-checkbox" title={comparisonEnabled && comparisonTree ? "Time stripes are not shown in comparison mode." : "Draw temporal guide bands or lines behind the tree."}>
+              <label className="visual-option-checkbox" title={viewMode === "spiral" ? "Spiral mode always uses the input branch lengths." : comparisonEnabled && comparisonTree ? "Cladogram display is not available in comparison mode." : "Display topology with equal internal branch lengths instead of the input lengths."}>
                 <input
                   type="checkbox"
-                  checked={showTimeStripes}
-                  disabled={comparisonEnabled && Boolean(comparisonTree)}
-                  onChange={(event) => setShowTimeStripes(event.target.checked)}
+                  checked={Boolean(cladogramActive)}
+                  disabled={viewMode === "spiral" || comparisonEnabled && Boolean(comparisonTree)}
+                  onChange={(event) => setShowCladogram(event.target.checked)}
                 />
-                Show time stripes
+                Show cladogram
               </label>
               <div className="visual-option-actions">
                 <SettingsPopoverButton
-                  title="Time stripes"
-                  isOpen={activeLabelStylePopover === "timeStripes"}
-                  disabled={comparisonEnabled && Boolean(comparisonTree) || !showTimeStripes}
-                  disabledReason={comparisonEnabled && comparisonTree ? "Time stripes are not shown in comparison mode." : "Enable time stripes first."}
-                  onToggle={() => setActiveLabelStylePopover((current) => current === "timeStripes" ? null : "timeStripes")}
+                  title="Cladogram"
+                  isOpen={activeLabelStylePopover === "cladogram"}
+                  disabled={!cladogramActive}
+                  disabledReason={viewMode === "spiral" ? "Spiral mode uses input branch lengths." : "Enable cladogram display first."}
+                  onToggle={() => setActiveLabelStylePopover((current) => current === "cladogram" ? null : "cladogram")}
                 >
-                    <label title="Choose whether time stripes are bands, a gradient, or dashed guide lines.">
-                      Stripe style
-                    <select value={timeStripeStyle} onChange={(event) => setTimeStripeStyle(event.target.value as TimeStripeStyle)}>
-                      <option value="bands">Shaded bands</option>
-                      <option value="age-gradient">Old-to-young gradient</option>
-                      <option value="dashed">Dashed guides</option>
-                    </select>
+                  <label className="label-style-inline-toggle" title="Extend terminal branches to the deepest root-to-tip node path. Turn off to give every branch one unit of display length.">
+                    <input type="checkbox" checked={ultrametricCladogram} onChange={(event) => setUltrametricCladogram(event.target.checked)} />
+                    Show as ultrametric cladogram
                   </label>
-                  {timeStripeStyle === "dashed" ? (
-                    <>
-                      <label title="Adjust the stroke width for dashed time-stripe guides.">
-                        Stripe line weight
-                        <input
-                          type="range"
-                          min={0.5}
-                          max={4}
-                          step={0.1}
-                          value={timeStripeLineWeight}
-                          onChange={(event) => setTimeStripeLineWeight(Number(event.target.value))}
-                        />
-                      </label>
-                      <div className="figure-style-value">{timeStripeLineWeight.toFixed(1)}px</div>
-                    </>
-                  ) : null}
                 </SettingsPopoverButton>
               </div>
             </div>
@@ -10604,6 +10667,8 @@ export default function App() {
           <TreeCanvas
           treeRef={treeCanvasTreeRef}
           visibleViewportLeftInsetPx={viewerLeftOcclusionPx}
+          showCladogram={cladogramActive}
+          ultrametricCladogram={ultrametricCladogram}
           order={order}
           viewMode={viewMode}
           zoomAxisMode={viewMode !== "rectangular" ? "both" : zoomAxisMode}
@@ -10611,10 +10676,10 @@ export default function App() {
           radialAngularSpanDegrees={radialAngularSpanDegrees}
           radialCenterOpeningRatio={radialCenterOpeningRatio}
           spiralTurns={spiralTurns}
-          showTimeStripes={showTimeStripes}
+          showTimeStripes={showScaleBars && showTimeStripes && !cladogramActive}
           timeStripeStyle={timeStripeStyle}
           timeStripeLineWeight={timeStripeLineWeight}
-          showScaleBars={showScaleBars}
+          showScaleBars={showScaleBars && !cladogramActive}
           timeAxisScale={timeAxisScale}
           timeAxisLogBase={timeAxisLogBase}
           scaleTickInterval={scaleTickInterval}
@@ -10627,7 +10692,7 @@ export default function App() {
           useAutoCircularCenterScaleAngle={useAutoCircularCenterScaleAngle}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
           showTipLabels={showTipLabels}
-          alignTipLabels={alignTipLabels}
+          alignTipLabels={alignTipLabels && (!cladogramActive || ultrametricCladogram)}
           showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}
           taxonomyOverlayStyle={taxonomyOverlayStyle}
@@ -10677,7 +10742,7 @@ export default function App() {
           figureStyles={figureStyles}
           branchThicknessScale={branchThicknessScale}
           showNodeHeightLabels={showNodeHeightLabels}
-          showNodeErrorBars={showNodeErrorBars && viewMode !== "spiral"}
+          showNodeErrorBars={showNodeErrorBars && viewMode !== "spiral" && !cladogramActive}
           errorBarStyle={errorBarStyle}
           errorBarColor={errorBarColor}
           errorBarOpacity={errorBarOpacity}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { createCladogramTree } from "../lib/cladogram";
 import {
   fontFamilyCss,
   fontStyleCss,
@@ -4309,6 +4310,8 @@ function expandedMinimizedTriangleBase(
 export default function TreeCanvas({
   treeRef,
   visibleViewportLeftInsetPx = 0,
+  showCladogram = false,
+  ultrametricCladogram = true,
   order,
   viewMode,
   zoomAxisMode,
@@ -4421,7 +4424,11 @@ export default function TreeCanvas({
   onSessionRestoreComplete,
   onAutomationExportComplete,
 }: TreeCanvasProps) {
-  const tree = treeRef.current;
+  const sourceTree = treeRef.current;
+  const cladogramActive = showCladogram && viewMode !== "spiral";
+  const tree = useMemo(() => sourceTree && cladogramActive
+    ? createCladogramTree(sourceTree, ultrametricCladogram)
+    : sourceTree, [cladogramActive, sourceTree, ultrametricCladogram]);
   const taxonomyMap = taxonomyMapRef.current;
   const taxonomyColorSourceMap = taxonomyColorSourceMapRef.current;
   const sharedSubtreeSourceTree = sharedSubtreeSourceTreeRef.current;
@@ -4707,7 +4714,7 @@ export default function TreeCanvas({
     tooltip.hidden = false;
   }, [clearHoverTooltip, size.height, size.width, tree]);
 
-  const effectiveTimeAxisScale: TimeAxisScale = viewMode === "spiral" ? "log" : timeAxisScale;
+  const effectiveTimeAxisScale: TimeAxisScale = viewMode === "spiral" ? "log" : cladogramActive ? "linear" : timeAxisScale;
   const effectiveTimeAxisLogBase = viewMode === "spiral"
     ? timeAxisLogBase * SPIRAL_TIME_AXIS_LOG_BASE_MULTIPLIER
     : timeAxisLogBase;
@@ -4813,7 +4820,7 @@ export default function TreeCanvas({
     if (hoverCanvas && ctx) {
       ctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
     }
-  }, [clearHoverTooltip, tree]);
+  }, [clearHoverTooltip, sourceTree]);
 
   useEffect(() => {
     const allowedKeys = new Set(phylopicSilhouettes.map((silhouette) => phylopicImageElementKey(silhouette)));
@@ -6504,10 +6511,10 @@ export default function TreeCanvas({
       targetNode: startNode,
       mrcaNode: startNode,
       distance: 0,
-      mrcaAge: tree.isUltrametric
-        ? Math.max(0, tree.rootAge - tree.buffers.depth[startNode])
+      mrcaAge: sourceTree!.isUltrametric
+        ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[startNode])
         : null,
-      mrcaRootDistance: tree.buffers.depth[startNode],
+      mrcaRootDistance: sourceTree!.buffers.depth[startNode],
       screenX,
       screenY,
     };
@@ -6538,13 +6545,13 @@ export default function TreeCanvas({
       startNode,
       targetNode,
       mrcaNode,
-      distance: tree.buffers.depth[startNode]
-        + tree.buffers.depth[targetNode]
-        - (2 * tree.buffers.depth[mrcaNode]),
-      mrcaAge: tree.isUltrametric
-        ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode])
+      distance: sourceTree!.buffers.depth[startNode]
+        + sourceTree!.buffers.depth[targetNode]
+        - (2 * sourceTree!.buffers.depth[mrcaNode]),
+      mrcaAge: sourceTree!.isUltrametric
+        ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[mrcaNode])
         : null,
-      mrcaRootDistance: tree.buffers.depth[mrcaNode],
+      mrcaRootDistance: sourceTree!.buffers.depth[mrcaNode],
       screenX,
       screenY,
     };
@@ -8055,11 +8062,17 @@ export default function TreeCanvas({
       }
       exportCaptureRef.current.elements.push({ kind: "rect", x, y, width, height, fill, opacity });
     };
+    const drawScaleAxis = showScaleBars && figureStyles.scale.showScaleBar !== false;
+    const drawScaleLabels = showScaleBars && figureStyles.scale.showScaleBarLabels !== false;
+    const drawGuideLabels = showScaleBars && showTimeStripes && figureStyles.scale.showTimeGuideLabels === true;
     const pushSceneLine = (x1: number, y1: number, x2: number, y2: number, stroke: string, strokeWidth: number, opacity?: number, dashArray?: string): void => {
       if (!exportCaptureRef.current) {
         return;
       }
       exportCaptureRef.current.elements.push({ kind: "line", x1, y1, x2, y2, stroke, strokeWidth, opacity, dashArray });
+    };
+    const pushScaleAxisLine = (...args: Parameters<typeof pushSceneLine>): void => {
+      if (drawScaleAxis) pushSceneLine(...args);
     };
     const pushScenePath = (path: string | (() => string), stroke?: string, strokeWidth?: number, fill?: string, opacity?: number, dashArray?: string): void => {
       if (!exportCaptureRef.current) {
@@ -8557,7 +8570,7 @@ export default function TreeCanvas({
       const maxY = Math.max(worldMin.y, worldMax.y);
       const rectWorldOverscanX = 48 / Math.max(camera.scaleX, 1e-6);
       const rectWorldOverscanY = 48 / Math.max(camera.scaleY, 1e-6);
-      const axisBarHeight = showScaleBars ? 44 : 0;
+      const axisBarHeight = drawScaleAxis || drawScaleLabels ? 44 : 0;
       const treeDrawBottom = renderSize.height - axisBarHeight;
       const stripeExtent = effectiveTimeAxisScale === "log" ? timeAxisExtent : (tree.isUltrametric ? tree.rootAge : tree.maxDepth);
       const rectAxisDepthForBoundary = (value: number): number => (
@@ -10369,9 +10382,9 @@ export default function TreeCanvas({
             ? Math.max(0, (tree.buffers.depth[node] - tree.buffers.depth[parent]) * camera.scaleX)
             : 0;
           const text = formatLabelDecimals(
-            nodeHeightValue(tree, node),
+            nodeHeightValue(sourceTree!, node),
             figureStyles.nodeHeight.decimalPlaces,
-            () => formatAgeNumber(nodeHeightValue(tree, node)),
+            () => formatAgeNumber(nodeHeightValue(sourceTree!, node)),
           );
           const labelWidth = ctx.measureText(text).width;
           if (!pointLabelHasScreenRoom(subtreeSpanPx, branchSpanPx, fontSize, labelWidth)) {
@@ -10619,7 +10632,30 @@ export default function TreeCanvas({
       }
       (renderDebug.rect as Record<string, unknown>).errorBarCount = rectErrorBarCount;
 
-      if (showScaleBars) {
+      if (drawGuideLabels) {
+        const fontSize = scaleLabelFontSize("scale", 11);
+        ctx.font = fontSpec("scale", fontSize);
+        ctx.fillStyle = "#6b7280";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const labelY = 5 + (fontSize * 0.5);
+        const candidates = displayedRectScaleBoundaries.map((boundary) => ({
+          boundary,
+          x: worldToScreenRect(camera, rectAxisDepthForBoundary(boundary.value), 0).x,
+          text: scaleLabelText(boundary.value),
+        })).sort((a, b) => a.x - b.x);
+        let lastRight = -Infinity;
+        for (const { boundary, x, text } of candidates) {
+          const halfWidth = ctx.measureText(text).width * 0.5;
+          if (x - halfWidth < Math.max(4, lastRight + 6) || x + halfWidth > renderSize.width - 4) continue;
+          ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
+          ctx.fillText(text, x, labelY);
+          pushSceneText(text, x, labelY, "#6b7280", fontSize, labelFontFamilies.scale, "middle", undefined, labelFontStyles.scale);
+          lastRight = x + halfWidth;
+        }
+        ctx.globalAlpha = 1;
+      }
+      if (drawScaleAxis || drawScaleLabels) {
         ctx.fillStyle = "rgba(251,252,254,0.96)";
         ctx.fillRect(0, renderSize.height - axisBarHeight, renderSize.width, axisBarHeight);
         const axisY = renderSize.height - 28;
@@ -10639,7 +10675,7 @@ export default function TreeCanvas({
           : worldToScreenRect(camera, rectAxisDepthForBoundary(stripeExtent), 0).x;
         ctx.moveTo(axisStart, axisY);
         ctx.lineTo(axisEnd, axisY);
-        pushSceneLine(axisStart, axisY, axisEnd, axisY, "#6b7280", 1);
+        pushScaleAxisLine(axisStart, axisY, axisEnd, axisY, "#6b7280", 1);
         if (displayedRectScaleBoundaries.length > 0) {
           for (let index = 0; index < displayedRectScaleBoundaries.length; index += 1) {
             const boundary = displayedRectScaleBoundaries[index];
@@ -10647,11 +10683,11 @@ export default function TreeCanvas({
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
             ctx.moveTo(x, axisY);
             ctx.lineTo(x, axisY + (4 + (3 * boundary.alpha)));
-            pushSceneLine(x, axisY, x, axisY + (4 + (3 * boundary.alpha)), "#6b7280", 1, 0.35 + (0.65 * boundary.alpha));
+            pushScaleAxisLine(x, axisY, x, axisY + (4 + (3 * boundary.alpha)), "#6b7280", 1, 0.35 + (0.65 * boundary.alpha));
           }
           ctx.globalAlpha = 1;
-          ctx.stroke();
-          for (let index = 0; index < displayedRectScaleBoundaries.length; index += 1) {
+          if (drawScaleAxis) ctx.stroke();
+          for (let index = 0; drawScaleLabels && index < displayedRectScaleBoundaries.length; index += 1) {
             const boundary = displayedRectScaleBoundaries[index];
             const x = worldToScreenRect(camera, rectAxisDepthForBoundary(boundary.value), 0).x;
             ctx.globalAlpha = 0.35 + (0.65 * boundary.alpha);
@@ -10670,8 +10706,6 @@ export default function TreeCanvas({
           }
           ctx.globalAlpha = 1;
         }
-      } else {
-        ctx.stroke();
       }
     }
 
@@ -11711,7 +11745,7 @@ export default function TreeCanvas({
         }
       }
 
-      if (showScaleBars) {
+      if (drawScaleAxis || drawScaleLabels || drawGuideLabels) {
         let scaleFontSize = Math.max(
           1.5,
           Math.min(
@@ -11816,7 +11850,7 @@ export default function TreeCanvas({
           const tick = selectedSpiralScaleLabels[index];
           ctx.moveTo(tick.tickStart.x, tick.tickStart.y);
           ctx.lineTo(tick.tickEnd.x, tick.tickEnd.y);
-          pushSceneLine(tick.tickStart.x, tick.tickStart.y, tick.tickEnd.x, tick.tickEnd.y, "#64748b", 1);
+          pushScaleAxisLine(tick.tickStart.x, tick.tickStart.y, tick.tickEnd.x, tick.tickEnd.y, "#64748b", 1);
         }
         const axisStart = spiralToScreen(spiralPointAt(axisTheta, 0, metrics));
         const axisEnd = spiralToScreen(spiralPointAt(axisTheta, metrics.timeExtent, metrics));
@@ -11826,11 +11860,11 @@ export default function TreeCanvas({
         const axisEndY = axisEnd.y + ((labelVector.y - labelOrigin.y) * axisOffsetWorld);
         ctx.moveTo(axisStartX, axisStartY);
         ctx.lineTo(axisEndX, axisEndY);
-        pushSceneLine(axisStartX, axisStartY, axisEndX, axisEndY, "#64748b", 1);
-        ctx.stroke();
+        pushScaleAxisLine(axisStartX, axisStartY, axisEndX, axisEndY, "#64748b", 1);
+        if (drawScaleAxis) ctx.stroke();
         ctx.textAlign = labelAlign;
         ctx.textBaseline = "middle";
-        for (let index = 0; index < selectedSpiralScaleLabels.length; index += 1) {
+        for (let index = 0; (drawScaleLabels || drawGuideLabels) && index < selectedSpiralScaleLabels.length; index += 1) {
           const label = selectedSpiralScaleLabels[index];
           ctx.lineWidth = 3;
           ctx.strokeStyle = "rgba(251,252,254,0.9)";
@@ -12091,9 +12125,10 @@ export default function TreeCanvas({
             : collapsedNodes.size === 0
               ? "visible-segments"
               : "full-tree";
-      const showCentralTimeLabels = showScaleBars && visibleCircleFraction >= 0.58;
+      const useCentralScale = visibleCircleFraction >= 0.58;
+      const showCentralTimeLabels = useCentralScale && (drawScaleLabels || drawGuideLabels);
       const centerScaleTheta = (-circularCenterScaleAngleDegrees * Math.PI) / 180;
-      const circularScaleBar = showScaleBars && !showCentralTimeLabels
+      const circularScaleBar = (drawScaleAxis || drawScaleLabels || drawGuideLabels) && !useCentralScale
         ? buildCircularScaleBar(
           centerPoint.x,
           centerPoint.y,
@@ -14778,9 +14813,9 @@ export default function TreeCanvas({
             ? Math.max(0, (tree.buffers.depth[node] - tree.buffers.depth[parent]) * camera.scale)
             : 0;
           const text = formatLabelDecimals(
-            nodeHeightValue(tree, node),
+            nodeHeightValue(sourceTree!, node),
             figureStyles.nodeHeight.decimalPlaces,
-            () => formatAgeNumber(nodeHeightValue(tree, node)),
+            () => formatAgeNumber(nodeHeightValue(sourceTree!, node)),
           );
           const labelWidth = ctx.measureText(text).width;
           if (!pointLabelHasScreenRoom(subtreeSpanPx, branchSpanPx, fontSize, labelWidth)) {
@@ -15087,7 +15122,7 @@ export default function TreeCanvas({
       (renderDebug.circular as Record<string, unknown>).centerScaleAngleDegrees = circularCenterScaleAngleDegrees;
       (renderDebug.circular as Record<string, unknown>).showCentralScaleLabels = showCentralTimeLabels;
       (renderDebug.circular as Record<string, unknown>).centerScaleTickCount = displayedCircularCenterScaleBoundaries.length;
-      (renderDebug.circular as Record<string, unknown>).showCenterRadialScaleBar = showCentralTimeLabels && showCircularCenterRadialScaleBar;
+      (renderDebug.circular as Record<string, unknown>).showCenterRadialScaleBar = useCentralScale && drawScaleAxis && showCircularCenterRadialScaleBar;
       (renderDebug.circular as Record<string, unknown>).panBranchBitmapReused = Boolean(cachedPanBranches);
       (renderDebug.circular as Record<string, unknown>).renderedColoredStemCount = circularRenderedColoredStemCount;
       (renderDebug.circular as Record<string, unknown>).renderedColoredConnectorCount = circularRenderedColoredConnectorCount;
@@ -15101,12 +15136,12 @@ export default function TreeCanvas({
           ),
         }));
 
-      if (showScaleBars) {
+      if (drawScaleAxis || drawScaleLabels || drawGuideLabels) {
         ctx.fillStyle = "#6b7280";
         let scaleFontSize = scaleLabelFontSize("scale", 11);
         ctx.font = fontSpec("scale", scaleFontSize);
         ctx.textBaseline = "middle";
-        if (showCentralTimeLabels) {
+        if (useCentralScale) {
           const centerScaleBarTheta = showCircularCenterRadialScaleBar
             ? centerScaleTheta + ((2.5 * Math.PI) / 180)
             : centerScaleTheta;
@@ -15195,7 +15230,7 @@ export default function TreeCanvas({
             }
           }
           (renderDebug.circular as Record<string, unknown>).centerScaleLabelFontSize = scaleFontSize;
-          (renderDebug.circular as Record<string, unknown>).visibleCenterScaleLabelCount = visibleCenterScaleBoundaries.length;
+          (renderDebug.circular as Record<string, unknown>).visibleCenterScaleLabelCount = showCentralTimeLabels ? visibleCenterScaleBoundaries.length : 0;
           (renderDebug.circular as Record<string, unknown>).centerScaleLabelRotationRadians = centerScaleLabelRotation;
           (renderDebug.circular as Record<string, unknown>).centerScaleUnitOmitted = omitCenterScaleUnit;
           (renderDebug.circular as Record<string, unknown>).centerScaleBoundaryGapPx = centerScaleBoundaryGapPx;
@@ -15206,7 +15241,7 @@ export default function TreeCanvas({
           ctx.textAlign = rotateCenterScaleLabels || showCircularCenterRadialScaleBar
             ? "center"
             : Math.cos(centerScaleTheta + rotationAngle) >= 0 ? "left" : "right";
-          for (let index = 0; index < visibleCenterScaleBoundaries.length; index += 1) {
+          for (let index = 0; showCentralTimeLabels && index < visibleCenterScaleBoundaries.length; index += 1) {
             const boundary = visibleCenterScaleBoundaries[index];
             const radius = circularRadiusForBoundary(boundary.value) + (centerScaleBoundaryGapPx / camera.scale);
             const point = polarToCartesian(radius, showCircularCenterRadialScaleBar ? centerScaleBarTheta : centerScaleTheta);
@@ -15240,7 +15275,7 @@ export default function TreeCanvas({
               showCircularCenterRadialScaleBar ? "middle" : "text-after-edge",
             );
           }
-          if (showCircularCenterRadialScaleBar) {
+          if (drawScaleAxis && showCircularCenterRadialScaleBar) {
             const startWorld = polarToCartesian(polarInnerRadius, centerScaleBarTheta);
             const startPoint = worldToScreenCircular(camera, startWorld.x, startWorld.y);
             const endWorld = polarToCartesian(
@@ -15286,10 +15321,10 @@ export default function TreeCanvas({
           ctx.globalAlpha = 1;
         } else if (circularScaleBar) {
           ctx.fillStyle = "rgba(251,252,254,0.97)";
-          if (circularScaleBar.kind === "bottom") {
+          if ((drawScaleAxis || drawScaleLabels) && circularScaleBar.kind === "bottom") {
             ctx.fillRect(0, Math.max(0, circularScaleBar.axisPosition - 12), renderSize.width, renderSize.height);
             pushSceneRect(0, Math.max(0, circularScaleBar.axisPosition - 12), renderSize.width, renderSize.height, "rgba(251,252,254,0.97)");
-          } else {
+          } else if (drawScaleAxis || drawScaleLabels) {
             ctx.fillRect(0, 0, circularScaleBar.axisPosition + 16, renderSize.height);
             pushSceneRect(0, 0, circularScaleBar.axisPosition + 16, renderSize.height, "rgba(251,252,254,0.97)");
           }
@@ -15301,19 +15336,19 @@ export default function TreeCanvas({
           if (circularScaleBar.kind === "bottom") {
             ctx.moveTo(24, circularScaleBar.axisPosition);
             ctx.lineTo(renderSize.width - 24, circularScaleBar.axisPosition);
-            pushSceneLine(24, circularScaleBar.axisPosition, renderSize.width - 24, circularScaleBar.axisPosition, "#6b7280", 1);
+            pushScaleAxisLine(24, circularScaleBar.axisPosition, renderSize.width - 24, circularScaleBar.axisPosition, "#6b7280", 1);
             for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
               const tick = circularScaleBar.ticks[index];
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
               ctx.moveTo(tick.position, circularScaleBar.axisPosition);
               ctx.lineTo(tick.position, circularScaleBar.axisPosition + (4 + (3 * tick.boundary.alpha)));
-              pushSceneLine(tick.position, circularScaleBar.axisPosition, tick.position, circularScaleBar.axisPosition + (4 + (3 * tick.boundary.alpha)), "#6b7280", 1, 0.35 + (0.65 * tick.boundary.alpha));
+              pushScaleAxisLine(tick.position, circularScaleBar.axisPosition, tick.position, circularScaleBar.axisPosition + (4 + (3 * tick.boundary.alpha)), "#6b7280", 1, 0.35 + (0.65 * tick.boundary.alpha));
             }
             ctx.globalAlpha = 1;
-            ctx.stroke();
+            if (drawScaleAxis) ctx.stroke();
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
-            for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
+            for (let index = 0; (drawScaleLabels || drawGuideLabels) && index < circularScaleBar.ticks.length; index += 1) {
               const tick = circularScaleBar.ticks[index];
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
               ctx.fillText(scaleLabelText(tick.boundary.value), tick.position, circularScaleBar.axisPosition + 8);
@@ -15333,19 +15368,19 @@ export default function TreeCanvas({
           } else {
             ctx.moveTo(circularScaleBar.axisPosition, 24);
             ctx.lineTo(circularScaleBar.axisPosition, renderSize.height - 24);
-            pushSceneLine(circularScaleBar.axisPosition, 24, circularScaleBar.axisPosition, renderSize.height - 24, "#6b7280", 1);
+            pushScaleAxisLine(circularScaleBar.axisPosition, 24, circularScaleBar.axisPosition, renderSize.height - 24, "#6b7280", 1);
             for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
               const tick = circularScaleBar.ticks[index];
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
               ctx.moveTo(circularScaleBar.axisPosition, tick.position);
               ctx.lineTo(circularScaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position);
-              pushSceneLine(circularScaleBar.axisPosition, tick.position, circularScaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position, "#6b7280", 1, 0.35 + (0.65 * tick.boundary.alpha));
+              pushScaleAxisLine(circularScaleBar.axisPosition, tick.position, circularScaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position, "#6b7280", 1, 0.35 + (0.65 * tick.boundary.alpha));
             }
             ctx.globalAlpha = 1;
-            ctx.stroke();
+            if (drawScaleAxis) ctx.stroke();
             ctx.textAlign = "center";
             ctx.textBaseline = "bottom";
-            for (let index = 0; index < circularScaleBar.ticks.length; index += 1) {
+            for (let index = 0; (drawScaleLabels || drawGuideLabels) && index < circularScaleBar.ticks.length; index += 1) {
               const tick = circularScaleBar.ticks[index];
               ctx.save();
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
@@ -16568,12 +16603,12 @@ export default function TreeCanvas({
         hitbox.endIndex,
       ) ?? lowestCommonAncestor(tree, hitbox.firstNode, hitbox.lastNode);
       const parent = tree.buffers.parent[mrcaNode];
-      const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
+      const mrcaAge = sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[mrcaNode]) : null;
       return {
         node: mrcaNode,
         branchLength: tree.buffers.branchLength[mrcaNode],
-        parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-        parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+        parentDepth: parent >= 0 ? sourceTree!.buffers.depth[parent] : 0,
+        parentAge: parent >= 0 && sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[parent]) : null,
         childAge: mrcaAge,
         descendantTipCount: tree.buffers.leafCount[mrcaNode],
         name: hitbox.label,
@@ -16608,9 +16643,9 @@ export default function TreeCanvas({
         return {
           node,
           branchLength: tree.buffers.branchLength[node],
-          parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-          parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
-          childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[node]) : null,
+          parentDepth: parent >= 0 ? sourceTree!.buffers.depth[parent] : 0,
+          parentAge: parent >= 0 && sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[parent]) : null,
+          childAge: sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[node]) : null,
           name: displayNodeNameForView(node),
           descendantTipCount: descendantTipCountForView(node),
           screenX,
@@ -16632,12 +16667,12 @@ export default function TreeCanvas({
       ) {
         const mrcaNode = lowestCommonAncestor(tree, phylopicHitbox.firstNode, phylopicHitbox.lastNode);
         const parent = tree.buffers.parent[mrcaNode];
-        const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
+        const mrcaAge = sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[mrcaNode]) : null;
         return {
           node: mrcaNode,
           branchLength: tree.buffers.branchLength[mrcaNode],
-          parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-          parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+          parentDepth: parent >= 0 ? sourceTree!.buffers.depth[parent] : 0,
+          parentAge: parent >= 0 && sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[parent]) : null,
           childAge: mrcaAge,
           descendantTipCount: phylopicHitbox.taxonomyTipCount ?? tree.buffers.leafCount[mrcaNode],
           name: phylopicHitbox.taxonLabel,
@@ -16670,12 +16705,12 @@ export default function TreeCanvas({
             hitbox.taxonomyEndIndex,
           ) ?? lowestCommonAncestor(tree, hitbox.taxonomyFirstNode, hitbox.taxonomyLastNode);
           const parent = tree.buffers.parent[mrcaNode];
-          const mrcaAge = tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[mrcaNode]) : null;
+          const mrcaAge = sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[mrcaNode]) : null;
           hover = {
             node: mrcaNode,
             branchLength: tree.buffers.branchLength[mrcaNode],
-            parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-            parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
+            parentDepth: parent >= 0 ? sourceTree!.buffers.depth[parent] : 0,
+            parentAge: parent >= 0 && sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[parent]) : null,
             childAge: mrcaAge,
             descendantTipCount: tree.buffers.leafCount[mrcaNode],
             name: hitbox.text,
@@ -17628,6 +17663,8 @@ export default function TreeCanvas({
       radialAngularSpanDegrees: configuredRadialSpanDegrees,
       radialCenterOpeningRatio: effectiveRadialCenterOpeningRatio,
       spiralTurns,
+      showCladogram,
+      ultrametricCladogram,
       showTimeStripes,
       timeAxisScale,
       timeAxisLogBase,
@@ -17713,6 +17750,8 @@ export default function TreeCanvas({
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
+    showCladogram,
+    ultrametricCladogram,
     showMyaTimeUnit,
     customTimeUnit,
     showTimeStripes,
@@ -18278,6 +18317,8 @@ export default function TreeCanvas({
           radialAngularSpanDegrees: configuredRadialSpanDegrees,
           radialCenterOpeningRatio: effectiveRadialCenterOpeningRatio,
           spiralTurns,
+          showCladogram,
+          ultrametricCladogram,
           showTimeStripes,
           timeAxisScale,
           timeAxisLogBase,
@@ -18367,6 +18408,8 @@ export default function TreeCanvas({
     showNodeHeightLabels,
     showScaleBars,
     showScaleZeroTick,
+    showCladogram,
+    ultrametricCladogram,
     showMyaTimeUnit,
     customTimeUnit,
     showTimeStripes,
@@ -18476,9 +18519,9 @@ export default function TreeCanvas({
       return {
         node: preferred.node,
         branchLength: tree.buffers.branchLength[preferred.node],
-        parentDepth: parent >= 0 ? tree.buffers.depth[parent] : 0,
-        parentAge: parent >= 0 && tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[parent]) : null,
-        childAge: tree.isUltrametric ? Math.max(0, tree.rootAge - tree.buffers.depth[preferred.node]) : null,
+        parentDepth: parent >= 0 ? sourceTree!.buffers.depth[parent] : 0,
+        parentAge: parent >= 0 && sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[parent]) : null,
+        childAge: sourceTree!.isUltrametric ? Math.max(0, sourceTree!.rootAge - sourceTree!.buffers.depth[preferred.node]) : null,
         name: displayNodeNameForView(preferred.node),
         descendantTipCount: descendantTipCountForView(preferred.node),
         screenX: preferred.x,

@@ -53,6 +53,8 @@ export type SharedSubtreeVisualPayload = {
   timeStripeStyle: TimeStripeStyle;
   timeStripeLineWeight: number;
   showScaleBars: boolean;
+  showCladogram?: boolean;
+  ultrametricCladogram?: boolean;
   scaleTickInterval: number | null;
   showIntermediateScaleTicks: boolean;
   extendRectScaleToTick: boolean;
@@ -152,6 +154,11 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
     }
     current.bold = coerceBoolean(source.bold, Boolean(current.bold));
     current.italic = coerceBoolean(source.italic, Boolean(current.italic));
+    if (labelClass === "scale") {
+      current.showScaleBar = coerceBoolean(source.showScaleBar, true);
+      current.showScaleBarLabels = coerceBoolean(source.showScaleBarLabels, true);
+      current.showTimeGuideLabels = coerceBoolean(source.showTimeGuideLabels, false);
+    }
     if (labelClass === "tip") {
       current.limitWidth = coerceBoolean(source.limitWidth, Boolean(current.limitWidth));
       current.maxWidthPx = Math.max(40, coerceFiniteNumber(source.maxWidthPx, current.maxWidthPx ?? 240));
@@ -216,6 +223,8 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     timeStripeStyle: coerceEnum(source.timeStripeStyle, ["bands", "age-gradient", "dashed"] as const, "bands"),
     timeStripeLineWeight: coerceFiniteNumber(source.timeStripeLineWeight, 1.1),
     showScaleBars: coerceBoolean(source.showScaleBars, true),
+    showCladogram: coerceBoolean(source.showCladogram, false),
+    ultrametricCladogram: coerceBoolean(source.ultrametricCladogram, true),
     scaleTickInterval: coerceNullableFiniteNumber(source.scaleTickInterval),
     showIntermediateScaleTicks: coerceBoolean(source.showIntermediateScaleTicks, true),
     extendRectScaleToTick: coerceBoolean(source.extendRectScaleToTick, false),

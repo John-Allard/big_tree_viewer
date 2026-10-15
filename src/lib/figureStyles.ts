@@ -37,6 +37,9 @@ export interface LabelStyleSettings {
   overflowMode?: TipLabelOverflowMode;
   decimalPlaces?: number;
   polarOrientation?: PolarLabelOrientation;
+  showScaleBar?: boolean;
+  showScaleBarLabels?: boolean;
+  showTimeGuideLabels?: boolean;
 }
 
 export interface FigureStyleSettings {
@@ -94,7 +97,7 @@ export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
   internalNode: { fontFamily: "georgia", sizeScale: 0.95, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
   bootstrap: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },
   nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },
-  scale: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
+  scale: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, showScaleBar: true, showScaleBarLabels: true, showTimeGuideLabels: false },
 };
 
 export function fontFamilyCss(fontFamily: FontFamilyKey): string {
