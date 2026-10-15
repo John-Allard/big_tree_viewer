@@ -5,6 +5,95 @@ async function waitForViewer(page: import("@playwright/test").Page): Promise<voi
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded === true);
 }
 
+for (const view of ["rectangular", "circular", "spiral"] as const) {
+  test(`full screen preserves proportional coverage and focus in ${view} view`, async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(Element.prototype, "requestFullscreen", { configurable: true, value: undefined });
+    });
+    const newick = "(((A_a:1,B_b:1):1,(C_c:1,D_d:1):1):1,((E_e:1,F_f:1):1,(G_g:1,H_h:1):1):1)Root;";
+    await page.goto(`/?btv_newick=${encodeURIComponent(newick)}&btv_view=${view}`);
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+    await page.waitForTimeout(150);
+    await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.fitView());
+    const snapshot = () => page.evaluate(() => {
+      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera()!;
+      const bounds = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+      const inset = window.__BIG_TREE_VIEWER_APP_TEST__!.getState().viewerLeftOcclusionPx;
+      const canvasWidth = Math.floor(bounds.width);
+      const height = Math.floor(bounds.height);
+      const width = canvasWidth - inset;
+      const scaleX = camera.kind === "rect" ? camera.scaleX : camera.scale;
+      const scaleY = camera.kind === "rect" ? camera.scaleY : camera.scale;
+      return {
+        x: ((canvasWidth + inset) * 0.5 - camera.translateX) / scaleX,
+        y: (height * 0.5 - camera.translateY) / scaleY,
+        coverageX: scaleX / (camera.kind === "rect" ? width : Math.min(width, height)),
+        coverageY: scaleY / (camera.kind === "rect" ? height : Math.min(width, height)),
+      };
+    });
+    for (const zoomed of [false, true]) {
+      if (zoomed) {
+        const bounds = (await page.getByTestId("tree-canvas").boundingBox())!;
+        await page.mouse.move(bounds.x + bounds.width * 0.65, bounds.y + bounds.height * 0.4);
+        await page.mouse.wheel(0, -400);
+        await page.waitForTimeout(250);
+      }
+      const before = await snapshot();
+      for (const name of ["Enter full screen", "Exit full screen"]) {
+        await page.getByRole("button", { name, exact: true }).click();
+        await page.waitForTimeout(150);
+        const after = await snapshot();
+        expect(after.x).toBeCloseTo(before.x, 6);
+        expect(after.y).toBeCloseTo(before.y, 6);
+        expect(after.coverageX).toBeCloseTo(before.coverageX, 8);
+        expect(after.coverageY).toBeCloseTo(before.coverageY, 8);
+      }
+    }
+  });
+
+  test(`side panel toggles keep the focused world point centered in ${view} view`, async ({ page }) => {
+    const newick = "(((A_a:1,B_b:1):1,(C_c:1,D_d:1):1):1,((E_e:1,F_f:1):1,(G_g:1,H_h:1):1):1)Root;";
+    await page.goto(`/?btv_newick=${encodeURIComponent(newick)}&btv_view=${view}`);
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+    const settle = () => page.waitForTimeout(250);
+    await settle();
+    await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.fitView());
+    const focus = () => page.evaluate(() => {
+      const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera()!;
+      const bounds = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+      const inset = window.__BIG_TREE_VIEWER_APP_TEST__!.getState().viewerLeftOcclusionPx;
+      const centerX = (bounds.width + inset) * 0.5;
+      const scaleX = camera.kind === "rect" ? camera.scaleX : camera.scale;
+      const scaleY = camera.kind === "rect" ? camera.scaleY : camera.scale;
+      return {
+        x: (centerX - camera.translateX) / scaleX,
+        y: (bounds.height * 0.5 - camera.translateY) / scaleY,
+        scaleX, scaleY,
+      };
+    });
+    for (const zoomed of [false, true]) {
+      if (zoomed) {
+        const bounds = await page.locator("[data-testid=tree-canvas]").boundingBox();
+        await page.mouse.move(bounds!.x + bounds!.width * 0.7, bounds!.y + bounds!.height * 0.4);
+        await page.mouse.wheel(0, -400);
+        await settle();
+      }
+      const before = await focus();
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        for (const name of ["Hide side panel", "Show side panel"]) {
+          await page.getByRole("button", { name, exact: true }).click();
+          await settle();
+          const after = await focus();
+          expect(after.scaleX).toBeCloseTo(before.scaleX, 8);
+          expect(after.scaleY).toBeCloseTo(before.scaleY, 8);
+          expect(after.x).toBeCloseTo(before.x, 6);
+          expect(after.y).toBeCloseTo(before.y, 6);
+        }
+      }
+    }
+  });
+}
+
 for (const view of ["rectangular", "circular"] as const) {
   test(`panel visibility and resizing preserve colors and collapsed clades in ${view} view`, async ({ page }) => {
     await page.addInitScript(() => {
@@ -208,7 +297,10 @@ test("full screen retains the side panel and exposes compact viewport controls",
   const overlayControlsBounds = await page.locator(".viewer-corner-controls").boundingBox();
   const cameraAfterRestore = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera());
   expect(viewerWithOverlay).toEqual(viewerWithoutPanel);
-  expect(cameraAfterRestore).toEqual(cameraBeforeRestore);
+  expect(cameraAfterRestore?.kind).toBe(cameraBeforeRestore?.kind);
+  expect(Number(cameraAfterRestore?.translateX) - Number(cameraBeforeRestore?.translateX))
+    .toBeCloseTo(Number(overlayPanelBounds?.width) * 0.5, 0);
+  expect(cameraAfterRestore?.translateY).toEqual(cameraBeforeRestore?.translateY);
   expect(overlayPanelBounds?.x ?? 0).toBeLessThan((viewerWithOverlay?.x ?? 0) + (viewerWithOverlay?.width ?? 0));
   expect(overlayControlsBounds?.x ?? 0).toBeGreaterThanOrEqual(
     (overlayPanelBounds?.x ?? 0) + (overlayPanelBounds?.width ?? 0),

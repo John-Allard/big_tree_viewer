@@ -501,13 +501,13 @@ function spiralArcFractionForTheta(theta: number, metrics: SpiralMetrics): numbe
     / Math.max(metrics.totalArcLength, 1e-12);
 }
 
-function closestSpiralThetaForPoint(x: number, y: number, metrics: SpiralMetrics): number {
+function closestSpiralThetaForPoint(x: number, y: number, metrics: SpiralMetrics, offset = metrics.spacingOffset): number {
   let bestTheta = metrics.startTheta;
   let bestDistanceSq = Number.POSITIVE_INFINITY;
   const samples = 720;
   for (let index = 0; index <= samples; index += 1) {
     const theta = metrics.startTheta + ((index / samples) * metrics.totalTheta);
-    const point = spiralNormalOffsetPoint(theta, metrics.spacingOffset, metrics);
+    const point = spiralNormalOffsetPoint(theta, offset, metrics);
     const dx = point.x - x;
     const dy = point.y - y;
     const distanceSq = (dx * dx) + (dy * dy);
@@ -522,8 +522,8 @@ function closestSpiralThetaForPoint(x: number, y: number, metrics: SpiralMetrics
   for (let iteration = 0; iteration < 18; iteration += 1) {
     const left = low + ((high - low) / 3);
     const right = high - ((high - low) / 3);
-    const leftPoint = spiralNormalOffsetPoint(left, metrics.spacingOffset, metrics);
-    const rightPoint = spiralNormalOffsetPoint(right, metrics.spacingOffset, metrics);
+    const leftPoint = spiralNormalOffsetPoint(left, offset, metrics);
+    const rightPoint = spiralNormalOffsetPoint(right, offset, metrics);
     const leftDistanceSq = ((leftPoint.x - x) ** 2) + ((leftPoint.y - y) ** 2);
     const rightDistanceSq = ((rightPoint.x - x) ** 2) + ((rightPoint.y - y) ** 2);
     if (leftDistanceSq < rightDistanceSq) {
@@ -603,7 +603,21 @@ function unambiguousVisibleSpiralThetaForViewport(
   if (turnPitchPx < minViewportDimension * 0.32) {
     return null;
   }
-  return bestTheta;
+  // At tip-level zoom a fixed sample grid can skip the entire visible arc.
+  // Refine a nearest point on each boundary once turn spacing disambiguates it.
+  const world = screenToWorldCircular(camera, centerX, centerY);
+  let refinedTheta: number | null = null;
+  let refinedDistanceSq = Number.POSITIVE_INFINITY;
+  for (const offset of [...offsets, metrics.bandWidth]) {
+    const theta = closestSpiralThetaForPoint(world.x, world.y, metrics, offset);
+    const point = spiralNormalOffsetPoint(theta, offset, metrics);
+    const distanceSq = (point.x - world.x) ** 2 + (point.y - world.y) ** 2;
+    if (distanceSq < refinedDistanceSq) {
+      refinedDistanceSq = distanceSq;
+      refinedTheta = theta;
+    }
+  }
+  return refinedTheta;
 }
 
 function spiralBaseRadius(theta: number, metrics: SpiralMetrics): number {
@@ -4532,6 +4546,7 @@ export default function TreeCanvas({
   const visibleViewportWidth = Math.max(1, size.width - visibleViewportLeftInset);
   const visibleViewportCenterX = visibleViewportLeftInset + (visibleViewportWidth * 0.5);
   const previousSizeRef = useRef(size);
+  const previousViewportCenterXRef = useRef(visibleViewportCenterX);
   const previousTreeRef = useRef<TreeModel | null>(tree);
   const previousFitRequestRef = useRef(fitRequest);
   const pendingCircularTaxonomyRefitRef = useRef(false);
@@ -6152,8 +6167,8 @@ export default function TreeCanvas({
     ) {
       canvas.width = backingWidth;
       canvas.height = backingHeight;
-      canvas.style.removeProperty("width");
-      canvas.style.removeProperty("height");
+      canvas.style.width = `${size.width}px`;
+      canvas.style.height = `${size.height}px`;
       hoverCanvasBackingStoreRef.current = {
         width: backingWidth,
         height: backingHeight,
@@ -6461,7 +6476,7 @@ export default function TreeCanvas({
       ctx.stroke();
       return;
     }
-  }, [axisDepth, collapsedView, order, polarThetaFor, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode]);
+  }, [axisDepth, collapsedView, order, polarThetaFor, size.height, size.width, spiralMetricsForScale, spiralVisibleTaxonomyRanksForScale, tree, viewMode, visibleViewportLeftInset]);
 
   const clearDistanceMeasurement = useCallback((): void => {
     distanceStartNodeRef.current = null;
@@ -7935,35 +7950,24 @@ export default function TreeCanvas({
     if (!element) {
       return undefined;
     }
-    let resizeTimer: number | null = null;
-    let initialized = false;
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       const nextSize = {
         width: Math.max(320, Math.floor(entry.contentRect.width)),
         height: Math.max(320, Math.floor(entry.contentRect.height)),
       };
-      if (!initialized) {
-        initialized = true;
-        setSize(nextSize);
-        return;
-      }
-      if (resizeTimer !== null) {
-        window.clearTimeout(resizeTimer);
-      }
-      resizeTimer = window.setTimeout(() => {
-        resizeTimer = null;
+      // CSS has already resized the viewport. Commit the backing store and
+      // camera together before paint, rather than stretching the old image
+      // during a debounce delay (which makes the tree jump on panel close).
+      flushSync(() => {
         setSize((current) => (
           current.width === nextSize.width && current.height === nextSize.height ? current : nextSize
         ));
-      }, 80);
+      });
     });
     observer.observe(element);
     return () => {
       observer.disconnect();
-      if (resizeTimer !== null) {
-        window.clearTimeout(resizeTimer);
-      }
     };
   }, []);
 
@@ -8003,13 +8007,10 @@ export default function TreeCanvas({
     ) {
       canvas.width = backingWidth;
       canvas.height = backingHeight;
-      if (isOverrideRender) {
-        canvas.style.width = `${renderSize.width}px`;
-        canvas.style.height = `${renderSize.height}px`;
-      } else {
-        canvas.style.removeProperty("width");
-        canvas.style.removeProperty("height");
-      }
+      // Do not let CSS stretch the previous bitmap while fullscreen layout
+      // changes are still arriving. Resize its display and backing store together.
+      canvas.style.width = `${renderSize.width}px`;
+      canvas.style.height = `${renderSize.height}px`;
       if (!isOverrideRender) {
         canvasBackingStoreRef.current = {
           width: backingWidth,
@@ -15557,6 +15558,7 @@ export default function TreeCanvas({
     useAutomaticTaxonomyRankVisibility,
     viewMode,
     withSupplementalTaxonomyRanks,
+    visibleViewportLeftInset,
   ]);
 
   const zoomAtKeyboardAnchor = useCallback((zoom: number): void => {
@@ -15903,6 +15905,8 @@ export default function TreeCanvas({
     previousViewModeRef.current = viewMode;
     const previousSize = previousSizeRef.current;
     previousSizeRef.current = size;
+    const previousViewportCenterX = previousViewportCenterXRef.current;
+    previousViewportCenterXRef.current = visibleViewportCenterX;
     const previousTree = previousTreeRef.current;
     previousTreeRef.current = tree;
     const previousFitRequest = previousFitRequestRef.current;
@@ -15911,7 +15915,33 @@ export default function TreeCanvas({
     const sizeChanged = previousSize.width !== size.width || previousSize.height !== size.height;
     const treeChanged = previousTree !== tree;
     const fitRequested = previousFitRequest !== fitRequest;
-    if (currentCamera && sizeChanged && previousViewMode === viewMode) {
+    const viewportCenterChanged = previousViewportCenterX !== visibleViewportCenterX;
+    if (currentCamera && !treeChanged && !fitRequested && previousViewMode === viewMode
+      && (sizeChanged || viewportCenterChanged)) {
+      const previousViewportWidth = Math.max(1, 2 * (previousSize.width - previousViewportCenterX));
+      // A height change resizes the whole view (fullscreen or window resize),
+      // unlike a sidebar toggle. Preserve its proportional magnification.
+      const resizeWholeView = size.height !== previousSize.height;
+      let factorX = 1;
+      let factorY = 1;
+      if (resizeWholeView) {
+        if (currentCamera.kind === "rect") {
+          factorX = visibleViewportWidth / previousViewportWidth;
+          factorY = size.height / previousSize.height;
+          currentCamera.scaleX *= factorX;
+          currentCamera.scaleY *= factorY;
+        } else {
+          factorX = Math.min(visibleViewportWidth, size.height)
+            / Math.min(previousViewportWidth, previousSize.height);
+          factorY = factorX;
+          currentCamera.scale *= factorX;
+        }
+      }
+      // Keep the same world point at the center of the uncovered viewport.
+      currentCamera.translateX = visibleViewportCenterX
+        + (currentCamera.translateX - previousViewportCenterX) * factorX;
+      currentCamera.translateY = size.height * 0.5
+        + (currentCamera.translateY - previousSize.height * 0.5) * factorY;
       if (currentCamera.kind === "rect") {
         clampRectCamera(currentCamera, tree, size.width, size.height, rectClampPadding(currentCamera));
       } else {
@@ -15930,7 +15960,7 @@ export default function TreeCanvas({
       return;
     }
     draw();
-  }, [cache, convertCameraForViewMode, fitCamera, fitRequest, size, tree, viewMode]);
+  }, [cache, convertCameraForViewMode, fitCamera, fitRequest, size, tree, viewMode, visibleViewportCenterX]);
 
   useLayoutEffect(() => {
     if (!tree || handledSessionRestoreRequestRef.current === sessionRestoreRequest) {

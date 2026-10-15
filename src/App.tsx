@@ -8173,7 +8173,7 @@ export default function App() {
                   ? "Tree comparison is available only in rectangular mode."
                   : tree && tree.leafCount < MIN_SPIRAL_TIP_COUNT
                   ? `Spiral mode requires at least ${MIN_SPIRAL_TIP_COUNT.toLocaleString()} tips.`
-                  : "Draw time-calibrated trees as a spiral so deep time and recent tips can share the same figure."
+                  : "Show the tree as a spiral."
               }
             >
               Spiral

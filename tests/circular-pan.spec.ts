@@ -516,6 +516,48 @@ test("a close view of one spiral turn stays local when switching to rectangular"
   expect(Math.abs(Number(result.switched?.translateY ?? 0) - Number(result.fit?.translateY ?? 0))).toBeGreaterThan(20);
 });
 
+for (const destination of ["rectangular", "circular"] as const) {
+  test(`a tip-level spiral view stays local when switching to ${destination}`, async ({ page }) => {
+    await waitForViewer(page);
+    await settleFrames(page);
+    await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.setViewMode("spiral"));
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().viewMode === "spiral"
+      && window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera()?.kind === "circular");
+    await settleFrames(page);
+    const result = await page.evaluate(async (mode) => {
+      const settle = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const app = window.__BIG_TREE_VIEWER_APP_TEST__!;
+      let canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      canvas.fitView();
+      const fit = canvas.getCamera()!;
+      if (fit.kind !== "circular") throw new Error("Expected spiral camera");
+      canvas.setCircularCamera({ scale: fit.scale * 120 });
+      await settle();
+      const debug = canvas.getRenderDebug()?.spiral as { firstTipWorld: { x: number; y: number } };
+      const camera = canvas.getCamera()!;
+      if (camera.kind !== "circular") throw new Error("Expected spiral camera");
+      const bounds = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+      canvas.setCircularCamera({
+        translateX: bounds.width * 0.5 - debug.firstTipWorld.x * camera.scale,
+        translateY: bounds.height * 0.5 - debug.firstTipWorld.y * camera.scale,
+      });
+      await settle();
+      app.setViewMode(mode);
+      await settle();
+      canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      const switched = canvas.getCamera();
+      canvas.fitView();
+      await settle();
+      return { switched, fit: canvas.getCamera() };
+    }, destination);
+    if (destination === "rectangular") {
+      expect(Number(result.switched?.scaleY)).toBeGreaterThan(Number(result.fit?.scaleY) * 2);
+    } else {
+      expect(Number(result.switched?.scale)).toBeGreaterThan(Number(result.fit?.scale) * 2);
+    }
+  });
+}
+
 test("the 50k example refreshes a sharp circular bitmap as it zooms", async ({ page }) => {
   await waitForViewer(page);
   await page.getByRole("button", { name: "Load Example" }).click();
