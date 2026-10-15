@@ -6956,6 +6956,8 @@ export default function TreeCanvas({
     return nextCamera;
   }, [circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, isPartialRadial, polarInnerRadius, polarOuterRadius, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset, visibleViewportWidth]);
 
+  const previousFitCameraForModeRef = useRef(fitCameraForMode);
+
   const cameraApproximatelyMatchesFit = useCallback((camera: CameraState, mode: ViewMode): boolean => {
     const fit = fitCameraForMode(camera.kind === "rect" ? "rectangular" : mode);
     if (!fit || fit.kind !== camera.kind) {
@@ -15952,6 +15954,8 @@ export default function TreeCanvas({
     previousSourceTreeRef.current = sourceTree;
     const previousAxisDepth = previousAxisDepthRef.current;
     previousAxisDepthRef.current = axisDepth;
+    const previousFitCameraForMode = previousFitCameraForModeRef.current;
+    previousFitCameraForModeRef.current = fitCameraForMode;
     const previousFitRequest = previousFitRequestRef.current;
     previousFitRequestRef.current = fitRequest;
     const currentCamera = cameraRef.current;
@@ -15962,6 +15966,32 @@ export default function TreeCanvas({
     const viewportCenterChanged = previousViewportCenterX !== visibleViewportCenterX;
     if (currentCamera && previousTree && displayDepthsChanged && !fitRequested
       && previousViewMode === viewMode && viewMode !== "spiral") {
+      // In an overview there is no focused internal branch. Retain framing
+      // relative to fit (including any pan), rather than anchoring an arbitrary node.
+      const previousFit = previousFitCameraForMode(viewMode);
+      const overview = previousFit?.kind === "rect" && currentCamera.kind === "rect"
+        ? currentCamera.scaleX <= previousFit.scaleX * 1.03 && currentCamera.scaleY <= previousFit.scaleY * 1.03
+        : previousFit?.kind === "circular" && currentCamera.kind === "circular"
+          && currentCamera.scale <= previousFit.scale * 1.03;
+      const nextFit = overview ? fitCameraForMode(viewMode) : null;
+      if (previousFit?.kind === "rect" && nextFit?.kind === "rect" && currentCamera.kind === "rect") {
+        const zoomX = currentCamera.scaleX / previousFit.scaleX;
+        const zoomY = currentCamera.scaleY / previousFit.scaleY;
+        currentCamera.scaleX = nextFit.scaleX * zoomX;
+        currentCamera.scaleY = nextFit.scaleY * zoomY;
+        currentCamera.translateX += (nextFit.translateX - previousFit.translateX) * zoomX;
+        currentCamera.translateY += (nextFit.translateY - previousFit.translateY) * zoomY;
+        draw();
+        return;
+      }
+      if (previousFit?.kind === "circular" && nextFit?.kind === "circular" && currentCamera.kind === "circular") {
+        const zoom = currentCamera.scale / previousFit.scale;
+        currentCamera.scale = nextFit.scale * zoom;
+        currentCamera.translateX += (nextFit.translateX - previousFit.translateX) * zoom;
+        currentCamera.translateY += (nextFit.translateY - previousFit.translateY) * zoom;
+        draw();
+        return;
+      }
       const layout = collapsedView?.layout ?? tree.layouts[order];
       const centerY = size.height * 0.5;
       const world = currentCamera.kind === "rect"
@@ -16058,7 +16088,7 @@ export default function TreeCanvas({
       return;
     }
     draw();
-  }, [axisDepth, cache, collapsedView, convertCameraForViewMode, fitCamera, fitRequest, order, polarLayoutValueForCurrentModeTheta, polarThetaFor, size, sourceTree, tree, viewMode, visibleViewportCenterX]);
+  }, [axisDepth, cache, collapsedView, convertCameraForViewMode, fitCamera, fitCameraForMode, fitRequest, order, polarLayoutValueForCurrentModeTheta, polarThetaFor, size, sourceTree, tree, viewMode, visibleViewportCenterX]);
 
   useLayoutEffect(() => {
     if (!tree || handledSessionRestoreRequestRef.current === sessionRestoreRequest) {

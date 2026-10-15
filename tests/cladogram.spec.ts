@@ -13,6 +13,76 @@ const layoutLabels: Record<string, string> = {
 };
 
 for (const view of ["rectangular", "circular", "fan"] as const) {
+  test(`${view} keeps whole-tree fit framing when enabling cladograms and changing modes`, async ({ page }) => {
+    await page.goto(`/?btv_newick=${encodeURIComponent(newick)}&btv_view=${view}`);
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+    await page.getByRole("button", { name: /Visual Options/ }).click();
+    const verifyFit = async () => {
+      const before = await page.evaluate(() => {
+        const api = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+        const internal = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__!;
+        const canvas = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+        const panelRight = document.querySelector(".control-panel")!.getBoundingClientRect().right;
+        const inset = Math.max(0, panelRight - canvas.left);
+        const tips = internal.leafNodes.map(node => api.getBranchScreenSegmentForTest(node)!);
+        return { camera: api.getCamera()!, visible: tips.every(tip => tip.x2 >= inset - 1 && tip.x2 <= canvas.width + 1 && tip.y2 >= -1 && tip.y2 <= canvas.height + 1) };
+      });
+      expect(before.visible).toBe(true);
+      await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.fitView());
+      const fit = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera()!);
+      for (const [key, value] of Object.entries(fit)) {
+        if (typeof value === "number") expect((before.camera as unknown as Record<string, number>)[key], key).toBeCloseTo(value, 6);
+      }
+    };
+    await verifyFit();
+    await page.getByLabel("Show cladogram", { exact: true }).check();
+    await verifyFit();
+    await page.getByRole("button", { name: "Cladogram settings", exact: true }).click();
+    for (const method of ["grafen", "levels", "logarithmic"] as const) {
+      await page.getByRole("radio", { name: layoutLabels[method], exact: true }).check();
+      await verifyFit();
+      if (method === "logarithmic") {
+        await page.getByRole("slider", { name: "Logarithmic strength" }).fill("3");
+        await verifyFit();
+      }
+    }
+    await page.getByRole("radio", { name: layoutLabels.equal, exact: true }).check();
+    await verifyFit();
+    await page.getByRole("button", { name: "Close Cladogram settings", exact: true }).click();
+    await page.getByLabel("Show cladogram", { exact: true }).uncheck();
+    await verifyFit();
+  });
+
+  test(`${view} keeps a panned overview offset across cladogram modes`, async ({ page }) => {
+    await page.goto(`/?btv_newick=${encodeURIComponent(newick)}&btv_view=${view}`);
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+    await page.getByRole("button", { name: /Visual Options/ }).click();
+    await page.evaluate(() => {
+      const api = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      const camera = api.getCamera()!;
+      const pan = { translateX: camera.translateX + 12, translateY: camera.translateY - 8 };
+      if (camera.kind === "rect") api.setRectCamera(pan);
+      else api.setCircularCamera(pan);
+    });
+    await page.getByLabel("Show cladogram", { exact: true }).check();
+    await page.getByRole("button", { name: "Cladogram settings", exact: true }).click();
+    for (const method of ["grafen", "levels", "logarithmic", "equal"]) {
+      await page.getByRole("radio", { name: layoutLabels[method], exact: true }).check();
+      const offset = await page.evaluate(() => {
+        const api = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+        const camera = api.getCamera()!;
+        api.fitView();
+        const fit = api.getCamera()!;
+        const result = { x: camera.translateX - fit.translateX, y: camera.translateY - fit.translateY };
+        if (camera.kind === "rect") api.setRectCamera(camera);
+        else api.setCircularCamera(camera);
+        return result;
+      });
+      expect(offset.x).toBeCloseTo(12, 6);
+      expect(offset.y).toBeCloseTo(-8, 6);
+    }
+  });
+
   test(`${view} preserves a zoomed branch when switching cladogram modes and strength`, async ({ page }) => {
     const balanced = (start: number, count: number): string => count === 1
       ? `Tip_${start}:1`
