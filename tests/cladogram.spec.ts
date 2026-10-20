@@ -410,13 +410,14 @@ for (const width of [1100, 390]) {
     await expect(dialog).toBeVisible();
     const methodControl = page.getByRole("radio", { name: layoutLabels.logarithmic, exact: true });
     await methodControl.check();
-    await methodControl.scrollIntoViewIfNeeded();
+    const strength = page.getByRole("slider", { name: "Logarithmic strength" });
+    await strength.scrollIntoViewIfNeeded();
     const bounds = (await dialog.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    await expect(strength).toBeInViewport();
+    await page.getByRole("button", { name: "Close Cladogram settings", exact: true }).scrollIntoViewIfNeeded();
     await expect(page.getByRole("button", { name: "Close Cladogram settings", exact: true })).toBeInViewport();
-    await expect(methodControl).toBeInViewport();
-    await expect(page.getByRole("slider", { name: "Logarithmic strength" })).toBeInViewport();
     await page.screenshot({ path: `test-results/cladogram-${width}.png` });
   });
 }

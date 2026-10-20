@@ -1410,34 +1410,6 @@ function useLowMemoryTaxonomyMode(): boolean {
   return isAppleMobileDevice && isWebKitBrowser;
 }
 
-function usePanelPopoverPosition(popoverRef: RefObject<HTMLDivElement | null>, enabled: boolean): void {
-  useLayoutEffect(() => {
-    const popover = popoverRef.current;
-    const panel = popover?.closest<HTMLElement>(".control-panel");
-    const anchor = popover?.parentElement;
-    if (!enabled || !popover || !panel || !anchor) return;
-    const positionPopover = () => {
-      const panelBounds = panel.getBoundingClientRect();
-      const anchorBounds = anchor.getBoundingClientRect();
-      const top = Math.max(8, panelBounds.top + 8);
-      const bottom = Math.min(window.innerHeight - 8, panelBounds.bottom - 8);
-      popover.style.maxHeight = `${Math.max(80, Math.min(640, bottom - top))}px`;
-      popover.style.top = `${Math.max(top, Math.min(anchorBounds.bottom + 7, bottom - popover.offsetHeight))}px`;
-      popover.style.left = `${Math.max(panelBounds.left + 8, Math.min(anchorBounds.right - popover.offsetWidth, panelBounds.right - popover.offsetWidth - 8))}px`;
-    };
-    positionPopover();
-    const observer = new ResizeObserver(positionPopover);
-    observer.observe(popover);
-    panel.addEventListener("scroll", positionPopover);
-    window.addEventListener("resize", positionPopover);
-    return () => {
-      observer.disconnect();
-      panel.removeEventListener("scroll", positionPopover);
-      window.removeEventListener("resize", positionPopover);
-    };
-  }, [enabled, popoverRef]);
-}
-
 function LabelStyleSection({
   labelClass,
   settings,
@@ -1467,13 +1439,10 @@ function LabelStyleSection({
 }): ReactNode {
   const isTaxonomy = labelClass === "taxonomy";
   const isScale = labelClass === "scale";
-  const fitInPanel = isScale || labelClass === "tip";
   const supportsAxisOffsets = labelClass === "internalNode"
     || labelClass === "bootstrap"
     || labelClass === "nodeHeight";
   const usePolarOffsets = supportsAxisOffsets && viewMode !== "rectangular";
-  const popoverRef = useRef<HTMLDivElement>(null);
-  usePanelPopoverPosition(popoverRef, fitInPanel && isOpen && !disabled);
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -1489,7 +1458,7 @@ function LabelStyleSection({
         <span aria-hidden="true">⚙</span>
       </button>
       {disabled || !isOpen ? null : (
-        <div ref={popoverRef} className={`label-style-popover${fitInPanel ? " panel-settings-popover" : ""}`} role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
+        <div className="label-style-popover" role="dialog" aria-label={`${LABEL_STYLE_CLASS_LABELS[labelClass]} settings`}>
           <div className="label-style-popover-header">
             <strong>{LABEL_STYLE_CLASS_LABELS[labelClass]}</strong>
             <button
@@ -1658,9 +1627,9 @@ function LabelStyleSection({
             </>
           )}
           {labelClass === "tip" ? (
-            <label className="label-style-inline-toggle" title="Show short dashes as a zoom cue before tip names become visible. Turn off to omit these dashes from the view and exported figures; tip names and alignment leaders are unchanged.">
-              <input type="checkbox" checked={settings.showGuideTicks !== false} onChange={(event) => onUpdate(labelClass, "showGuideTicks", event.target.checked)} />
-              Show tip-label guide ticks
+            <label className="label-style-inline-toggle" title="Disable the short dashes shown before tip names become visible, in both the view and exported figures. Tip names and alignment leaders are unchanged.">
+              <input type="checkbox" checked={settings.showGuideTicks === false} onChange={(event) => onUpdate(labelClass, "showGuideTicks", !event.target.checked)} />
+              Disable tip label tick marks
             </label>
           ) : null}
           {labelClass === "tip" && viewMode === "rectangular" ? (
@@ -1726,7 +1695,6 @@ function SettingsPopoverButton({
   isOpen,
   disabled,
   disabledReason,
-  fitInPanel = false,
   onToggle,
   children,
 }: {
@@ -1734,12 +1702,9 @@ function SettingsPopoverButton({
   isOpen: boolean;
   disabled: boolean;
   disabledReason?: string;
-  fitInPanel?: boolean;
   onToggle: () => void;
   children: ReactNode;
 }): ReactNode {
-  const popoverRef = useRef<HTMLDivElement>(null);
-  usePanelPopoverPosition(popoverRef, fitInPanel && isOpen && !disabled);
   return (
     <div className={`label-style-popover-anchor${disabled ? " disabled" : ""}`}>
       <button
@@ -1755,7 +1720,7 @@ function SettingsPopoverButton({
         <span aria-hidden="true">⚙</span>
       </button>
       {disabled || !isOpen ? null : (
-        <div ref={popoverRef} className={`label-style-popover${fitInPanel ? " panel-settings-popover" : ""}`} role="dialog" aria-label={`${title} settings`}>
+        <div className="label-style-popover" role="dialog" aria-label={`${title} settings`}>
           <div className="label-style-popover-header">
             <strong>{title}</strong>
             <button
@@ -9206,7 +9171,6 @@ export default function App() {
               <div className="visual-option-actions">
                 <SettingsPopoverButton
                   title="Cladogram"
-                  fitInPanel
                   isOpen={activeLabelStylePopover === "cladogram"}
                   disabled={!cladogramActive}
                   disabledReason={viewMode === "spiral" ? "Spiral mode uses input branch lengths." : "Enable cladogram display first."}

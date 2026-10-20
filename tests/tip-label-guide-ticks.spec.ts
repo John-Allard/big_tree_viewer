@@ -34,9 +34,9 @@ for (const view of ["circular", "fan"] as const) {
     }, before.point);
     const beforePixels = await sample();
     await page.getByRole("button", { name: "Tip labels settings", exact: true }).click();
-    const toggle = page.getByLabel("Show tip-label guide ticks", { exact: true });
-    await expect(toggle).toBeChecked();
-    await toggle.uncheck();
+    const toggle = page.getByLabel("Disable tip label tick marks", { exact: true });
+    await expect(toggle).not.toBeChecked();
+    await toggle.check();
     await expect.poll(async () => (await read()).count).toBe(0);
     expect(await sample()).not.toEqual(beforePixels);
     const shared = await page.evaluate(() => {
@@ -63,7 +63,7 @@ test("guide-tick preference survives session loading and resets to on", async ({
   });
   await page.getByRole("button", { name: /Visual Options/ }).click();
   await page.getByRole("button", { name: "Tip labels settings", exact: true }).click();
-  await page.getByLabel("Show tip-label guide ticks", { exact: true }).uncheck();
+  await page.getByLabel("Disable tip label tick marks", { exact: true }).check();
   await page.getByRole("button", { name: "Close Tip labels settings", exact: true }).click();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Save Session", exact: true }).click();
@@ -76,11 +76,11 @@ test("guide-tick preference survives session loading and resets to on", async ({
   await page.getByRole("button", { name: "Load Session", exact: true }).click();
   await (await chooser).setFiles(file);
   await page.getByRole("button", { name: "Tip labels settings", exact: true }).click();
-  await expect(page.getByLabel("Show tip-label guide ticks", { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel("Disable tip label tick marks", { exact: true })).toBeChecked();
   await page.getByRole("button", { name: "Close Tip labels settings", exact: true }).click();
   await page.getByRole("button", { name: "Reset Defaults", exact: true }).click();
   await page.getByRole("button", { name: "Tip labels settings", exact: true }).click();
-  await expect(page.getByLabel("Show tip-label guide ticks", { exact: true })).toBeChecked();
+  await expect(page.getByLabel("Disable tip label tick marks", { exact: true })).not.toBeChecked();
 });
 
 test("older shared views default guide ticks to on and explicit false is retained", () => {

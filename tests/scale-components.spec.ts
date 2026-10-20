@@ -157,7 +157,7 @@ test("scale component settings survive a session round trip", async ({ page }) =
 });
 
 for (const width of [1100, 390]) {
-  test(`scale component controls fit a ${width}px viewport`, async ({ page }) => {
+  test(`scale component controls can be reached with sidebar scrolling at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto(`/?btv_newick=${encodeURIComponent(newick)}`);
     await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
@@ -167,9 +167,9 @@ for (const width of [1100, 390]) {
     await page.getByLabel("Show time guide labels", { exact: true }).scrollIntoViewIfNeeded();
     const bounds = (await dialog.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.y).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-    expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+    await expect(page.getByLabel("Show time guide labels", { exact: true })).toBeInViewport();
+    await page.getByRole("button", { name: "Close Scale labels settings", exact: true }).scrollIntoViewIfNeeded();
     await expect(page.getByRole("button", { name: "Close Scale labels settings", exact: true })).toBeInViewport();
     await page.screenshot({ path: `test-results/scale-components-${width}.png` });
   });
