@@ -4,6 +4,7 @@ import { createCladogramTree, DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLAD
 import {
   fontFamilyCss,
   fontStyleCss,
+  taxonomyLabelVisibilityThreshold,
   TAXONOMY_LABEL_SIZE_SCALE_MAX,
   TAXONOMY_LABEL_SIZE_SCALE_MIN,
   type LabelStyleClass,
@@ -16,6 +17,10 @@ import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, taxonomyEntityKe
 import { TAXONOMY_COLOR_PALETTES, type TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
 import type { PhyloPicSilhouette } from "../lib/phylopic";
 import { metadataTipTableContinuousColor, metadataTipTableValueIsOn } from "../lib/metadataTipTable";
+import { tagPngAsSrgb } from "../lib/pngColorProfile";
+import { layoutMetadataLegend } from "../lib/metadataLegend";
+import { imageContentBounds } from "../lib/treeExportBounds";
+import { exportSizeForViewport } from "../lib/exportViewport";
 import { depthToTimeAxisDepth, timeAxisDepthToRawDepth, timeAxisLogUnit, treeTimeAxisExtent, type TimeAxisScale } from "../lib/timeAxis";
 import { DEFAULT_TAXONOMY_RANKS, isAutomaticTaxonomyRank, isDefaultTaxonomyRank, TAXONOMY_RANKS, type TaxonomyBlock, type TaxonomyBlocksByOrder, type TaxonomyMapPayload, type TaxonomyRank, type TaxonomyTipRanks } from "../types/taxonomy";
 import { buildCache } from "./treeCanvasCache";
@@ -1409,6 +1414,9 @@ interface SvgScene {
   height: number;
   background: string;
   elements: SvgScenePrimitive[];
+  viewport?: { x: number; y: number; width: number; height: number };
+  outputSize?: { width: number; height: number };
+  outputDpi?: number;
 }
 
 function metadataMarkerPath(shape: "circle" | "square" | "diamond" | "triangle", x: number, y: number, sizePx: number): string {
@@ -1798,6 +1806,10 @@ function traceCircularRibbonPath(
 }
 
 function buildSvgString(scene: SvgScene): string {
+  const viewport = scene.viewport ?? { x: 0, y: 0, width: scene.width, height: scene.height };
+  const output = scene.outputSize ?? viewport;
+  const physicalDimension = (pixels: number): string => scene.outputDpi
+    ? `${Number((pixels / scene.outputDpi).toFixed(6))}in` : String(pixels);
   const body = scene.elements.map((element) => {
     if (element.kind === "rect") {
       return `<rect x="${element.x.toFixed(3)}" y="${element.y.toFixed(3)}" width="${element.width.toFixed(3)}" height="${element.height.toFixed(3)}" fill="${element.fill}"${element.opacity !== undefined ? ` opacity="${element.opacity}"` : ""}/>`;
@@ -1818,8 +1830,8 @@ function buildSvgString(scene: SvgScene): string {
     return `<text x="${element.x.toFixed(3)}" y="${element.y.toFixed(3)}" fill="${element.fill}" font-size="${element.fontSize.toFixed(3)}" font-family="${escapeSvgText(element.fontFamily)}"${style} text-anchor="${element.anchor}" dominant-baseline="${element.dominantBaseline ?? "middle"}"${transform}>${escapeSvgText(element.text)}</text>`;
   }).join("");
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${scene.width}" height="${scene.height}" viewBox="0 0 ${scene.width} ${scene.height}">`,
-    `<rect width="100%" height="100%" fill="${scene.background}"/>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${physicalDimension(output.width)}" height="${physicalDimension(output.height)}" viewBox="${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}">`,
+    `<rect x="${viewport.x}" y="${viewport.y}" width="${viewport.width}" height="${viewport.height}" fill="${scene.background}"/>`,
     body,
     "</svg>",
   ].join("");
@@ -4366,6 +4378,14 @@ export default function TreeCanvas({
   sharedSubtreeSourceTaxonomyMapRef,
   sharedSubtreeSourceNodeByViewNode,
   metadataBranchColors,
+  metadataBranchValues,
+  metadataTooltipColumns,
+  metadataLegendSections = [],
+  metadataLegendPosition = "top-right",
+  metadataLegendPlacement,
+  onMetadataLegendPlacementChange,
+  onMetadataLegendSettingsRequest,
+  onMetadataLegendHide,
   metadataBranchColorVersion,
   metadataLabels,
   metadataLabelVersion,
@@ -4410,7 +4430,9 @@ export default function TreeCanvas({
   exportPngRequest,
   exportPngFilename,
   exportPngWidth,
+  exportFigureDpi = 200,
   exportPngHeight,
+  exportPngAdditionalTaxonomyLabels = false,
   automationExportRequest,
   sessionStateRequest,
   sessionRestoreRequest,
@@ -4440,6 +4462,7 @@ export default function TreeCanvas({
   const hoverCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderCanvasOverrideRef = useRef<HTMLCanvasElement | null>(null);
   const renderSizeOverrideRef = useRef<{ width: number; height: number } | null>(null);
+  const taxonomyLabelResolutionScaleRef = useRef(1);
   const renderDprOverrideRef = useRef<number | null>(null);
   const renderCameraOverrideRef = useRef<CameraState | null>(null);
   const cameraRef = useRef<CameraState | null>(null);
@@ -4453,6 +4476,16 @@ export default function TreeCanvas({
   const hoverTooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverTooltipLabelRef = useRef<HTMLDivElement | null>(null);
   const hoverTooltipBodyRef = useRef<HTMLDivElement | null>(null);
+  const metadataLegendBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const legendDragRef = useRef<{ pointerId: number; clientX: number; clientY: number; x: number; y: number; width: number; height: number } | null>(null);
+  const legendPlacementPreviewRef = useRef<TreeCanvasProps["metadataLegendPlacement"]>(null);
+  const hideLegendForExportProbeRef = useRef(false);
+  useEffect(() => { if (!legendDragRef.current) legendPlacementPreviewRef.current = null; }, [metadataLegendPlacement]);
+  const metadataLegendLayoutCacheRef = useRef<{
+    sections: TreeCanvasProps["metadataLegendSections"];
+    signature: string;
+    layout: ReturnType<typeof layoutMetadataLegend>;
+  } | null>(null);
   const distanceTooltipRef = useRef<HTMLDivElement | null>(null);
   const distanceTooltipNodesRef = useRef<HTMLDivElement | null>(null);
   const distanceTooltipValueRef = useRef<HTMLDivElement | null>(null);
@@ -4589,6 +4622,8 @@ export default function TreeCanvas({
     });
   }, [viewMode]);
   const [contextMenu, setContextMenu] = useState<(
+    { kind: "legend"; x: number; y: number; name: string; tutorialDemo?: boolean }
+    |
     {
       kind: "node";
       x: number;
@@ -4711,11 +4746,24 @@ export default function TreeCanvas({
       appendLine(`Branch length: ${hover.branchLength.toPrecision(5)}`);
       appendLine(`Parent age: ${hover.parentAge === null ? "n/a" : hover.parentAge.toPrecision(5)}`);
       appendLine(`Child age: ${hover.childAge === null ? "n/a" : hover.childAge.toPrecision(5)}`);
+      const metadata = new Map<string, string>();
+      const addMetadata = (column: string, value: string | null | undefined): void => {
+        if (value && !metadata.has(column)) metadata.set(column, value);
+      };
+      addMetadata(metadataTooltipColumns?.branchColor || "Branch color", metadataBranchValues?.[hover.node]);
+      addMetadata(metadataTooltipColumns?.label || "Label", metadataLabels?.[hover.node]);
+      addMetadata(metadataTooltipColumns?.marker || "Marker", metadataMarkers?.[hover.node]?.label);
+      for (const slice of metadataPies?.[hover.node]?.slices ?? []) addMetadata(slice.label, String(slice.value));
+      if (metadata.size) {
+        appendLine("Metadata");
+        for (const [column, value] of metadata) appendLine(`${column}: ${value}`);
+      }
     }
-    tooltip.style.left = `${Math.min(size.width - 220, hover.screenX + 16)}px`;
-    tooltip.style.top = `${Math.min(size.height - 90, hover.screenY + 16)}px`;
     tooltip.hidden = false;
-  }, [clearHoverTooltip, size.height, size.width, tree]);
+    tooltip.style.maxWidth = `${Math.min(360, visibleViewportWidth - 16)}px`;
+    tooltip.style.left = `${Math.max(visibleViewportLeftInset + 8, Math.min(size.width - tooltip.offsetWidth - 8, hover.screenX + 16))}px`;
+    tooltip.style.top = `${Math.max(8, Math.min(size.height - tooltip.offsetHeight - 8, hover.screenY + 16))}px`;
+  }, [clearHoverTooltip, size.height, size.width, tree, metadataBranchValues, metadataTooltipColumns, metadataLabels, metadataMarkers, metadataPies, visibleViewportWidth, visibleViewportLeftInset]);
 
   const effectiveTimeAxisScale: TimeAxisScale = viewMode === "spiral" ? "log" : cladogramActive ? "linear" : timeAxisScale;
   const effectiveTimeAxisLogBase = viewMode === "spiral"
@@ -5587,6 +5635,10 @@ export default function TreeCanvas({
     Math.min(viewMode === "spiral" ? 5 : 2, figureStyles.taxonomy.bandThicknessScale ?? 1),
   );
   const taxonomyLabelFitScale = Math.max(1, taxonomyBandThicknessScale);
+  const taxonomyLabelThreshold = taxonomyLabelVisibilityThreshold(figureStyles.taxonomy);
+  useEffect(() => {
+    taxonomyLabelHistoryRef.current = null;
+  }, [taxonomyLabelThreshold]);
   const thickenOutermostTaxonomyRibbon = figureStyles.taxonomy.thickenOutermostRibbon !== false;
   const circularOverlayViewportScale = compactCircularOverlayScale(size.width, size.height);
   const compactCircularViewport = circularOverlayViewportScale < 1;
@@ -9324,6 +9376,7 @@ export default function TreeCanvas({
         }
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
         const preservedKeys = previousTaxonomyState
+          && taxonomyLabelResolutionScaleRef.current === 1
           && previousTaxonomyState.tree === tree
           && previousTaxonomyState.viewMode === "rectangular"
           && previousTaxonomyState.order === order
@@ -9337,6 +9390,7 @@ export default function TreeCanvas({
           const rank = visibleRanks[rankIndex];
           const rankDisplayMode = taxonomyRankDisplayModeForRank(rank);
           const rankIsLabelOnlyStrand = rankDisplayMode === "label-only";
+          const labelResolutionScale = (rankIsLabelOnlyStrand ? 1 : taxonomyLabelResolutionScaleRef.current) / taxonomyLabelThreshold;
           const orderedBlockInfo = rectTaxonomyBlockInfo?.[rank] ?? [];
           const bandX = bandCursorX;
           const bandWidthPx = metrics.ringWidthsPx[rankIndex];
@@ -9479,14 +9533,14 @@ export default function TreeCanvas({
               : rank === "family"
                 ? (isPreservedLabel ? 14 : 22)
                 : (isPreservedLabel ? 18 : 30);
-            if (spanPx < minimumSpanPx) {
+            if (spanPx < minimumSpanPx / labelResolutionScale) {
               continue;
             }
-            const minFontSize = rank === "genus"
+            const minFontSize = (rank === "genus"
               ? (isPreservedLabel ? 4.5 : 5.2)
               : rank === "family"
                 ? (isPreservedLabel ? 5.5 : 6.2)
-                : (isPreservedLabel ? 6 : 7.5);
+                : (isPreservedLabel ? 6 : 7.5)) / labelResolutionScale;
             const normalizedMetrics = measureNormalizedLabelMetrics(ctx, block.label, labelFontFamilies.taxonomy);
             const paddingFraction = 0.12;
             const availableSpanPx = Math.max(0, spanPx * (1 - paddingFraction));
@@ -9552,16 +9606,16 @@ export default function TreeCanvas({
               ctx.font = `${finalFontSize}px ${labelFontFamilies.taxonomy}`;
               textMetrics = ctx.measureText(block.label);
             }
-            finalFontSize = Math.max(3.5, finalFontSize * taxonomyLabelSizeScale);
-            finalFontSize = Math.min(finalFontSize, Math.max(3.5, fitFontSize * 0.98));
+            finalFontSize = Math.max(3.5 / labelResolutionScale, finalFontSize * taxonomyLabelSizeScale);
+            finalFontSize = Math.min(finalFontSize, Math.max(3.5 / labelResolutionScale, fitFontSize * 0.98));
             ctx.font = `${finalFontSize}px ${labelFontFamilies.taxonomy}`;
             textMetrics = ctx.measureText(block.label);
             if (!isPreservedLabel && !canPlaceLinearLabel(
               labelsForRank,
               labelX,
               labelY,
-              Math.max(18, textMetrics.width * 0.9),
-              Math.max(8, bandWidthPx + metrics.ringGapPx),
+              Math.max(18 / labelResolutionScale, textMetrics.width * 0.9),
+              Math.max(8 / labelResolutionScale, bandWidthPx + metrics.ringGapPx),
             )) {
               continue;
             }
@@ -11387,11 +11441,19 @@ export default function TreeCanvas({
                 taxonomyMetrics.innerRadius + centerOffset,
                 taxonomyMetrics.pitchPerRadian,
               )) * camera.scale;
+              const labelResolutionScale = (rankIsLabelOnlyStrand ? 1 : taxonomyLabelResolutionScaleRef.current) / taxonomyLabelThreshold;
               const fittedLabelFontSize = Math.max(
-                4,
-                Math.min(labelFontSize, labelSpanPx / Math.max(1, block.label.length * 0.56)),
+                4 / labelResolutionScale,
+                Math.min(
+                  labelFontSize,
+                  labelResolutionScale > 1 ? ribbonThicknessPx * 0.88 : labelFontSize,
+                  labelSpanPx / Math.max(1, block.label.length * 0.56),
+                ),
               );
-              if (labelSpanPx < Math.max(34, block.label.length * fittedLabelFontSize * 0.56)) {
+              if (labelResolutionScale !== 1 && fittedLabelFontSize > Math.min(labelFontSize, ribbonThicknessPx * 0.88)) {
+                continue;
+              }
+              if (labelSpanPx < Math.max(34 / labelResolutionScale, block.label.length * fittedLabelFontSize * 0.56)) {
                 continue;
               }
               let labelFrame = spiralFrameAt(labelTheta, centerOffset, taxonomyMetrics);
@@ -11399,6 +11461,9 @@ export default function TreeCanvas({
               let labelScreen = spiralToScreen(labelWorld);
               ctx.font = fontSpec("taxonomy", fittedLabelFontSize);
               const measuredLabelWidth = ctx.measureText(block.label).width;
+              if (labelResolutionScale > 1 && measuredLabelWidth > labelSpanPx * 0.94) {
+                continue;
+              }
               let tangentAngle = spiralTangentAngle(labelTheta, centerOffset, taxonomyMetrics) + camera.rotation;
               let rotation = normalizeRotation(tangentAngle * 180 / Math.PI) * Math.PI / 180;
               if (
@@ -13018,6 +13083,7 @@ export default function TreeCanvas({
         const previousTaxonomyState = taxonomyLabelHistoryRef.current;
         const canReusePreviousTaxonomyLabelHistory = Boolean(
           previousTaxonomyState
+          && taxonomyLabelResolutionScaleRef.current === 1
           && previousTaxonomyState.tree === tree
           && previousTaxonomyState.viewMode === viewMode
           && previousTaxonomyState.order === order,
@@ -13086,6 +13152,7 @@ export default function TreeCanvas({
               : `${visibleLeafRangesSignature}:${camera.translateX.toFixed(6)}:${camera.translateY.toFixed(6)}`,
             visibleRankBlockCountsSignature,
             taxonomyLabelSizeScale.toFixed(3),
+            taxonomyLabelThreshold.toFixed(3),
             taxonomyBandThicknessScale.toFixed(3),
             thickenOutermostTaxonomyRibbon ? "thick-outer" : "uniform-ribbons",
             taxonomyGapControl.toFixed(3),
@@ -13197,6 +13264,7 @@ export default function TreeCanvas({
           };
         } else {
         const preservedKeys = previousTaxonomyState
+          && taxonomyLabelResolutionScaleRef.current === 1
           && previousTaxonomyState.tree === tree
           && previousTaxonomyState.viewMode === viewMode
           && previousTaxonomyState.order === order
@@ -13669,7 +13737,8 @@ export default function TreeCanvas({
               : rank === "family"
                 ? (isPreservedLabel ? 4 : 7)
                 : (isPreservedLabel ? 8 : 16);
-            if (!bestLabelCandidate || bestLabelCandidate.arcLengthPx < minimumArcLengthPx) {
+            const labelResolutionScale = (rankIsLabelOnlyStrand ? 1 : taxonomyLabelResolutionScaleRef.current) / taxonomyLabelThreshold;
+            if (!bestLabelCandidate || bestLabelCandidate.arcLengthPx < minimumArcLengthPx / labelResolutionScale) {
               pushTaxonomyCandidateDebug({
                 rank,
                 label: block.label,
@@ -13687,7 +13756,7 @@ export default function TreeCanvas({
             const scaledMinFontSize = Math.max(
               3.5,
               minFontSize * Math.min(1, taxonomyBandThicknessScale),
-            );
+            ) / labelResolutionScale;
             const paddingFraction = 0.12;
             const normalizedMetrics = measureNormalizedLabelMetrics(ctx, block.label, labelFontFamilies.taxonomy);
             let textMetrics = ctx.measureText(block.label);
@@ -13774,7 +13843,7 @@ export default function TreeCanvas({
               });
               continue;
             }
-            const finalFontSize = Math.max(3.5, Math.max(scaledMinFontSize, bestFitFontSize * 0.92) * taxonomyLabelSizeScale);
+            const finalFontSize = Math.max(3.5 / labelResolutionScale, Math.max(scaledMinFontSize, bestFitFontSize * 0.92) * taxonomyLabelSizeScale);
             ctx.font = `${finalFontSize}px ${labelFontFamilies.taxonomy}`;
             textMetrics = ctx.measureText(block.label);
             const ascent = textMetrics.actualBoundingBoxAscent || (finalFontSize * 0.72);
@@ -15411,6 +15480,61 @@ export default function TreeCanvas({
       }
     }
     flushPhyloPicImages();
+    ctx.save();
+    ctx.globalAlpha = 1;
+    const legendViewport = {
+      left: isOverrideRender && renderSize.width !== size.width ? 0 : visibleViewportLeftInset,
+      width: isOverrideRender && renderSize.width !== size.width ? renderSize.width : visibleViewportWidth,
+      height: Math.min(renderSize.height, renderSize.width !== size.width ? renderSize.height : wrapperRef.current?.clientHeight ?? renderSize.height),
+    };
+    const legendPlacement = legendPlacementPreviewRef.current ?? metadataLegendPlacement;
+    const legendSignature = `${legendViewport.left}:${legendViewport.width}:${legendViewport.height}:${metadataLegendPosition}:${legendPlacement?.x}:${legendPlacement?.y}`;
+    const cachedLegend = metadataLegendLayoutCacheRef.current;
+    const legend = cachedLegend?.sections === metadataLegendSections && cachedLegend.signature === legendSignature
+      ? cachedLegend.layout
+      : layoutMetadataLegend(ctx, metadataLegendSections, legendViewport, metadataLegendPosition, legendPlacement);
+    metadataLegendLayoutCacheRef.current = { sections: metadataLegendSections, signature: legendSignature, layout: legend };
+    if (!isOverrideRender) metadataLegendBoundsRef.current = legend;
+    if (legend && !hideLegendForExportProbeRef.current) {
+      ctx.fillStyle = "rgba(255,255,255,0.96)";
+      ctx.fillRect(legend.x, legend.y, legend.width, legend.height);
+      pushSceneRect(legend.x, legend.y, legend.width, legend.height, ctx.fillStyle);
+      ctx.strokeStyle = "#cbd0d6";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(legend.x, legend.y, legend.width, legend.height);
+      pushSceneLine(legend.x, legend.y, legend.x + legend.width, legend.y, ctx.strokeStyle, 1);
+      pushSceneLine(legend.x, legend.y + legend.height, legend.x + legend.width, legend.y + legend.height, ctx.strokeStyle, 1);
+      pushSceneLine(legend.x, legend.y, legend.x, legend.y + legend.height, ctx.strokeStyle, 1);
+      pushSceneLine(legend.x + legend.width, legend.y, legend.x + legend.width, legend.y + legend.height, ctx.strokeStyle, 1);
+      for (const primitive of legend.primitives) {
+        const x = legend.x + primitive.x;
+        const y = legend.y + primitive.y;
+        if (primitive.kind === "text") {
+          ctx.font = `${primitive.bold ? "700 " : ""}12px Arial`;
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "#18212c";
+          ctx.fillText(primitive.text, x, y);
+          pushSceneText(primitive.text, x, y, ctx.fillStyle, 12, "Arial", "start", undefined, primitive.bold ? "700" : "", "middle");
+        } else if (primitive.kind === "rect") {
+          ctx.fillStyle = primitive.color;
+          ctx.fillRect(x, y, primitive.width, primitive.height);
+          pushSceneRect(x, y, primitive.width, primitive.height, primitive.color);
+        } else if (primitive.kind === "line") {
+          ctx.strokeStyle = primitive.color;
+          ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + primitive.width, y); ctx.stroke();
+          pushSceneLine(x, y, x + primitive.width, y, primitive.color, 3);
+        } else {
+          ctx.fillStyle = primitive.color;
+          drawMetadataMarker(ctx, primitive.shape, x, y, 12);
+          ctx.fill();
+          pushScenePath(metadataMarkerPath(primitive.shape, x, y, 12), undefined, undefined, primitive.color, 1);
+        }
+      }
+      renderDebug.metadataLegend = { x: legend.x, y: legend.y, width: legend.width, height: legend.height };
+    }
+    ctx.restore();
     if (!isOverrideRender) {
       rotationPreviewRef.current = null;
     }
@@ -15492,6 +15616,9 @@ export default function TreeCanvas({
     drawHoverHighlightOverlay,
     fitCamera,
     figureStyles,
+    metadataLegendSections,
+    metadataLegendPosition,
+    metadataLegendPlacement,
     getCircularTaxonomyBitmapCache,
     getCircularTaxonomyPaths,
     getCircularBasePath,
@@ -15621,30 +15748,21 @@ export default function TreeCanvas({
     draw();
   }, [draw, fitCamera, onHoverChange, size.height, size.width, updateHoverTooltip, zoomAtPoint]);
 
-  const buildCurrentSvgString = useCallback((): string | null => {
-    if (!tree || !cache) {
-      return null;
-    }
-    exportCaptureRef.current = {
-      width: size.width,
-      height: size.height,
-      background: "#fbfcfe",
-      elements: [],
-    };
-    draw();
-    const scene = exportCaptureRef.current;
-    exportCaptureRef.current = null;
-    return scene ? buildSvgString(scene) : null;
-  }, [cache, draw, size.height, size.width, tree]);
+  const getExportViewportSize = useCallback(() => ({
+    width: Math.max(1, Math.min(size.width, wrapperRef.current?.clientWidth ?? size.width) - visibleViewportLeftInset),
+    height: Math.max(1, Math.min(size.height, wrapperRef.current?.clientHeight ?? size.height)),
+  }), [size.height, size.width, visibleViewportLeftInset]);
 
   const cameraForRenderSize = useCallback((camera: CameraState, targetSize: { width: number; height: number }): CameraState => {
+    const sourceSize = getExportViewportSize();
+    const sourceCenterX = visibleViewportLeftInset + sourceSize.width * 0.5;
     if (camera.kind === "rect") {
       const safeScaleX = Math.max(camera.scaleX, 1e-9);
       const safeScaleY = Math.max(camera.scaleY, 1e-9);
-      const centerWorldX = ((size.width * 0.5) - camera.translateX) / safeScaleX;
-      const centerWorldY = ((size.height * 0.5) - camera.translateY) / safeScaleY;
-      const nextScaleX = camera.scaleX * (targetSize.width / Math.max(1, size.width));
-      const nextScaleY = camera.scaleY * (targetSize.height / Math.max(1, size.height));
+      const centerWorldX = (sourceCenterX - camera.translateX) / safeScaleX;
+      const centerWorldY = ((sourceSize.height * 0.5) - camera.translateY) / safeScaleY;
+      const nextScaleX = camera.scaleX * (targetSize.width / sourceSize.width);
+      const nextScaleY = camera.scaleY * (targetSize.height / sourceSize.height);
       return {
         ...camera,
         scaleX: nextScaleX,
@@ -15654,8 +15772,8 @@ export default function TreeCanvas({
       };
     }
     const safeScale = Math.max(camera.scale, 1e-9);
-    const savedDx = ((size.width * 0.5) - camera.translateX) / safeScale;
-    const savedDy = ((size.height * 0.5) - camera.translateY) / safeScale;
+    const savedDx = (sourceCenterX - camera.translateX) / safeScale;
+    const savedDy = ((sourceSize.height * 0.5) - camera.translateY) / safeScale;
     const centerWorld = {
       x: (savedDx * camera.rotationCos) + (savedDy * camera.rotationSin),
       y: (-savedDx * camera.rotationSin) + (savedDy * camera.rotationCos),
@@ -15664,7 +15782,7 @@ export default function TreeCanvas({
       ...camera,
       scale: camera.scale * (
         Math.min(targetSize.width, targetSize.height)
-        / Math.max(1, Math.min(size.width, size.height))
+        / Math.max(1, Math.min(sourceSize.width, sourceSize.height))
       ),
     };
     setCircularCameraRotation(nextCamera, camera.rotation);
@@ -15672,7 +15790,34 @@ export default function TreeCanvas({
     nextCamera.translateX = (targetSize.width * 0.5) - (rotatedCenter.x * nextCamera.scale);
     nextCamera.translateY = (targetSize.height * 0.5) - (rotatedCenter.y * nextCamera.scale);
     return nextCamera;
-  }, [size.height, size.width]);
+  }, [getExportViewportSize, visibleViewportLeftInset]);
+
+  const buildCurrentSvgString = useCallback((): string | null => {
+    const sourceCamera = cameraRef.current;
+    if (!tree || !cache || !sourceCamera) {
+      return null;
+    }
+    const viewport = { x: visibleViewportLeftInset, y: 0, ...getExportViewportSize() };
+    const renderSize = size;
+    exportCaptureRef.current = {
+      ...renderSize,
+      background: "#fbfcfe",
+      elements: [],
+    };
+    renderCanvasOverrideRef.current = document.createElement("canvas");
+    renderSizeOverrideRef.current = renderSize;
+    renderCameraOverrideRef.current = { ...sourceCamera };
+    try {
+      draw();
+      return exportCaptureRef.current ? buildSvgString({ ...exportCaptureRef.current, viewport }) : null;
+    } finally {
+      exportCaptureRef.current = null;
+      renderCanvasOverrideRef.current = null;
+      renderSizeOverrideRef.current = null;
+      renderCameraOverrideRef.current = null;
+      draw();
+    }
+  }, [cache, draw, getExportViewportSize, size, tree, visibleViewportLeftInset]);
 
   const downloadBlob = useCallback((blob: Blob, filename: string): void => {
     if (typeof window === "undefined") {
@@ -15686,6 +15831,116 @@ export default function TreeCanvas({
     window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
   }, []);
 
+  const renderTreeFigurePass = useCallback((frame: { size: { width: number; height: number }; camera: CameraState }, density: number, vector = false, additionalLabels = false, hideLegend = false) => {
+    const canvas = document.createElement("canvas");
+    renderCanvasOverrideRef.current = canvas;
+    renderSizeOverrideRef.current = frame.size;
+    renderCameraOverrideRef.current = { ...frame.camera };
+    renderDprOverrideRef.current = density;
+    hideLegendForExportProbeRef.current = hideLegend;
+    const previousHistory = taxonomyLabelHistoryRef.current;
+    taxonomyLabelResolutionScaleRef.current = additionalLabels ? density : 1;
+    if (vector) exportCaptureRef.current = { ...frame.size, background: "#fbfcfe", elements: [] };
+    try {
+      draw();
+      return { canvas, scene: exportCaptureRef.current };
+    } finally {
+      renderCanvasOverrideRef.current = null;
+      renderSizeOverrideRef.current = null;
+      renderCameraOverrideRef.current = null;
+      renderDprOverrideRef.current = null;
+      exportCaptureRef.current = null;
+      taxonomyLabelResolutionScaleRef.current = 1;
+      hideLegendForExportProbeRef.current = false;
+      taxonomyLabelHistoryRef.current = previousHistory;
+      draw();
+    }
+  }, [draw]);
+
+  const prepareTreeFigure = useCallback(() => {
+    const source = cameraRef.current;
+    const fitted = fitCameraForMode(viewMode);
+    if (!source || !fitted || !tree) return null;
+    const viewport = getExportViewportSize();
+    const heightRatio = viewport.height / size.height;
+    let camera: CameraState = { ...fitted };
+    let spacing: number;
+    if (camera.kind === "rect" && source.kind === "rect") {
+      // Fit by a single factor so independent X/Y zoom does not get stretched.
+      const factor = Math.min(camera.scaleX / source.scaleX, camera.scaleY * heightRatio / source.scaleY);
+      const worldCenterX = (visibleViewportLeftInset + viewport.width * 0.5 - camera.translateX) / camera.scaleX;
+      const worldCenterY = (size.height * 0.5 - camera.translateY) / camera.scaleY;
+      camera.scaleX = source.scaleX * factor;
+      camera.scaleY = source.scaleY * factor;
+      camera.translateX = viewport.width * 0.5 - worldCenterX * camera.scaleX;
+      camera.translateY = viewport.height * 0.5 - worldCenterY * camera.scaleY;
+      spacing = camera.scaleY * (collapsedView?.effectiveLeafScale ?? 1);
+    } else if (camera.kind === "circular") {
+      camera.scale *= Math.min(1, heightRatio);
+      camera.translateX -= visibleViewportLeftInset;
+      camera.translateY *= heightRatio;
+      spacing = camera.scale * polarOuterRadius * polarAngleSpan / Math.max(1, polarLeafDivisor);
+    } else return null;
+    const glyphSize = Math.max(
+      metadataMarkerNodes.length ? scaledMetadataMarkerSizePx(metadataMarkerSizePx, spacing) : 0,
+      metadataPieNodes.length ? scaledMetadataGlyphSizePx(metadataPieSizePx, spacing) : 0,
+    );
+    const margin = Math.ceil(Math.max(48, glyphSize * 0.6 + 12));
+    camera.translateX += margin;
+    camera.translateY += margin;
+    const frame = { camera, size: { width: viewport.width + margin * 2, height: viewport.height + margin * 2 } };
+    const reserveLegend = metadataLegendSections.length > 0 && !metadataLegendPlacement;
+    const probe = renderTreeFigurePass(frame, 1, false, false, reserveLegend).canvas;
+    const context = probe.getContext("2d");
+    if (!context) return null;
+    let bounds = imageContentBounds(context.getImageData(0, 0, probe.width, probe.height));
+    if (reserveLegend) {
+      const legend = layoutMetadataLegend(context, metadataLegendSections, { left: 0, ...frame.size }, metadataLegendPosition);
+      if (legend) {
+        // A whole-tree fit can occupy space that was empty at the live camera.
+        // Place corner legends beside the complete figure, not over its tip labels.
+        if (metadataLegendPosition.endsWith("right")) {
+          frame.size.width = Math.max(frame.size.width, bounds.x + bounds.width + legend.width + 36);
+        } else {
+          const shift = Math.max(0, legend.width + 36 - bounds.x);
+          frame.camera.translateX += shift;
+          frame.size.width += shift;
+        }
+        const composed = renderTreeFigurePass(frame, 1).canvas;
+        const composedContext = composed.getContext("2d");
+        if (composedContext) bounds = imageContentBounds(composedContext.getImageData(0, 0, composed.width, composed.height));
+      }
+    }
+    return { ...frame, bounds };
+  }, [fitCameraForMode, getExportViewportSize, viewMode, tree, size.height, visibleViewportLeftInset, collapsedView?.effectiveLeafScale, polarOuterRadius, polarAngleSpan, polarLeafDivisor, metadataMarkerNodes.length, metadataMarkerSizePx, metadataPieNodes.length, metadataPieSizePx, metadataLegendSections, metadataLegendPosition, metadataLegendPlacement, renderTreeFigurePass]);
+
+  const buildTreeFigureSvg = useCallback((width: number, dpi: number): string | null => {
+    const frame = prepareTreeFigure();
+    if (!frame) return null;
+    const { scene } = renderTreeFigurePass(frame, 1, true);
+    return scene ? buildSvgString({ ...scene, viewport: frame.bounds, outputSize: exportSizeForViewport(frame.bounds, width), outputDpi: dpi }) : null;
+  }, [prepareTreeFigure, renderTreeFigurePass]);
+
+  const buildTreeFigurePng = useCallback(async (width: number, additionalLabels: boolean, dpi: number) => {
+    const frame = prepareTreeFigure();
+    if (!frame) return null;
+    const outputSize = exportSizeForViewport(frame.bounds, width);
+    const density = Math.max(1, outputSize.width / frame.bounds.width);
+    const { canvas } = renderTreeFigurePass(frame, density, false, additionalLabels);
+    const output = document.createElement("canvas");
+    output.width = outputSize.width;
+    output.height = outputSize.height;
+    const context = output.getContext("2d", { alpha: false });
+    if (!context) return null;
+    context.fillStyle = "#fbfcfe";
+    context.fillRect(0, 0, output.width, output.height);
+    context.imageSmoothingQuality = "high";
+    context.drawImage(canvas, frame.bounds.x * density, frame.bounds.y * density, frame.bounds.width * density, frame.bounds.height * density,
+      0, 0, output.width, output.height);
+    const blob = await new Promise<Blob | null>(resolve => output.toBlob(resolve, "image/png"));
+    return blob ? { blob: await tagPngAsSrgb(blob, dpi), ...outputSize } : null;
+  }, [prepareTreeFigure, renderTreeFigurePass]);
+
   const blobToDataUrl = useCallback(async (blob: Blob): Promise<string> => (
     await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -15698,14 +15953,15 @@ export default function TreeCanvas({
   const buildCurrentPngBlob = useCallback(async (
     targetPixelSize: { width: number; height: number },
     viewportCssSize?: { width?: number; height?: number },
+    options: { reframeToOutput?: boolean; additionalTaxonomyLabels?: boolean } = {},
   ): Promise<{ blob: Blob; width: number; height: number } | null> => {
     const sourceCamera = cameraRef.current;
     if (!sourceCamera || typeof window === "undefined") {
       return null;
     }
     const safeTargetPixelSize = {
-      width: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.width) ? targetPixelSize.width : size.width))),
-      height: Math.max(320, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.height) ? targetPixelSize.height : size.height))),
+      width: Math.max(1, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.width) ? targetPixelSize.width : visibleViewportWidth))),
+      height: Math.max(1, Math.min(10000, Math.floor(Number.isFinite(targetPixelSize.height) ? targetPixelSize.height : size.height))),
     };
     const hasViewportOverride = typeof viewportCssSize?.width === "number"
       && Number.isFinite(viewportCssSize.width)
@@ -15717,30 +15973,25 @@ export default function TreeCanvas({
           height: Math.max(1, Math.min(10000, Math.floor(viewportCssSize.height as number))),
         }
       : null;
-    const exportScale = safeViewportCssSize
-      ? Math.max(
-          1,
-          Math.min(
-            safeTargetPixelSize.width / Math.max(1, safeViewportCssSize.width),
-            safeTargetPixelSize.height / Math.max(1, safeViewportCssSize.height),
-          ),
-        )
-      : Math.max(
-          1,
-          Math.min(
-            safeTargetPixelSize.width / Math.max(1, size.width),
-            safeTargetPixelSize.height / Math.max(1, size.height),
-          ),
-        );
-    const renderSize = safeViewportCssSize ?? {
-      width: safeTargetPixelSize.width / exportScale,
-      height: safeTargetPixelSize.height / exportScale,
+    const sourceSize = getExportViewportSize();
+    const preserveScreenLayout = !safeViewportCssSize && !options.reframeToOutput;
+    const density = Math.max(1, Math.min(safeTargetPixelSize.width / sourceSize.width, safeTargetPixelSize.height / sourceSize.height));
+    const renderSize = preserveScreenLayout ? size : safeViewportCssSize ?? {
+      width: safeTargetPixelSize.width / density,
+      height: safeTargetPixelSize.height / density,
     };
+    const exportedCssSize = preserveScreenLayout ? sourceSize : renderSize;
+    const exportScale = Math.max(1, Math.min(
+      safeTargetPixelSize.width / exportedCssSize.width,
+      safeTargetPixelSize.height / exportedCssSize.height,
+    ));
     const exportCanvas = document.createElement("canvas");
     renderCanvasOverrideRef.current = exportCanvas;
     renderSizeOverrideRef.current = renderSize;
     renderDprOverrideRef.current = exportScale;
-    renderCameraOverrideRef.current = cameraForRenderSize(sourceCamera, renderSize);
+    renderCameraOverrideRef.current = preserveScreenLayout ? { ...sourceCamera } : cameraForRenderSize(sourceCamera, renderSize);
+    const previousTaxonomyLabelHistory = taxonomyLabelHistoryRef.current;
+    taxonomyLabelResolutionScaleRef.current = options.additionalTaxonomyLabels ? exportScale : 1;
     try {
       draw();
     } finally {
@@ -15748,13 +15999,38 @@ export default function TreeCanvas({
       renderSizeOverrideRef.current = null;
       renderDprOverrideRef.current = null;
       renderCameraOverrideRef.current = null;
+      taxonomyLabelResolutionScaleRef.current = 1;
+      taxonomyLabelHistoryRef.current = previousTaxonomyLabelHistory;
       draw();
     }
+    // Lay out overlays exactly as on screen, then crop away the covered area.
+    // Re-laying out a smaller canvas changes viewport-anchored labels and axes.
+    let outputCanvas = exportCanvas;
+    if (preserveScreenLayout || exportCanvas.width !== safeTargetPixelSize.width || exportCanvas.height !== safeTargetPixelSize.height) {
+      outputCanvas = document.createElement("canvas");
+      outputCanvas.width = safeTargetPixelSize.width;
+      outputCanvas.height = safeTargetPixelSize.height;
+      const outputCtx = outputCanvas.getContext("2d", { alpha: false });
+      if (!outputCtx) {
+        return null;
+      }
+      outputCtx.fillStyle = "#fbfcfe";
+      outputCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+      outputCtx.imageSmoothingQuality = "high";
+      if (preserveScreenLayout) {
+        outputCtx.drawImage(exportCanvas,
+          visibleViewportLeftInset * exportScale, 0,
+          sourceSize.width * exportScale, sourceSize.height * exportScale,
+          0, 0, outputCanvas.width, outputCanvas.height);
+      } else {
+        outputCtx.drawImage(exportCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+      }
+    }
     const blob = await new Promise<Blob | null>((resolve) => {
-      exportCanvas.toBlob(resolve, "image/png");
+      outputCanvas.toBlob(resolve, "image/png");
     });
-    return blob ? { blob, width: exportCanvas.width, height: exportCanvas.height } : null;
-  }, [cameraForRenderSize, draw, size.height, size.width]);
+    return blob ? { blob: await tagPngAsSrgb(blob), width: outputCanvas.width, height: outputCanvas.height } : null;
+  }, [cameraForRenderSize, draw, getExportViewportSize, size, visibleViewportLeftInset, visibleViewportWidth]);
 
   useLayoutEffect(() => {
     latestDrawRef.current = draw;
@@ -16452,25 +16728,25 @@ export default function TreeCanvas({
     if (!canvas || typeof window === "undefined") {
       return;
     }
-    const svg = buildCurrentSvgString();
+    const svg = buildTreeFigureSvg(exportPngWidth, exportFigureDpi);
     if (!svg) {
       return;
     }
     const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     downloadBlob(blob, exportSvgFilename || `big-tree-view-${viewMode}.svg`);
-  }, [buildCurrentSvgString, downloadBlob, exportSvgFilename, exportSvgRequest, viewMode]);
+  }, [buildTreeFigureSvg, exportPngWidth, exportFigureDpi, downloadBlob, exportSvgFilename, exportSvgRequest, viewMode]);
 
   useEffect(() => {
     if (exportPngRequest === 0 || handledPngExportRequestRef.current === exportPngRequest) {
       return;
     }
     handledPngExportRequestRef.current = exportPngRequest;
-    void buildCurrentPngBlob({ width: exportPngWidth, height: exportPngHeight }).then((result) => {
+    void buildTreeFigurePng(exportPngWidth, exportPngAdditionalTaxonomyLabels, exportFigureDpi).then((result) => {
       if (result) {
         downloadBlob(result.blob, exportPngFilename || `big-tree-view-${viewMode}.png`);
       }
     });
-  }, [buildCurrentPngBlob, downloadBlob, exportPngFilename, exportPngHeight, exportPngRequest, exportPngWidth, viewMode]);
+  }, [buildTreeFigurePng, downloadBlob, exportPngAdditionalTaxonomyLabels, exportPngFilename, exportPngRequest, exportPngWidth, exportFigureDpi, viewMode]);
 
   useEffect(() => {
     const request = automationExportRequest;
@@ -16498,8 +16774,7 @@ export default function TreeCanvas({
             mimeType: "image/svg+xml;charset=utf-8",
             ok: true,
             text: svg,
-            width: size.width,
-            height: size.height,
+            ...getExportViewportSize(),
           });
           return;
         }
@@ -16509,7 +16784,7 @@ export default function TreeCanvas({
         }, {
           width: request.viewportWidth,
           height: request.viewportHeight,
-        });
+        }, { reframeToOutput: true });
         if (!result) {
           throw new Error("Unable to build PNG export.");
         }
@@ -16544,12 +16819,14 @@ export default function TreeCanvas({
     blobToDataUrl,
     buildCurrentPngBlob,
     buildCurrentSvgString,
+    getExportViewportSize,
     downloadBlob,
     exportPngHeight,
     exportPngWidth,
     onAutomationExportComplete,
     size.height,
     size.width,
+    visibleViewportWidth,
     viewMode,
   ]);
 
@@ -16714,7 +16991,12 @@ export default function TreeCanvas({
       };
     };
 
+    const hitsMetadataLegend = (localX: number, localY: number): boolean => {
+      const legend = metadataLegendBoundsRef.current;
+      return Boolean(legend && localX >= legend.x && localX <= legend.x + legend.width && localY >= legend.y && localY <= legend.y + legend.height);
+    };
     const hitTestAt = (localX: number, localY: number): CanvasHoverInfo | null => {
+      if (hitsMetadataLegend(localX, localY)) return null;
       const camera = cameraRef.current;
       if (!camera) {
         return null;
@@ -17218,6 +17500,23 @@ export default function TreeCanvas({
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
       lastCanvasPointerRef.current = { x: localX, y: localY };
+      if (hitsMetadataLegend(localX, localY) && onMetadataLegendPlacementChange) {
+        const legend = metadataLegendBoundsRef.current!;
+        clearHoverState();
+        legendDragRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, ...legend };
+        canvas.style.cursor = "grabbing";
+        canvas.setPointerCapture(event.pointerId);
+        if (event.pointerType === "touch") {
+          longPressTimerRef.current = window.setTimeout(() => {
+            legendDragRef.current = null;
+            legendPlacementPreviewRef.current = null;
+            clearLongPress();
+            if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+            showContextMenuAt(localX, localY);
+          }, 550);
+        }
+        return;
+      }
       for (let index = labelHitsRef.current.length - 1; index >= 0; index -= 1) {
         const hitbox = labelHitsRef.current[index];
         if (hitbox.source !== "collapse") {
@@ -17287,6 +17586,19 @@ export default function TreeCanvas({
 
     const handlePointerMove = (event: PointerEvent): void => {
       const rect = canvas.getBoundingClientRect();
+      const legendDrag = legendDragRef.current;
+      if (legendDrag?.pointerId === event.pointerId) {
+        const dx = event.clientX - legendDrag.clientX;
+        const dy = event.clientY - legendDrag.clientY;
+        if (Math.hypot(dx, dy) > 4) clearLongPress();
+        legendPlacementPreviewRef.current = {
+          x: Math.max(0, Math.min(1, (legendDrag.x + dx - visibleViewportLeftInset - 12) / Math.max(1, visibleViewportWidth - legendDrag.width - 24))),
+          y: Math.max(0, Math.min(1, (legendDrag.y + dy - 12) / Math.max(1, rect.height - legendDrag.height - 24))),
+        };
+        scheduleDraw();
+        return;
+      }
+      if (distanceStartNodeRef.current === null) canvas.style.cursor = hitsMetadataLegend(event.clientX - rect.left, event.clientY - rect.top) ? "grab" : "";
       lastCanvasPointerRef.current = {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
@@ -17378,6 +17690,14 @@ export default function TreeCanvas({
 
     const handlePointerUp = (event: PointerEvent): void => {
       clearLongPress();
+      if (legendDragRef.current?.pointerId === event.pointerId) {
+        legendDragRef.current = null;
+        if (legendPlacementPreviewRef.current) onMetadataLegendPlacementChange?.(legendPlacementPreviewRef.current);
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+        canvas.style.cursor = "grab";
+        scheduleDraw();
+        return;
+      }
       activePointersRef.current.delete(event.pointerId);
       if (activePointersRef.current.size === 0) {
         pointerDownRef.current = false;
@@ -17397,6 +17717,12 @@ export default function TreeCanvas({
 
     const handlePointerCancel = (event: PointerEvent): void => {
       clearLongPress();
+      if (legendDragRef.current?.pointerId === event.pointerId) {
+        legendDragRef.current = null;
+        legendPlacementPreviewRef.current = null;
+        canvas.style.cursor = "";
+        scheduleDraw();
+      }
       activePointersRef.current.delete(event.pointerId);
       if (canvas.hasPointerCapture(event.pointerId)) {
         canvas.releasePointerCapture(event.pointerId);
@@ -17409,6 +17735,7 @@ export default function TreeCanvas({
     };
 
     const handlePointerLeave = (): void => {
+      if (legendDragRef.current) return;
       clearLongPress();
       activePointersRef.current.clear();
       pinchGestureRef.current = null;
@@ -17467,6 +17794,11 @@ export default function TreeCanvas({
       window.getSelection()?.removeAllRanges();
       setContextMenuColorMode(null);
       setContextMenuCollapseMenuOpen(false);
+      if (hitsMetadataLegend(localX, localY)) {
+        clearHoverState();
+        setContextMenu({ kind: "legend", name: "Metadata legend", x: localX + 8, y: localY + 8 });
+        return;
+      }
       const phylopicHitbox = findPhyloPicHitboxAt(localX, localY);
       if (phylopicHitbox) {
         const descendantTipCount = tree
@@ -17715,12 +18047,14 @@ export default function TreeCanvas({
     isBranchHoverEnabled,
     markPanBenchmarkInput,
     onHoverChange,
+    onMetadataLegendPlacementChange,
     order,
     rectClampPadding,
     resolveTaxonomySegmentNode,
     scheduleDraw,
     size.height,
     size.width,
+    visibleViewportWidth,
     spiralMetricsForScale,
     spiralVisibleTaxonomyRanksForScale,
     toggleCollapsedNode,
@@ -18733,7 +19067,18 @@ export default function TreeCanvas({
         >
           {contextMenu.tutorialDemo ? <div className="tree-context-menu-tutorial-cue">Right click to open this menu</div> : null}
           <div className="tree-context-menu-title">{contextMenu.name}</div>
-          {contextMenu.kind === "node" ? (
+          {contextMenu.kind === "legend" ? (
+            <>
+              <button type="button" className="tree-context-menu-item" title="Open the metadata legend controls in the side panel."
+                onClick={() => { setContextMenu(null); onMetadataLegendSettingsRequest?.(); }}>
+                Legend settings
+              </button>
+              <button type="button" className="tree-context-menu-item" title="Hide the legend without changing the metadata displays."
+                onClick={() => { setContextMenu(null); onMetadataLegendHide?.(); }}>
+                Hide legend
+              </button>
+            </>
+          ) : contextMenu.kind === "node" ? (
             <>
               <div className="tree-context-menu-meta">
                 Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}

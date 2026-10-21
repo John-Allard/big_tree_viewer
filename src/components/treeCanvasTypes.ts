@@ -12,6 +12,7 @@ import type { TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
 import type { TimeAxisScale } from "../lib/timeAxis";
 import type { TaxonomyCollapseRank, TaxonomyMapPayload, TaxonomyRank } from "../types/taxonomy";
 import type { HoverInfo, LayoutOrder, TreeModel, ViewMode, ZoomAxisMode } from "../types/tree";
+import type { MetadataLegendPlacement, MetadataLegendPosition, MetadataLegendSection } from "../lib/metadataLegend";
 
 export type TimeStripeStyle = "bands" | "age-gradient" | "dashed";
 export type TaxonomyOverlayStyle = "ribbons" | "strands";
@@ -104,6 +105,14 @@ export interface TreeCanvasProps {
   sharedSubtreeSourceTaxonomyMapRef: { current: TaxonomyMapPayload | null };
   sharedSubtreeSourceNodeByViewNode?: Int32Array | null;
   metadataBranchColors: Array<string | null> | null;
+  metadataBranchValues?: Array<string | null> | null;
+  metadataTooltipColumns?: { branchColor: string; label: string; marker: string };
+  metadataLegendSections?: MetadataLegendSection[];
+  metadataLegendPosition?: MetadataLegendPosition;
+  metadataLegendPlacement?: MetadataLegendPlacement | null;
+  onMetadataLegendPlacementChange?: (placement: MetadataLegendPlacement) => void;
+  onMetadataLegendSettingsRequest?: () => void;
+  onMetadataLegendHide?: () => void;
   metadataBranchColorVersion: string;
   metadataLabels: Array<string | null> | null;
   metadataLabelVersion: string;
@@ -148,7 +157,9 @@ export interface TreeCanvasProps {
   exportPngRequest: number;
   exportPngFilename: string;
   exportPngWidth: number;
+  exportFigureDpi?: number;
   exportPngHeight: number;
+  exportPngAdditionalTaxonomyLabels?: boolean;
   automationExportRequest: AutomationExportRequest | null;
   sessionStateRequest: number;
   sessionRestoreRequest: number;

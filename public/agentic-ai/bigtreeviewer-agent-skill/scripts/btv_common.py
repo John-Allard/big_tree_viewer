@@ -189,15 +189,16 @@ def export_dimensions_for_view(
             viewport_width,
             viewport_height,
         )
-    if width is not None and height is not None and width != height:
-        raise SystemExit("Spiral PNG exports must be square. Use equal --width and --height, or provide only one dimension.")
-    if viewport_width is not None and viewport_height is not None and viewport_width != viewport_height:
-        raise SystemExit("Spiral PNG export viewports must be square. Use equal viewport dimensions, or provide only one.")
     size = width if width is not None else height
     if size is None:
         size = DEFAULT_SQUARE_EXPORT_SIZE[0]
     viewport_size = viewport_width if viewport_width is not None else viewport_height
-    return size, size, viewport_size, viewport_size
+    return (
+        width if width is not None else size,
+        height if height is not None else size,
+        viewport_width if viewport_width is not None else viewport_size,
+        viewport_height if viewport_height is not None else viewport_size,
+    )
 
 
 def normalize_btv_url(value: str) -> str:

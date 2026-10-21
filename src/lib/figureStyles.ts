@@ -30,6 +30,7 @@ export interface LabelStyleSettings {
   italic?: boolean;
   bandThicknessScale?: number;
   thickenOutermostRibbon?: boolean;
+  labelVisibilityThreshold?: number;
   taxonomyGap?: number;
   taxonomyGapPx?: number;
   limitWidth?: boolean;
@@ -78,6 +79,13 @@ export const LABEL_STYLE_CLASS_LABELS: Record<LabelStyleClass, string> = {
 export const TAXONOMY_LABEL_SIZE_SCALE_MIN = 0.55;
 export const TAXONOMY_LABEL_SIZE_SCALE_MAX = 1;
 
+export function taxonomyLabelVisibilityThreshold(settings: Pick<LabelStyleSettings, "labelVisibilityThreshold">): number {
+  const value = settings.labelVisibilityThreshold;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0.1, Math.min(2, value))
+    : 1;
+}
+
 export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
   tip: {
     fontFamily: "arial",
@@ -95,7 +103,7 @@ export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
     showGuideTicks: true,
   },
   genus: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
-  taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, thickenOutermostRibbon: true, taxonomyGap: 1, taxonomyGapPx: 0 },
+  taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, thickenOutermostRibbon: true, labelVisibilityThreshold: 1, taxonomyGap: 1, taxonomyGapPx: 0 },
   internalNode: { fontFamily: "georgia", sizeScale: 0.95, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
   bootstrap: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },
   nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },

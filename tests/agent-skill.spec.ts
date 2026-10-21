@@ -183,7 +183,8 @@ test("agent skill supports unified radial controls and rectangular radial export
     "args = parser.parse_args(sys.argv[2:])",
     "payload = btv_common.load_payload(args)",
     "dimensions = btv_common.export_dimensions_for_view('png', 'radial', 800, 500, None, None)",
-    "print(json.dumps({'visual': payload['visual'], 'dimensions': dimensions}))",
+    "spiral = btv_common.export_dimensions_for_view('png', 'spiral', 800, 500, 400, 250)",
+    "print(json.dumps({'visual': payload['visual'], 'dimensions': dimensions, 'spiral': spiral}))",
   ].join(";");
   const result = await execFileAsync("python3", [
     "-S",
@@ -202,8 +203,10 @@ test("agent skill supports unified radial controls and rectangular radial export
   const parsed = JSON.parse(result.stdout) as {
     visual: Record<string, unknown>;
     dimensions: Array<number | null>;
+    spiral: Array<number | null>;
   };
   expect(parsed.visual.viewMode).toBe("radial");
+  expect(parsed.spiral).toEqual([800, 500, 400, 250]);
   expect(parsed.visual.radialAngularSpanDegrees).toBe(240);
   expect(parsed.visual.radialCenterOpeningRatio).toBe(0.35);
   expect(parsed.dimensions).toEqual([800, 500, null, null]);

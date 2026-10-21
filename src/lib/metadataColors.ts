@@ -21,6 +21,7 @@ export interface MetadataLegendCategoryItem {
 }
 
 export interface MetadataContinuousLegend {
+  colors: string[];
   min: number;
   max: number;
   startColor: string;
@@ -47,6 +48,7 @@ export interface MetadataMarkerLegendItem {
 
 export interface MetadataColorOverlayResult {
   colors: Array<string | null>;
+  values: Array<string | null>;
   hasAny: boolean;
   matchedRowCount: number;
   matchedNodeCount: number;
@@ -370,7 +372,7 @@ function normalizeContinuousBounds(min: number | null, max: number | null): { mi
   return min <= max ? { min, max } : { min: max, max: min };
 }
 
-function applySubtreeColor(tree: TreeModel, colors: Array<string | null>, node: number, color: string): number {
+function applySubtreeColor(tree: TreeModel, colors: Array<string | null>, values: Array<string | null>, node: number, color: string, value: string): number {
   let colored = 0;
   const stack = [node];
   while (stack.length > 0) {
@@ -382,6 +384,7 @@ function applySubtreeColor(tree: TreeModel, colors: Array<string | null>, node: 
       colored += 1;
     }
     colors[current] = color;
+    values[current] = value;
     for (let child = tree.buffers.firstChild[current]; child >= 0; child = tree.buffers.nextSibling[child]) {
       stack.push(child);
     }
@@ -464,6 +467,7 @@ export function buildMetadataColorOverlay(
     categoricalColorOverrides = {},
   } = options;
   const colors = new Array<string | null>(tree.nodeCount).fill(null);
+  const values = new Array<string | null>(tree.nodeCount).fill(null);
   const byName = buildNodeLookup(tree);
   const matchedNodes = new Set<number>();
   let matchedRowCount = 0;
@@ -493,12 +497,13 @@ export function buildMetadataColorOverlay(
         const node = nodes[nodeIndex];
         matchedNodes.add(node);
         if (scope === "subtree") {
-          coloredNodeCount += applySubtreeColor(tree, colors, node, color);
+          coloredNodeCount += applySubtreeColor(tree, colors, values, node, color, value);
         } else if (tree.buffers.parent[node] >= 0) {
           if (colors[node] !== color) {
             coloredNodeCount += 1;
           }
           colors[node] = color;
+          values[node] = value;
         }
       }
     }
@@ -509,6 +514,7 @@ export function buildMetadataColorOverlay(
     }));
     return {
       colors,
+      values,
       hasAny: colors.some((color) => color !== null),
       matchedRowCount,
       matchedNodeCount: matchedNodes.size,
@@ -568,17 +574,19 @@ export function buildMetadataColorOverlay(
     for (let nodeIndex = 0; nodeIndex < entry.nodes.length; nodeIndex += 1) {
       const node = entry.nodes[nodeIndex];
       if (scope === "subtree") {
-        coloredNodeCount += applySubtreeColor(tree, colors, node, color);
+        coloredNodeCount += applySubtreeColor(tree, colors, values, node, color, String(entry.value));
       } else if (tree.buffers.parent[node] >= 0) {
         if (colors[node] !== color) {
           coloredNodeCount += 1;
         }
         colors[node] = color;
+        values[node] = String(entry.value);
       }
     }
   }
   return {
     colors,
+    values,
     hasAny: colors.some((color) => color !== null),
     matchedRowCount,
     matchedNodeCount: matchedNodes.size,
@@ -588,6 +596,7 @@ export function buildMetadataColorOverlay(
     categoryLegend: [],
     continuousLegend: numericEntries.length > 0
       ? {
+        colors: Array.from({ length: 64 }, (_, index) => continuousColorForT(paletteStops, index / 63, colorCache)),
         min: legendMin,
         max: legendMax,
         startColor: paletteStops[0],

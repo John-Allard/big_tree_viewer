@@ -8,6 +8,7 @@ import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanva
 import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { extractGenusToken, serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import { computeTreeStatistics } from "./lib/treeStatistics";
+import { metadataLegendPosition as normalizeMetadataLegendPosition, normalizeMetadataLegendComponents, normalizeMetadataLegendPlacement, type MetadataLegendComponents, type MetadataLegendPlacement, type MetadataLegendPosition, type MetadataLegendSection } from "./lib/metadataLegend";
 import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLADOGRAM_LOG_STRENGTH, MIN_CLADOGRAM_LOG_STRENGTH, MAX_CLADOGRAM_LOG_STRENGTH, normalizeCladogramLogStrength, isUltrametricCladogramMethod, type UltrametricCladogramMethod } from "./lib/cladogram";
 import { computeTreeComparisonStatistics } from "./lib/treeComparisonStatistics";
 import { analyzeTreeComparisonTopology } from "./lib/treeComparisonTopology";
@@ -199,31 +200,6 @@ function defaultExportPixelSizeForMode(mode: ViewMode): { width: number; height:
     : { width: DEFAULT_EXPORT_SQUARE_SIZE_PX, height: DEFAULT_EXPORT_SQUARE_SIZE_PX };
 }
 
-function clampExportPixelDimension(value: unknown, fallback: number): number {
-  const parsed = typeof value === "number"
-    ? value
-    : typeof value === "string"
-      ? Number(value)
-      : Number.NaN;
-  return Math.max(320, Math.min(10000, Math.round(Number.isFinite(parsed) ? parsed : fallback)));
-}
-
-function squarePngExportSizeForMode(
-  mode: ViewMode,
-  width: number | undefined,
-  height: number | undefined,
-): { width: number | undefined; height: number | undefined } {
-  if (mode !== "spiral") {
-    return { width, height };
-  }
-  if (width === undefined && height === undefined) {
-    return { width, height };
-  }
-  const providedSizes = [width, height].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  const size = Math.max(...providedSizes.map((value) => clampExportPixelDimension(value, value)));
-  return { width: size, height: size };
-}
-
 type BigTreeViewerLaunchPayload = {
   version?: 1;
   newick?: string;
@@ -379,6 +355,10 @@ type BigTreeViewerSessionSettings = {
   phylopicOffsetYPx?: number;
   branchThicknessScale: number;
   metadataEnabled: boolean;
+  metadataLegendEnabled?: boolean;
+  metadataLegendPosition?: MetadataLegendPosition;
+  metadataLegendPlacement?: MetadataLegendPlacement | null;
+  metadataLegendComponents?: MetadataLegendComponents;
   metadataFirstRowIsHeader: boolean;
   metadataKeyColumn: string;
   metadataValueColumn: string;
@@ -1305,6 +1285,7 @@ type VisualPopoverId =
   | "nodeErrorBars"
   | "phylopic"
   | "metadataBranchColors"
+  | "metadataLegend"
   | "metadataLabels"
   | "metadataMarkers"
   | "metadataPies"
@@ -1494,6 +1475,22 @@ function LabelStyleSection({
             />
           </label>
           <div className="figure-style-value">x{settings.sizeScale.toFixed(2)}</div>
+          {isTaxonomy ? (
+            <>
+              <label title="Lower values allow smaller taxonomy labels to appear. 100% uses the usual visibility thresholds. Labels must still fit their bands without overlapping. Small labels may become readable when magnifying a high-resolution PNG or SVG export. Does not enable additional taxonomy ranks.">
+                Label visibility threshold
+                <input
+                  type="range"
+                  min={0.1}
+                  max={2}
+                  step={0.05}
+                  value={settings.labelVisibilityThreshold ?? 1}
+                  onChange={(event) => onUpdate(labelClass, "labelVisibilityThreshold", Number(event.target.value))}
+                />
+              </label>
+              <div className="figure-style-value">{Math.round((settings.labelVisibilityThreshold ?? 1) * 100)}%</div>
+            </>
+          ) : null}
           {labelClass === "bootstrap" || labelClass === "nodeHeight" ? (
             <>
               <label>
@@ -1636,7 +1633,7 @@ function LabelStyleSection({
             <>
               <label
                 className={`label-style-inline-toggle${tipWidthControlsDisabledReason ? " label-style-disabled-control" : ""}`}
-                title={tipWidthControlsDisabledReason}
+                title={tipWidthControlsDisabledReason ?? "Set a maximum width for tip labels in rectangular views. Choose whether longer labels are truncated or scaled down. Off by default."}
               >
                 <input
                   type="checkbox"
@@ -1808,6 +1805,7 @@ function collectMetadataUnmappedRows(
 
 const EMPTY_METADATA_OVERLAY: MetadataColorOverlayResult = {
   colors: [],
+  values: [],
   hasAny: false,
   matchedRowCount: 0,
   matchedNodeCount: 0,
@@ -1994,6 +1992,8 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const comparisonFileInputRef = useRef<HTMLInputElement | null>(null);
   const metadataFileInputRef = useRef<HTMLInputElement | null>(null);
+  const metadataLegendSettingsRef = useRef<HTMLDivElement | null>(null);
+  const pendingLegendSettingsScrollRef = useRef(false);
   const didAutoloadRef = useRef(false);
   const dragCounterRef = useRef(0);
   const comparisonDragCounterRef = useRef(0);
@@ -2145,16 +2145,17 @@ export default function App() {
   const [exportPngRequest, setExportPngRequest] = useState(0);
   const [exportPngFilename, setExportPngFilename] = useState("big-tree-view.png");
   const [exportPngWidth, setExportPngWidth] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
-  const [exportPngHeight, setExportPngHeight] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
+  const [exportFigureDpi, setExportFigureDpi] = useState(DEFAULT_EXPORT_DPI);
+  const exportPngHeight = DEFAULT_EXPORT_SQUARE_SIZE_PX;
   const [automationExportRequest, setAutomationExportRequest] = useState<AutomationExportRequest | null>(null);
   const [showExportOptions, setShowExportOptions] = useState(false);
+  const exportOptionsInitializedRef = useRef(false);
   const [exportViewFormat, setExportViewFormat] = useState<ExportViewFormat>("png");
   const [exportViewFilenameInput, setExportViewFilenameInput] = useState("big-tree-view.png");
-  const [exportViewWidthInput, setExportViewWidthInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
-  const [exportViewHeightInput, setExportViewHeightInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX);
-  const [exportViewPrintWidthInchesInput, setExportViewPrintWidthInchesInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX / DEFAULT_EXPORT_DPI);
-  const [exportViewPrintHeightInchesInput, setExportViewPrintHeightInchesInput] = useState(DEFAULT_EXPORT_SQUARE_SIZE_PX / DEFAULT_EXPORT_DPI);
-  const [exportViewDpiInput, setExportViewDpiInput] = useState(DEFAULT_EXPORT_DPI);
+  const [exportViewWidthInput, setExportViewWidthInput] = useState(String(DEFAULT_EXPORT_SQUARE_SIZE_PX));
+  const [exportViewPrintWidthInput, setExportViewPrintWidthInput] = useState(String(DEFAULT_EXPORT_SQUARE_SIZE_PX / DEFAULT_EXPORT_DPI));
+  const [exportViewDpiInput, setExportViewDpiInput] = useState(String(DEFAULT_EXPORT_DPI));
+  const [exportAdditionalTaxonomyLabels, setExportAdditionalTaxonomyLabels] = useState(false);
   const [sessionStateRequest, setSessionStateRequest] = useState(0);
   const [sessionRestoreRequest, setSessionRestoreRequest] = useState(0);
   const [sessionRestoreState, setSessionRestoreState] = useState<TreeCanvasSessionState | null>(null);
@@ -2170,6 +2171,10 @@ export default function App() {
   const [metadataFirstRowIsHeader, setMetadataFirstRowIsHeader] = useState(true);
   const [metadataFileName, setMetadataFileName] = useState("");
   const [metadataEnabled, setMetadataEnabled] = useState(false);
+  const [metadataLegendEnabled, setMetadataLegendEnabled] = useState(false);
+  const [metadataLegendPosition, setMetadataLegendPosition] = useState<MetadataLegendPosition>("top-right");
+  const [metadataLegendPlacement, setMetadataLegendPlacement] = useState<MetadataLegendPlacement | null>(null);
+  const [metadataLegendComponents, setMetadataLegendComponents] = useState<MetadataLegendComponents>(() => normalizeMetadataLegendComponents());
   const [metadataKeyColumn, setMetadataKeyColumn] = useState("");
   const [metadataValueColumn, setMetadataValueColumn] = useState("");
   const [metadataColorMode, setMetadataColorMode] = useState<MetadataColorMode>("categorical");
@@ -2587,6 +2592,20 @@ export default function App() {
       statsSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
   }, [setStatsOpen, showSidebar]);
+  const hideMetadataLegend = useCallback(() => setMetadataLegendEnabled(false), []);
+  const metadataTooltipColumns = useMemo(() => ({ branchColor: metadataValueColumn, label: metadataLabelColumn, marker: metadataMarkerColumn }),
+    [metadataValueColumn, metadataLabelColumn, metadataMarkerColumn]);
+  const openMetadataLegendSettings = useCallback(() => {
+    pendingLegendSettingsScrollRef.current = true;
+    setMetadataOpen(true);
+    setActiveLabelStylePopover("metadataLegend");
+    showSidebar();
+  }, [setMetadataOpen, showSidebar]);
+  useLayoutEffect(() => {
+    if (!pendingLegendSettingsScrollRef.current || !metadataOpen || !sidebarVisible || activeLabelStylePopover !== "metadataLegend") return;
+    pendingLegendSettingsScrollRef.current = false;
+    metadataLegendSettingsRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+  }, [metadataOpen, sidebarVisible, activeLabelStylePopover]);
   const viewTaxonomyMap = collapsedTaxonomyView?.taxonomyMap ?? taxonomyMap;
   const treeCanvasTreeRef = useRef(viewTree);
   const treeCanvasTaxonomyMapRef = useRef(viewTaxonomyMap);
@@ -3040,6 +3059,10 @@ export default function App() {
     if (typeof visual.metadataEnabled === "boolean") {
       setMetadataEnabled(visual.metadataEnabled);
     }
+    if (typeof visual.metadataLegendEnabled === "boolean") setMetadataLegendEnabled(visual.metadataLegendEnabled);
+    if (typeof visual.metadataLegendPosition === "string") setMetadataLegendPosition(normalizeMetadataLegendPosition(visual.metadataLegendPosition));
+    if (visual.metadataLegendPlacement !== undefined) setMetadataLegendPlacement(normalizeMetadataLegendPlacement(visual.metadataLegendPlacement));
+    if (visual.metadataLegendComponents) setMetadataLegendComponents(normalizeMetadataLegendComponents(visual.metadataLegendComponents));
     if (typeof visual.metadataKeyColumn === "string") {
       setMetadataKeyColumn(visual.metadataKeyColumn);
     }
@@ -3727,6 +3750,21 @@ export default function App() {
     );
   }, [metadataKeyColumn, metadataPieColorOverrides, metadataPieColumns, metadataPiePalette, metadataPiesEnabled, metadataTable, tree]);
   const metadataOverlaysSuppressed = taxonomyCollapseIsSynthetic;
+  const metadataLegendSections = useMemo<MetadataLegendSection[]>(() => {
+    if (!metadataLegendEnabled || metadataOverlaysSuppressed) return [];
+    const sections: MetadataLegendSection[] = [];
+    if (metadataLegendComponents.branchColors && metadataEnabled && metadataOverlay.hasAny) {
+      sections.push({ kind: "branchColors", title: `Branch colors: ${metadataValueColumn}`, entries: metadataOverlay.categoryLegend,
+        continuous: metadataOverlay.continuousLegend ?? undefined });
+    }
+    if (metadataLegendComponents.markers && metadataMarkersEnabled && metadataMarkerOverlay.hasAny) {
+      sections.push({ kind: "markers", title: `Markers: ${metadataMarkerColumn}`, entries: metadataMarkerOverlay.legend });
+    }
+    if (metadataLegendComponents.pies && metadataPiesEnabled && metadataPieOverlay.hasAny) {
+      sections.push({ kind: "pies", title: "Pie charts", entries: metadataPieOverlay.legend });
+    }
+    return sections;
+  }, [metadataLegendEnabled, metadataLegendComponents, metadataOverlaysSuppressed, metadataEnabled, metadataOverlay, metadataValueColumn, metadataMarkersEnabled, metadataMarkerOverlay, metadataMarkerColumn, metadataPiesEnabled, metadataPieOverlay]);
   const mappedTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(viewTaxonomyMap?.activeRanks ?? [])].sort(
       (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
@@ -3758,6 +3796,11 @@ export default function App() {
     [availableTaxonomyRanks, taxonomyRankDisplayModes, taxonomyRankVisibility, useAutomaticTaxonomyRankVisibility],
   );
   const phylopicViewportRankSet = useMemo(() => new Set(phylopicViewportRanks), [phylopicViewportRanks]);
+  const canExportAdditionalTaxonomyLabels = taxonomyEnabled && Boolean(viewTaxonomyMap)
+    && taxonomyOverlayStyle === "ribbons" && availableTaxonomyRanks.some(rank => (
+      useAutomaticTaxonomyRankVisibility && isAutomaticTaxonomyRank(rank) ? true
+        : (taxonomyRankDisplayModes[rank] ?? (useAutomaticTaxonomyRankVisibility || taxonomyRankVisibility[rank] === false ? "hidden" : "ribbon")) === "ribbon"
+    ));
   const phylopicHasViewportRankInfo = phylopicViewportRanks.length > 0;
   const phylopicHasSelectedVisibleRank = phylopicSelectableRanks.some((rank) => (
     phylopicRankSelection[rank] && (!phylopicHasViewportRankInfo || phylopicViewportRankSet.has(rank))
@@ -4499,63 +4542,85 @@ export default function App() {
     window.URL.revokeObjectURL(url);
   }, [loadedTreeLabel, tree]);
 
+  const resetExportOptions = useCallback((): void => {
+    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
+    const defaultWidth = defaultExportPixelSizeForMode(viewMode).width;
+    setExportViewFormat("png");
+    setExportViewFilenameInput(`${baseLabel}-${viewMode}-view.png`);
+    setExportViewWidthInput(String(defaultWidth));
+    setExportViewPrintWidthInput(String(defaultWidth / DEFAULT_EXPORT_DPI));
+    setExportViewDpiInput(String(DEFAULT_EXPORT_DPI));
+    setExportAdditionalTaxonomyLabels(false);
+    exportOptionsInitializedRef.current = true;
+  }, [loadedTreeLabel, viewMode]);
+
+  const updateExportWidthInches = (value: string, commit = false): void => {
+    setExportViewPrintWidthInput(value);
+    const inches = Number(value);
+    if (!commit && (!value.trim() || !Number.isFinite(inches) || inches <= 0)) return;
+    const dpi = Number(exportViewDpiInput) || DEFAULT_EXPORT_DPI;
+    const requested = inches > 0 && Number.isFinite(inches) ? inches * dpi : Number(exportViewWidthInput);
+    const width = Math.max(1, Math.min(10000, Math.round(requested || defaultExportPixelSizeForMode(viewMode).width)));
+    setExportViewWidthInput(String(width));
+    if (commit) setExportViewPrintWidthInput(String(Number((width / dpi).toPrecision(12))));
+  };
+  const updateExportDpi = (value: string, commit = false): void => {
+    setExportViewDpiInput(value);
+    let dpi = Number(value);
+    if (!commit && (!value.trim() || !Number.isFinite(dpi) || dpi <= 0)) return;
+    dpi = Math.max(1, Math.min(2400, Math.round(dpi || DEFAULT_EXPORT_DPI)));
+    const inches = Number(exportViewPrintWidthInput) || Number(exportViewWidthInput) / dpi;
+    const width = Math.max(1, Math.min(10000, Math.round(inches * dpi)));
+    setExportViewWidthInput(String(width));
+    if (commit) {
+      setExportViewDpiInput(String(dpi));
+      setExportViewPrintWidthInput(String(Number((width / dpi).toPrecision(12))));
+    }
+  };
+  const updateExportWidthPixels = (value: string, commit = false): void => {
+    setExportViewWidthInput(value);
+    let width = Number(value);
+    if (!commit && (!value.trim() || !Number.isFinite(width) || width <= 0)) return;
+    const dpi = Number(exportViewDpiInput) || DEFAULT_EXPORT_DPI;
+    width = Math.max(1, Math.min(10000, Math.round(width || Number(exportViewPrintWidthInput) * dpi || defaultExportPixelSizeForMode(viewMode).width)));
+    setExportViewPrintWidthInput(String(Number((width / dpi).toPrecision(12))));
+    if (commit) setExportViewWidthInput(String(width));
+  };
+
   const openExportOptions = useCallback((): void => {
     if (!tree) {
       return;
     }
-    const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
-    const extension = exportViewFormat === "svg" ? "svg" : "png";
-    const defaultSize = defaultExportPixelSizeForMode(viewMode);
-    setExportViewFilenameInput(`${baseLabel}-${viewMode}-view.${extension}`);
-    setExportViewWidthInput(defaultSize.width);
-    setExportViewHeightInput(defaultSize.height);
-    setExportViewPrintWidthInchesInput(Number((defaultSize.width / DEFAULT_EXPORT_DPI).toFixed(2)));
-    setExportViewPrintHeightInchesInput(Number((defaultSize.height / DEFAULT_EXPORT_DPI).toFixed(2)));
-    setExportViewDpiInput(DEFAULT_EXPORT_DPI);
+    if (!exportOptionsInitializedRef.current) {
+      resetExportOptions();
+    }
     setShowExportOptions((value) => !value);
-  }, [exportViewFormat, loadedTreeLabel, tree, viewMode]);
-
-  const applyPrintSizeToPngExport = useCallback((): void => {
-    const defaultSize = defaultExportPixelSizeForMode(viewMode);
-    const widthInches = Math.max(0.5, Math.min(100, Number(exportViewPrintWidthInchesInput) || (defaultSize.width / DEFAULT_EXPORT_DPI)));
-    const heightInches = Math.max(0.5, Math.min(100, Number(exportViewPrintHeightInchesInput) || widthInches));
-    const dpi = Math.max(72, Math.min(1200, Number(exportViewDpiInput) || DEFAULT_EXPORT_DPI));
-    const width = clampExportPixelDimension(widthInches * dpi, defaultSize.width);
-    const height = clampExportPixelDimension(heightInches * dpi, defaultSize.height);
-    const normalized = squarePngExportSizeForMode(viewMode, width, height);
-    setExportViewWidthInput(normalized.width ?? width);
-    setExportViewHeightInput(normalized.height ?? height);
-  }, [exportViewDpiInput, exportViewPrintHeightInchesInput, exportViewPrintWidthInchesInput, viewMode]);
+  }, [resetExportOptions, tree]);
 
   const exportCurrentView = useCallback((): void => {
     if (!tree || typeof window === "undefined") {
       return;
     }
     const baseLabel = sanitizeExportBaseLabel(loadedTreeLabel);
+    const width = Math.max(1, Math.min(10000, Math.round(Number(exportViewWidthInput) || defaultExportPixelSizeForMode(viewMode).width)));
+    const dpi = Math.max(1, Math.min(2400, Math.round(Number(exportViewDpiInput) || DEFAULT_EXPORT_DPI)));
+    setExportViewWidthInput(String(width));
+    setExportViewPrintWidthInput(String(Number((width / dpi).toPrecision(12))));
+    setExportViewDpiInput(String(dpi));
+    setExportPngWidth(width);
+    setExportFigureDpi(dpi);
     if (exportViewFormat === "svg") {
       setExportSvgFilename(normalizeSvgExportFilename(exportViewFilenameInput, `${baseLabel}-${viewMode}-view`));
       setExportSvgRequest((value) => value + 1);
-      setShowExportOptions(false);
       return;
     }
-    const defaultSize = defaultExportPixelSizeForMode(viewMode);
-    const rawWidth = clampExportPixelDimension(exportViewWidthInput, defaultSize.width);
-    const rawHeight = clampExportPixelDimension(exportViewHeightInput, defaultSize.height);
-    const normalizedSize = squarePngExportSizeForMode(viewMode, rawWidth, rawHeight);
-    const width = normalizedSize.width ?? rawWidth;
-    const height = normalizedSize.height ?? rawHeight;
-    setExportViewWidthInput(width);
-    setExportViewHeightInput(height);
-    setExportPngWidth(width);
-    setExportPngHeight(height);
     setExportPngFilename(normalizePngExportFilename(exportViewFilenameInput, `${baseLabel}-${viewMode}-view`));
     setExportPngRequest((value) => value + 1);
-    setShowExportOptions(false);
   }, [
     exportViewFilenameInput,
     exportViewFormat,
-    exportViewHeightInput,
     exportViewWidthInput,
+    exportViewDpiInput,
     loadedTreeLabel,
     tree,
     viewMode,
@@ -4581,21 +4646,15 @@ export default function App() {
     if (replyTarget && normalized.delivery === "postMessage") {
       automationExportReplyTargetsRef.current.set(id, replyTarget);
     }
-    const normalizedTargetSize = normalized.format === "png"
-      ? squarePngExportSizeForMode(exportViewMode, normalized.width, normalized.height)
-      : { width: normalized.width, height: normalized.height };
-    const normalizedViewportSize = normalized.format === "png"
-      ? squarePngExportSizeForMode(exportViewMode, normalized.viewportWidth, normalized.viewportHeight)
-      : { width: normalized.viewportWidth, height: normalized.viewportHeight };
     setAutomationExportRequest({
       id,
       format: normalized.format,
       delivery: normalized.delivery ?? "download",
       filename: normalized.filename || defaultFilename,
-      width: normalizedTargetSize.width,
-      height: normalizedTargetSize.height,
-      viewportWidth: normalizedViewportSize.width,
-      viewportHeight: normalizedViewportSize.height,
+      width: normalized.width,
+      height: normalized.height,
+      viewportWidth: normalized.viewportWidth,
+      viewportHeight: normalized.viewportHeight,
     });
   }, [loadedTreeLabel, viewMode]);
 
@@ -4715,6 +4774,10 @@ export default function App() {
     phylopicOffsetYPx,
     branchThicknessScale,
     metadataEnabled,
+    metadataLegendEnabled,
+    metadataLegendPosition,
+    metadataLegendPlacement,
+    metadataLegendComponents,
     metadataFirstRowIsHeader,
     metadataKeyColumn,
     metadataValueColumn,
@@ -4769,6 +4832,10 @@ export default function App() {
     metadataContinuousPalette,
     metadataContinuousTransform,
     metadataEnabled,
+    metadataLegendEnabled,
+    metadataLegendPosition,
+    metadataLegendPlacement,
+    metadataLegendComponents,
     metadataFirstRowIsHeader,
     metadataKeyColumn,
     metadataLabelColumn,
@@ -4963,6 +5030,10 @@ export default function App() {
     setBranchThicknessScale(settings.branchThicknessScale);
     setMetadataFirstRowIsHeader(settings.metadataFirstRowIsHeader);
     setMetadataEnabled(settings.metadataEnabled);
+    setMetadataLegendEnabled(settings.metadataLegendEnabled === true);
+    setMetadataLegendPosition(normalizeMetadataLegendPosition(settings.metadataLegendPosition));
+    setMetadataLegendPlacement(normalizeMetadataLegendPlacement(settings.metadataLegendPlacement));
+    setMetadataLegendComponents(normalizeMetadataLegendComponents(settings.metadataLegendComponents));
     setMetadataKeyColumn(settings.metadataKeyColumn);
     setMetadataValueColumn(settings.metadataValueColumn);
     setMetadataColorMode(settings.metadataColorMode);
@@ -7386,6 +7457,10 @@ export default function App() {
         taxonomyColorJitterRank,
         taxonomyMappedCount: viewTaxonomyMap?.mappedCount ?? 0,
         metadataEnabled,
+        metadataLegendEnabled,
+        metadataLegendPosition,
+        metadataLegendPlacement,
+        metadataLegendComponents,
         metadataFileName,
         metadataRowCount: metadataTable?.rows.length ?? 0,
         metadataKeyColumn,
@@ -7686,6 +7761,10 @@ export default function App() {
     metadataContinuousPalette,
     metadataContinuousTransform,
     metadataEnabled,
+    metadataLegendEnabled,
+    metadataLegendPosition,
+    metadataLegendPlacement,
+    metadataLegendComponents,
     metadataFileName,
     metadataKeyColumn,
     metadataLabelColumn,
@@ -7866,6 +7945,9 @@ export default function App() {
           break;
         case "export-view":
           setDataOpen(true);
+          if (!exportOptionsInitializedRef.current) {
+            resetExportOptions();
+          }
           setShowExportOptions(true);
           showSidebar();
           break;
@@ -7884,7 +7966,7 @@ export default function App() {
           break;
       }
     });
-  }, [downloadCurrentTreeNewick, fitCurrentView, hideSidebar, loadSession, saveSession, setDataOpen, showSidebar, sidebarVisible, toggleViewerFullscreen]);
+  }, [downloadCurrentTreeNewick, fitCurrentView, hideSidebar, loadSession, resetExportOptions, saveSession, setDataOpen, showSidebar, sidebarVisible, toggleViewerFullscreen]);
 
   return (
     <div
@@ -8060,7 +8142,7 @@ export default function App() {
               onClick={openExportOptions}
               title={comparisonEnabled && comparisonTree
                 ? "Comparison-view image export is not yet available. Save a session to share this comparison."
-                : "Export the current visible view as a PNG or SVG figure."}
+                : "Save the complete tree and displayed metadata legend as a tightly cropped PNG or SVG figure."}
             >
               Export View
             </button>
@@ -8070,9 +8152,9 @@ export default function App() {
                 className="secondary"
                 disabled={!tree}
                 onClick={() => void downloadCurrentTreeNewick()}
-                title="Download the currently loaded tree topology as a Newick file."
+                title="Save the currently loaded tree topology as a Newick file."
               >
-                Download Newick
+                Save Newick
               </button>
             ) : null}
           </div>
@@ -8103,75 +8185,37 @@ export default function App() {
                   onChange={(event) => setExportViewFilenameInput(event.target.value)}
                 />
               </label>
+              <div className="export-options-grid">
+                <label title="Printed width of the complete tree and legend. Height follows their combined bounds without stretching.">
+                  Width (inches)
+                  <input type="number" min={0.01} step={0.1} value={exportViewPrintWidthInput}
+                    onChange={event => updateExportWidthInches(event.target.value)}
+                    onBlur={event => updateExportWidthInches(event.target.value, true)}
+                    onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+                </label>
+                <label title="Pixels per printed inch for PNG. SVG is vector; this value converts its pixel width to physical inches.">
+                  DPI
+                  <input type="number" min={1} max={2400} step={1} value={exportViewDpiInput}
+                    onChange={event => updateExportDpi(event.target.value)}
+                    onBlur={event => updateExportDpi(event.target.value, true)}
+                    onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+                </label>
+              </div>
+              <label title="Linked to width in inches × DPI. Export the complete tree and enabled legend, tightly cropped; panning does not affect the exported frame.">
+                Width px
+                <input type="number" min={1} max={10000} step={100} value={exportViewWidthInput}
+                  onChange={event => updateExportWidthPixels(event.target.value)}
+                  onBlur={event => updateExportWidthPixels(event.target.value, true)}
+                  onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+              </label>
               {exportViewFormat === "png" ? (
                 <>
-                  <div className="export-options-grid">
-                    <label>
-                      Width px
-                      <input
-                        type="number"
-                        min={320}
-                        max={10000}
-                        step={100}
-                        value={exportViewWidthInput}
-                        onChange={(event) => setExportViewWidthInput(Number(event.target.value))}
-                      />
+                  {canExportAdditionalTaxonomyLabels ? (
+                    <label className="label-style-inline-toggle" title="Use the PNG resolution to include additional readable labels inside the taxonomy ribbons. Keeps the same export framing and selected ranks; labels must still fit without overlap.">
+                      <input type="checkbox" checked={exportAdditionalTaxonomyLabels} onChange={event => setExportAdditionalTaxonomyLabels(event.target.checked)} />
+                      Show additional taxonomy labels at export resolution
                     </label>
-                    <label>
-                      Height px
-                      <input
-                        type="number"
-                        min={320}
-                        max={10000}
-                        step={100}
-                        value={exportViewHeightInput}
-                        onChange={(event) => setExportViewHeightInput(Number(event.target.value))}
-                      />
-                    </label>
-                  </div>
-                  <div className="export-options-grid">
-                    <label>
-                      Print width (in)
-                      <input
-                        type="number"
-                        min={0.5}
-                        max={100}
-                        step={0.5}
-                        value={exportViewPrintWidthInchesInput}
-                        onChange={(event) => setExportViewPrintWidthInchesInput(Number(event.target.value))}
-                      />
-                    </label>
-                    <label>
-                      Print height (in)
-                      <input
-                        type="number"
-                        min={0.5}
-                        max={100}
-                        step={0.5}
-                        value={exportViewPrintHeightInchesInput}
-                        onChange={(event) => setExportViewPrintHeightInchesInput(Number(event.target.value))}
-                      />
-                    </label>
-                  </div>
-                  <div className="export-options-grid export-options-grid-single">
-                    <label>
-                      DPI
-                      <input
-                        type="number"
-                        min={72}
-                        max={1200}
-                        step={25}
-                        value={exportViewDpiInput}
-                        onChange={(event) => setExportViewDpiInput(Number(event.target.value))}
-                      />
-                    </label>
-                  </div>
-                  <button type="button" className="secondary export-helper-button" onClick={applyPrintSizeToPngExport}>
-                    Set pixels from print size
-                  </button>
-                  <p className="export-options-help">
-                    PNG exports the current viewport at the pixel dimensions above. Spiral PNG exports are kept square; rectangular and radial views support independent width and height. Very large exports can take a few seconds.
-                  </p>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -8193,6 +8237,9 @@ export default function App() {
                   Cancel
                 </button>
               </div>
+              <button type="button" className="secondary export-helper-button" onClick={resetExportOptions}>
+                Restore Defaults
+              </button>
             </div>
           ) : null}
           <div className="button-row" data-tour="sessions">
@@ -9630,6 +9677,37 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+                <div ref={metadataLegendSettingsRef} className="metadata-toggle-row">
+                  <label className="metadata-inline-toggle metadata-toggle-main" title="Show a movable metadata key on the tree and in exported figures.">
+                    <input type="checkbox" checked={metadataLegendEnabled} onChange={event => setMetadataLegendEnabled(event.target.checked)} />
+                    Show metadata legend
+                  </label>
+                  <SettingsPopoverButton title="Metadata legend" isOpen={activeLabelStylePopover === "metadataLegend"}
+                    disabled={!metadataLegendEnabled} disabledReason="Turn on the metadata legend first."
+                    onToggle={() => setActiveLabelStylePopover(current => current === "metadataLegend" ? null : "metadataLegend")}>
+                    <label title="Choose a corner, or drag the legend to a custom position.">
+                      Legend position
+                      <select value={metadataLegendPlacement ? "custom" : metadataLegendPosition} onChange={event => {
+                        setMetadataLegendPosition(normalizeMetadataLegendPosition(event.target.value));
+                        setMetadataLegendPlacement(null);
+                      }}>
+                        {metadataLegendPlacement ? <option value="custom" disabled>Custom (dragged)</option> : null}
+                        <option value="top-right">Top right</option>
+                        <option value="bottom-right">Bottom right</option>
+                        <option value="bottom-left">Bottom left</option>
+                        <option value="top-left">Top left</option>
+                      </select>
+                    </label>
+                    {([
+                      ["branchColors", "Branch colors"], ["markers", "Markers"], ["pies", "Pie charts"],
+                    ] as const).map(([key, label]) => (
+                      <label key={key} className="metadata-inline-toggle" title={`Include the ${label.toLowerCase()} key when that metadata display is active.`}>
+                        <input type="checkbox" checked={metadataLegendComponents[key]} onChange={event => setMetadataLegendComponents(current => ({ ...current, [key]: event.target.checked }))} />
+                        {label}
+                      </label>
+                    ))}
+                  </SettingsPopoverButton>
+                </div>
                 <div className="metadata-toggle-row">
                   <label className="metadata-inline-toggle metadata-toggle-main" title="Color branches using values from the loaded metadata table.">
                     <input
@@ -10769,6 +10847,14 @@ export default function App() {
           sharedSubtreeSourceTaxonomyMapRef={treeCanvasSourceTaxonomyMapRef}
           sharedSubtreeSourceNodeByViewNode={collapsedTaxonomyView?.sourceNodeByNode ?? null}
           metadataBranchColors={metadataEnabled && !metadataOverlaysSuppressed && metadataOverlay.hasAny ? metadataOverlay.colors : null}
+          metadataBranchValues={metadataEnabled && !metadataOverlaysSuppressed && metadataOverlay.hasAny ? metadataOverlay.values : null}
+          metadataTooltipColumns={metadataTooltipColumns}
+          metadataLegendSections={metadataLegendSections}
+          metadataLegendPosition={metadataLegendPosition}
+          metadataLegendPlacement={metadataLegendPlacement}
+          onMetadataLegendPlacementChange={setMetadataLegendPlacement}
+          onMetadataLegendSettingsRequest={openMetadataLegendSettings}
+          onMetadataLegendHide={hideMetadataLegend}
           metadataBranchColorVersion={metadataEnabled ? metadataOverlay.version : ""}
           metadataLabels={metadataLabelsEnabled && !metadataOverlaysSuppressed && metadataLabelOverlay.hasAny ? metadataLabelOverlay.labels : null}
           metadataLabelVersion={metadataLabelsEnabled ? metadataLabelOverlay.version : ""}
@@ -10813,7 +10899,9 @@ export default function App() {
           exportPngRequest={exportPngRequest}
           exportPngFilename={exportPngFilename}
           exportPngWidth={exportPngWidth}
+          exportFigureDpi={exportFigureDpi}
           exportPngHeight={exportPngHeight}
+          exportPngAdditionalTaxonomyLabels={canExportAdditionalTaxonomyLabels && exportAdditionalTaxonomyLabels}
           automationExportRequest={automationExportRequest}
           sessionStateRequest={sessionStateRequest}
           sessionRestoreRequest={sessionRestoreRequest}

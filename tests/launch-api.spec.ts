@@ -225,7 +225,7 @@ test("remote Newick URL launch fetches a public tree and applies URL settings", 
   expect(state?.loadError).toBeNull();
 });
 
-test("export dialog defaults to browser-scale PNG dimensions", async ({ page }) => {
+test("export dialog defaults to a width-only figure with automatic height", async ({ page }) => {
   const newick = "((Alpha:1,Beta:1)CladeOne:1,Gamma:2)Root;";
   const params = new URLSearchParams({
     btv_newick_b64: toBase64Url(newick),
@@ -241,29 +241,22 @@ test("export dialog defaults to browser-scale PNG dimensions", async ({ page }) 
   await page.getByRole("button", { name: "Export View" }).click();
   let dialog = page.getByRole("dialog", { name: "Export view settings" });
   await expect(dialog.getByLabel("Width px")).toHaveValue("1600");
-  await expect(dialog.getByLabel("Height px")).toHaveValue("1000");
-  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("8");
-  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("5");
-  await expect(dialog.getByLabel("DPI")).toHaveValue("200");
+  await expect(dialog.getByLabel("Height px", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText("Height: automatic", { exact: true })).toHaveCount(0);
 
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await page.getByRole("button", { name: "Radial" }).click();
   await page.getByRole("button", { name: "Export View" }).click();
   dialog = page.getByRole("dialog", { name: "Export view settings" });
   await expect(dialog.getByLabel("Width px")).toHaveValue("1600");
-  await expect(dialog.getByLabel("Height px")).toHaveValue("1000");
-  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("8");
-  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("5");
-  await expect(dialog.getByLabel("DPI")).toHaveValue("200");
+  await expect(dialog.getByText("Height: automatic", { exact: true })).toHaveCount(0);
 
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setRadialAngularSpanDegreesForTest(180));
   await page.getByRole("button", { name: "Export View" }).click();
   dialog = page.getByRole("dialog", { name: "Export view settings" });
   await expect(dialog.getByLabel("Width px")).toHaveValue("1600");
-  await expect(dialog.getByLabel("Height px")).toHaveValue("1000");
-  await expect(dialog.getByLabel("Print width (in)")).toHaveValue("8");
-  await expect(dialog.getByLabel("Print height (in)")).toHaveValue("5");
+  await expect(dialog.getByText("Height: automatic", { exact: true })).toHaveCount(0);
 });
 
 test("remote session URL launch fetches and restores a saved session", async ({ page }) => {

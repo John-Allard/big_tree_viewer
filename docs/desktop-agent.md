@@ -56,7 +56,8 @@ setting names and mismatched primitive types are rejected; supported values may
 be normalized by BTV, so check the effective settings returned. Spiral requires
 at least 1,000 tips. Canvas camera coordinates use the supplied saved viewport
 and are rescaled to the actual tree viewport. PNG dimensions may also be
-normalized (spiral PNG is square); exported dimensions are returned.
+normalized to export limits; exported dimensions are returned. Spiral PNGs can
+use non-square dimensions, like other geometries.
 
 Metadata is local `metadataPath` plus typed `metadata` column/encoding settings.
 Taxonomy example: `{ "source": "ncbi", "ranks": ["class", "order"],

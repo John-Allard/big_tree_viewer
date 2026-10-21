@@ -69,6 +69,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
     app.setFigureStyleForTest("nodeHeight", "decimalPlaces", 3);
     app.setFigureStyleForTest("bootstrap", "polarOrientation", "radial");
     app.setFigureStyleForTest("nodeHeight", "polarOrientation", "tangential");
+    app.setFigureStyleForTest("taxonomy", "labelVisibilityThreshold", 0.25);
     app.setViewMode("circular");
     app.setShowTipLabels(false);
     app.setAlignTipLabels(true);
@@ -123,6 +124,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(session.settings?.figureStyles?.nodeHeight?.decimalPlaces).toBe(3);
   expect(session.settings?.figureStyles?.bootstrap?.polarOrientation).toBe("radial");
   expect(session.settings?.figureStyles?.nodeHeight?.polarOrientation).toBe("tangential");
+  expect(session.settings?.figureStyles?.taxonomy?.labelVisibilityThreshold).toBe(0.25);
   expect(session.canvas?.camera?.kind).toBe("circular");
   expect(Number(session.canvas?.viewportWidth ?? 0)).toBeGreaterThan(0);
   expect(Number(session.canvas?.viewportHeight ?? 0)).toBeGreaterThan(0);
@@ -159,6 +161,7 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(restored.app?.figureStyles?.nodeHeight?.decimalPlaces).toBe(3);
   expect(restored.app?.figureStyles?.bootstrap?.polarOrientation).toBe("radial");
   expect(restored.app?.figureStyles?.nodeHeight?.polarOrientation).toBe("tangential");
+  expect(restored.app?.figureStyles?.taxonomy?.labelVisibilityThreshold).toBe(0.25);
   expect(restored.app?.metadataTipTableColumns).toEqual([{ column: "group", label: "Study group" }]);
   expect(restored.app?.metadataRowCount).toBe(2);
   expect(restored.camera?.kind).toBe("circular");

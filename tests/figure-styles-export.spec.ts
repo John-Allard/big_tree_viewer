@@ -42,7 +42,7 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
   await waitForViewer(page);
   await loadTreeFromPaste(page, "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;");
 
-  const svg = await page.evaluate(async () => {
+  await page.evaluate(() => {
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("rectangular");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowInternalNodeLabels(true);
     window.__BIG_TREE_VIEWER_APP_TEST__?.setShowBootstrapLabels(true);
@@ -51,9 +51,12 @@ test("vector SVG export includes styled tip, internal, and bootstrap labels with
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("bootstrap", "fontFamily", "courierNew");
     window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("tip", "offsetPx", 12);
     window.__BIG_TREE_VIEWER_APP_TEST__?.requestFit();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    return window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? null;
   });
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.viewMode === "rectangular" && state.showInternalNodeLabels && state.showBootstrapLabels;
+  });
+  const svg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? null);
 
   expect(svg).toBeTruthy();
   expect(svg).toContain("<svg");
@@ -475,6 +478,7 @@ test("rectangular tip labels are unlimited by default and support explicit overf
   await page.getByRole("button", { name: "Visual Options" }).click();
   await page.getByRole("button", { name: "Tip labels settings" }).click();
   await expect(page.getByLabel("Limit label section width")).not.toBeChecked();
+  await expect(page.getByLabel("Limit label section width").locator("..")).toHaveAttribute("title", /maximum width.*truncated or scaled down/i);
   const widthControlsFollowOffset = await page.getByRole("dialog", { name: "Tip labels settings" }).evaluate((dialog) => {
     const offset = Array.from(dialog.querySelectorAll("label")).find((label) => label.textContent?.trim().startsWith("Offset"));
     const limit = Array.from(dialog.querySelectorAll("label")).find((label) => label.textContent?.includes("Limit label section width"));
@@ -718,14 +722,14 @@ test("time stripe settings live inside the scale settings", async ({ page }) => 
   await expect(page.getByText("Stripe style")).toBeVisible();
 });
 
-test("download newick exports the active tree in the current tab", async ({ page }) => {
+test("save newick exports the active tree in the current tab", async ({ page }) => {
   await waitForViewer(page);
   const pastedNewick = "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1)92:1)Root;";
   const exportedNewick = "((A_species:1,B_species:1)CladeOne:1,(C_species:1,D_species:1):1)Root;";
   await loadTreeFromPaste(page, pastedNewick);
 
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download Newick" }).click();
+  await page.getByRole("button", { name: "Save Newick" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("pasted_tree.nwk");
 

@@ -165,8 +165,8 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
               <tr><th scope="row"><code>btv_session_url</code></th><td>Public URL</td><td>Load a <code>.btvsession</code> file. Requires host CORS support.</td></tr>
               <tr><th scope="row"><code>btv_export</code></th><td><code>svg</code>, <code>png</code></td><td>Export after launch.</td></tr>
               <tr><th scope="row"><code>btv_export_delivery</code></th><td><code>download</code>, <code>postMessage</code></td><td>Download the exported file or return it through postMessage.</td></tr>
-              <tr><th scope="row"><code>btv_export_width</code></th><td>Pixels</td><td>PNG width. Spiral exports are square; rectangular and radial exports may use independent dimensions without distorting radial geometry.</td></tr>
-              <tr><th scope="row"><code>btv_export_height</code></th><td>Pixels</td><td>PNG height, subject to the same geometry constraints as width.</td></tr>
+              <tr><th scope="row"><code>btv_export_width</code></th><td>Pixels</td><td>PNG width for an API current-view export. All geometries support landscape or portrait dimensions. The separate Export View panel exports the complete tree, tightly cropped, using a chosen width and an automatically derived height.</td></tr>
+              <tr><th scope="row"><code>btv_export_height</code></th><td>Pixels</td><td>PNG height for an API current-view export.</td></tr>
               <tr><th scope="row"><code>btv_export_filename</code></th><td>Filename</td><td>Suggested filename for downloads and automation results.</td></tr>
             </tbody>
           </table>
@@ -338,14 +338,19 @@ window.addEventListener("message", (event) => {
     taxonomyRankVisibility?: { [rank: string]: boolean | undefined },
     taxonomyRankDisplayModes?: { kingdom?: "hidden" | "label-only" | "ribbon", [rank: string]: "hidden" | "label-only" | "ribbon" | undefined },
     figureStyles?: {
+      // Taxonomy labelVisibilityThreshold: 0.1 to 2, default 1. Lower values allow smaller labels.
       tip?: { sizeScale?: number, showGuideTicks?: boolean, limitWidth?: boolean, maxWidthPx?: number, overflowMode?: "truncate" | "scale" },
-      taxonomy?: { sizeScale?: number, bandThicknessScale?: number, taxonomyGap?: number, thickenOutermostRibbon?: boolean },
+      taxonomy?: { sizeScale?: number, bandThicknessScale?: number, taxonomyGap?: number, thickenOutermostRibbon?: boolean, labelVisibilityThreshold?: number },
       bootstrap?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
       nodeHeight?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
       scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean },
       [labelClass: string]: object | undefined
     },
     metadataMarkersEnabled?: boolean,
+    metadataLegendEnabled?: boolean,
+    metadataLegendPosition?: "top-right" | "bottom-right" | "bottom-left" | "top-left",
+    metadataLegendPlacement?: { x: number, y: number } | null, // normalized custom position, 0..1
+    metadataLegendComponents?: { branchColors: boolean, markers: boolean, pies: boolean },
     metadataTipTableEnabled?: boolean,
     metadataTipTableMode?: "bars" | "heatmap" | "categorical",
     metadataTipTableCellStyle?: "filled" | "circle" | "square" | "check" | "text",

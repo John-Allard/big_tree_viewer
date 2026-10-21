@@ -1,4 +1,4 @@
-import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
+import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, taxonomyLabelVisibilityThreshold, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
 import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, ULTRAMETRIC_CLADOGRAM_METHODS, normalizeCladogramLogStrength, type UltrametricCladogramMethod } from "./cladogram";
 import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
 import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./timeAxis";
@@ -147,6 +147,7 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
     current.offsetYPx = coerceFiniteNumber(source.offsetYPx, current.offsetYPx);
     current.bandThicknessScale = coerceFiniteNumber(source.bandThicknessScale, current.bandThicknessScale ?? 1);
     if (labelClass === "taxonomy") {
+      current.labelVisibilityThreshold = taxonomyLabelVisibilityThreshold(source);
       const sourceTaxonomyGap = typeof source.taxonomyGap === "number" && Number.isFinite(source.taxonomyGap)
         ? source.taxonomyGap
         : coerceFiniteNumber(source.taxonomyGapPx, 0) + 1;

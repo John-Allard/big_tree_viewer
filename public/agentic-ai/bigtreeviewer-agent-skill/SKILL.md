@@ -39,7 +39,7 @@ Use the following instructions when desktop MCP is not connected or not availabl
 - `btv_open.py --download-export png|svg` remains compatible with older commands, but now renders headlessly and saves the named file instead of using the active browser's download UI.
 - For huge trees, avoid SVG unless the user explicitly needs vector output for a limited visible region. SVG can become slow or unusable because every visible branch is vector geometry; PNG is usually safer.
 - For slide figures, prefer setting PNG `--width`/`--height` to the final on-slide pixel box, or use `--export-viewport-width`/`--export-viewport-height` to preserve slide-scale styling while exporting at higher pixel density.
-- Spiral PNG exports must be square. Rectangular and radial trees may use landscape or portrait dimensions; radial geometry remains circular rather than stretching with the canvas.
+- All geometries support landscape or portrait PNG dimensions, including spiral. API/helper exports retain current-view framing with explicit dimensions. The viewer's separate Export View panel exports the complete tree and enabled legend, tightly cropped; it accepts only a width and derives the height from the figure bounds without stretching the tree.
 - Use spiral mode only for trees with at least 1,000 tips; the viewer disables it for smaller trees.
 - If the user does not request export dimensions, keep browser-window-scale defaults: rectangular and radial PNG exports default to 1600 x 1000 pixels, and spiral PNG exports default to 1200 x 1200 pixels.
 - For large local trees, prefer the scripts' postMessage launch path instead of putting Newick directly into a URL.

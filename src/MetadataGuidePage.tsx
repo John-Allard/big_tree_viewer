@@ -171,6 +171,11 @@ export default function MetadataGuidePage() {
               <p>
                 Check that the selected column and visual encoding represent the
                 intended variable. These views use the same example table.
+                Enable Show metadata legend to include a color and symbol key in
+                the view and exported images. Its settings select the position
+                and included components; the legend can also be dragged or
+                right-clicked to open settings or hide it. Hover over a branch to inspect its
+                mapped metadata values, including inherited subtree colors.
               </p>
             </div>
           </div>
@@ -244,7 +249,8 @@ export default function MetadataGuidePage() {
           <p>
             <strong>Save Session</strong> stores the table, matching column,
             overlay settings, tree, and current view. <strong>Export View</strong>
-            writes the current rendered figure as PNG or SVG.
+            writes the complete tree and enabled legend as a tightly cropped
+            PNG or SVG. Choose the width; height follows the figure proportions.
           </p>
         </section>
       </div>

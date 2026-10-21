@@ -134,7 +134,7 @@ try {
   const info = await call('inspect_tree', { sessionId }); assert.equal(info.tips, 16);
   const handoff = await call('handoff_tree', { sessionId });
   assert.ok(handoff.outputPath.endsWith('.btvsession'));
-  await expect(guiPage.getByRole('button', { name: 'Download Newick', exact: true })).toBeEnabled({ timeout: 15000 });
+  await expect(guiPage.getByRole('button', { name: 'Save Newick', exact: true })).toBeEnabled({ timeout: 15000 });
   await call('close_tree', { sessionId }); await call('inspect_tree', { sessionId }, true);
   await call('close_tree', { sessionId: reopened.sessionId });
   const large = await call('render_tree', { treePath: path.join(root, 'public/example_tree.btvsession'), layout: 'spiral',
@@ -142,6 +142,6 @@ try {
   assert.equal(large.tree.tips, 50033); assert.ok(large.tree.taxonomy.mappedTips > 49000);
   assert.equal(large.tree.layout, 'spiral');
   await client.close();
-  await expect(guiPage.getByRole('button', { name: 'Download Newick', exact: true })).toBeEnabled();
+  await expect(guiPage.getByRole('button', { name: 'Save Newick', exact: true })).toBeEnabled();
   console.log(`Passed ${count} desktop MCP operations: visible open, update, inspect, PNG/SVG export, session roundtrip, NEXUS, error handling, and close.`);
 } finally { await client.close(); await gui?.close(); await rm(dir, { recursive: true, force: true }); }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
-import { fontFamilyCss, type FigureStyleSettings } from "../lib/figureStyles";
+import { fontFamilyCss, taxonomyLabelVisibilityThreshold, type FigureStyleSettings } from "../lib/figureStyles";
 import { buildComparisonLayout, normalizeComparisonTipName } from "../lib/treeComparison";
 import { deriveDefaultVisibleTaxonomyRanks } from "../lib/taxonomyActiveRanks";
 import { isAutomaticTaxonomyRank, isDefaultTaxonomyRank, TAXONOMY_RANKS, type TaxonomyMapPayload, type TaxonomyRank } from "../types/taxonomy";
@@ -758,7 +758,8 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
               lastNode: segment.lastNode,
               descendantTipCount: Math.max(1, segment.endIndex - segment.startIndex + 1),
             });
-            if (height > 28 && rankWidth >= 5) {
+            const labelThreshold = taxonomyLabelVisibilityThreshold(figureStyles.taxonomy);
+            if (height > 28 * labelThreshold && rankWidth >= 5 * labelThreshold) {
               context.save();
               context.beginPath();
               context.rect(x, top, rankWidth, height);
@@ -766,7 +767,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
               context.translate(x + (rankWidth / 2), (top + bottom) / 2);
               context.rotate(Math.PI / 2);
               context.fillStyle = "#111827";
-              const labelFontSize = Math.max(3, Math.min(
+              const labelFontSize = Math.max(3 * Math.min(1, labelThreshold), Math.min(
                 32 * figureStyles.taxonomy.sizeScale,
                 rankWidth - 2,
               ));
