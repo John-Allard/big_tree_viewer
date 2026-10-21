@@ -33,6 +33,7 @@ jobs:
       - run: npm ci
       - run: npm run test:agent-connect
       - run: npm run test:update-dialog
+      - run: npm run test:update-check
       - run: npm run build:desktop:web
       - run: npx electron-builder --linux AppImage deb --x64 --publish never
       - name: Smoke-test packaged app and file association launch

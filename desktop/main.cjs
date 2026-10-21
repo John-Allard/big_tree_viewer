@@ -411,7 +411,20 @@ async function checkForUpdates(manual = true) {
   updateCheckIsManual = manual;
   updateCheckInProgress = true;
   try {
-    await autoUpdater.checkForUpdates();
+    const result = await autoUpdater.checkForUpdates();
+    if (result === null && updateCheckIsManual) {
+      updateCheckIsManual = false;
+      const choice = await dialog.showMessageBox(activeWindow(), {
+        type: "info",
+        title: "Updates Unavailable for This Installation",
+        message: "Automatic updates are not available for this installation.",
+        detail: `This copy is version ${app.getVersion()}. It may be running from an extracted AppImage or another installation that cannot update itself. Download a current installer from the Big Tree Viewer website.`,
+        buttons: ["Open Downloads", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (choice.response === 0) await shell.openExternal("https://bigtreeviewer.net/#desktop");
+    }
   } catch (error) {
     updateCheckIsManual = false;
     if (manual) {

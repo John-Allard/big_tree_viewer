@@ -46,6 +46,13 @@ try {
   if (!hasLearnMoreHelpItem) {
     throw new Error("The desktop application is missing Learn More from its Help menu.");
   }
+  if (process.platform !== "darwin") {
+    const hasAboutHelpItem = await emptyApp.evaluate(({ Menu }) => {
+      const help = Menu.getApplicationMenu()?.items.find(item => item.role === "help" || item.label === "Help");
+      return Boolean(help?.submenu?.items.some(item => item.label === "About Big Tree Viewer"));
+    });
+    if (!hasAboutHelpItem) throw new Error("The desktop application is missing Help > About Big Tree Viewer.");
+  }
   const desktopMenu = await emptyApp.evaluate(({ app, Menu }) => {
     const applicationMenu = Menu.getApplicationMenu();
     const fileMenu = applicationMenu?.items.find((item) => item.label === "File");
@@ -164,7 +171,7 @@ try {
   const page = await app.firstWindow();
   await page.waitForFunction(() => {
     const button = [...document.querySelectorAll("button")]
-      .find((element) => element.textContent?.trim() === "Download Newick");
+      .find((element) => element.textContent?.trim() === "Save Newick");
     return button instanceof HTMLButtonElement && !button.disabled;
   }, undefined, { timeout: 15_000 });
   if (!await page.getByRole("button", { name: "Spiral", exact: true }).isDisabled()) {
