@@ -1,3 +1,5 @@
+import { automaticPolarBranchLabelCandidates, arcIntersectsLabel, branchIntersectsLabel, labelFitsBranch } from "../lib/automaticBranchLabel";
+import { circularLabelOffset, normalizeLabelAngle } from "../lib/circularLabelOffsets";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createCladogramTree, DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLADOGRAM_LOG_STRENGTH } from "../lib/cladogram";
@@ -334,24 +336,6 @@ function isEditableEventTarget(target: EventTarget | null): boolean {
   return editable instanceof HTMLElement;
 }
 
-function applyCircularPointLabelOffset(
-  x: number,
-  y: number,
-  theta: number,
-  rotationAngle: number,
-  tangentialOffsetPx: number,
-  radialOffsetPx: number,
-): { x: number; y: number } {
-  const renderedTheta = theta + rotationAngle;
-  const tangentX = -Math.sin(renderedTheta);
-  const tangentY = Math.cos(renderedTheta);
-  const radialX = Math.cos(renderedTheta);
-  const radialY = Math.sin(renderedTheta);
-  return {
-    x: x + (tangentX * tangentialOffsetPx) + (radialX * radialOffsetPx),
-    y: y + (tangentY * tangentialOffsetPx) + (radialY * radialOffsetPx),
-  };
-}
 
 type SpiralMetrics = {
   startTheta: number;
@@ -10612,14 +10596,34 @@ export default function TreeCanvas({
           if (!labelText) {
             continue;
           }
-          const x = tree.buffers.depth[node];
+          const automaticPlacement = figureStyles.internalNode.metadataPlacement === "auto";
+          const stemPlacement = automaticPlacement || figureStyles.internalNode.metadataPlacement === "stem";
+          const parent = tree.buffers.parent[node];
+          const x = stemPlacement && parent >= 0
+            ? (axisDepth(tree.buffers.depth[parent]) + axisDepth(tree.buffers.depth[node])) / 2
+            : tree.buffers.depth[node];
           const y = layout.center[node];
           if (x < minX || x > maxX || y < minY || y > maxY) {
             continue;
           }
           const screen = worldToScreenRect(camera, x, y);
-          const labelX = screen.x + 10 + figureStyles.internalNode.offsetXPx + metadataLabelOffsetXPx;
-          const labelY = screen.y - 12 + figureStyles.internalNode.offsetYPx + metadataLabelOffsetYPx;
+          let labelX = stemPlacement ? screen.x + metadataLabelOffsetXPx
+            : screen.x + 10 + figureStyles.internalNode.offsetXPx + metadataLabelOffsetXPx;
+          let labelY = stemPlacement ? screen.y - fontSize * 0.5 - 5 + metadataLabelOffsetYPx
+            : screen.y - 12 + figureStyles.internalNode.offsetYPx + metadataLabelOffsetYPx;
+          if (automaticPlacement) {
+            const nodeScreen = worldToScreenRect(camera, axisDepth(tree.buffers.depth[node]), y);
+            const parentScreen = worldToScreenRect(camera, axisDepth(tree.buffers.depth[parent >= 0 ? parent : node]), y);
+            const width = ctx.measureText(labelText).width;
+            if (!labelFitsBranch(Math.abs(nodeScreen.x - parentScreen.x), width)) {
+              let top = nodeScreen.y;
+              for (let child = tree.buffers.firstChild[node]; child >= 0; child = tree.buffers.nextSibling[child]) {
+                top = Math.min(top, worldToScreenRect(camera, axisDepth(tree.buffers.depth[node]), layout.center[child]).y);
+              }
+              labelX = nodeScreen.x + width / 2 + 5 + metadataLabelOffsetXPx;
+              labelY = top - fontSize / 2 - 5 + metadataLabelOffsetYPx;
+            }
+          }
           if (!canPlaceLinearLabel(
             labels,
             labelX,
@@ -10635,15 +10639,19 @@ export default function TreeCanvas({
             text: labelText,
             alpha: 0.9,
             fontSize,
-            color: effectiveBranchColors?.[node] ?? metadataBranchColorOverlay.colors[node] ?? "#1f2937",
+            align: stemPlacement ? "center" : "left",
+            color: figureStyles.internalNode.metadataColorMode === "fixed"
+              ? figureStyles.internalNode.metadataColor ?? "#1f2937"
+              : effectiveBranchColors?.[node] ?? metadataBranchColorOverlay.colors[node] ?? BRANCH_COLOR,
           });
         }
         for (let index = 0; index < labels.length; index += 1) {
           const label = labels[index];
           ctx.globalAlpha = label.alpha;
           ctx.fillStyle = label.color ?? "#1f2937";
+          ctx.textAlign = label.align ?? "left";
           ctx.fillText(label.text, label.x, label.y);
-          pushSceneText(label.text, label.x, label.y, label.color ?? "#1f2937", label.fontSize ?? fontSize, labelFontFamilies.internalNode, "start");
+          pushSceneText(label.text, label.x, label.y, label.color ?? "#1f2937", label.fontSize ?? fontSize, labelFontFamilies.internalNode, label.align === "center" ? "middle" : "start");
         }
         ctx.globalAlpha = 1;
       }
@@ -14543,20 +14551,15 @@ export default function TreeCanvas({
           const labelClass: LabelStyleClass = isBootstrap ? "bootstrap" : "internalNode";
           const fontSize = scaleLabelFontSize(labelClass, pointLabelBaseFontSize(isBootstrap, angularSpacingPx));
           const theta = polarThetaFor(layout.center, node);
-          const renderedTheta = theta + rotationAngle;
+          const renderedTheta = theta + rotationAngle + normalizeLabelAngle(figureStyles[labelClass].angularOffsetDegrees ?? 0) * Math.PI / 180;
           const radius = axisDepth(tree.buffers.depth[node]) + (14 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
-          const offsetPoint = applyCircularPointLabelOffset(
-            screen.x,
-            screen.y,
-            theta,
-            rotationAngle,
-            figureStyles[labelClass].offsetXPx,
-            figureStyles[labelClass].offsetYPx,
-          );
-          const labelX = offsetPoint.x;
-          const labelY = offsetPoint.y;
+          const offsetPoint = circularLabelOffset(screen.x, screen.y, camera.translateX, camera.translateY,
+            theta + rotationAngle, figureStyles[labelClass].angularOffsetDegrees ?? 0,
+            figureStyles[labelClass].offsetYPx);
+          let labelX = offsetPoint.x;
+          let labelY = offsetPoint.y;
           if (labelX < -40 || labelX > renderSize.width + 40 || labelY < -40 || labelY > renderSize.height + 40) {
             continue;
           }
@@ -14576,7 +14579,7 @@ export default function TreeCanvas({
           const rotation = polarPointLabelRotation(
             renderedTheta,
             onRightSide,
-            isBootstrap ? figureStyles.bootstrap.polarOrientation ?? "tangential" : "tangential",
+            figureStyles[labelClass].polarOrientation ?? "tangential",
           );
           labels.push({
             x: labelX,
@@ -14942,16 +14945,11 @@ export default function TreeCanvas({
           if (!pointLabelHasScreenRoom(subtreeSpanPx, branchSpanPx, fontSize, labelWidth)) {
             continue;
           }
-          const offsetPoint = applyCircularPointLabelOffset(
-            screen.x,
-            screen.y,
-            theta,
-            rotationAngle,
-            figureStyles.nodeHeight.offsetXPx,
-            figureStyles.nodeHeight.offsetYPx - 5,
-          );
-          const labelX = offsetPoint.x;
-          const labelY = offsetPoint.y;
+          const offsetPoint = circularLabelOffset(screen.x, screen.y, camera.translateX, camera.translateY,
+            theta + rotationAngle, figureStyles.nodeHeight.angularOffsetDegrees ?? 0,
+            figureStyles.nodeHeight.offsetYPx - 5);
+          let labelX = offsetPoint.x;
+          let labelY = offsetPoint.y;
           if (
             labelX < -40 || labelX > renderSize.width + 40 ||
             labelY < -40 || labelY > renderSize.height + 40
@@ -14961,7 +14959,7 @@ export default function TreeCanvas({
           if (!canPlaceLinearLabel(labels, labelX, labelY, fontSize * 2.1, Math.max(labelWidth, fontSize * 5.5))) {
             continue;
           }
-          const renderedTheta = theta + rotationAngle;
+          const renderedTheta = theta + rotationAngle + normalizeLabelAngle(figureStyles.nodeHeight.angularOffsetDegrees ?? 0) * Math.PI / 180;
           const onRightSide = Math.cos(renderedTheta) >= 0;
           labels.push({
             x: labelX,
@@ -15087,11 +15085,74 @@ export default function TreeCanvas({
             continue;
           }
           const theta = polarThetaFor(layout.center, node);
-          const radius = axisDepth(tree.buffers.depth[node]) + (12 / camera.scale);
+          const automaticPlacement = figureStyles.internalNode.metadataPlacement === "auto";
+          const stemPlacement = automaticPlacement || figureStyles.internalNode.metadataPlacement === "stem";
+          const parent = tree.buffers.parent[node];
+          const radius = stemPlacement && parent >= 0
+            ? (axisDepth(tree.buffers.depth[parent]) + axisDepth(tree.buffers.depth[node])) / 2
+            : axisDepth(tree.buffers.depth[node]) + (12 / camera.scale);
           const point = polarToCartesian(radius, theta);
           const screen = worldToScreenCircular(camera, point.x, point.y);
-          const labelX = screen.x + figureStyles.internalNode.offsetXPx + metadataLabelOffsetXPx;
-          const labelY = screen.y - 10 + figureStyles.internalNode.offsetYPx + metadataLabelOffsetYPx;
+          const labelRadiusPx = Math.max(1, Math.hypot(screen.x - camera.translateX, screen.y - camera.translateY));
+          const sidePaddingPx = stemPlacement ? fontSize * 0.5 + 5 : -10;
+          const angularDegrees = normalizeLabelAngle(
+            (figureStyles.internalNode.metadataAngularOffsetDegrees ?? 0)
+            + (stemPlacement ? 0 : figureStyles.internalNode.angularOffsetDegrees ?? 0)
+            + Math.atan2(sidePaddingPx, labelRadiusPx) * 180 / Math.PI,
+          );
+          const offsetPoint = circularLabelOffset(screen.x, screen.y, camera.translateX, camera.translateY,
+            theta + rotationAngle, angularDegrees,
+            metadataLabelOffsetYPx + (stemPlacement ? 0 : figureStyles.internalNode.offsetYPx));
+          let labelX = offsetPoint.x;
+          let labelY = offsetPoint.y;
+          const renderedTheta = theta + rotationAngle + angularDegrees * Math.PI / 180;
+          const onRightSide = Math.cos(renderedTheta) >= 0;
+          let rotation = polarPointLabelRotation(renderedTheta, onRightSide,
+            figureStyles.internalNode.polarOrientation ?? (stemPlacement ? "radial" : "tangential"));
+          if (automaticPlacement) {
+            const width = ctx.measureText(labelText).width;
+            const candidates = automaticPolarBranchLabelCandidates(camera.translateX, camera.translateY,
+              axisDepth(tree.buffers.depth[parent >= 0 ? parent : node]) * camera.scale,
+              axisDepth(tree.buffers.depth[node]) * camera.scale,
+              theta + rotationAngle, width, fontSize);
+            let placed = false;
+            for (const candidate of candidates) {
+              const offset = circularLabelOffset(candidate.x, candidate.y, camera.translateX, camera.translateY,
+                Math.atan2(candidate.y - camera.translateY, candidate.x - camera.translateX),
+                figureStyles.internalNode.metadataAngularOffsetDegrees ?? 0, metadataLabelOffsetYPx);
+              const placement = { ...candidate, ...offset,
+                rotation: candidate.rotation + (figureStyles.internalNode.metadataAngularOffsetDegrees ?? 0) * Math.PI / 180 };
+              const world = screenToWorldCircular(camera, placement.x, placement.y);
+              const extent = (Math.hypot(width, fontSize) / 2 + 4) / camera.scale;
+              const segments = collapsedSpatialCache
+                ? collapsedSpatialCache.circularIndex.query(world.x, world.y, extent, extent)
+                : cache.circularTreeIndex.query(layout, world.x - extent, world.y - extent,
+                  world.x + extent, world.y + extent);
+              const intersects = segments.some(segment => {
+                if (hiddenNodes[segment.node]) return false;
+                if (segment.kind === "connector") {
+                  const ordered = children[segment.node];
+                  if (ordered.length < 2) return false;
+                  const start = polarThetaFor(layout.center, ordered[0]) + rotationAngle;
+                  const end = polarThetaFor(layout.center, ordered[ordered.length - 1]) + rotationAngle;
+                  return arcIntersectsLabel(placement, width, fontSize, camera.translateX, camera.translateY,
+                    axisDepth(tree.buffers.depth[segment.node]) * camera.scale, start, end,
+                    2 + circularBranchStrokeScale / 2);
+                }
+                const a = worldToScreenCircular(camera, segment.x1, segment.y1);
+                const b = worldToScreenCircular(camera, segment.x2, segment.y2);
+                return branchIntersectsLabel(placement, width, fontSize, a.x, a.y, b.x, b.y,
+                  2 + circularBranchStrokeScale / 2);
+              });
+              if (intersects) continue;
+              labelX = placement.x;
+              labelY = placement.y;
+              rotation = placement.rotation;
+              placed = true;
+              break;
+            }
+            if (!placed) continue;
+          }
           if (labelX < -40 || labelX > renderSize.width + 40 || labelY < -40 || labelY > renderSize.height + 40) {
             continue;
           }
@@ -15104,9 +15165,6 @@ export default function TreeCanvas({
           )) {
             continue;
           }
-          const renderedTheta = theta + rotationAngle;
-          const onRightSide = Math.cos(renderedTheta) >= 0;
-          const rotation = normalizeRotation((renderedTheta * 180 / Math.PI) + (onRightSide ? 90 : 270)) * Math.PI / 180;
           labels.push({
             x: labelX,
             y: labelY,
@@ -15114,8 +15172,10 @@ export default function TreeCanvas({
             alpha: 0.9,
             fontSize,
             rotation,
-            align: onRightSide ? "left" : "right",
-            color: effectiveBranchColors?.[node] ?? metadataBranchColorOverlay.colors[node] ?? "#1f2937",
+            align: stemPlacement ? "center" : onRightSide ? "left" : "right",
+            color: figureStyles.internalNode.metadataColorMode === "fixed"
+              ? figureStyles.internalNode.metadataColor ?? "#1f2937"
+              : effectiveBranchColors?.[node] ?? metadataBranchColorOverlay.colors[node] ?? BRANCH_COLOR,
           });
         }
         for (let index = 0; index < labels.length; index += 1) {
@@ -15135,7 +15195,7 @@ export default function TreeCanvas({
             label.color ?? "#1f2937",
             label.fontSize ?? fontSize,
             labelFontFamilies.internalNode,
-            label.align === "right" ? "end" : "start",
+            label.align === "center" ? "middle" : label.align === "right" ? "end" : "start",
             label.rotation ?? 0,
           );
         }

@@ -1,3 +1,4 @@
+import { normalizeLabelAngle } from "./circularLabelOffsets";
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, taxonomyLabelVisibilityThreshold, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
 import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, ULTRAMETRIC_CLADOGRAM_METHODS, normalizeCladogramLogStrength, type UltrametricCladogramMethod } from "./cladogram";
 import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
@@ -176,6 +177,17 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
         source.decimalPlaces,
         current.decimalPlaces ?? -1,
       ))));
+    }
+    current.angularOffsetDegrees = normalizeLabelAngle(coerceFiniteNumber(source.angularOffsetDegrees, 0));
+    if (labelClass === "internalNode") {
+      current.metadataAngularOffsetDegrees = normalizeLabelAngle(coerceFiniteNumber(source.metadataAngularOffsetDegrees, 0));
+      current.metadataPlacement = coerceEnum(source.metadataPlacement, ["node", "stem", "auto"] as const, "node");
+      current.metadataColorMode = coerceEnum(source.metadataColorMode, ["branch", "fixed"] as const, "branch");
+      if (typeof source.metadataColor === "string" && /^#[0-9a-f]{6}$/i.test(source.metadataColor)) {
+        current.metadataColor = source.metadataColor;
+      }
+    }
+    if (labelClass === "internalNode" || labelClass === "bootstrap" || labelClass === "nodeHeight") {
       current.polarOrientation = coerceEnum(
         source.polarOrientation,
         ["tangential", "radial"] as const,

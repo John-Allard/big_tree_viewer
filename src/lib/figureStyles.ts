@@ -42,6 +42,11 @@ export interface LabelStyleSettings {
   showScaleBar?: boolean;
   showScaleBarLabels?: boolean;
   showTimeGuideLabels?: boolean;
+  angularOffsetDegrees?: number;
+  metadataAngularOffsetDegrees?: number;
+  metadataPlacement?: "node" | "stem" | "auto";
+  metadataColorMode?: "branch" | "fixed";
+  metadataColor?: string;
 }
 
 export interface FigureStyleSettings {

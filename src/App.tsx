@@ -1522,23 +1522,24 @@ function LabelStyleSection({
                   ))}
                 </select>
               </label>
-              {viewMode === "circular" || viewMode === "fan" ? (
-                <label>
-                  Orientation
-                  <select
-                    value={settings.polarOrientation ?? "tangential"}
-                    onChange={(event) => onUpdate(
-                      labelClass,
-                      "polarOrientation",
-                      event.target.value as PolarLabelOrientation,
-                    )}
-                  >
-                    <option value="tangential">Tangential</option>
-                    <option value="radial">Radial</option>
-                  </select>
-                </label>
-              ) : null}
             </>
+          ) : null}
+          {(labelClass === "internalNode" || labelClass === "bootstrap" || labelClass === "nodeHeight")
+            && (viewMode === "circular" || viewMode === "fan") ? (
+            <label>
+              Orientation
+              <select
+                value={settings.polarOrientation ?? "tangential"}
+                onChange={(event) => onUpdate(
+                  labelClass,
+                  "polarOrientation",
+                  event.target.value as PolarLabelOrientation,
+                )}
+              >
+                <option value="tangential">Tangential</option>
+                <option value="radial">Radial</option>
+              </select>
+            </label>
           ) : null}
           {labelClass === "tip" ? (
             <>
@@ -1600,23 +1601,23 @@ function LabelStyleSection({
           ) : isScale ? null : supportsAxisOffsets ? (
             <>
               <label>
-                {usePolarOffsets ? "Tangential offset" : "X offset"}
+                {usePolarOffsets ? "Angular offset" : "X offset"}
                 <input
                   type="range"
-                  min={-24}
-                  max={24}
-                  step={1}
-                  value={settings.offsetXPx}
-                  onChange={(event) => onUpdate(labelClass, "offsetXPx", Number(event.target.value))}
+                  min={usePolarOffsets ? -180 : Math.min(-240, settings.offsetXPx - 48)}
+                  max={usePolarOffsets ? 180 : Math.max(240, settings.offsetXPx + 48)}
+                  step={usePolarOffsets ? 0.5 : 1}
+                  value={usePolarOffsets ? settings.angularOffsetDegrees ?? 0 : settings.offsetXPx}
+                  onChange={(event) => onUpdate(labelClass, usePolarOffsets ? "angularOffsetDegrees" : "offsetXPx", Number(event.target.value))}
                 />
               </label>
-              <div className="figure-style-value">{settings.offsetXPx}px</div>
+              <div className="figure-style-value">{usePolarOffsets ? `${settings.angularOffsetDegrees ?? 0}°` : `${settings.offsetXPx}px`}</div>
               <label>
                 {usePolarOffsets ? "Radial offset" : "Y offset"}
                 <input
                   type="range"
-                  min={-24}
-                  max={24}
+                  min={Math.min(-240, settings.offsetYPx - 48)}
+                  max={Math.max(240, settings.offsetYPx + 48)}
                   step={1}
                   value={settings.offsetYPx}
                   onChange={(event) => onUpdate(labelClass, "offsetYPx", Number(event.target.value))}
@@ -10159,6 +10160,42 @@ export default function App() {
                         ))}
                       </select>
                     </label>
+                    <label title="Automatic placement uses the incoming branch when the text fits; otherwise it places the label above the crossbar, clear of its parent stem. Recalculated as you zoom.">
+                      Label placement
+                      <select value={figureStyles.internalNode.metadataPlacement ?? "node"}
+                        onChange={(event) => setFigureStyles((current) => ({ ...current, internalNode: { ...current.internalNode, metadataPlacement: event.target.value as "node" | "stem" | "auto" } }))}>
+                        <option value="node">Beside node</option>
+                        <option value="stem">Beside incoming branch</option>
+                        <option value="auto">Automatic: along branch or above crossbar</option>
+                      </select>
+                    </label>
+                    <label>
+                      Label color
+                      <select value={figureStyles.internalNode.metadataColorMode ?? "branch"}
+                        onChange={(event) => setFigureStyles((current) => ({ ...current, internalNode: { ...current.internalNode, metadataColorMode: event.target.value as "branch" | "fixed" } }))}>
+                        <option value="branch">Match branch color</option>
+                        <option value="fixed">Fixed color</option>
+                      </select>
+                    </label>
+                    {figureStyles.internalNode.metadataColorMode === "fixed" ? (
+                      <label>Fixed label color
+                        <input type="color" value={figureStyles.internalNode.metadataColor ?? "#1f2937"}
+                          onChange={(event) => setFigureStyles((current) => ({ ...current, internalNode: { ...current.internalNode, metadataColor: event.target.value } }))} />
+                      </label>
+                    ) : null}
+                    {(viewMode === "circular" || viewMode === "fan") && figureStyles.internalNode.metadataPlacement !== "auto" ? (
+                      <label>Orientation
+                        <select value={figureStyles.internalNode.polarOrientation ?? (figureStyles.internalNode.metadataPlacement === "stem" ? "radial" : "tangential")}
+                          onChange={(event) => updateFigureStyle("internalNode", "polarOrientation", event.target.value as PolarLabelOrientation)}>
+                          <option value="tangential">Tangential</option>
+                          <option value="radial">Radial</option>
+                        </select>
+                      </label>
+                    ) : null}
+                    <p className="panel-note">Match CSV rows to internal-node names to label selected clades. Empty label cells are not drawn.</p>
+                    {figureStyles.internalNode.metadataPlacement === "auto" && viewMode !== "rectangular" ? (
+                      <p className="panel-note">Automatic placement checks both sides of the branch and crossbar. Labels without a clear position are hidden until there is room, for example after zooming in.</p>
+                    ) : null}
                     <label title="Choose the font family for metadata text labels.">
                       Font family
                       <select
@@ -10206,24 +10243,24 @@ export default function App() {
                       />
                     </label>
                     <div className="figure-style-value">{metadataLabelMinSpacingPx}px</div>
-                    <label title="Move metadata text labels horizontally in screen pixels.">
-                      Metadata label X offset
-                      <input
-                        type="range"
-                        min={-36}
-                        max={36}
-                        step={1}
-                        value={metadataLabelOffsetXPx}
-                        onChange={(event) => setMetadataLabelOffsetXPx(Number(event.target.value))}
+                    <label title={viewMode === "rectangular" ? "Move labels horizontally." : "Rotate labels around the tree center, in degrees."}>
+                      {viewMode !== "rectangular" ? "Metadata label angular offset" : "Metadata label X offset"}
+                      <input type="range"
+                        min={viewMode !== "rectangular" ? -180 : Math.min(-240, metadataLabelOffsetXPx - 48)}
+                        max={viewMode !== "rectangular" ? 180 : Math.max(240, metadataLabelOffsetXPx + 48)}
+                        step={viewMode !== "rectangular" ? 0.5 : 1}
+                        value={viewMode !== "rectangular" ? figureStyles.internalNode.metadataAngularOffsetDegrees ?? 0 : metadataLabelOffsetXPx}
+                        onChange={(event) => viewMode === "rectangular" ? setMetadataLabelOffsetXPx(Number(event.target.value))
+                          : setFigureStyles((current) => ({ ...current, internalNode: { ...current.internalNode, metadataAngularOffsetDegrees: Number(event.target.value) } }))}
                       />
                     </label>
-                    <div className="figure-style-value">{metadataLabelOffsetXPx}px</div>
-                    <label title="Move metadata text labels vertically in screen pixels.">
-                      Metadata label Y offset
+                    <div className="figure-style-value">{viewMode !== "rectangular" ? `${figureStyles.internalNode.metadataAngularOffsetDegrees ?? 0}°` : `${metadataLabelOffsetXPx}px`}</div>
+                    <label title={viewMode === "rectangular" ? "Move labels vertically." : "Move labels toward or away from the tree center."}>
+                      {viewMode !== "rectangular" ? "Metadata label radial offset" : "Metadata label Y offset"}
                       <input
                         type="range"
-                        min={-36}
-                        max={36}
+                        min={Math.min(-240, metadataLabelOffsetYPx - 48)}
+                        max={Math.max(240, metadataLabelOffsetYPx + 48)}
                         step={1}
                         value={metadataLabelOffsetYPx}
                         onChange={(event) => setMetadataLabelOffsetYPx(Number(event.target.value))}
