@@ -1,12 +1,15 @@
 import type { TreeModel } from "../types/tree";
 import { METADATA_CONTINUOUS_PALETTES, type MetadataContinuousPalette } from "./metadataColors";
+import { parseMetadataDate } from "./metadataDates";
 
 export type MetadataTipTableMode = "bars" | "heatmap" | "categorical";
 export type MetadataTipTableCellStyle = "filled" | "circle" | "square" | "check" | "text";
+export type MetadataTipTableValueType = "number" | "date";
 
 export interface MetadataTipTableColumn {
   column: string;
   label: string;
+  valueType?: MetadataTipTableValueType;
 }
 
 export interface MetadataTipTableColumnData extends MetadataTipTableColumn {
@@ -44,6 +47,13 @@ export function metadataTipTableValueIsOn(value: string): boolean {
     && normalized !== "none"
     && normalized !== "na"
     && normalized !== "n/a";
+}
+
+/** Shared by bounds calculation and renderers; raw cell text remains unchanged. */
+export function metadataTipTableNumericValue(value: string, valueType: MetadataTipTableValueType = "number"): number | null {
+  if (valueType === "date") return parseMetadataDate(value);
+  const numeric = Number(value);
+  return value.trim() && Number.isFinite(numeric) ? numeric : null;
 }
 
 export function metadataTipTableContinuousColor(
@@ -111,8 +121,8 @@ export function buildMetadataTipTableData(
     }
     const values = columns.map((column, columnIndex) => {
       const value = (rows[rowIndex][column.column] ?? "").trim();
-      const numeric = Number(value);
-      if (value && Number.isFinite(numeric)) {
+      const numeric = metadataTipTableNumericValue(value, column.valueType);
+      if (numeric !== null) {
         column.min = column.min === null ? numeric : Math.min(column.min, numeric);
         column.max = column.max === null ? numeric : Math.max(column.max, numeric);
       }

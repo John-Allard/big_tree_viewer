@@ -767,14 +767,20 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
               context.translate(x + (rankWidth / 2), (top + bottom) / 2);
               context.rotate(Math.PI / 2);
               context.fillStyle = "#111827";
-              const labelFontSize = Math.max(3 * Math.min(1, labelThreshold), Math.min(
+              let labelFontSize = Math.max(3 * Math.min(1, labelThreshold), Math.min(
                 32 * figureStyles.taxonomy.sizeScale,
                 rankWidth - 2,
               ));
               context.font = `${labelFontSize}px ${fontFamilyCss(figureStyles.taxonomy.fontFamily)}`;
+              // Fit the font rather than squeezing glyphs with fillText's maxWidth.
+              const labelWidth = context.measureText(block.label).width;
+              if (labelWidth > height - 8) {
+                labelFontSize *= Math.max(1, height - 8) / labelWidth;
+                context.font = `${labelFontSize}px ${fontFamilyCss(figureStyles.taxonomy.fontFamily)}`;
+              }
               context.textAlign = "center";
               context.textBaseline = "middle";
-              context.fillText(block.label, 0, 0, Math.max(1, height - 8));
+              context.fillText(block.label, 0, 0);
               context.restore();
             }
           }

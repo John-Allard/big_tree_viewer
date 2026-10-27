@@ -16,7 +16,7 @@ import { distanceToSegmentSquared, UniformGridIndex, type IndexedSegment } from 
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, taxonomyEntityKey, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { TAXONOMY_COLOR_PALETTES, type TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
 import type { PhyloPicSilhouette } from "../lib/phylopic";
-import { metadataTipTableContinuousColor, metadataTipTableValueIsOn } from "../lib/metadataTipTable";
+import { metadataTipTableContinuousColor, metadataTipTableNumericValue, metadataTipTableValueIsOn } from "../lib/metadataTipTable";
 import { tagPngAsSrgb } from "../lib/pngColorProfile";
 import { layoutMetadataLegend } from "../lib/metadataLegend";
 import { imageContentBounds } from "../lib/treeExportBounds";
@@ -1318,6 +1318,8 @@ function buildSharedSubtreeStoragePayload(
     return payload;
   }
   payload.taxonomy = {
+    mappingOrigin: serializedTaxonomyMap.mappingOrigin,
+    metadataRankColumns: serializedTaxonomyMap.metadataRankColumns,
     version: serializedTaxonomyMap.version,
     source: serializedTaxonomyMap.source,
     identifierMode: serializedTaxonomyMap.identifierMode,
@@ -4321,6 +4323,8 @@ function expandedMinimizedTriangleBase(
 
 export default function TreeCanvas({
   treeRef,
+  tipDisplayLabels,
+  metadataCollapsedNodes,
   visibleViewportLeftInsetPx = 0,
   showCladogram = false,
   ultrametricCladogram = false,
@@ -4593,7 +4597,24 @@ export default function TreeCanvas({
   const previousSourceTreeRef = useRef(sourceTree);
   const previousFitRequestRef = useRef(fitRequest);
   const pendingCircularTaxonomyRefitRef = useRef(false);
-  const [collapsedNodeModes, setCollapsedNodeModes] = useState<Map<number, CollapsedNodeMode>>(() => new Map());
+  const [manualCollapsedNodeModes, setCollapsedNodeModes] = useState<Map<number, CollapsedNodeMode>>(() => new Map());
+  const metadataCollapsedGroupByNode = useMemo(() => {
+    const groups = new Map<number, NonNullable<TreeCanvasProps["metadataCollapsedNodes"]>[number]>();
+    if (tree) {
+      for (const group of metadataCollapsedNodes ?? []) {
+        if (Number.isInteger(group.node) && group.node >= 0 && group.node < tree.nodeCount
+          && tree.buffers.firstChild[group.node] >= 0) {
+          groups.set(group.node, group);
+        }
+      }
+    }
+    return groups;
+  }, [metadataCollapsedNodes, tree]);
+  const collapsedNodeModes = useMemo(() => {
+    const modes = new Map(manualCollapsedNodeModes);
+    for (const node of metadataCollapsedGroupByNode.keys()) modes.set(node, "minimize");
+    return modes;
+  }, [manualCollapsedNodeModes, metadataCollapsedGroupByNode]);
   const collapsedNodes = useMemo(() => new Set(collapsedNodeModes.keys()), [collapsedNodeModes]);
   const [collapsedLayoutRevision, setCollapsedLayoutRevision] = useState(0);
   const [manualBranchColorAssignments, setManualBranchColorAssignments] = useState<Map<number, string>>(() => new Map());
@@ -4733,6 +4754,17 @@ export default function TreeCanvas({
         `MRCA age: ${hover.mrcaAge === null || hover.mrcaAge === undefined ? "n/a" : hover.mrcaAge.toPrecision(5)}`,
       );
     } else {
+      const metadataGroup = metadataCollapsedGroupByNode.get(hover.node);
+      if (metadataGroup) {
+        appendLine(`Metadata group: ${metadataGroup.label}`);
+        appendLine(`Descendant tips: ${metadataGroup.tipCount.toLocaleString()}`);
+      } else if (tree && tree.buffers.firstChild[hover.node] < 0) {
+        const displayName = tipDisplayLabels?.[hover.node];
+        if (displayName != null && displayName !== tree.names[hover.node]) {
+          appendLine(`Original name: ${tree.names[hover.node] ?? ""}`);
+          appendLine(`Display name: ${displayName}`);
+        }
+      }
       if (hover.collapsedTaxonomyRank) {
         appendLine(`Rank: ${hover.collapsedTaxonomyRank}`);
         appendLine(`Descendant tips: ${(hover.collapsedTaxonomyDescendantTipCount ?? 0).toLocaleString()}`);
@@ -4740,7 +4772,7 @@ export default function TreeCanvas({
           `MRCA age: ${hover.collapsedTaxonomyMrcaAge === null || hover.collapsedTaxonomyMrcaAge === undefined ? "n/a" : hover.collapsedTaxonomyMrcaAge.toPrecision(5)}`,
         );
       }
-      if (tree && tree.buffers.firstChild[hover.node] >= 0) {
+      if (!metadataGroup && tree && tree.buffers.firstChild[hover.node] >= 0) {
         appendLine(`Descendant tips: ${hover.descendantTipCount.toLocaleString()}`);
       }
       appendLine(`Branch length: ${hover.branchLength.toPrecision(5)}`);
@@ -4763,7 +4795,7 @@ export default function TreeCanvas({
     tooltip.style.maxWidth = `${Math.min(360, visibleViewportWidth - 16)}px`;
     tooltip.style.left = `${Math.max(visibleViewportLeftInset + 8, Math.min(size.width - tooltip.offsetWidth - 8, hover.screenX + 16))}px`;
     tooltip.style.top = `${Math.max(8, Math.min(size.height - tooltip.offsetHeight - 8, hover.screenY + 16))}px`;
-  }, [clearHoverTooltip, size.height, size.width, tree, metadataBranchValues, metadataTooltipColumns, metadataLabels, metadataMarkers, metadataPies, visibleViewportWidth, visibleViewportLeftInset]);
+  }, [clearHoverTooltip, size.height, size.width, tree, tipDisplayLabels, metadataCollapsedGroupByNode, metadataBranchValues, metadataTooltipColumns, metadataLabels, metadataMarkers, metadataPies, visibleViewportWidth, visibleViewportLeftInset]);
 
   const effectiveTimeAxisScale: TimeAxisScale = viewMode === "spiral" ? "log" : cladogramActive ? "linear" : timeAxisScale;
   const effectiveTimeAxisLogBase = viewMode === "spiral"
@@ -4907,15 +4939,14 @@ export default function TreeCanvas({
       camera: cameraRef.current ? { ...cameraRef.current } : null,
       viewportWidth: size.width,
       viewportHeight: size.height,
-      collapsedNodes: Array.from(collapsedNodes),
-      collapsedNodeModes: Array.from(collapsedNodeModes),
+      collapsedNodes: Array.from(manualCollapsedNodeModes.keys()),
+      collapsedNodeModes: Array.from(manualCollapsedNodeModes),
       manualBranchColors: Array.from(manualBranchColorAssignments),
       manualSubtreeColors: Array.from(manualSubtreeColorAssignments),
       taxonomyRootColors: Array.from(taxonomyRootColorAssignments),
     });
   }, [
-    collapsedNodes,
-    collapsedNodeModes,
+    manualCollapsedNodeModes,
     manualBranchColorAssignments,
     manualSubtreeColorAssignments,
     onSessionStateSnapshot,
@@ -5730,7 +5761,7 @@ export default function TreeCanvas({
     let maximum = 6;
     for (let index = 0; index < tree.leafNodes.length; index += 1) {
       const node = tree.leafNodes[index];
-      const length = displayLabelText(tree.names[node] || "", `tip-${node}`).length;
+      const length = displayLabelText(tipDisplayLabels?.[node] ?? tree.names[node] ?? "", `tip-${node}`).length;
       maximum = Math.max(maximum, length);
       cappedLengthCounts[Math.min(length, 32)] += 1;
     }
@@ -5748,7 +5779,7 @@ export default function TreeCanvas({
       }
     }
     return { reserved: Math.max(6, reserved), maximum };
-  }, [tree]);
+  }, [tree, tipDisplayLabels]);
   const reservedTipLabelCharacters = tipLabelCharacterMetrics.reserved;
   const maxTipLabelCharacters = tipLabelCharacterMetrics.maximum;
   const maxGenusLabelCharacters = useMemo(() => {
@@ -5765,8 +5796,8 @@ export default function TreeCanvas({
     return maxCharacters;
   }, [cache]);
   const displayTipLabelForView = useCallback((node: number): string => (
-    displayLabelText(tree?.names[node] ?? "", `tip-${node}`)
-  ), [tree]);
+    displayLabelText(tipDisplayLabels?.[node] ?? tree?.names[node] ?? "", `tip-${node}`)
+  ), [tree, tipDisplayLabels]);
   const displayNodeNameForView = useCallback((node: number): string => {
     if (!tree) {
       return `tip-${node}`;
@@ -6705,7 +6736,7 @@ export default function TreeCanvas({
         const node = tree.leafNodes[index];
         maxRenderedTipCharacters = Math.max(
           maxRenderedTipCharacters,
-          displayLabelText(tree.names[node] || "", `tip-${node}`).length,
+          displayTipLabelForView(node).length,
         );
       }
       renderedTipLabelWidthPx = maxRenderedTipCharacters * renderedTipFontSize * 0.61;
@@ -6744,7 +6775,7 @@ export default function TreeCanvas({
     }
 
     return envelopePx + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [cache, collapsedView?.effectiveLeafScale, collapsedView?.layout, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, order, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyEnabled, tree]);
+  }, [cache, collapsedView?.effectiveLeafScale, collapsedView?.layout, displayTipLabelForView, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, order, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyEnabled, tree]);
 
   const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {
@@ -7591,7 +7622,7 @@ export default function TreeCanvas({
   }, [branchStrokeScale, size.height, size.width, tree]);
 
   const setCollapsedNodeMode = useCallback((node: number, mode: CollapsedNodeMode | null) => {
-    if (!tree || tree.buffers.firstChild[node] < 0) {
+    if (!tree || !Number.isInteger(node) || node < 0 || node >= tree.nodeCount || tree.buffers.firstChild[node] < 0) {
       return;
     }
     const normalizedMode = mode === "preserve-width" && viewMode !== "rectangular"
@@ -7609,15 +7640,18 @@ export default function TreeCanvas({
   }, [tree, viewMode]);
 
   const toggleCollapsedNode = useCallback((node: number) => {
+    if (metadataCollapsedGroupByNode.has(node)) {
+      return;
+    }
     setCollapsedNodeMode(
       node,
-      collapsedNodeModes.has(node)
+      manualCollapsedNodeModes.has(node)
         ? null
         : viewMode === "rectangular"
           ? "preserve-width"
           : "minimize",
     );
-  }, [collapsedNodeModes, setCollapsedNodeMode, viewMode]);
+  }, [manualCollapsedNodeModes, metadataCollapsedGroupByNode, setCollapsedNodeMode, viewMode]);
 
   const spiralScaleForViewContinuity = useCallback((initialScale: number, sourcePixelsPerLeaf: number): number => {
     if (!tree) {
@@ -10143,10 +10177,10 @@ export default function TreeCanvas({
             const column = metadataTipTableData.columns[0];
             if (column) {
               drawHeader(column.label, tableStartX);
-              const min = Math.min(0, column.min ?? 0);
-              const max = Math.max(0, column.max ?? 0);
+              const min = column.valueType === "date" ? column.min ?? 0 : Math.min(0, column.min ?? 0);
+              const max = column.valueType === "date" ? column.max ?? min : Math.max(0, column.max ?? 0);
               const span = Math.max(1e-9, max - min);
-              const zeroX = tableStartX + (((0 - min) / span) * metadataTipTableBarWidthPx);
+              const zeroX = column.valueType === "date" ? tableStartX : tableStartX + (((0 - min) / span) * metadataTipTableBarWidthPx);
               ctx.strokeStyle = "rgba(100,116,139,0.52)";
               ctx.lineWidth = 0.8;
               ctx.beginPath();
@@ -10157,8 +10191,8 @@ export default function TreeCanvas({
               for (let index = 0; index < visibleTipLabels.length; index += 1) {
                 const label = visibleTipLabels[index];
                 const rawValue = metadataTipTableData.valuesByNode[label.node]?.[0] ?? "";
-                const value = Number(rawValue);
-                if (!rawValue || !Number.isFinite(value)) {
+                const value = metadataTipTableNumericValue(rawValue, column.valueType);
+                if (value === null) {
                   continue;
                 }
                 const valueX = tableStartX + (((value - min) / span) * metadataTipTableBarWidthPx);
@@ -10190,8 +10224,8 @@ export default function TreeCanvas({
                   continue;
                 }
                 if (metadataTipTableMode === "heatmap") {
-                  const numeric = Number(value);
-                  if (!Number.isFinite(numeric) || column.min === null || column.max === null) {
+                  const numeric = metadataTipTableNumericValue(value, column.valueType);
+                  if (numeric === null || column.min === null || column.max === null) {
                     continue;
                   }
                   const color = metadataTipTableContinuousColor(numeric, column.min, column.max, metadataTipTablePalette);
@@ -10309,7 +10343,11 @@ export default function TreeCanvas({
           ctx.strokeStyle = "#64748b";
           const node = visibleCollapsedNodes[index];
           const collapseMode = collapsedNodeModes.get(node) ?? "preserve-width";
-          const taxonomyGroup = collapsedTaxonomyGroupByNode.get(node) ?? null;
+          const metadataGroup = metadataCollapsedGroupByNode.get(node);
+          const taxonomyGroup = metadataGroup ? null : collapsedTaxonomyGroupByNode.get(node) ?? null;
+          const collapsedLabel = metadataGroup
+            ? `${metadataGroup.label} (${metadataGroup.tipCount.toLocaleString()} tips)`
+            : taxonomyGroup?.label;
           const taxonomyHitbox = taxonomyGroup
             ? {
                 labelKind: "taxonomy" as const,
@@ -10369,19 +10407,19 @@ export default function TreeCanvas({
             width: hitMaxX - hitMinX,
             height: hitMaxY - hitMinY,
           });
-          if (collapseMode === "minimize" && taxonomyGroup) {
+          if (collapseMode === "minimize" && collapsedLabel) {
             const fontSize = scaleLabelFontSize("taxonomy", 14);
             ctx.font = fontSpec("taxonomy", fontSize);
-            const labelWidth = ctx.measureText(taxonomyGroup.label).width;
+            const labelWidth = ctx.measureText(collapsedLabel).width;
             const labelLeftX = rectangularFirstTaxonomyBandX ?? (hitMaxX + 8);
             const labelX = labelLeftX + (labelWidth * 0.5);
             const labelY = (hitMinY + hitMaxY) * 0.5;
             ctx.fillStyle = "#1f2937";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText(taxonomyGroup.label, labelX, labelY);
+            ctx.fillText(collapsedLabel, labelX, labelY);
             pushSceneText(
-              taxonomyGroup.label,
+              collapsedLabel,
               labelX,
               labelY,
               "#1f2937",
@@ -11045,7 +11083,11 @@ export default function TreeCanvas({
           ctx.strokeStyle = "#64748b";
           const node = visibleCollapsedNodes[index];
           const collapseMode = collapsedNodeModes.get(node) ?? "preserve-width";
-          const taxonomyGroup = collapsedTaxonomyGroupByNode.get(node) ?? null;
+          const metadataGroup = metadataCollapsedGroupByNode.get(node);
+          const taxonomyGroup = metadataGroup ? null : collapsedTaxonomyGroupByNode.get(node) ?? null;
+          const collapsedLabel = metadataGroup
+            ? `${metadataGroup.label} (${metadataGroup.tipCount.toLocaleString()} tips)`
+            : taxonomyGroup?.label;
           const taxonomyHitbox = taxonomyGroup
             ? {
                 labelKind: "taxonomy" as const,
@@ -11108,10 +11150,10 @@ export default function TreeCanvas({
             width: hitMaxX - hitMinX,
             height: hitMaxY - hitMinY,
           });
-          if (collapseMode === "minimize" && taxonomyGroup) {
+          if (collapseMode === "minimize" && collapsedLabel) {
             const fontSize = scaleLabelFontSize("taxonomy", 14);
             ctx.font = fontSpec("taxonomy", fontSize);
-            const labelWidth = ctx.measureText(taxonomyGroup.label).width;
+            const labelWidth = ctx.measureText(collapsedLabel).width;
             const labelFrame = spiralFrameAt(
               apexTheta,
               spiralFirstTaxonomyRibbonInnerOffset,
@@ -11134,10 +11176,10 @@ export default function TreeCanvas({
             ctx.save();
             ctx.translate(labelPoint.x, labelPoint.y);
             ctx.rotate(labelRotation);
-            ctx.fillText(taxonomyGroup.label, 0, 0);
+            ctx.fillText(collapsedLabel, 0, 0);
             ctx.restore();
             pushSceneText(
-              taxonomyGroup.label,
+              collapsedLabel,
               labelPoint.x,
               labelPoint.y,
               "#1f2937",
@@ -14570,7 +14612,11 @@ export default function TreeCanvas({
           ctx.strokeStyle = "#64748b";
           const node = visibleCollapsedNodes[index];
           const collapseMode = collapsedNodeModes.get(node) ?? "preserve-width";
-          const taxonomyGroup = collapsedTaxonomyGroupByNode.get(node) ?? null;
+          const metadataGroup = metadataCollapsedGroupByNode.get(node);
+          const taxonomyGroup = metadataGroup ? null : collapsedTaxonomyGroupByNode.get(node) ?? null;
+          const collapsedLabel = metadataGroup
+            ? `${metadataGroup.label} (${metadataGroup.tipCount.toLocaleString()} tips)`
+            : taxonomyGroup?.label;
           const taxonomyHitbox = taxonomyGroup
             ? {
                 labelKind: "taxonomy" as const,
@@ -14631,10 +14677,10 @@ export default function TreeCanvas({
             width: hitMaxX - hitMinX,
             height: hitMaxY - hitMinY,
           });
-          if (collapseMode === "minimize" && taxonomyGroup) {
+          if (collapseMode === "minimize" && collapsedLabel) {
             const fontSize = scaleLabelFontSize("taxonomy", 14);
             ctx.font = fontSpec("taxonomy", fontSize);
-            const labelWidth = ctx.measureText(taxonomyGroup.label).width;
+            const labelWidth = ctx.measureText(collapsedLabel).width;
             const renderedTheta = apexTheta + rotationAngle;
             const firstRenderedTaxonomyArc = circularGenusArcs.find((arc) => arc.mode !== "divider");
             const labelRadiusPx = circularOverlayInnerRadiusPx(firstRenderedTaxonomyArc)
@@ -14651,10 +14697,10 @@ export default function TreeCanvas({
             ctx.save();
             ctx.translate(labelX, labelY);
             ctx.rotate(labelRotation);
-            ctx.fillText(taxonomyGroup.label, 0, 0);
+            ctx.fillText(collapsedLabel, 0, 0);
             ctx.restore();
             pushSceneText(
-              taxonomyGroup.label,
+              collapsedLabel,
               labelX,
               labelY,
               "#1f2937",
@@ -15610,6 +15656,7 @@ export default function TreeCanvas({
     cache,
     collapsedNodeModes,
     collapsedTaxonomyGroupByNode,
+    metadataCollapsedGroupByNode,
     collapsedView,
     collapsedNodes,
     effectiveTimeAxisScale,
@@ -18337,7 +18384,8 @@ export default function TreeCanvas({
   }, [contextMenu, openSubtreeInNewTab, tree]);
 
   const handleContextOpenTaxonomySource = useCallback(() => {
-    if (!contextMenu || contextMenu.kind !== "taxonomy" || typeof window === "undefined") {
+    if (!contextMenu || contextMenu.kind !== "taxonomy" || typeof window === "undefined"
+      || taxonomyMap?.mappingOrigin === "metadata-ranks") {
       return;
     }
     if (taxonomyMap?.source === "catalogue-of-life") {
@@ -18354,7 +18402,7 @@ export default function TreeCanvas({
     }
     window.open(`https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=${contextMenu.taxId}`, "_blank", "noopener,noreferrer");
     setContextMenu(null);
-  }, [contextMenu, taxonomyMap?.source]);
+  }, [contextMenu, taxonomyMap?.source, taxonomyMap?.mappingOrigin]);
 
   const handleContextTryAnotherPhyloPic = useCallback(() => {
     if (!contextMenu || contextMenu.kind !== "phylopic" || !onPhyloPicTryAnotherSilhouette) {
@@ -19121,7 +19169,7 @@ export default function TreeCanvas({
                   Copy Tip Name
                 </button>
               ) : null}
-              {contextMenuCollapseTarget !== null ? (
+              {contextMenuCollapseTarget !== null && !metadataCollapsedGroupByNode.has(contextMenuCollapseTarget) ? (
                 collapsedNodes.has(contextMenuCollapseTarget) ? (
                   <button
                     type="button"
@@ -19318,7 +19366,7 @@ export default function TreeCanvas({
               >
                 Copy Name
               </button>
-              <button
+              {taxonomyMap?.mappingOrigin !== "metadata-ranks" ? <button
                 type="button"
                 className="tree-context-menu-item"
                 onClick={handleContextOpenTaxonomySource}
@@ -19332,8 +19380,8 @@ export default function TreeCanvas({
                 {taxonomyMap?.source === "catalogue-of-life"
                   ? "Open In Catalogue of Life"
                   : "Open In NCBI Taxonomy"}
-              </button>
-              {contextMenuCollapseTarget !== null ? (
+              </button> : null}
+              {contextMenuCollapseTarget !== null && !metadataCollapsedGroupByNode.has(contextMenuCollapseTarget) ? (
                 collapsedNodes.has(contextMenuCollapseTarget) ? (
                   <button
                     type="button"
@@ -19441,11 +19489,11 @@ export default function TreeCanvas({
               >
                 Copy Name
               </button>
-              <button
+              {taxonomyMap?.mappingOrigin !== "metadata-ranks" ? <button
                 type="button"
                 className="tree-context-menu-item"
                 onClick={() => {
-                  if (contextMenu.taxId && typeof window !== "undefined") {
+                  if (taxonomyMap?.mappingOrigin !== "metadata-ranks" && contextMenu.taxId && typeof window !== "undefined") {
                     window.open(`https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=${contextMenu.taxId}`, "_blank", "noopener,noreferrer");
                   }
                   setContextMenu(null);
@@ -19456,7 +19504,7 @@ export default function TreeCanvas({
                   : "No NCBI taxonomy identifier is available for this silhouette."}
               >
                 Open In NCBI Taxonomy
-              </button>
+              </button> : null}
             </>
           )}
         </div>

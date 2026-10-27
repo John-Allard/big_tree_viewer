@@ -1,6 +1,7 @@
 import type { TreeModel } from "../types/tree";
+import { formatMetadataDate, parseMetadataDate } from "./metadataDates";
 
-export type MetadataColorMode = "categorical" | "continuous";
+export type MetadataColorMode = "categorical" | "continuous" | "date";
 export type MetadataApplyScope = "branch" | "subtree";
 export type MetadataContinuousPalette = "blueOrange" | "viridis" | "redBlue" | "tealRose";
 export type MetadataContinuousTransform = "linear" | "sqrt" | "log";
@@ -21,6 +22,11 @@ export interface MetadataLegendCategoryItem {
 }
 
 export interface MetadataContinuousLegend {
+  valueType: "number" | "date";
+  minLabel: string;
+  maxLabel: string;
+  actualMinLabel: string;
+  actualMaxLabel: string;
   colors: string[];
   min: number;
   max: number;
@@ -120,6 +126,7 @@ export interface MetadataColorOverlayOptions {
   reverseScale: boolean;
   continuousPalette: MetadataContinuousPalette;
   continuousTransform: MetadataContinuousTransform;
+  /** Date mode bounds are UTC milliseconds, as returned by parseMetadataDate. */
   continuousMin: number | null;
   continuousMax: number | null;
   categoricalColorOverrides?: Record<string, string>;
@@ -424,6 +431,18 @@ export function parseMetadataTable(text: string, firstRowIsHeader = true): Parse
   };
 }
 
+/** Explicit date detection also accepts year-only columns; numeric inference is unchanged. */
+export function metadataColumnLooksDate(rows: Array<Record<string, string>>, column: string): boolean {
+  let hasDate = false;
+  for (const row of rows) {
+    const raw = (row[column] ?? "").trim();
+    if (!raw) continue;
+    if (parseMetadataDate(raw) === null) return false;
+    hasDate = true;
+  }
+  return hasDate;
+}
+
 export function metadataColumnLooksContinuous(rows: Array<Record<string, string>>, column: string): boolean {
   let numericCount = 0;
   let integerOnly = true;
@@ -527,7 +546,9 @@ export function buildMetadataColorOverlay(
     };
   }
 
-  const numericEntries: Array<{ nodes: number[]; value: number }> = [];
+  // Calendar chronology is linear; applying log/sqrt to an epoch is arbitrary.
+  const transform = mode === "date" ? "linear" : continuousTransform;
+  const numericEntries: Array<{ nodes: number[]; value: number; label: string }> = [];
   let actualMin = Number.POSITIVE_INFINITY;
   let actualMax = Number.NEGATIVE_INFINITY;
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
@@ -541,13 +562,13 @@ export function buildMetadataColorOverlay(
       unmappedRowCount += 1;
       continue;
     }
-    const value = Number(raw);
-    if (!Number.isFinite(value)) {
+    const value = mode === "date" ? parseMetadataDate(raw) : Number(raw);
+    if (value === null || !Number.isFinite(value)) {
       invalidValueRowCount += 1;
       continue;
     }
     matchedRowCount += 1;
-    numericEntries.push({ nodes, value });
+    numericEntries.push({ nodes, value, label: mode === "date" ? raw : String(value) });
     actualMin = Math.min(actualMin, value);
     actualMax = Math.max(actualMax, value);
     for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
@@ -561,29 +582,30 @@ export function buildMetadataColorOverlay(
   const bounded = normalizeContinuousBounds(continuousMin, continuousMax);
   const legendMin = bounded.min ?? actualMin;
   const legendMax = bounded.max ?? actualMax;
-  const transformedMin = transformContinuousValue(legendMin, continuousTransform);
-  const transformedMax = transformContinuousValue(legendMax, continuousTransform);
+  const transformedMin = transformContinuousValue(legendMin, transform);
+  const transformedMax = transformContinuousValue(legendMax, transform);
   const span = Math.max(1e-9, transformedMax - transformedMin);
   const colorCache = new Map<number, string>();
   for (let entryIndex = 0; entryIndex < numericEntries.length; entryIndex += 1) {
     const entry = numericEntries[entryIndex];
     const clampedValue = Math.max(legendMin, Math.min(legendMax, entry.value));
-    const transformedValue = transformContinuousValue(clampedValue, continuousTransform);
+    const transformedValue = transformContinuousValue(clampedValue, transform);
     const t = legendMax > legendMin ? (transformedValue - transformedMin) / span : 0.5;
     const color = continuousColorForT(paletteStops, t, colorCache);
     for (let nodeIndex = 0; nodeIndex < entry.nodes.length; nodeIndex += 1) {
       const node = entry.nodes[nodeIndex];
       if (scope === "subtree") {
-        coloredNodeCount += applySubtreeColor(tree, colors, values, node, color, String(entry.value));
+        coloredNodeCount += applySubtreeColor(tree, colors, values, node, color, entry.label);
       } else if (tree.buffers.parent[node] >= 0) {
         if (colors[node] !== color) {
           coloredNodeCount += 1;
         }
         colors[node] = color;
-        values[node] = String(entry.value);
+        values[node] = entry.label;
       }
     }
   }
+  const formatBound = mode === "date" ? formatMetadataDate : (value: number) => Number(value.toPrecision(5)).toString();
   return {
     colors,
     values,
@@ -596,6 +618,11 @@ export function buildMetadataColorOverlay(
     categoryLegend: [],
     continuousLegend: numericEntries.length > 0
       ? {
+        valueType: mode === "date" ? "date" : "number",
+        minLabel: formatBound(legendMin),
+        maxLabel: formatBound(legendMax),
+        actualMinLabel: formatBound(actualMin),
+        actualMaxLabel: formatBound(actualMax),
         colors: Array.from({ length: 64 }, (_, index) => continuousColorForT(paletteStops, index / 63, colorCache)),
         min: legendMin,
         max: legendMax,
@@ -605,10 +632,10 @@ export function buildMetadataColorOverlay(
         actualMin,
         actualMax,
         palette: continuousPalette,
-        transform: continuousTransform,
+        transform,
       }
       : null,
-    version: `continuous:${keyColumn}:${valueColumn}:${scope}:${reverseScale ? "reverse" : "forward"}:${continuousPalette}:${continuousTransform}:${bounded.min ?? "auto"}:${bounded.max ?? "auto"}:${rows.length}:${actualMin}:${actualMax}`,
+    version: `${mode}:${keyColumn}:${valueColumn}:${scope}:${reverseScale ? "reverse" : "forward"}:${continuousPalette}:${transform}:${bounded.min ?? "auto"}:${bounded.max ?? "auto"}:${rows.length}:${actualMin}:${actualMax}`,
   };
 }
 

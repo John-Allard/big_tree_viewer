@@ -1,4 +1,4 @@
-import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
+import { deriveActiveTaxonomyRanks, derivePresentTaxonomyRanks } from "./taxonomyActiveRanks";
 import type { TaxonomyMapPayload, TaxonomyRank, TaxonomyTipRanks } from "../types/taxonomy";
 import type { LayoutBuffers, LayoutOrder, TreeBuffers, TreeModel, WorkerTreePayload } from "../types/tree";
 
@@ -577,12 +577,16 @@ export function buildTaxonomyCollapsedTreePayload(
     payload,
     taxonomyMap: {
       version: taxonomyMap.version,
+      mappingOrigin: taxonomyMap.mappingOrigin,
+      metadataRankColumns: taxonomyMap.metadataRankColumns,
       source: taxonomyMap.source,
       sourceVersion: taxonomyMap.sourceVersion,
       sourceDoi: taxonomyMap.sourceDoi,
       mappedCount: syntheticTipRanks.length,
       totalTips: payload.leafCount,
-      activeRanks: deriveActiveTaxonomyRanks(syntheticTipRanks.map((tip) => tip.ranks)),
+      activeRanks: taxonomyMap.mappingOrigin === "metadata-ranks"
+        ? derivePresentTaxonomyRanks(syntheticTipRanks.map(tip => tip.ranks))
+        : deriveActiveTaxonomyRanks(syntheticTipRanks.map((tip) => tip.ranks)),
       tipRanks: syntheticTipRanks,
     },
     sourceNodeByNode,

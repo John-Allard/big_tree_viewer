@@ -48,6 +48,10 @@ export interface AutomationExportResult {
 
 export interface TreeCanvasProps {
   treeRef: { current: TreeModel | null };
+  /** Node-indexed visual labels only; null or missing entries retain the original tip name. */
+  tipDisplayLabels?: Array<string | null>;
+  /** External minimized groups, layered over manual collapse state and excluded from snapshots. */
+  metadataCollapsedNodes?: Array<{ node: number; label: string; tipCount: number }>;
   visibleViewportLeftInsetPx?: number;
   showCladogram?: boolean;
   ultrametricCladogram?: boolean;

@@ -2,6 +2,14 @@ import { isAutomaticTaxonomyRank, TAXONOMY_RANKS, type TaxonomyMapPayload, type 
 
 export const ACTIVE_TAXONOMY_RANK_ORDER: TaxonomyRank[] = [...TAXONOMY_RANKS].reverse();
 
+export function derivePresentTaxonomyRanks(entries: Array<Partial<Record<TaxonomyRank, string>>>): TaxonomyRank[] {
+  const present = new Set<TaxonomyRank>();
+  for (const entry of entries) {
+    for (const rank of Object.keys(entry) as TaxonomyRank[]) if (entry[rank]) present.add(rank);
+  }
+  return ACTIVE_TAXONOMY_RANK_ORDER.filter(rank => present.has(rank));
+}
+
 function collapseLabelForRank(
   entry: Partial<Record<TaxonomyRank, string>> | TaxonomyTipRanks,
   rank: TaxonomyRank,
@@ -121,7 +129,9 @@ export function filterTaxonomyMapToRanks(
     taxIds: filterRecord(tip.taxIds),
     collapseFallbacks: filterRecord(tip.collapseFallbacks),
   }));
-  const activeRanks = deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
+  const activeRanks = taxonomyMap.mappingOrigin === "metadata-ranks"
+    ? derivePresentTaxonomyRanks(tipRanks.map(tip => tip.ranks))
+    : deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
   const resolvedSource = taxonomyMap.resolvedRanks ?? taxonomyMap.activeRanks;
   return {
     ...taxonomyMap,

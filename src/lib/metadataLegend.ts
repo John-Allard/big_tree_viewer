@@ -1,4 +1,5 @@
 import type { MetadataMarkerShape } from "./metadataColors";
+import { formatMetadataDate } from "./metadataDates";
 
 export type MetadataLegendPosition = "top-right" | "bottom-right" | "bottom-left" | "top-left";
 export interface MetadataLegendPlacement { x: number; y: number }
@@ -15,7 +16,11 @@ export interface MetadataLegendSection {
   title: string;
   kind?: "branchColors" | "markers" | "pies";
   entries: Array<{ label: string; color: string; shape?: MetadataMarkerShape }>;
-  continuous?: { colors: string[]; min: number; max: number; transform: string };
+  continuous?: {
+    colors: string[]; min: number; max: number; transform: string;
+    valueType?: "number" | "date";
+    minLabel?: string; maxLabel?: string;
+  };
 }
 type LegendPrimitive =
   | { kind: "line"; x: number; y: number; width: number; color: string }
@@ -66,15 +71,15 @@ export function layoutMetadataLegend(
     textLines(heading, 12, true);
     cursorY += 4;
     if (section.continuous) {
-      const { colors, min, max, transform } = section.continuous;
+      const { colors, min, max, transform, valueType, minLabel, maxLabel } = section.continuous;
       const barWidth = width - 24;
       for (let index = 0; index < colors.length; index += 1) {
         primitives.push({ kind: "rect", x: 12 + index * barWidth / colors.length, y: cursorY,
           width: Math.min(barWidth - index * barWidth / colors.length, barWidth / colors.length + 1), height: 12, color: colors[index] });
       }
       cursorY += 16;
-      const number = (value: number) => Number(value.toPrecision(5)).toString();
-      textLines(wrapped(`${number(min)} to ${number(max)}${transform === "linear" ? "" : ` (${transform})`}`, width - 24, false), 12, false);
+      const format = valueType === "date" ? formatMetadataDate : (value: number) => Number(value.toPrecision(5)).toString();
+      textLines(wrapped(`${minLabel ?? format(min)} to ${maxLabel ?? format(max)}${transform === "linear" ? "" : ` (${transform})`}`, width - 24, false), 12, false);
       remaining -= 1;
     }
     for (const entry of section.entries) {

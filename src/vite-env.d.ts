@@ -65,7 +65,7 @@ declare global {
       clearMetadataForTest: () => void;
       setMetadataKeyColumn: (column: string) => void;
       setMetadataValueColumn: (column: string) => void;
-      setMetadataColorMode: (mode: "categorical" | "continuous") => void;
+      setMetadataColorMode: (mode: "categorical" | "continuous" | "date") => void;
       setMetadataCategoryColorOverridesForTest: (overrides: Record<string, string>) => void;
       setMetadataApplyScope: (scope: "branch" | "subtree") => void;
       setMetadataReverseScale: (reverse: boolean) => void;

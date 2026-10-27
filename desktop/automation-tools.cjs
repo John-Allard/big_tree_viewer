@@ -17,7 +17,11 @@ const taxonomy = z.object({
 const metadataOptions = z.object({
   text: z.string().optional(), label: z.string().optional(), firstRowIsHeader: z.boolean().optional(),
   enabled: z.boolean().optional(), keyColumn: z.string().optional(), valueColumn: z.string().optional(),
-  colorMode: z.enum(["categorical", "continuous"]).optional(), applyScope: z.enum(["branch", "subtree"]).optional(),
+  tipLabelColumn: z.string().optional().describe("Alternative tip display names; original tree IDs remain unchanged."),
+  collapseColumn: z.string().optional().describe("Collapse maximal clades whose tips all share one nonempty value. Empty disables metadata collapse."),
+  taxIdColumn: z.string().optional().describe("NCBI TaxID column linked by keyColumn; use with taxonomy mapping."),
+  rankColumns: z.partialRecord(taxonomyRank, z.string()).optional().describe("Custom taxonomy ribbons from metadata: assign rank names to table columns, without a taxonomy database."),
+  colorMode: z.enum(["categorical", "continuous", "date"]).optional().describe("Date mode colors ISO YYYY, YYYY-MM, or YYYY-MM-DD values chronologically."), applyScope: z.enum(["branch", "subtree"]).optional(),
   labelsEnabled: z.boolean().optional(), labelColumn: z.string().optional(),
   markersEnabled: z.boolean().optional(), markerColumn: z.string().optional(),
   piesEnabled: z.boolean().optional(), pieStartColumn: z.string().optional(), pieEndColumn: z.string().optional(),

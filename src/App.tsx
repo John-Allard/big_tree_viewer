@@ -33,6 +33,7 @@ import {
   buildMetadataPieOverlay,
   METADATA_CONTINUOUS_PALETTES,
   metadataColumnLooksContinuous,
+  metadataColumnLooksDate,
   parseMetadataTable,
   type MetadataApplyScope,
   type MetadataColorMode,
@@ -125,6 +126,9 @@ import {
   type TaxonomySource,
 } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
+import { parseMetadataDate } from "./lib/metadataDates";
+import { buildMetadataCollapseGroups } from "./lib/metadataCollapse";
+import { buildMetadataTipDisplayLabels, buildMetadataTaxIdTips, buildMetadataTaxonomyMap } from "./lib/metadataMapping";
 import { canParseTreeInline, parseTreePayload } from "./lib/treeParser";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
@@ -241,6 +245,10 @@ type BigTreeViewerLaunchPayload = {
     firstRowIsHeader?: boolean;
     enabled?: boolean;
     keyColumn?: string;
+    tipLabelColumn?: string;
+    collapseColumn?: string;
+    taxIdColumn?: string;
+    rankColumns?: Partial<Record<TaxonomyRank, string>>;
     valueColumn?: string;
     colorMode?: MetadataColorMode;
     applyScope?: MetadataApplyScope;
@@ -362,6 +370,10 @@ type BigTreeViewerSessionSettings = {
   metadataLegendComponents?: MetadataLegendComponents;
   metadataFirstRowIsHeader: boolean;
   metadataKeyColumn: string;
+  tipLabelMetadataColumn?: string;
+  metadataCollapseColumn?: string;
+  metadataTaxIdColumn?: string;
+  metadataRankColumns?: Partial<Record<TaxonomyRank, string>>;
   metadataValueColumn: string;
   metadataColorMode: MetadataColorMode;
   metadataApplyScope: MetadataApplyScope;
@@ -652,6 +664,9 @@ function buildTaxonomyMappingWarning(tree: TreeModel | null, taxonomyMap: Taxono
   const unmappedFraction = unmappedCount / Math.max(1, taxonomyMap.totalTips);
   if (unmappedCount < 100 && unmappedFraction < 0.1) {
     return "";
+  }
+  if (taxonomyMap.mappingOrigin) {
+    return `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips were not mapped from the metadata table. Check matching tip IDs and missing ${taxonomyMap.mappingOrigin === "metadata-taxids" ? "or invalid NCBI TaxIDs" : "rank values"}.`;
   }
   const mappedNodes = new Set(taxonomyMap.tipRanks.map((tip) => tip.node));
   const examples: string[] = [];
@@ -1269,6 +1284,7 @@ const TAXONOMY_SOURCE_CONFIG: Record<TaxonomySource, {
 };
 
 function taxonomyMapSourceLabel(map: TaxonomyMapPayload): string {
+  if (map.mappingOrigin === "metadata-ranks") return "custom metadata taxonomy";
   return TAXONOMY_SOURCE_CONFIG[taxonomyMapSource(map)].label;
 }
 
@@ -1961,6 +1977,12 @@ async function computeTreeSignature(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function inferMetadataColorMode(table: ParsedMetadataTable, column: string): MetadataColorMode {
+  const calendarColumn = /date|year/i.test(column) || table.rows.some(row => /^\d{4}-\d{2}/.test((row[column] ?? "").trim()));
+  if (calendarColumn && metadataColumnLooksDate(table.rows, column)) return "date";
+  return metadataColumnLooksContinuous(table.rows, column) ? "continuous" : "categorical";
+}
+
 async function parseComparisonTree(text: string): Promise<TreeModel> {
   const normalizedText = normalizeImportedTreeText(text);
   if (!looksLikeTreeText(normalizedText)) {
@@ -1997,6 +2019,9 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const comparisonFileInputRef = useRef<HTMLInputElement | null>(null);
   const metadataFileInputRef = useRef<HTMLInputElement | null>(null);
+  const metadataTableRef = useRef<ParsedMetadataTable | null>(null);
+  const taxonomyMappingRevisionRef = useRef(0);
+  const metadataTaxIdMappingRef = useRef<{ tree: TreeModel; table: ParsedMetadataTable; key: string; column: string } | null>(null);
   const metadataLegendSettingsRef = useRef<HTMLDivElement | null>(null);
   const pendingLegendSettingsScrollRef = useRef(false);
   const didAutoloadRef = useRef(false);
@@ -2021,6 +2046,7 @@ export default function App() {
     source: TaxonomySource;
     identifierMode: TaxonomyIdentifierMode | null;
     ranks: TaxonomyRank[];
+    metadataIdentifiers?: { table: ParsedMetadataTable; key: string; column: string };
     resolve: (payload: TaxonomyMapPayload | null) => void;
   } | null>(null);
   const pendingSessionPhyloPicRef = useRef<BigTreeViewerSessionFile["phylopic"] | undefined>(undefined);
@@ -2181,6 +2207,10 @@ export default function App() {
   const [metadataLegendPlacement, setMetadataLegendPlacement] = useState<MetadataLegendPlacement | null>(null);
   const [metadataLegendComponents, setMetadataLegendComponents] = useState<MetadataLegendComponents>(() => normalizeMetadataLegendComponents());
   const [metadataKeyColumn, setMetadataKeyColumn] = useState("");
+  const [tipLabelMetadataColumn, setTipLabelMetadataColumn] = useState("");
+  const [metadataCollapseColumn, setMetadataCollapseColumn] = useState("");
+  const [metadataTaxIdColumn, setMetadataTaxIdColumn] = useState("");
+  const [metadataRankColumns, setMetadataRankColumns] = useState<Partial<Record<TaxonomyRank, string>>>({});
   const [metadataValueColumn, setMetadataValueColumn] = useState("");
   const [metadataColorMode, setMetadataColorMode] = useState<MetadataColorMode>("categorical");
   const [metadataApplyScope, setMetadataApplyScope] = useState<MetadataApplyScope>("branch");
@@ -3071,10 +3101,14 @@ export default function App() {
     if (typeof visual.metadataKeyColumn === "string") {
       setMetadataKeyColumn(visual.metadataKeyColumn);
     }
+    if (typeof visual.tipLabelMetadataColumn === "string") setTipLabelMetadataColumn(visual.tipLabelMetadataColumn);
+    if (typeof visual.metadataCollapseColumn === "string") setMetadataCollapseColumn(visual.metadataCollapseColumn);
+    if (typeof visual.metadataTaxIdColumn === "string") setMetadataTaxIdColumn(visual.metadataTaxIdColumn);
+    if (visual.metadataRankColumns) setMetadataRankColumns(visual.metadataRankColumns);
     if (typeof visual.metadataValueColumn === "string") {
       setMetadataValueColumn(visual.metadataValueColumn);
     }
-    if (visual.metadataColorMode === "categorical" || visual.metadataColorMode === "continuous") {
+    if (visual.metadataColorMode === "categorical" || visual.metadataColorMode === "continuous" || visual.metadataColorMode === "date") {
       setMetadataColorMode(visual.metadataColorMode);
     }
     if (visual.metadataApplyScope === "branch" || visual.metadataApplyScope === "subtree") {
@@ -3204,6 +3238,8 @@ export default function App() {
     const nextTaxonomyMap = taxonomyMap
       ? rebuildSharedSubtreeTaxonomyMap(nextTree, {
         version: taxonomyMap.version,
+        mappingOrigin: taxonomyMap.mappingOrigin,
+        metadataRankColumns: taxonomyMap.metadataRankColumns,
         source: taxonomyMap.source,
         identifierMode: taxonomyMap.identifierMode,
         sourceVersion: taxonomyMap.sourceVersion,
@@ -3530,6 +3566,20 @@ export default function App() {
     setUseAutoCircularCenterScaleAngle(enabled);
   }, [effectiveCircularCenterScaleAngleDegrees]);
   const metadataColumns = metadataTable?.columns ?? [];
+  const metadataDerivedView = useMemo(() => {
+    if (!tree || !metadataTable || !metadataKeyColumn) return { labels: null, groups: [], error: "" };
+    try {
+      return {
+        labels: tipLabelMetadataColumn && metadataTable.columns.includes(tipLabelMetadataColumn)
+          ? buildMetadataTipDisplayLabels(tree, metadataTable.rows, metadataKeyColumn, tipLabelMetadataColumn) : null,
+        groups: metadataCollapseColumn && metadataTable.columns.includes(metadataCollapseColumn)
+          ? buildMetadataCollapseGroups(tree, metadataTable.rows, metadataKeyColumn, metadataCollapseColumn) : [],
+        error: "",
+      };
+    } catch (error) {
+      return { labels: null, groups: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  }, [tree, metadataTable, metadataKeyColumn, tipLabelMetadataColumn, metadataCollapseColumn]);
   const metadataPieColumns = useMemo(() => {
     if (metadataColumns.length === 0 || !metadataPieStartColumn || !metadataPieEndColumn) {
       return [];
@@ -3558,17 +3608,17 @@ export default function App() {
     if (!trimmed) {
       return null;
     }
-    const parsed = Number(trimmed);
+    const parsed = metadataColorMode === "date" ? parseMetadataDate(trimmed) : Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
-  }, [metadataContinuousMinInput]);
+  }, [metadataColorMode, metadataContinuousMinInput]);
   const metadataContinuousMax = useMemo(() => {
     const trimmed = metadataContinuousMaxInput.trim();
     if (!trimmed) {
       return null;
     }
-    const parsed = Number(trimmed);
+    const parsed = metadataColorMode === "date" ? parseMetadataDate(trimmed) : Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
-  }, [metadataContinuousMaxInput]);
+  }, [metadataColorMode, metadataContinuousMaxInput]);
   useEffect(() => {
     let cancelled = false;
     let timeoutId: number | null = null;
@@ -4351,10 +4401,12 @@ export default function App() {
     source: TaxonomySource = "ncbi",
     identifierMode: TaxonomyIdentifierMode = "scientific-name",
     requestedRanks: TaxonomyRank[] = [...DEFAULT_TAXONOMY_RANKS],
+    metadataTips?: Array<{ node: number; name: string }>,
   ): Promise<TaxonomyMapPayload | null> => {
     if (source !== "ncbi" && identifierMode === "ncbi-taxid") {
       throw new Error("NCBI TaxID tip labels can only be mapped with NCBI Taxonomy.");
     }
+    taxonomyMappingRevisionRef.current += 1;
     setTaxonomySource(source);
     setTaxonomyIdentifierMode(identifierMode);
     setTaxonomyLoading(true);
@@ -4373,7 +4425,7 @@ export default function App() {
     try {
       const archive = await ensureTaxonomyArchive(allowDownload, source);
       setTaxonomyStatus(`Mapping tree tips to ${TAXONOMY_SOURCE_CONFIG[source].label}...`);
-      const tips = Array.from(targetTree.leafNodes)
+      const tips = metadataTips ?? Array.from(targetTree.leafNodes)
         .sort((left, right) => targetTree.layouts.input.center[left] - targetTree.layouts.input.center[right])
         .map((node) => ({
           node,
@@ -4391,7 +4443,8 @@ export default function App() {
       if (response.type !== "taxonomy-mapped" || !response.payload) {
         throw new Error(response.message || "Taxonomy mapping did not complete.");
       }
-      if (targetTreeSignature && !lowMemoryMode) {
+      if (metadataTips) response.payload.mappingOrigin = "metadata-taxids";
+      if (targetTreeSignature && !lowMemoryMode && !metadataTips) {
         try {
           await putCachedTaxonomyMapping(targetTreeSignature, response.payload, source);
         } catch (error) {
@@ -4437,6 +4490,7 @@ export default function App() {
     if (!tree || !taxonomyMap) {
       return null;
     }
+    if (taxonomyMap.mappingOrigin === "metadata-ranks") return taxonomyMap;
     const uniqueRanks = TAXONOMY_RANKS.filter((rank) => requestedRanks.includes(rank));
     const alreadyResolved = new Set(taxonomyMap.resolvedRanks ?? taxonomyMap.activeRanks);
     if (uniqueRanks.every((rank) => alreadyResolved.has(rank))) {
@@ -4463,7 +4517,8 @@ export default function App() {
       if (response.type !== "taxonomy-mapped" || !response.payload) {
         throw new Error(response.message || "The additional taxonomy rank could not be mapped.");
       }
-      if (treeSignature && !useLowMemoryTaxonomyMapping) {
+      response.payload.mappingOrigin = taxonomyMap.mappingOrigin;
+      if (treeSignature && !useLowMemoryTaxonomyMapping && !taxonomyMap.mappingOrigin) {
         await putCachedTaxonomyMapping(treeSignature, response.payload, source);
       }
       setTaxonomyMap(response.payload);
@@ -4798,6 +4853,10 @@ export default function App() {
     metadataLegendComponents,
     metadataFirstRowIsHeader,
     metadataKeyColumn,
+    tipLabelMetadataColumn,
+    metadataCollapseColumn,
+    metadataTaxIdColumn,
+    metadataRankColumns,
     metadataValueColumn,
     metadataColorMode,
     metadataApplyScope,
@@ -4856,6 +4915,10 @@ export default function App() {
     metadataLegendComponents,
     metadataFirstRowIsHeader,
     metadataKeyColumn,
+    tipLabelMetadataColumn,
+    metadataCollapseColumn,
+    metadataTaxIdColumn,
+    metadataRankColumns,
     metadataLabelColumn,
     metadataLabelMaxCount,
     metadataLabelMinSpacingPx,
@@ -5053,6 +5116,10 @@ export default function App() {
     setMetadataLegendPlacement(normalizeMetadataLegendPlacement(settings.metadataLegendPlacement));
     setMetadataLegendComponents(normalizeMetadataLegendComponents(settings.metadataLegendComponents));
     setMetadataKeyColumn(settings.metadataKeyColumn);
+    setTipLabelMetadataColumn(settings.tipLabelMetadataColumn ?? "");
+    setMetadataCollapseColumn(settings.metadataCollapseColumn ?? "");
+    setMetadataTaxIdColumn(settings.metadataTaxIdColumn ?? "");
+    setMetadataRankColumns(settings.metadataRankColumns ?? {});
     setMetadataValueColumn(settings.metadataValueColumn);
     setMetadataColorMode(settings.metadataColorMode);
     setMetadataApplyScope(settings.metadataApplyScope);
@@ -5085,6 +5152,7 @@ export default function App() {
       ? settings.metadataTipTableColumns.filter((column) => column && typeof column.column === "string").map((column) => ({
         column: column.column,
         label: typeof column.label === "string" ? column.label : column.column,
+        ...(column.valueType === "date" ? { valueType: "date" as const } : column.valueType === "number" ? { valueType: "number" as const } : {}),
       }))
       : []);
     setMetadataTipTablePalette(settings.metadataTipTablePalette && METADATA_CONTINUOUS_PALETTES[settings.metadataTipTablePalette]
@@ -5296,18 +5364,24 @@ export default function App() {
         return false;
       }
       pendingLaunchTaxonomyMappingRef.current = null;
-      void runStandardTaxonomyMappingForTree(
+      void Promise.resolve().then(() => runStandardTaxonomyMappingForTree(
         tree,
         treeSignature,
         pending.lowMemoryMode,
         pending.allowDownload,
         pending.source,
         pending.source === "ncbi"
-          ? pending.identifierMode ?? (treeHasNcbiTaxIdLabels(tree) ? "ncbi-taxid" : "scientific-name")
+          ? pending.metadataIdentifiers ? "ncbi-taxid" : pending.identifierMode ?? (treeHasNcbiTaxIdLabels(tree) ? "ncbi-taxid" : "scientific-name")
           : "scientific-name",
         pending.ranks,
-      )
-        .then((payload) => pending.resolve(payload));
+        pending.metadataIdentifiers ? buildMetadataTaxIdTips(tree, pending.metadataIdentifiers.table.rows, pending.metadataIdentifiers.key, pending.metadataIdentifiers.column) : undefined,
+      ))
+        .then((payload) => pending.resolve(payload))
+        .catch(error => {
+          taxonomyMappingFailureMessageRef.current = error instanceof Error ? error.message : String(error);
+          setTaxonomyError(taxonomyMappingFailureMessageRef.current);
+          pending.resolve(null);
+        });
       return true;
     };
     if (pendingTreeReplacementTaxonomyRef.current !== undefined) {
@@ -5338,7 +5412,7 @@ export default function App() {
         const source = taxonomyMapSource(sessionTaxonomy);
         setTaxonomySource(source);
         setTaxonomyIdentifierMode(taxonomyMapIdentifierMode(sessionTaxonomy));
-        if (sessionTaxonomy.totalTips <= MAX_EAGER_SESSION_TAXONOMY_CACHE_TIPS) {
+        if (!sessionTaxonomy.mappingOrigin && sessionTaxonomy.totalTips <= MAX_EAGER_SESSION_TAXONOMY_CACHE_TIPS) {
           void putCachedTaxonomyMapping(treeSignature, sessionTaxonomy, source).catch(() => {
             // Session loading must still succeed if browser storage is unavailable or full.
           });
@@ -5378,7 +5452,7 @@ export default function App() {
         setTaxonomyStatus(`Loaded shared ${taxonomyMapSourceLabel(rebuilt)} mapping for this subtree (${rebuilt.mappedCount.toLocaleString()} mapped tips).`);
         setTaxonomyError(null);
         setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, rebuilt));
-        void putCachedTaxonomyMapping(treeSignature, rebuilt).catch(() => {
+        if (!rebuilt.mappingOrigin) void putCachedTaxonomyMapping(treeSignature, rebuilt).catch(() => {
           // Shared subtree loading must still succeed if browser storage is unavailable or full.
         });
         return;
@@ -5392,9 +5466,10 @@ export default function App() {
     setTaxonomyError(null);
     setTaxonomyMappingWarning("");
     let cancelled = false;
+    const mappingRevision = taxonomyMappingRevisionRef.current;
     void (async () => {
       const cached = await getMostRecentCachedTaxonomyMapping(treeSignature);
-      if (cancelled || !cached) {
+      if (cancelled || !cached || mappingRevision !== taxonomyMappingRevisionRef.current) {
         return;
       }
       setTaxonomySource(cached.source);
@@ -5423,6 +5498,7 @@ export default function App() {
     }
     if (
       taxonomyMap
+      && !taxonomyMap.mappingOrigin
       && taxonomyMapSource(taxonomyMap) === taxonomySource
       && taxonomyMapIdentifierMode(taxonomyMap) === taxonomyIdentifierMode
     ) {
@@ -5447,6 +5523,11 @@ export default function App() {
   }, [taxonomyIdentifierMode, taxonomyMap, taxonomySource, treeSignature]);
 
   const clearMetadata = useCallback((): void => {
+    metadataTableRef.current = null;
+    setTipLabelMetadataColumn("");
+    setMetadataCollapseColumn("");
+    setMetadataTaxIdColumn("");
+    setMetadataRankColumns({});
     setMetadataTable(null);
     setMetadataRawText("");
     setMetadataFirstRowIsHeader(true);
@@ -5503,6 +5584,11 @@ export default function App() {
       const defaultKeyColumn = table.columns[0];
       const defaultValueColumn = table.columns[1];
       setMetadataTable(table);
+      metadataTableRef.current = table;
+      setTipLabelMetadataColumn("");
+      setMetadataCollapseColumn("");
+      setMetadataTaxIdColumn("");
+      setMetadataRankColumns({});
       setMetadataRawText(text);
       setMetadataFirstRowIsHeader(firstRowIsHeader);
       setMetadataFileName(label);
@@ -5511,7 +5597,7 @@ export default function App() {
       setMetadataValueColumn(defaultValueColumn);
       setMetadataLabelColumn(table.columns[2] ?? defaultValueColumn);
       setMetadataLabelsEnabled(false);
-      setMetadataColorMode(metadataColumnLooksContinuous(table.rows, defaultValueColumn) ? "continuous" : "categorical");
+      setMetadataColorMode(inferMetadataColorMode(table, defaultValueColumn));
       setMetadataApplyScope("branch");
       setMetadataReverseScale(false);
       setMetadataContinuousPalette("blueOrange");
@@ -5815,16 +5901,35 @@ export default function App() {
     event.target.value = "";
   };
 
+  const installCustomMetadataTaxonomy = useCallback((targetTree: TreeModel, table: ParsedMetadataTable, key: string, ranks: Partial<Record<TaxonomyRank, string>>): TaxonomyMapPayload => {
+    const map = buildMetadataTaxonomyMap(targetTree, table.rows, key, ranks);
+    if (!map.mappedCount) throw new Error("No tree tips matched the selected metadata rank columns.");
+    taxonomyMappingRevisionRef.current += 1;
+    setTaxonomyMap(map);
+    setTaxonomyEnabled(true);
+    setTaxonomyOverlayStyle("ribbons");
+    setTaxonomyCollapseRank(DEFAULT_TAXONOMY_COLLAPSE_RANK);
+    setUseAutomaticTaxonomyRankVisibility(false);
+    setTaxonomyRankDisplayModes(Object.fromEntries(map.activeRanks.map(rank => [rank, "ribbon"])));
+    setTaxonomyRankVisibility(Object.fromEntries(map.activeRanks.map(rank => [rank, true])));
+    setTaxonomyError(null);
+    setTaxonomyMappingWarning(buildTaxonomyMappingWarning(targetTree, map));
+    setTaxonomyStatus(`Loaded custom metadata taxonomy (${map.mappedCount.toLocaleString()} mapped tips).`);
+    return map;
+  }, []);
+
   const applyLaunchMetadata = useCallback(async (metadata: BigTreeViewerLaunchPayload["metadata"] | undefined): Promise<void> => {
     const metadataUrl = typeof metadata?.url === "string" && metadata.url.trim() ? metadata.url.trim() : "";
-    if (!metadata || (!metadata.text && !metadataUrl)) {
+    if (!metadata) {
       return;
     }
-    const metadataText = metadata.text ?? await fetchRemoteLaunchText(metadataUrl, "metadata");
-    const metadataLabel = metadata.label ?? (metadataUrl ? launchLabelFromUrl(metadataUrl, "remote metadata") : "launch-metadata.csv");
-    const metadataParseError = applyMetadataText(metadataText, metadataLabel, metadata.firstRowIsHeader ?? true);
-    if (metadataParseError) {
-      throw metadataParseError;
+    if (metadata.text || metadataUrl) {
+      const metadataText = metadata.text ?? await fetchRemoteLaunchText(metadataUrl, "metadata");
+      const metadataLabel = metadata.label ?? (metadataUrl ? launchLabelFromUrl(metadataUrl, "remote metadata") : "launch-metadata.csv");
+      const metadataParseError = applyMetadataText(metadataText, metadataLabel, metadata.firstRowIsHeader ?? true);
+      if (metadataParseError) throw metadataParseError;
+    } else if (!metadataTableRef.current) {
+      throw new Error("Load a CSV or TSV metadata table before configuring metadata columns.");
     }
     if (typeof metadata.enabled === "boolean") {
       setMetadataEnabled(metadata.enabled);
@@ -5832,10 +5937,14 @@ export default function App() {
     if (metadata.keyColumn) {
       setMetadataKeyColumn(metadata.keyColumn);
     }
+    if (typeof metadata.tipLabelColumn === "string") setTipLabelMetadataColumn(metadata.tipLabelColumn);
+    if (typeof metadata.collapseColumn === "string") setMetadataCollapseColumn(metadata.collapseColumn);
+    if (typeof metadata.taxIdColumn === "string") setMetadataTaxIdColumn(metadata.taxIdColumn);
+    if (metadata.rankColumns) setMetadataRankColumns(metadata.rankColumns);
     if (metadata.valueColumn) {
       setMetadataValueColumn(metadata.valueColumn);
     }
-    if (metadata.colorMode === "categorical" || metadata.colorMode === "continuous") {
+    if (metadata.colorMode === "categorical" || metadata.colorMode === "continuous" || metadata.colorMode === "date") {
       setMetadataColorMode(metadata.colorMode);
     }
     if (metadata.applyScope === "branch" || metadata.applyScope === "subtree") {
@@ -5936,6 +6045,24 @@ export default function App() {
     const launchCompactTaxonomy = payload.taxonomy?.compact;
     const launchCompactTaxonomyProvided = launchCompactTaxonomy !== undefined;
     const launchTaxonomyRunMapping = payload.taxonomy?.runMapping === true;
+    if (payload.metadata?.rankColumns && (launchTaxonomyRunMapping || launchTaxonomyProvided || launchCompactTaxonomyProvided)) {
+      throw new Error("Custom metadata rank columns cannot be combined with a database or supplied taxonomy mapping.");
+    }
+    const metadataIdentifiers = (): { table: ParsedMetadataTable; key: string; column: string } | undefined => {
+      if (!payload.metadata?.taxIdColumn) return undefined;
+      if (payload.taxonomy?.source === "catalogue-of-life") throw new Error("NCBI TaxID columns require NCBI Taxonomy.");
+      const table = metadataTableRef.current;
+      if (!table) throw new Error("Load a metadata table before using a TaxID column.");
+      return { table, key: payload.metadata.keyColumn || table.columns[0], column: payload.metadata.taxIdColumn };
+    };
+    const applyLaunchRankColumns = (): void => {
+      const ranks = payload.metadata?.rankColumns;
+      if (!ranks) return;
+      const targetTree = currentTreeRef.current;
+      const table = metadataTableRef.current;
+      if (!targetTree || !table) throw new Error("Custom taxonomy requires a tree and a metadata table.");
+      installCustomMetadataTaxonomy(targetTree, table, payload.metadata?.keyColumn || table.columns[0], ranks);
+    };
     if (launchCompactTaxonomyProvided && (launchTaxonomyProvided || launchTaxonomyRunMapping)) {
       throw new Error("taxonomy.compact cannot be combined with taxonomy.map or taxonomy.runMapping.");
     }
@@ -5966,6 +6093,7 @@ export default function App() {
           source: launchTaxonomySource,
           identifierMode: launchTaxonomyIdentifierMode,
           ranks: launchTaxonomyRanks,
+          metadataIdentifiers: metadataIdentifiers(),
           resolve,
         };
       });
@@ -6018,8 +6146,9 @@ export default function App() {
             launchTaxonomyLowMemoryMode,
             launchTaxonomyAllowDownload,
             launchTaxonomySource,
-            launchTaxonomyIdentifierMode ?? (treeHasNcbiTaxIdLabels(restoredTree) ? "ncbi-taxid" : "scientific-name"),
+            metadataIdentifiers() ? "ncbi-taxid" : launchTaxonomyIdentifierMode ?? (treeHasNcbiTaxIdLabels(restoredTree) ? "ncbi-taxid" : "scientific-name"),
             launchTaxonomyRanks,
+            metadataIdentifiers() ? buildMetadataTaxIdTips(restoredTree, metadataIdentifiers()!.table.rows, metadataIdentifiers()!.key, metadataIdentifiers()!.column) : undefined,
           );
           if (!taxonomyPayload) {
             throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping did not complete.");
@@ -6027,6 +6156,7 @@ export default function App() {
         }
       }
       await waitForMetadataOverlayCompletion();
+      applyLaunchRankColumns();
       return { loaded: true, viewMode: effectiveViewMode, label };
     }
     await applyLaunchMetadata(payload.metadata);
@@ -6073,6 +6203,7 @@ export default function App() {
         }
       }
       await waitForMetadataOverlayCompletion();
+      applyLaunchRankColumns();
     } catch (error) {
       if (restoreApplied) {
         pendingCompactLaunchTaxonomyRef.current = null;
@@ -6089,7 +6220,7 @@ export default function App() {
       throw error;
     }
     return { loaded: true, viewMode: effectiveViewMode, label };
-  }, [applyLaunchMetadata, applyLaunchVisualSettings, loadFullSessionFromObject, parseText, runStandardTaxonomyMappingForTree, useLowMemoryTaxonomyMapping, viewMode, waitForMetadataOverlayCompletion]);
+  }, [applyLaunchMetadata, applyLaunchVisualSettings, installCustomMetadataTaxonomy, loadFullSessionFromObject, parseText, runStandardTaxonomyMappingForTree, useLowMemoryTaxonomyMapping, viewMode, waitForMetadataOverlayCompletion]);
 
   const readLaunchPayloadFromUrl = useCallback((): {
     payload: BigTreeViewerLaunchPayload | null;
@@ -6288,7 +6419,7 @@ export default function App() {
         enabled: readLaunchBoolParam(params, "btv_metadata_enabled") ?? payload.metadata?.enabled,
         keyColumn: params.get("btv_metadata_key") ?? payload.metadata?.keyColumn,
         valueColumn: params.get("btv_metadata_value") ?? payload.metadata?.valueColumn,
-        colorMode: metadataColorModeParam === "categorical" || metadataColorModeParam === "continuous"
+        colorMode: metadataColorModeParam === "categorical" || metadataColorModeParam === "continuous" || metadataColorModeParam === "date"
           ? metadataColorModeParam
           : payload.metadata?.colorMode,
         applyScope: metadataScopeParam === "branch" || metadataScopeParam === "subtree"
@@ -6636,6 +6767,14 @@ export default function App() {
             if (payload.visual?.viewMode === "spiral" && tree.leafCount < 1000) throw new Error("Spiral layout requires at least 1,000 tips.");
             applyLaunchVisualSettings(payload.visual);
             await applyLaunchMetadata(payload.metadata);
+            const table = metadataTableRef.current;
+            if (payload.metadata?.rankColumns) {
+              if (payload.taxonomy?.runMapping) throw new Error("Custom metadata ranks cannot be combined with database mapping.");
+              if (!table) throw new Error("Custom taxonomy requires a metadata table.");
+              installCustomMetadataTaxonomy(tree, table, payload.metadata.keyColumn || table.columns[0], payload.metadata.rankColumns);
+            }
+            const metadataTaxIdColumn = payload.metadata?.taxIdColumn;
+            if (metadataTaxIdColumn && payload.taxonomy?.source === "catalogue-of-life") throw new Error("NCBI TaxID columns require NCBI Taxonomy.");
             if (payload.taxonomy?.runMapping) {
               const mapped = await runStandardTaxonomyMappingForTree(tree, treeSignature,
                 payload.taxonomy.lowMemoryMode ?? useLowMemoryTaxonomyMapping,
@@ -6643,11 +6782,11 @@ export default function App() {
                 payload.taxonomy.source === "catalogue-of-life" ? "catalogue-of-life" : "ncbi",
                 payload.taxonomy.source === "catalogue-of-life"
                   ? "scientific-name"
-                  : payload.taxonomy.identifierMode ?? (treeHasNcbiTaxIdLabels(tree) ? "ncbi-taxid" : "scientific-name"),
+                  : metadataTaxIdColumn ? "ncbi-taxid" : payload.taxonomy.identifierMode ?? (treeHasNcbiTaxIdLabels(tree) ? "ncbi-taxid" : "scientific-name"),
                 TAXONOMY_RANKS.filter((rank) => (
                   DEFAULT_TAXONOMY_RANKS.includes(rank as typeof DEFAULT_TAXONOMY_RANKS[number])
                   || payload.taxonomy?.ranks?.includes(rank)
-                )));
+                )), metadataTaxIdColumn && table ? buildMetadataTaxIdTips(tree, table.rows, payload.metadata?.keyColumn || table.columns[0], metadataTaxIdColumn) : undefined);
               if (!mapped) throw new Error(taxonomyMappingFailureMessageRef.current || "Taxonomy mapping failed.");
             }
             if (payload.canvas) {
@@ -7040,17 +7179,43 @@ export default function App() {
     if (!tree) {
       return null;
     }
+    if (taxonomySource === "ncbi" && metadataTaxIdColumn && metadataTable) {
+      try {
+        const tips = buildMetadataTaxIdTips(tree, metadataTable.rows, metadataKeyColumn, metadataTaxIdColumn);
+        const result = await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, "ncbi", "ncbi-taxid", [...DEFAULT_TAXONOMY_RANKS], tips);
+        if (result) metadataTaxIdMappingRef.current = { tree, table: metadataTable, key: metadataKeyColumn, column: metadataTaxIdColumn };
+        return result;
+      } catch (error) {
+        setTaxonomyError(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    }
     return await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, taxonomySource, taxonomyIdentifierMode);
-  }, [runStandardTaxonomyMappingForTree, taxonomyIdentifierMode, taxonomySource, tree, treeSignature, useLowMemoryTaxonomyMapping]);
+  }, [metadataTaxIdColumn, metadataTable, metadataKeyColumn, runStandardTaxonomyMappingForTree, taxonomyIdentifierMode, taxonomySource, tree, treeSignature, useLowMemoryTaxonomyMapping]);
+
+  const applyCustomMetadataTaxonomy = useCallback((): void => {
+    if (!tree || !metadataTable) return;
+    try {
+      installCustomMetadataTaxonomy(tree, metadataTable, metadataKeyColumn, metadataRankColumns);
+    } catch (error) {
+      setTaxonomyError(error instanceof Error ? error.message : String(error));
+    }
+  }, [installCustomMetadataTaxonomy, tree, metadataTable, metadataKeyColumn, metadataRankColumns]);
 
   const canLoadSelectedCachedTaxonomyMapping = Boolean(
     tree
+    && !metadataTaxIdColumn
     && selectedSourceCachedTaxonomyMap
     && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource || taxonomyMapIdentifierMode(taxonomyMap) !== taxonomyIdentifierMode),
   );
   const selectedSourceTaxonomyLoaded = Boolean(
     tree
     && taxonomyMap
+    && (metadataTaxIdColumn && taxonomySource === "ncbi"
+      ? taxonomyMap.mappingOrigin === "metadata-taxids" && metadataTaxIdMappingRef.current?.tree === tree
+        && metadataTaxIdMappingRef.current?.table === metadataTable && metadataTaxIdMappingRef.current?.key === metadataKeyColumn
+        && metadataTaxIdMappingRef.current?.column === metadataTaxIdColumn
+      : !taxonomyMap.mappingOrigin)
     && taxonomyMapSource(taxonomyMap) === taxonomySource
     && taxonomyMapIdentifierMode(taxonomyMap) === taxonomyIdentifierMode,
   );
@@ -7064,7 +7229,7 @@ export default function App() {
     if (!tree || !treeSignature) {
       return null;
     }
-    if (selectedSourceCachedTaxonomyMap && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource || taxonomyMapIdentifierMode(taxonomyMap) !== taxonomyIdentifierMode)) {
+    if (!metadataTaxIdColumn && selectedSourceCachedTaxonomyMap && (!taxonomyMap || taxonomyMap.mappingOrigin || taxonomyMapSource(taxonomyMap) !== taxonomySource || taxonomyMapIdentifierMode(taxonomyMap) !== taxonomyIdentifierMode)) {
       setTaxonomyMap(selectedSourceCachedTaxonomyMap);
       setTaxonomyEnabled(true);
       setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(selectedSourceCachedTaxonomyMap)} mapping for this tree (${selectedSourceCachedTaxonomyMap.mappedCount.toLocaleString()} mapped tips).`);
@@ -7076,7 +7241,7 @@ export default function App() {
       return selectedSourceCachedTaxonomyMap;
     }
     return await runTaxonomyMapping();
-  }, [runTaxonomyMapping, selectedSourceCachedTaxonomyMap, taxonomyIdentifierMode, taxonomyMap, taxonomySource, tree, treeSignature]);
+  }, [metadataTaxIdColumn, runTaxonomyMapping, selectedSourceCachedTaxonomyMap, taxonomyIdentifierMode, taxonomyMap, taxonomySource, tree, treeSignature]);
 
   const selectTaxonomySource = useCallback((source: TaxonomySource): void => {
     if (source === taxonomySource) {
@@ -7433,6 +7598,7 @@ export default function App() {
     setErrorBarThicknessPx(DEFAULT_ERROR_BAR_THICKNESS_PX);
     setErrorBarCapSizePx(DEFAULT_ERROR_BAR_CAP_SIZE_PX);
     setAlignTipLabels(false);
+    setTipLabelMetadataColumn("");
     setActiveLabelStylePopover(null);
     setVisualResetRequest((current) => current + 1);
   }, [taxonomyEnabled]);
@@ -7482,6 +7648,11 @@ export default function App() {
         metadataFileName,
         metadataRowCount: metadataTable?.rows.length ?? 0,
         metadataKeyColumn,
+        tipLabelMetadataColumn,
+        metadataCollapseColumn,
+        metadataCollapseGroupCount: metadataDerivedView.groups.length,
+        metadataTaxIdColumn,
+        metadataRankColumns,
         metadataValueColumn,
         metadataColorMode,
         metadataApplyScope,
@@ -7489,6 +7660,7 @@ export default function App() {
         metadataContinuousTransform,
         metadataContinuousMin,
         metadataContinuousMax,
+        metadataContinuousLegend: metadataOverlay.continuousLegend,
         metadataOverlayProcessing,
         metadataLabelsEnabled,
         metadataLabelColumn,
@@ -7785,6 +7957,11 @@ export default function App() {
     metadataLegendComponents,
     metadataFileName,
     metadataKeyColumn,
+    tipLabelMetadataColumn,
+    metadataCollapseColumn,
+    metadataDerivedView,
+    metadataTaxIdColumn,
+    metadataRankColumns,
     metadataLabelColumn,
     metadataLabelOverlay.labeledNodeCount,
     metadataLabelMaxCount,
@@ -7797,6 +7974,7 @@ export default function App() {
     metadataMarkerSizePx,
     metadataMarkersEnabled,
     metadataOverlay.coloredNodeCount,
+    metadataOverlay.continuousLegend,
     metadataOverlay.matchedNodeCount,
     metadataOverlay.matchedRowCount,
     metadataPieEndColumn,
@@ -8005,6 +8183,7 @@ export default function App() {
       }}
       onDrop={(event) => void handleDrop(event)}
     >
+      <input ref={metadataFileInputRef} type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" hidden onChange={event => void onMetadataFileChange(event)} />
       {dragActive ? <div className="drag-overlay">Drop a tree file, CSV/TSV metadata file, or Newick / NEXUS text to load it</div> : null}
       {tutorialActive && !tutorialSuppressedForMobile ? (
         <div
@@ -8564,6 +8743,28 @@ export default function App() {
                   onToggle={() => setActiveLabelStylePopover((current) => current === "tip" ? null : "tip")}
                   onUpdate={updateFigureStyle}
                   extraControls={(
+                    <>
+                    <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()}
+                      title="Load a shared CSV or TSV metadata table containing original tip IDs and alternative display names. This replaces the currently loaded metadata table.">
+                      Open label mapping file
+                    </button>
+                    {metadataTable ? (
+                      <>
+                      <label title="Choose the column containing the original tree tip IDs. This key is shared with the Metadata and Taxonomy panels.">
+                        Label mapping key column
+                        <select value={metadataKeyColumn} onChange={event => setMetadataKeyColumn(event.target.value)}>
+                          {metadataColumns.map(column => <option key={column} value={column}>{column}</option>)}
+                        </select>
+                      </label>
+                      <label title="Replace displayed tip names only. Original tree IDs remain unchanged for matching and saving Newick. Missing names use the original label.">
+                        Tip label source
+                        <select value={tipLabelMetadataColumn} onChange={event => setTipLabelMetadataColumn(event.target.value)} disabled={taxonomyCollapseIsSynthetic || comparisonEnabled && Boolean(comparisonTree)}>
+                          <option value="">Original tree labels</option>
+                          {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
+                        </select>
+                      </label>
+                      </>
+                    ) : null}
                     <label
                       className={`label-style-inline-toggle${
                         comparisonEnabled && comparisonTree || viewMode === "spiral" || viewTree?.isUltrametric
@@ -8588,6 +8789,7 @@ export default function App() {
                       />
                       Align labels at tree edge
                     </label>
+                    </>
                   )}
                 />
               </div>
@@ -9310,7 +9512,52 @@ export default function App() {
                 <option value="catalogue-of-life">Catalogue of Life</option>
               </select>
             </label>
-            {taxonomySource === "ncbi" && hasDetectedNcbiTaxIds ? (
+            <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()}
+              title="Load a shared CSV or TSV metadata table with tree tip IDs and NCBI TaxIDs or custom taxonomic rank columns. This replaces the currently loaded metadata table.">
+              Open taxonomy mapping file
+            </button>
+            {metadataTable ? (
+              <>
+                <label title="Select the column containing original tree tip IDs. This matching column is shared with Metadata and alternative tip labels.">
+                  Mapping key column
+                  <select value={metadataKeyColumn} onChange={event => setMetadataKeyColumn(event.target.value)}>
+                    {metadataColumns.map(column => <option key={column} value={column}>{column}</option>)}
+                  </select>
+                </label>
+                {taxonomySource === "ncbi" ? (
+                  <label title="Use NCBI Taxonomy IDs from this CSV column instead of the tree labels. Empty or unmatched rows stay unmapped.">
+                    NCBI TaxID column
+                    <select value={metadataTaxIdColumn} onChange={event => setMetadataTaxIdColumn(event.target.value)} disabled={taxonomyLoading}>
+                      <option value="">Use tree labels</option>
+                      {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
+                    </select>
+                  </label>
+                ) : null}
+                <details>
+                  <summary title="Build taxonomy ribbons directly from group names in the metadata, without a taxonomy database.">Custom taxonomy from metadata</summary>
+                  {TAXONOMY_RANKS.filter(rank => isDefaultTaxonomyRank(rank) || metadataRankColumns[rank] !== undefined).map(rank => (
+                    <label key={rank} title={`Use a metadata column for the ${rank} ribbon.`}>
+                      {taxonomyRankLabel(rank)} column
+                      <select value={metadataRankColumns[rank] ?? ""} onChange={event => setMetadataRankColumns(current => ({ ...current, [rank]: event.target.value }))}>
+                        <option value="">Not assigned</option>
+                        {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
+                      </select>
+                    </label>
+                  ))}
+                  <label title="Add an optional taxonomic rank to the custom metadata column assignments.">
+                    Additional custom rank
+                    <select value="" onChange={event => { if (event.target.value) setMetadataRankColumns(current => ({ ...current, [event.target.value]: "" })); }}>
+                      <option value="">Choose a rank</option>
+                      {OPTIONAL_TAXONOMY_RANKS.filter(rank => metadataRankColumns[rank] === undefined).map(rank => <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>)}
+                    </select>
+                  </label>
+                  <button type="button" className="secondary" disabled={!tree || taxonomyLoading || !Object.values(metadataRankColumns).some(Boolean)} onClick={applyCustomMetadataTaxonomy}>
+                    Apply custom taxonomy ribbons
+                  </button>
+                </details>
+              </>
+            ) : null}
+            {taxonomySource === "ncbi" && hasDetectedNcbiTaxIds && !metadataTaxIdColumn ? (
               <label className="label-style-inline-toggle" title="Use the NCBI Taxonomy IDs detected in the loaded tree's tip labels instead of interpreting the labels as scientific names.">
                 <input
                   type="checkbox"
@@ -9321,7 +9568,7 @@ export default function App() {
                 Use Taxonomy IDs to map taxonomy
               </label>
             ) : null}
-            {taxonomySource === "ncbi" && hasDetectedNcbiTaxIds && taxonomyIdentifierMode === "ncbi-taxid" ? (
+            {taxonomySource === "ncbi" && hasDetectedNcbiTaxIds && !metadataTaxIdColumn && taxonomyIdentifierMode === "ncbi-taxid" ? (
               <p className="status-line">
                 Detected explicit NCBI Taxonomy IDs. Supported forms include <code>taxid=9606</code>, <code>_taxid_9606</code>, <code>_tx9606</code>, <code>|taxid=9606</code>, and a bare numeric ID such as <code>9606</code>.
               </p>
@@ -9650,13 +9897,6 @@ export default function App() {
 
         <PanelSection title="Metadata" isOpen={metadataOpen} onToggle={() => setMetadataOpen(!metadataOpen)} tourId="metadata">
           <div className="search-controls">
-            <input
-              ref={metadataFileInputRef}
-              type="file"
-              accept=".csv,.tsv,text/csv,text/tab-separated-values"
-              hidden
-              onChange={(event) => void onMetadataFileChange(event)}
-            />
             <div className="button-row">
               <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()} title="Open a CSV or TSV table with one row per tip or node. Include a column containing the exact labels used in the tree; after loading, choose that column under Match tree labels by column.">
                 Open CSV / TSV
@@ -9695,6 +9935,15 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+                <label title="Collapse maximal clades only when every descendant tip has the same nonempty metadata value. Missing or conflicting values prevent collapse; separate occurrences remain separate.">
+                  Collapse by metadata
+                  <select value={metadataCollapseColumn} disabled={taxonomyCollapseIsSynthetic || comparisonEnabled && Boolean(comparisonTree)} onChange={event => setMetadataCollapseColumn(event.target.value)}>
+                    <option value="">Do not collapse</option>
+                    {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
+                  </select>
+                </label>
+                {metadataCollapseColumn ? <p className="status-line">{metadataDerivedView.groups.length.toLocaleString()} uniform clades</p> : null}
+                {metadataDerivedView.error ? <p className="status-error">{metadataDerivedView.error}</p> : null}
                 <div ref={metadataLegendSettingsRef} className="metadata-toggle-row">
                   <label className="metadata-inline-toggle metadata-toggle-main" title="Show a movable metadata key on the tree and in exported figures.">
                     <input type="checkbox" checked={metadataLegendEnabled} onChange={event => setMetadataLegendEnabled(event.target.checked)} />
@@ -9703,6 +9952,20 @@ export default function App() {
                   <SettingsPopoverButton title="Metadata legend" isOpen={activeLabelStylePopover === "metadataLegend"}
                     disabled={!metadataLegendEnabled} disabledReason="Turn on the metadata legend first."
                     onToggle={() => setActiveLabelStylePopover(current => current === "metadataLegend" ? null : "metadataLegend")}>
+                    {metadataEnabled && metadataColorMode !== "categorical" ? (
+                      <>
+                        <label title="Set the branch-color gradient and its matching legend together.">
+                          Color scale palette
+                          <select value={metadataContinuousPalette} onChange={event => setMetadataContinuousPalette(event.target.value as MetadataContinuousPalette)}>
+                            {Object.entries(METADATA_CONTINUOUS_PALETTES).map(([key, palette]) => <option key={key} value={key}>{palette.label}</option>)}
+                          </select>
+                        </label>
+                        <label className="metadata-inline-toggle" title="Reverse both the branch colors and the legend gradient.">
+                          <input type="checkbox" checked={metadataReverseScale} onChange={event => setMetadataReverseScale(event.target.checked)} />
+                          Reverse color scale
+                        </label>
+                      </>
+                    ) : null}
                     <label title="Choose a corner, or drag the legend to a custom position.">
                       Legend position
                       <select value={metadataLegendPlacement ? "custom" : metadataLegendPosition} onChange={event => {
@@ -9747,7 +10010,9 @@ export default function App() {
                       <select value={metadataValueColumn} onChange={(event) => {
                         const nextColumn = event.target.value;
                         setMetadataValueColumn(nextColumn);
-                        setMetadataColorMode(metadataColumnLooksContinuous(metadataTable.rows, nextColumn) ? "continuous" : "categorical");
+                        setMetadataColorMode(inferMetadataColorMode(metadataTable, nextColumn));
+                        setMetadataContinuousMinInput("");
+                        setMetadataContinuousMaxInput("");
                       }}
                       >
                         {metadataColumns.map((column) => (
@@ -9762,17 +10027,18 @@ export default function App() {
                         <option value="subtree">Matched subtrees</option>
                       </select>
                     </label>
-                    <label title="Categorical assigns a color per value; continuous maps numeric values through a gradient.">
+                    <label title="Categorical assigns a color per value; continuous maps numbers; chronological dates maps ISO years, months, or days through a time-ordered gradient. Partial dates use January 1 or the first day of the month.">
                       Color mode
                       <select
                         value={metadataColorMode}
-                        onChange={(event) => setMetadataColorMode(event.target.value as MetadataColorMode)}
+                        onChange={(event) => { setMetadataColorMode(event.target.value as MetadataColorMode); setMetadataContinuousMinInput(""); setMetadataContinuousMaxInput(""); }}
                       >
                         <option value="categorical">Categorical</option>
                         <option value="continuous" disabled={!metadataValueColumnSupportsContinuous}>Continuous</option>
+                        <option value="date">Chronological dates</option>
                       </select>
                     </label>
-                    {metadataColorMode === "continuous" ? (
+                    {metadataColorMode !== "categorical" ? (
                       <>
                         <label title="Choose the gradient used for numeric metadata values.">
                           Palette
@@ -9785,7 +10051,7 @@ export default function App() {
                             ))}
                           </select>
                         </label>
-                        <label title="Transform numeric values before mapping them to the continuous color scale.">
+                        {metadataColorMode !== "date" ? <label title="Transform numeric values before mapping them to the continuous color scale.">
                           Transform
                           <select
                             value={metadataContinuousTransform}
@@ -9795,11 +10061,11 @@ export default function App() {
                             <option value="sqrt">Signed square root</option>
                             <option value="log">Signed log1p</option>
                           </select>
-                        </label>
+                        </label> : null}
                         <label title="Optionally set the lower bound of the continuous color scale. Leave blank for the data minimum.">
                           Clamp minimum
                           <input
-                            type="number"
+                            type={metadataColorMode === "date" ? "text" : "number"}
                             value={metadataContinuousMinInput}
                             placeholder="auto"
                             onChange={(event) => setMetadataContinuousMinInput(event.target.value)}
@@ -9808,7 +10074,7 @@ export default function App() {
                         <label title="Optionally set the upper bound of the continuous color scale. Leave blank for the data maximum.">
                           Clamp maximum
                           <input
-                            type="number"
+                            type={metadataColorMode === "date" ? "text" : "number"}
                             value={metadataContinuousMaxInput}
                             placeholder="auto"
                             onChange={(event) => setMetadataContinuousMaxInput(event.target.value)}
@@ -9848,7 +10114,7 @@ export default function App() {
                         ))}
                       </div>
                     ) : null}
-                    {metadataColorMode === "continuous" && metadataOverlay.continuousLegend ? (
+                    {metadataColorMode !== "categorical" && metadataOverlay.continuousLegend ? (
                       <div className="metadata-gradient-legend" data-testid="metadata-gradient-legend">
                         <div
                           className="metadata-gradient-bar"
@@ -9857,13 +10123,13 @@ export default function App() {
                           }}
                         />
                         <div className="metadata-gradient-labels">
-                          <span>{formatNumber(metadataOverlay.continuousLegend.min)}</span>
-                          <span>{formatNumber(metadataOverlay.continuousLegend.max)}</span>
+                          <span>{metadataOverlay.continuousLegend.minLabel}</span>
+                          <span>{metadataOverlay.continuousLegend.maxLabel}</span>
                         </div>
                         <div className="metadata-gradient-labels">
-                          <span>data {formatNumber(metadataOverlay.continuousLegend.actualMin)}</span>
+                          <span>data {metadataOverlay.continuousLegend.actualMinLabel}</span>
                           <span>{METADATA_CONTINUOUS_PALETTES[metadataOverlay.continuousLegend.palette].label} · {metadataOverlay.continuousLegend.transform}</span>
-                          <span>data {formatNumber(metadataOverlay.continuousLegend.actualMax)}</span>
+                          <span>data {metadataOverlay.continuousLegend.actualMaxLabel}</span>
                         </div>
                       </div>
                     ) : null}
@@ -10270,6 +10536,15 @@ export default function App() {
                             aria-label={`Remove ${item.column}`}
                             onClick={() => setMetadataTipTableColumns((current) => current.filter((candidate) => candidate.column !== item.column))}
                           >&#215;</button>
+                          {metadataTipTableMode !== "categorical" ? (
+                            <label style={{ gridColumn: "1 / -1" }} title="Dates accept YYYY, YYYY-MM, or YYYY-MM-DD and use chronological colors in heat maps.">
+                              {item.column} data type
+                              <select value={item.valueType ?? "number"} onChange={event => setMetadataTipTableColumns(current => current.map(candidate => candidate.column === item.column ? { ...candidate, valueType: event.target.value === "date" ? "date" : "number" } : candidate))}>
+                                <option value="number">Numeric</option>
+                                <option value="date">Chronological dates</option>
+                              </select>
+                            </label>
+                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -10839,6 +11114,8 @@ export default function App() {
           useAutoCircularCenterScaleAngle={useAutoCircularCenterScaleAngle}
           showCircularCenterRadialScaleBar={showCircularCenterRadialScaleBar}
           showTipLabels={showTipLabels}
+          tipDisplayLabels={!taxonomyCollapseIsSynthetic ? metadataDerivedView.labels ?? undefined : undefined}
+          metadataCollapsedNodes={!taxonomyCollapseIsSynthetic && !(comparisonEnabled && comparisonTree) ? metadataDerivedView.groups : undefined}
           alignTipLabels={alignTipLabels && (!cladogramActive || ultrametricCladogram)}
           showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}

@@ -5,7 +5,7 @@ import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_B
 import type { TaxonomyCollapseFallback, TaxonomyCollapseRank, TaxonomyIdentifierMode, TaxonomyMapPayload, TaxonomyRank, TaxonomySource } from "../types/taxonomy";
 import type { TreeModel } from "../types/tree";
 import { TAXONOMY_RANKS, type TaxonomyTipRanks } from "../types/taxonomy";
-import { deriveActiveTaxonomyRanks } from "./taxonomyActiveRanks";
+import { deriveActiveTaxonomyRanks, derivePresentTaxonomyRanks } from "./taxonomyActiveRanks";
 import type { LayoutOrder, ViewMode, ZoomAxisMode } from "../types/tree";
 import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "../components/treeCanvasTypes";
 
@@ -18,6 +18,8 @@ export type SharedSubtreeTaxonomyEntry = {
 };
 
 export type SharedSubtreeTaxonomyPayload = {
+  mappingOrigin?: TaxonomyMapPayload["mappingOrigin"];
+  metadataRankColumns?: Partial<Record<TaxonomyRank, string>>;
   version?: number;
   source?: TaxonomySource;
   identifierMode?: TaxonomyIdentifierMode;
@@ -285,6 +287,8 @@ export function parseSharedSubtreeStoragePayload(raw: string): SharedSubtreeStor
           ? {
             version: parsed.taxonomy.version,
             source: parsed.taxonomy.source === "catalogue-of-life" ? "catalogue-of-life" : parsed.taxonomy.source === "ncbi" ? "ncbi" : undefined,
+            mappingOrigin: parsed.taxonomy.mappingOrigin,
+            metadataRankColumns: parsed.taxonomy.metadataRankColumns,
             identifierMode: parsed.taxonomy.identifierMode === "ncbi-taxid" ? "ncbi-taxid" : "scientific-name",
             sourceVersion: typeof parsed.taxonomy.sourceVersion === "string" ? parsed.taxonomy.sourceVersion : undefined,
             sourceDoi: typeof parsed.taxonomy.sourceDoi === "string" ? parsed.taxonomy.sourceDoi : undefined,
@@ -362,7 +366,9 @@ export function rebuildSharedSubtreeTaxonomyMap(
   if (!tipRanks.length) {
     return null;
   }
-  const derivedActiveRanks = deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
+  const derivedActiveRanks = payload.mappingOrigin === "metadata-ranks"
+    ? derivePresentTaxonomyRanks(tipRanks.map(tip => tip.ranks))
+    : deriveActiveTaxonomyRanks(tipRanks.map((tip) => tip.ranks));
   if (derivedActiveRanks.length === 0 && tipRanks.length > 1) {
     const finestRepeatedRank = [...TAXONOMY_RANKS]
       .reverse()
@@ -384,6 +390,8 @@ export function rebuildSharedSubtreeTaxonomyMap(
   return {
     version: payload.version,
     source: payload.source,
+    mappingOrigin: payload.mappingOrigin,
+    metadataRankColumns: payload.metadataRankColumns,
     identifierMode: payload.identifierMode,
     sourceVersion: payload.sourceVersion,
     sourceDoi: payload.sourceDoi,
