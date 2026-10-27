@@ -44,6 +44,7 @@ let pendingOpenPaths = [];
 const grantedFiles = new Map();
 let updateCheckIsManual = false;
 let updateCheckInProgress = false;
+let updateAvailablePromptInProgress = false;
 let updateDownloadInProgress = false;
 let updateProgressWindow = null;
 let recentPaths = [];
@@ -384,6 +385,7 @@ function updateDownloadProgressWindow(progress) {
 }
 
 async function checkForUpdates(manual = true) {
+  if (updateAvailablePromptInProgress) return;
   if (!app.isPackaged) {
     if (manual) {
       await dialog.showMessageBox(activeWindow(), {
@@ -456,19 +458,28 @@ function configureAutoUpdates() {
     });
   });
   autoUpdater.on("update-available", async (info) => {
+    if (updateAvailablePromptInProgress || updateDownloadInProgress) return;
     updateCheckInProgress = false;
     updateCheckIsManual = false;
-    const result = await dialog.showMessageBox(activeWindow(), {
-      type: "info",
-      title: "Big Tree Viewer Update Available",
-      message: `Version ${info.version} is available.`,
-      detail: "Download it now? You can keep working while the update downloads.",
-      buttons: ["Download Update", "Later"],
-      defaultId: 0,
-      cancelId: 1,
-    });
+    updateAvailablePromptInProgress = true;
+    let result;
+    try {
+      result = await dialog.showMessageBox(activeWindow(), {
+        type: "info",
+        title: "Big Tree Viewer Update Available",
+        message: `Version ${info.version} is available.`,
+        detail: "Download it now? You can keep working while the update downloads.",
+        buttons: ["Download Update", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      // The network check finishes before this dialog does. Hand the guard
+      // directly to the download state before releasing the prompt state.
+      if (result.response === 0) updateDownloadInProgress = true;
+    } finally {
+      updateAvailablePromptInProgress = false;
+    }
     if (result.response !== 0) return;
-    updateDownloadInProgress = true;
     setUpdateProgress(0);
     await showUpdateProgressWindow(info.version);
     try {
