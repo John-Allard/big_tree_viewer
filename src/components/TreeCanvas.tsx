@@ -18433,7 +18433,9 @@ export default function TreeCanvas({
       }
     }
     const url = new URL(window.location.href);
-    url.searchParams.delete("btv_desktop_open");
+    // A subtree is a new document, not a replay of the parent's original launch.
+    url.search = "";
+    url.hash = "";
     url.searchParams.set("subtree", key);
     window.open(url.toString(), "_blank", "noopener");
   }, [

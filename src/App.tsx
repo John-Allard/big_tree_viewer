@@ -6513,6 +6513,12 @@ export default function App() {
     void (async () => {
       void deleteExpiredStagedLaunchPayloads().catch(() => undefined);
       const stagedLaunchParams = new URLSearchParams(window.location.search);
+      // Older subtree links may still contain their parent's launch payload.
+      // The explicitly requested subtree must win over every other launch source.
+      if (stagedLaunchParams.get("subtree")) {
+        await loadSubtreeFromUrl();
+        return;
+      }
       const windowLaunchRequested = stagedLaunchParams.get("btv_window_launch") === "1";
       if (windowLaunchRequested) {
         stagedLaunchParams.delete("btv_window_launch");
@@ -6608,10 +6614,6 @@ export default function App() {
           message: "Waiting for Big Tree Viewer launch payload...",
           error: null,
         });
-        return;
-      }
-      const loadedSubtree = await loadSubtreeFromUrl();
-      if (loadedSubtree) {
         return;
       }
       if (new URLSearchParams(window.location.search).get("btv_desktop_open") === "1") {
