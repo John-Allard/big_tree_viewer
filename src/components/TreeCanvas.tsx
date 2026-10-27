@@ -1275,6 +1275,7 @@ function buildSharedSubtreeStoragePayload(
       ...visual,
       customCladeRibbons: remapCladeRibbonsForSubtree(tree, rootNode, visual.customCladeRibbons ?? []),
       useAutomaticTaxonomyRankVisibility: true,
+      scaleTickInterval: null,
     },
   };
   if (controls?.hideDownloadNewick === true) {
@@ -3742,13 +3743,15 @@ function interpolateTipBandWidthPx(
   readableStart: number,
   microWidthPx: number,
   readableWidthPx: number,
+  previewScale = 1,
 ): number {
   if (zoom <= preRampStart) {
     return 0;
   }
-  if (zoom < microStart) {
+  if (zoom <= microStart) {
     const progress = clamp01((zoom - preRampStart) / Math.max(1e-6, microStart - preRampStart));
-    return microWidthPx * progress * progress;
+    // A closed ribbon gap must not reserve space for text that is not drawn yet.
+    return microWidthPx * progress * progress * previewScale;
   }
   if (zoom < readableStart) {
     const progress = smoothstep01((zoom - microStart) / Math.max(1e-6, readableStart - microStart));
@@ -6679,7 +6682,7 @@ export default function TreeCanvas({
     const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
     const tipBandWidthPx = showTipLabels
-      ? interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx)
+      ? interpolateTipBandWidthPx(angularSpacingPx, 1.6, 2.9, 4.5, microBandWidthPx, readableBandWidthPx, taxonomyEnabled ? Math.min(1, taxonomyGapControl) : 1)
       : 0;
     if (taxonomyEnabled) {
       if (taxonomyBlocks) {
@@ -6929,7 +6932,7 @@ export default function TreeCanvas({
     const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
     const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
     const defaultTipBandWidthPx = showTipLabels
-      ? interpolateTipBandWidthPx(effectiveTipSpacingPx, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx)
+      ? interpolateTipBandWidthPx(effectiveTipSpacingPx, 1.55, 2.7, 4.2, microBandWidthPx, readableBandWidthPx, taxonomyEnabled ? Math.min(1, taxonomyGapControl) : 1)
       : 0;
     const renderedTipFontSize = effectiveTipSpacingPx > 4.2 ? tipFontSize : microTipFontSize;
     const naturalTipBandWidthPx = showTipLabels && effectiveTipSpacingPx > 2.7
@@ -9332,6 +9335,7 @@ export default function TreeCanvas({
           4.2,
           microBandWidthPx,
           readableBandWidthPx,
+          taxonomyEnabled ? Math.min(1, taxonomyGapControl) : 1,
         ) + metadataTipDecorationLabelExtraPx
         : 0;
       const rectTipLabelOffsetPx = (node: number): number => {
@@ -9342,7 +9346,8 @@ export default function TreeCanvas({
         return Math.max(8, tipGlyphSizePx > 0 ? (tipGlyphSizePx * 0.5) + 6 : 8);
       };
       const tipSideDepth = axisDepth(tree.maxDepth);
-      const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x + (showTipLabels ? 8 : 0);
+      const tipSideX = worldToScreenRect(camera, tipSideDepth, 0).x
+        + (showTipLabels && (!taxonomyEnabled || taxonomyGapControl > 0 || microTipLabelsVisible) ? 8 : 0);
       const alignedTipLabelX = tipSideX + metadataTipDecorationLabelExtraPx + figureStyles.tip.offsetPx;
       const orderedLeaves = cache.orderedLeaves[order];
       const startLeafIndex = lowerBoundLeaves(orderedLeaves, layout.center, minY - 2);
@@ -10321,7 +10326,8 @@ export default function TreeCanvas({
             }
           }
         }
-      } else if (figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && measuredLabels.length <= 9000) {
+      } else if (figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && measuredLabels.length <= 9000
+        && (!taxonomyEnabled || visibleTaxonomyRanks.length === 0 || taxonomyGapControl > 0)) {
         ctx.strokeStyle = "rgba(15,23,42,0.42)";
         ctx.lineWidth = 0.9;
         ctx.beginPath();
@@ -13050,6 +13056,7 @@ export default function TreeCanvas({
           4.5,
           microBandWidthPx,
           readableBandWidthPx,
+          taxonomyEnabled ? Math.min(1, taxonomyGapControl) : 1,
         ) + metadataTipDecorationLabelExtraPx
         : 0;
       const tipLabelRadius = maxRadius + (metadataTipDecorationLabelClearancePx / camera.scale);
@@ -14595,7 +14602,8 @@ export default function TreeCanvas({
             );
           }
         }
-      } else if (figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && circularVisibleTipLabels.length <= 9000) {
+      } else if (figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && circularVisibleTipLabels.length <= 9000
+        && (!taxonomyEnabled || visibleTaxonomyRanks.length === 0 || taxonomyGapControl > 0)) {
         ctx.strokeStyle = "rgba(15,23,42,0.42)";
         ctx.lineWidth = 0.9;
         ctx.beginPath();
