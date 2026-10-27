@@ -127,6 +127,7 @@ import {
 } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
 import { parseMetadataDate } from "./lib/metadataDates";
+import { inferCalendarRootYear } from "./lib/calendarAxis";
 import { buildMetadataCollapseGroups } from "./lib/metadataCollapse";
 import { buildMetadataTipDisplayLabels, buildMetadataTaxIdTips, buildMetadataTaxonomyMap } from "./lib/metadataMapping";
 import { canParseTreeInline, parseTreePayload } from "./lib/treeParser";
@@ -2249,6 +2250,9 @@ export default function App() {
   const [metadataOverlay, setMetadataOverlay] = useState<MetadataColorOverlayResult>(EMPTY_METADATA_OVERLAY);
   const [metadataOverlayProcessing, setMetadataOverlayProcessing] = useState(false);
   const [metadataOverlayCompletionRequest, setMetadataOverlayCompletionRequest] = useState(0);
+  const calendarDateFit = useMemo(() => inferCalendarRootYear(
+    tree, metadataColorMode === "date" && metadataApplyScope === "branch" ? metadataOverlay.values : [],
+  ), [tree, metadataColorMode, metadataApplyScope, metadataOverlay.values]);
   const [metadataReadProgress, setMetadataReadProgress] = useState<number | null>(null);
   const [taxonomySource, setTaxonomySource] = useState<TaxonomySource>("ncbi");
   const [taxonomyIdentifierMode, setTaxonomyIdentifierMode] = useState<TaxonomyIdentifierMode>("scientific-name");
@@ -3261,6 +3265,11 @@ export default function App() {
     const nextSignature = `${treeSignature ?? "tree"}:reroot:${mode}:${node}:${Date.now()}`;
     currentTreeRef.current = nextTree;
     currentTreeSignatureRef.current = nextSignature;
+    // Rerooting changes root-to-tip distances; the previous calendar origin is no longer valid.
+    setFigureStyles(current => ({
+      ...current,
+      scale: { ...current.scale, calendarAxis: false, calendarRootYear: undefined },
+    }));
     setTree(nextTree);
     setTreeSignature(nextSignature);
     setLoadedTreeLabel((current) => (current.includes("(rerooted)") ? current : `${current} (rerooted)`));
@@ -9277,6 +9286,39 @@ export default function App() {
                         />
                       </label>
                       <p className="figure-style-help">Leave blank for automatic tick spacing.</p>
+                      <label title="For a dated tree with branch lengths measured in years. This changes axis labels, not branch lengths or inferred dates.">
+                        Root calendar year
+                        <input
+                          type="number" min={0} max={9999} step="any"
+                          placeholder="e.g. 1967.91"
+                          value={figureStyles.scale.calendarRootYear ?? ""}
+                          onChange={(event) => {
+                            const raw = event.target.value;
+                            const year = raw.trim() ? Number(raw) : undefined;
+                            setFigureStyles(current => ({ ...current, scale: { ...current.scale,
+                              calendarRootYear: typeof year === "number" && Number.isFinite(year) && year >= 0 && year < 10000 ? year : undefined,
+                            } }));
+                          }}
+                        />
+                      </label>
+                      {metadataColorMode === "date" ? <>
+                        <button type="button" className="secondary"
+                          disabled={metadataOverlayProcessing || calendarDateFit.rootYear === null || viewMode !== "rectangular" || timeAxisScale !== "linear"}
+                          onClick={() => {
+                            if (calendarDateFit.rootYear === null) return;
+                            setFigureStyles(current => ({ ...current, scale: { ...current.scale,
+                              calendarRootYear: calendarDateFit.rootYear!, calendarAxis: true,
+                            } }));
+                          }}>Anchor calendar axis from CSV dates</button>
+                        <p className="figure-style-help">{calendarDateFit.message}</p>
+                      </> : null}
+                      <label className="label-style-inline-toggle" title="Calendar years require a linear rectangular display and an already dated tree with branch lengths in years.">
+                        <input type="checkbox" checked={figureStyles.scale.calendarAxis === true}
+                          disabled={viewMode !== "rectangular" || timeAxisScale !== "linear" || !Number.isFinite(figureStyles.scale.calendarRootYear)}
+                          onChange={event => updateFigureStyle("scale", "calendarAxis", event.target.checked)} />
+                        Show calendar-year axis
+                      </label>
+                      <p className="figure-style-help">Sampling-date colors work on any tree. A calendar axis requires branch lengths in years; CSV dates do not convert genetic distances into time.</p>
                       <label
                         className="label-style-inline-toggle"
                         title={viewMode === "spiral" ? "Spiral mode always uses a log time axis." : undefined}

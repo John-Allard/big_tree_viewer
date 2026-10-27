@@ -47,6 +47,8 @@ export interface LabelStyleSettings {
   metadataPlacement?: "node" | "stem" | "auto";
   metadataColorMode?: "branch" | "fixed";
   metadataColor?: string;
+  calendarAxis?: boolean;
+  calendarRootYear?: number;
 }
 
 export interface FigureStyleSettings {

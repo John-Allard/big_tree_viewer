@@ -21,6 +21,7 @@ import type { PhyloPicSilhouette } from "../lib/phylopic";
 import { metadataTipTableContinuousColor, metadataTipTableNumericValue, metadataTipTableValueIsOn } from "../lib/metadataTipTable";
 import { tagPngAsSrgb } from "../lib/pngColorProfile";
 import { layoutMetadataLegend } from "../lib/metadataLegend";
+import { calendarBands, calendarBoundaries, calendarStylesForSubtree, formatCalendarYear } from "../lib/calendarAxis";
 import { imageContentBounds } from "../lib/treeExportBounds";
 import { exportSizeForViewport } from "../lib/exportViewport";
 import { depthToTimeAxisDepth, timeAxisDepthToRawDepth, timeAxisLogUnit, treeTimeAxisExtent, type TimeAxisScale } from "../lib/timeAxis";
@@ -8108,6 +8109,10 @@ export default function TreeCanvas({
       return;
     }
     const scaleLabelText = (value: number): string => {
+      if (viewMode === "rectangular" && effectiveTimeAxisScale === "linear"
+        && figureStyles.scale.calendarAxis === true && Number.isFinite(figureStyles.scale.calendarRootYear)) {
+        return formatCalendarYear(figureStyles.scale.calendarRootYear! + (tree.isUltrametric ? tree.rootAge - value : value));
+      }
       if (!tree.isUltrametric) {
         return formatScaleNumber(value);
       }
@@ -8658,15 +8663,19 @@ export default function TreeCanvas({
         ? Math.max(stripeExtent, Math.ceil(stripeExtent / rectScaleStep) * rectScaleStep)
         : stripeExtent;
       const rectStripeExtent = tree.isUltrametric ? rectScaleExtent : stripeExtent;
-      const stripeBoundaries = buildStripeBoundaries(rectStripeExtent, stripeLevels);
+      const calendarAxis = figureStyles.scale.calendarAxis === true
+        && Number.isFinite(figureStyles.scale.calendarRootYear) && effectiveTimeAxisScale === "linear";
+      const stripeBoundaries = calendarAxis
+        ? calendarBoundaries(figureStyles.scale.calendarRootYear!, stripeExtent, stripeLevels, tree.isUltrametric)
+        : buildStripeBoundaries(rectStripeExtent, stripeLevels);
       const visibleScaleBoundaries = showIntermediateScaleTicks
         ? stripeBoundaries
         : stripeBoundaries.filter((boundary) => boundary.alpha >= SOLID_SCALE_TICK_ALPHA_THRESHOLD);
       const rectScaleBoundaries = [...visibleScaleBoundaries];
-      if (showScaleZeroTick) {
+      if (showScaleZeroTick && !calendarAxis) {
         rectScaleBoundaries.push({ value: 0, alpha: 1 });
       }
-      if (tree.isUltrametric && rectScaleExtent > stripeExtent + 1e-9) {
+      if (!calendarAxis && tree.isUltrametric && rectScaleExtent > stripeExtent + 1e-9) {
         rectScaleBoundaries.push({ value: rectScaleExtent, alpha: 1 });
       }
       const displayedRectScaleBoundaries = [...new Map(
@@ -8756,6 +8765,23 @@ export default function TreeCanvas({
         } else {
             const drawBands = (step: number, alpha: number, gradient = false) => {
               if (!Number.isFinite(step) || step <= 0 || alpha <= 0) {
+                return;
+              }
+              if (calendarAxis) {
+                const bands = calendarBands(figureStyles.scale.calendarRootYear!, stripeExtent, step);
+                if (bands.length > MAX_TIME_STRIPE_BANDS_PER_DRAW) return;
+                for (let index = 0; index < bands.length; index += 1) {
+                  const band = bands[index];
+                  const left = worldToScreenRect(camera, axisDepth(band.startDepth), 0).x;
+                  const right = worldToScreenRect(camera, axisDepth(band.endDepth), 0).x;
+                  ctx.fillStyle = gradient
+                    ? ageGradientStripeFill(tree.isUltrametric ? bands.length - 1 - index : index, bands.length, alpha)
+                    : band.calendarIndex % 2 === 0
+                      ? `rgba(243,244,246,${0.95 * alpha})`
+                      : `rgba(255,255,255,${0.95 * alpha})`;
+                  ctx.fillRect(left, 0, right - left, treeDrawBottom);
+                  pushSceneRect(left, 0, right - left, treeDrawBottom, ctx.fillStyle, 1);
+                }
                 return;
               }
               const bandCount = Math.max(1, Math.ceil(rectStripeExtent / step));
@@ -18229,7 +18255,7 @@ export default function TreeCanvas({
       errorBarShowNodeDot,
       errorBarThicknessPx,
       errorBarCapSizePx,
-      figureStyles,
+      figureStyles: calendarStylesForSubtree(figureStyles, exportTree.buffers.depth[exportNode] - exportTree.buffers.depth[exportTree.root]),
       taxonomyEnabled,
       taxonomyOverlayStyle,
       taxonomyBranchColoringEnabled,
@@ -18888,7 +18914,7 @@ export default function TreeCanvas({
           errorBarShowNodeDot,
           errorBarThicknessPx,
           errorBarCapSizePx,
-          figureStyles,
+          figureStyles: calendarStylesForSubtree(figureStyles, exportTree.buffers.depth[exportNode] - exportTree.buffers.depth[exportTree.root]),
           taxonomyEnabled,
           taxonomyOverlayStyle,
           taxonomyBranchColoringEnabled,
