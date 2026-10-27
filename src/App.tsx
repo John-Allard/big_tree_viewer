@@ -125,6 +125,7 @@ import {
   type TaxonomySource,
 } from "./types/taxonomy";
 import type { WorkerTreePayload } from "./types/tree";
+import { canParseTreeInline, parseTreePayload } from "./lib/treeParser";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
 import type {
@@ -1960,10 +1961,13 @@ async function computeTreeSignature(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function parseComparisonTree(text: string): Promise<TreeModel> {
+async function parseComparisonTree(text: string): Promise<TreeModel> {
   const normalizedText = normalizeImportedTreeText(text);
   if (!looksLikeTreeText(normalizedText)) {
-    return Promise.reject(new Error("The comparison file does not look like a Newick or NEXUS tree."));
+    throw new Error("The comparison file does not look like a Newick or NEXUS tree.");
+  }
+  if (canParseTreeInline(normalizedText)) {
+    return buildTreeModel(parseTreePayload(normalizedText).payload);
   }
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./workers/treeWorker.ts", import.meta.url), { type: "module" });
@@ -1989,6 +1993,7 @@ function parseComparisonTree(text: string): Promise<TreeModel> {
 
 export default function App() {
   const workerRef = useRef<Worker | null>(null);
+  const treeParseRequestRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const comparisonFileInputRef = useRef<HTMLInputElement | null>(null);
   const metadataFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -4017,8 +4022,7 @@ export default function App() {
     setActiveSearchIndex((current) => Math.min(current, searchResults.length - 1));
   }, [searchResults]);
 
-  const handleWorkerMessage = useCallback((event: MessageEvent<WorkerResponse>): void => {
-    const data = event.data;
+  const handleParseResponse = useCallback((data: WorkerResponse): void => {
     if (data.type === "parse-progress") {
       setLoadState((current) => ({
         ...current,
@@ -4109,6 +4113,10 @@ export default function App() {
     resolveParse?.();
   }, []);
 
+  const handleWorkerMessage = useCallback((event: MessageEvent<WorkerResponse>): void => {
+    handleParseResponse(event.data);
+  }, [handleParseResponse]);
+
   const handleWorkerError = useCallback((event: ErrorEvent): void => {
     const rejectParse = pendingTreeParseRejecterRef.current;
     pendingTreeParseResolverRef.current = null;
@@ -4165,6 +4173,15 @@ export default function App() {
   }, []);
 
   const parseText = useCallback(async (text: string, label: string, genusLabelsOverride?: boolean): Promise<void> => {
+    const request = ++treeParseRequestRef.current;
+    if (pendingTreeParseRejecterRef.current && workerRef.current) {
+      const worker = workerRef.current;
+      worker.removeEventListener("message", handleWorkerMessage);
+      worker.removeEventListener("error", handleWorkerError);
+      worker.removeEventListener("messageerror", handleWorkerMessageError);
+      worker.terminate();
+      workerRef.current = null;
+    }
     pendingTreeParseRejecterRef.current?.(new Error("Tree parsing was superseded by another load request."));
     pendingTreeParseResolverRef.current = null;
     pendingTreeParseRejecterRef.current = null;
@@ -4182,15 +4199,11 @@ export default function App() {
       });
       throw new Error(`${label} does not look like a Newick or NEXUS tree.`);
     }
-    pendingTreeSignatureRef.current = await computeTreeSignature(normalizedText);
+    const signature = await computeTreeSignature(normalizedText);
+    if (request !== treeParseRequestRef.current) throw new Error("Tree parsing was superseded by another load request.");
+    pendingTreeSignatureRef.current = signature;
     pendingTreeLabelRef.current = label;
     pendingGenusLabelsOverrideRef.current = genusLabelsOverride;
-    setLoadState({
-      loading: true,
-      message: `Starting worker for ${label}...`,
-      error: null,
-    });
-    const worker = ensureWorker();
     setLoadState({
       loading: true,
       message: `Parsing ${label}...`,
@@ -4200,12 +4213,17 @@ export default function App() {
       pendingTreeParseResolverRef.current = resolve;
       pendingTreeParseRejecterRef.current = reject;
     });
-    worker.postMessage({
-      type: "parse-tree",
-      text: normalizedText,
-    });
+    if (canParseTreeInline(normalizedText)) {
+      try {
+        handleParseResponse({ type: "parsed-tree", payload: parseTreePayload(normalizedText).payload });
+      } catch (error) {
+        handleParseResponse({ type: "parse-error", message: error instanceof Error ? error.message : String(error) });
+      }
+    } else {
+      ensureWorker().postMessage({ type: "parse-tree", text: normalizedText });
+    }
     await parseDone;
-  }, [ensureWorker]);
+  }, [ensureWorker, handleParseResponse, handleWorkerError, handleWorkerMessage, handleWorkerMessageError]);
 
   const runTaxonomyWorker = useCallback((request:
     | { type: "download-taxonomy"; source?: TaxonomySource }
