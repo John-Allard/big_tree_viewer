@@ -1,5 +1,7 @@
 import { automaticPolarBranchLabelCandidates, arcIntersectsLabel, branchIntersectsLabel, labelFitsBranch } from "../lib/automaticBranchLabel";
 import { circularLabelOffset, normalizeLabelAngle } from "../lib/circularLabelOffsets";
+import { EMPTY_CLADE_RIBBONS, resolveCladeRibbons } from "../lib/cladeRibbons";
+import { remapCladeRibbonsForSubtree } from "../lib/customCladeRibbons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createCladogramTree, DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLADOGRAM_LOG_STRENGTH } from "../lib/cladogram";
@@ -402,8 +404,9 @@ function expandSpiralMetricsForRibbonGap(
   metrics: SpiralMetrics,
   taxonomyGapControl: number,
   cameraScale: number,
+  extraScreenPaddingPx = 0,
 ): SpiralMetrics {
-  const extraGapWorld = Math.max(0, taxonomyGapControl - 1) / Math.max(cameraScale, 1e-6);
+  const extraGapWorld = (Math.max(0, taxonomyGapControl - 1) + extraScreenPaddingPx) / Math.max(cameraScale, 1e-6);
   if (extraGapWorld <= 0) {
     return metrics;
   }
@@ -997,6 +1000,7 @@ function drawSpiralCurvedText(
   centerTheta: number,
   centerOffset: number,
   color: string,
+  captureGlyph?: (glyph: string, x: number, y: number, color: string, rotation: number) => void,
 ): void {
   const glyphs = Array.from(text);
   const widths = glyphs.map((glyph) => ctx.measureText(glyph).width);
@@ -1025,6 +1029,7 @@ function drawSpiralCurvedText(
     ctx.fillStyle = color;
     ctx.fillText(glyph, 0, 0);
     ctx.restore();
+    captureGlyph?.(glyph, screen.x, screen.y, color, rotation);
     cursor += glyphWidth;
   }
 }
@@ -1268,6 +1273,7 @@ function buildSharedSubtreeStoragePayload(
     newick: serializeSubtreeToNewick(tree, rootNode),
     visual: {
       ...visual,
+      customCladeRibbons: remapCladeRibbonsForSubtree(tree, rootNode, visual.customCladeRibbons ?? []),
       useAutomaticTaxonomyRankVisibility: true,
     },
   };
@@ -4341,6 +4347,8 @@ export default function TreeCanvas({
   alignTipLabels,
   showGenusLabels,
   taxonomyEnabled,
+  customCladeRibbons = EMPTY_CLADE_RIBBONS,
+  onAddCladeRibbon,
   taxonomyOverlayStyle,
   taxonomyBranchColoringEnabled,
   taxonomyColorJitter,
@@ -4859,6 +4867,12 @@ export default function TreeCanvas({
   const polarThetaFor = useCallback((values: Float64Array, node: number): number => (
     tree ? thetaFor(values, node, tree.leafCount, polarAngleStart, polarAngleSpan) : polarAngleStart
   ), [polarAngleSpan, polarAngleStart, tree]);
+  const cladeRibbonLayout = useMemo(() => tree && cache
+    ? resolveCladeRibbons(customCladeRibbons, sharedSubtreeSourceTree ?? tree, cache.orderedLeaves[order], sharedSubtreeSourceNodeByViewNode)
+    : { ranges: [], inside: 0, outside: 0 },
+  [customCladeRibbons, tree, cache, order, sharedSubtreeSourceTree, sharedSubtreeSourceNodeByViewNode]);
+  const cladeRibbonInsidePx = cladeRibbonLayout.inside * 26;
+  const cladeRibbonPaddingPx = (cladeRibbonLayout.inside + cladeRibbonLayout.outside) * 26;
   const axisDepth = useCallback((depth: number): number => (
     axisDepthForMode(depth, viewMode)
   ), [axisDepthForMode, viewMode]);
@@ -5663,6 +5677,12 @@ export default function TreeCanvas({
     figureStyles.taxonomy.taxonomyGap ?? (1 + (figureStyles.taxonomy.taxonomyGapPx ?? 0)),
   );
   const taxonomyBaselineGapPx = 18;
+  // Fixed screen-space bands must leave enough fit radius for the tree itself.
+  const spiralCustomCompression = cladeRibbonPaddingPx
+    ? Math.min(1, Math.min(visibleViewportWidth, size.height) * 0.46 * 0.65 / ((cladeRibbonPaddingPx + 8) * (Math.max(1, Math.min(10, spiralTurns)) + 1)))
+    : 1;
+  const spiralCustomStridePx = 26 * spiralCustomCompression;
+  const spiralCustomPaddingPx = cladeRibbonPaddingPx ? (cladeRibbonPaddingPx + 8) * spiralCustomCompression : 0;
   const spiralMetricsForScale = useCallback((visibleRankCount: number, scale: number): SpiralMetrics => {
     if (!tree) {
       throw new Error("Spiral metrics require a loaded tree.");
@@ -5677,8 +5697,9 @@ export default function TreeCanvas({
       ),
       taxonomyGapControl,
       scale,
+      spiralCustomPaddingPx,
     );
-  }, [effectiveTimeAxisLogBase, spiralTurns, taxonomyBandThicknessScale, taxonomyGapControl, tree]);
+  }, [spiralCustomPaddingPx, effectiveTimeAxisLogBase, spiralTurns, taxonomyBandThicknessScale, taxonomyGapControl, tree]);
   const spiralVisibleTaxonomyRanksForScale = useCallback((scale: number): TaxonomyRank[] => {
     if (!taxonomyEnabled || !taxonomyBlocks) {
       return [];
@@ -5702,8 +5723,14 @@ export default function TreeCanvas({
       ).outerRadius,
       1e-9,
     );
-    for (let iteration = 0; iteration < 3; iteration += 1) {
-      fitScale = fitRadiusPx / Math.max(spiralMetricsForScale(fitTotalRankCount, fitScale).outerRadius, 1e-9);
+    if (spiralCustomPaddingPx) {
+      const fitMetrics = spiralMetricsForScale(fitTotalRankCount, fitScale);
+      const fixedRadiusPx = (Math.max(0, taxonomyGapControl - 1) + spiralCustomPaddingPx) * (fitMetrics.totalTheta / (Math.PI * 2) + 1);
+      fitScale *= Math.max(1e-6, fitRadiusPx - fixedRadiusPx) / fitRadiusPx;
+    } else {
+      for (let iteration = 0; iteration < 3; iteration += 1) {
+        fitScale = fitRadiusPx / Math.max(spiralMetricsForScale(fitTotalRankCount, fitScale).outerRadius, 1e-9);
+      }
     }
     const zoomRatio = scale / Math.max(fitScale, 1e-9);
     let visibleRankCount = fitVisibleRankCount;
@@ -5716,6 +5743,8 @@ export default function TreeCanvas({
   }, [
     automaticTaxonomyRanks,
     effectiveTimeAxisLogBase,
+    spiralCustomPaddingPx,
+    taxonomyGapControl,
     size.height,
     size.width,
     spiralTurns,
@@ -6679,16 +6708,16 @@ export default function TreeCanvas({
           )
           + 26
           + Math.max(0, figureStyles.tip.offsetPx);
-        return taxonomyWidthPx;
+        return taxonomyWidthPx + cladeRibbonPaddingPx;
       }
       if (!showGenusLabels) {
-        return tipBandWidthPx + 64 + Math.max(0, figureStyles.tip.offsetPx);
+        return tipBandWidthPx + 64 + Math.max(0, figureStyles.tip.offsetPx) + cladeRibbonPaddingPx;
       }
     }
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
-    return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [automaticTaxonomyRanks, circularOverlayViewportScale, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, tree, useAutomaticTaxonomyRankVisibility, withSupplementalTaxonomyRanks]);
+    return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + cladeRibbonPaddingPx;
+  }, [cladeRibbonPaddingPx, automaticTaxonomyRanks, circularOverlayViewportScale, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, tree, useAutomaticTaxonomyRankVisibility, withSupplementalTaxonomyRanks]);
 
   const circularFitLabelEnvelopePx = useCallback((camera: CircularCamera): number => {
     if (!tree || taxonomyEnabled) {
@@ -6939,17 +6968,17 @@ export default function TreeCanvas({
         + 40
         + Math.max(0, figureStyles.tip.offsetPx);
       return {
-        right: taxonomyWidthPx + 60 + tipTableWidthPx,
+        right: taxonomyWidthPx + 60 + tipTableWidthPx + cladeRibbonPaddingPx,
         top: tipTableTopPx,
       };
     }
     const labelFontSize = Math.max(4.5, Math.min(22, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return {
-      right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + tipTableWidthPx,
+      right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + tipTableWidthPx + cladeRibbonPaddingPx,
       top: tipTableTopPx,
     };
-  }, [collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.limitWidth, figureStyles.tip.maxWidthPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, maxTipLabelCharacters, metadataTipTableBarWidthPx, metadataTipTableCellWidthPx, metadataTipTableData, metadataTipTableMode, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, thickenOutermostTaxonomyRibbon]);
+  }, [cladeRibbonPaddingPx, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.limitWidth, figureStyles.tip.maxWidthPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, maxTipLabelCharacters, metadataTipTableBarWidthPx, metadataTipTableCellWidthPx, metadataTipTableData, metadataTipTableMode, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, thickenOutermostTaxonomyRibbon]);
 
   const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
@@ -6973,8 +7002,14 @@ export default function TreeCanvas({
         ).outerRadius,
         1e-9,
       );
-      for (let iteration = 0; iteration < 3; iteration += 1) {
-        fitScale = fitRadiusPx / Math.max(spiralMetricsForScale(visibleRankCount, fitScale).outerRadius, 1e-9);
+      if (spiralCustomPaddingPx) {
+        const fitMetrics = spiralMetricsForScale(visibleRankCount, fitScale);
+        const fixedRadiusPx = (Math.max(0, taxonomyGapControl - 1) + spiralCustomPaddingPx) * (fitMetrics.totalTheta / (Math.PI * 2) + 1);
+        fitScale *= Math.max(1e-6, fitRadiusPx - fixedRadiusPx) / fitRadiusPx;
+      } else {
+        for (let iteration = 0; iteration < 3; iteration += 1) {
+          fitScale = fitRadiusPx / Math.max(spiralMetricsForScale(visibleRankCount, fitScale).outerRadius, 1e-9);
+        }
       }
       nextCamera.scale = fitScale;
       nextCamera.translateX = visibleViewportCenterX;
@@ -6994,12 +7029,12 @@ export default function TreeCanvas({
     } else if (mode === "circular" && !taxonomyEnabled) {
       if (isPartialRadial || polarInnerRadius > 0) {
         for (let iteration = 0; iteration < 3; iteration += 1) {
-          nextCamera = fitPolarCamera(mode, circularFitLabelEnvelopePx(nextCamera)) ?? nextCamera;
+          nextCamera = fitPolarCamera(mode, Math.max(circularFitLabelEnvelopePx(nextCamera), cladeRibbonPaddingPx ? circularClampExtraRadiusPx(nextCamera) : 0)) ?? nextCamera;
         }
       } else {
         const radius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
         for (let iteration = 0; iteration < 3; iteration += 1) {
-          const labelEnvelopePx = circularFitLabelEnvelopePx(nextCamera);
+          const labelEnvelopePx = Math.max(circularFitLabelEnvelopePx(nextCamera), cladeRibbonPaddingPx ? circularClampExtraRadiusPx(nextCamera) : 0);
           const availableRadiusPx = Math.max(
             circularFitMinTreeRadiusPx(visibleViewportWidth, size.height),
             (Math.min(visibleViewportWidth, size.height) * 0.5) - 8 - labelEnvelopePx,
@@ -7022,7 +7057,7 @@ export default function TreeCanvas({
       finalizeCircularCamera(nextCamera);
     }
     return nextCamera;
-  }, [circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, isPartialRadial, polarInnerRadius, polarOuterRadius, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset, visibleViewportWidth]);
+  }, [spiralCustomPaddingPx, taxonomyGapControl, cladeRibbonPaddingPx, circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, isPartialRadial, polarInnerRadius, polarOuterRadius, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset, visibleViewportWidth]);
 
   const previousFitCameraForModeRef = useRef(fitCameraForMode);
 
@@ -8593,6 +8628,8 @@ export default function TreeCanvas({
       totalMs: 0,
     };
     const drawStartTime = performance.now();
+    let customRibbonBase = 0;
+    let customRibbonOutsideBase = 0;
     const hiddenNodes = collapsedView?.hiddenNodes ?? new Uint8Array(tree.nodeCount);
     const visibleCollapsedNodes = collapsedView?.visibleCollapsedNodes ?? [];
     const renderedTaxonomyBlocks = taxonomyOverlayBlocks ?? taxonomyBlocks;
@@ -9388,6 +9425,8 @@ export default function TreeCanvas({
         }));
       }
       const effectiveTipLabelSpacePx = Math.max(globalTipLabelSpacePx, tipLabelMaxRightPx - tipSideX);
+      customRibbonBase = tipSideX + effectiveTipLabelSpacePx + 8;
+      customRibbonOutsideBase = customRibbonBase + cladeRibbonInsidePx;
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
       let rectangularFirstTaxonomyBandX: number | null = null;
@@ -9410,11 +9449,12 @@ export default function TreeCanvas({
         const placedKeys: string[] = [];
         const renderedBlocksDebug: Array<{ rank: TaxonomyRank; label: string; topY: number; bottomY: number }> = [];
         let taxonomyConnectorSegmentCount = 0;
-        let bandCursorX = tipSideX + controlledRibbonGapPx(
+        let bandCursorX = tipSideX + cladeRibbonInsidePx + controlledRibbonGapPx(
           taxonomyGapControl,
           taxonomyBaselineGapPx,
           effectiveTipLabelSpacePx,
         );
+        if (cladeRibbonPaddingPx) bandCursorX = Math.max(bandCursorX, customRibbonBase + cladeRibbonInsidePx);
         if (visibleRanks.length > 0) {
           rectangularFirstTaxonomyBandX = bandCursorX;
         }
@@ -9730,6 +9770,8 @@ export default function TreeCanvas({
           bandCursorX += metrics.ringGapPx;
         }
         rectangularTaxonomyEndX = bandCursorX;
+        customRibbonBase = Math.max(customRibbonBase, (rectangularFirstTaxonomyBandX ?? customRibbonBase) - cladeRibbonInsidePx);
+        customRibbonOutsideBase = bandCursorX + 4;
         for (let index = 0; index < placedLabels.length; index += 1) {
           const label = placedLabels[index];
           ctx.font = `${label.fontSize ?? baseFontSize}px ${labelFontFamilies.taxonomy}`;
@@ -10151,7 +10193,8 @@ export default function TreeCanvas({
         }
         if (tipLabelsVisible && metadataTipTableData && metadataTipTableData.columns.length > 0) {
           const labelRightX = visibleTipLabels.reduce((right, label) => Math.max(right, label.x + label.renderedWidth), tipSideX);
-          const tableStartX = Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16);
+          const customRibbonEndX = cladeRibbonPaddingPx ? customRibbonOutsideBase + cladeRibbonLayout.outside * 26 : Number.NEGATIVE_INFINITY;
+          const tableStartX = Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16, customRibbonEndX + 16);
           const rowHeight = Math.max(3, Math.min(28, effectiveTipSpacingPx * 0.82));
           const firstVisibleY = visibleTipLabels.reduce((top, label) => Math.min(top, label.y), Number.POSITIVE_INFINITY);
           ctx.font = `11px ${LABEL_FONT}`;
@@ -10922,7 +10965,9 @@ export default function TreeCanvas({
           : 0,
       );
       const spiralFirstTaxonomyRibbonInnerOffset = taxonomyMetrics.bandWidth
-        + (spiralFirstGapPx / Math.max(camera.scale, 1e-6));
+        + ((spiralFirstGapPx + cladeRibbonLayout.inside * spiralCustomStridePx) / Math.max(camera.scale, 1e-6));
+      customRibbonBase = taxonomyMetrics.bandWidth * camera.scale + spiralFirstGapPx;
+      customRibbonOutsideBase = customRibbonBase + cladeRibbonLayout.inside * spiralCustomStridePx + spiralRenderedTaxonomyWidthPx + (cladeRibbonPaddingPx ? 4 * spiralCustomCompression : 0);
       const spiralBranchDetailProgress = smoothstep01(
         (spiralTipSpacingPx - SPIRAL_BRANCH_DETAIL_START_SPACING_PX)
         / Math.max(
@@ -13136,14 +13181,20 @@ export default function TreeCanvas({
         const closedGapInsetCompensationPx = globalTipLabelSpacePx > 0
           ? 0
           : firstRibbonStrokeInsetPx * (1 - Math.min(1, taxonomyGapControl));
-        const firstTaxonomyRingInnerRadiusPx = (maxRadius * camera.scale) + controlledRibbonGapPx(
+        const naturalTaxonomyGapPx = controlledRibbonGapPx(
           taxonomyGapControl,
           taxonomyBaselineGapPx + metrics.ringGapPx,
           globalTipLabelSpacePx,
         ) - closedGapInsetCompensationPx;
+        const firstTaxonomyRingInnerRadiusPx = (maxRadius * camera.scale) + cladeRibbonInsidePx
+          + (cladeRibbonPaddingPx ? Math.max(globalTipLabelSpacePx + 8, naturalTaxonomyGapPx) : naturalTaxonomyGapPx);
         circularFirstTaxonomyRingInnerRadiusPx = visibleRanks.length > 0
           ? firstTaxonomyRingInnerRadiusPx
           : null;
+        customRibbonBase = firstTaxonomyRingInnerRadiusPx - cladeRibbonInsidePx;
+        customRibbonOutsideBase = firstTaxonomyRingInnerRadiusPx
+          + metrics.ringWidthsPx.reduce((sum, width) => sum + width, 0)
+          + visibleRanks.length * metrics.ringGapPx + 4;
         const viewportCenterRenderedTheta = wrapPositive(Math.atan2((renderSize.height * 0.5) - centerPoint.y, (renderSize.width * 0.5) - centerPoint.x));
         let ringCursorOuterPx = firstTaxonomyRingInnerRadiusPx;
         const placedLabels: ScreenLabel[] = [];
@@ -13232,6 +13283,7 @@ export default function TreeCanvas({
             taxonomyBandThicknessScale.toFixed(3),
             thickenOutermostTaxonomyRibbon ? "thick-outer" : "uniform-ribbons",
             taxonomyGapControl.toFixed(3),
+            firstTaxonomyRingInnerRadiusPx.toFixed(3),
             labelFontFamilies.taxonomy,
             activeSearchTaxonomyKey ?? "",
             searchQuery.trim().toLowerCase(),
@@ -15611,6 +15663,100 @@ export default function TreeCanvas({
         }
       }
     }
+    if (cladeRibbonLayout.ranges.length) {
+      if (camera.kind === "circular" && viewMode !== "spiral" && !customRibbonBase) {
+        customRibbonBase = polarOuterRadius * camera.scale + 12 + (showTipLabels ? estimateLabelWidth(12, reservedTipLabelCharacters) : 0);
+        customRibbonOutsideBase = customRibbonBase + cladeRibbonInsidePx;
+      }
+      for (const ribbon of cladeRibbonLayout.ranges) {
+        const stride = viewMode === "spiral" ? spiralCustomStridePx : 26;
+        const bandWidth = stride * 22 / 26;
+        const band = (ribbon.placement === "inside" ? customRibbonBase : customRibbonOutsideBase) + ribbon.lane * stride;
+        let x = 0;
+        let y = 0;
+        let rotation = 0;
+        let available = 0;
+        let curveRadiusPx = 0;
+        let drawCurved: ((color: string, capture: (glyph: string, x: number, y: number, color: string, rotation: number) => void) => void) | null = null;
+        ctx.save();
+        ctx.fillStyle = ribbon.color;
+        if (camera.kind === "rect") {
+          const top = worldToScreenRect(camera, 0, taxonomyBoundaryValue(ribbon.start)).y + 1;
+          const bottom = worldToScreenRect(camera, 0, taxonomyBoundaryValue(ribbon.end)).y - 1;
+          if (bottom <= top) { ctx.restore(); continue; }
+          ctx.fillRect(band, top, 22, bottom - top);
+          pushSceneRect(band, top, 22, bottom - top, ribbon.color);
+          x = band + 11; y = (top + bottom) / 2; rotation = -Math.PI / 2; available = bottom - top - 6;
+        } else if (viewMode === "spiral") {
+          const metrics = spiralMetricsForScale(spiralVisibleTaxonomyRanksForScale(camera.scale).length, camera.scale);
+          const start = spiralThetaForTaxonomyBoundary(ribbon.start, metrics);
+          const end = spiralThetaForTaxonomyBoundary(ribbon.end, metrics);
+          const inner = band / camera.scale;
+          drawSpiralRibbonScreenPath(ctx, camera, start, end, inner, inner + bandWidth / camera.scale, metrics);
+          pushScenePath(() => svgSpiralRibbonScreenPath(camera, start, end, inner, inner + bandWidth / camera.scale, metrics), undefined, undefined, ribbon.color);
+          const intervals = spiralLabelIntervalsByTurn(start, end, metrics);
+          const interval = intervals[Math.floor(intervals.length / 2)] ?? { startTheta: start, endTheta: end };
+          const mid = (interval.startTheta + interval.endTheta) / 2;
+          const offset = inner + bandWidth / (2 * camera.scale);
+          const point = spiralNormalOffsetPoint(mid, offset, metrics);
+          const screen = worldToScreenCircular(camera, point.x, point.y);
+          x = screen.x; y = screen.y;
+          rotation = spiralTangentAngle(mid, offset, metrics) + camera.rotation;
+          const before = spiralNormalOffsetPoint(mid - 0.001, offset, metrics);
+          const after = spiralNormalOffsetPoint(mid + 0.001, offset, metrics);
+          const tangentDelta = spiralTangentAngle(mid + 0.001, offset, metrics)
+            - spiralTangentAngle(mid - 0.001, offset, metrics);
+          curveRadiusPx = Math.hypot(after.x - before.x, after.y - before.y) * camera.scale
+            / Math.max(1e-9, Math.abs(tangentDelta));
+          const delta = mid - metrics.startTheta;
+          const radius = metrics.innerRadius + offset;
+          available = 2 * Math.min(
+            spiralArcLengthBetween(interval.startTheta - metrics.startTheta, delta, radius, metrics.pitchPerRadian),
+            spiralArcLengthBetween(delta, interval.endTheta - metrics.startTheta, radius, metrics.pitchPerRadian),
+          ) * camera.scale - 8;
+          drawCurved = (color, capture) => drawSpiralCurvedText(ctx, camera, metrics, ribbon.label, mid, offset, color, capture);
+        } else {
+          const span = thetaSpanForTaxonomyRange(ribbon.start, ribbon.end);
+          const start = span.startTheta + camera.rotation;
+          const end = span.endTheta + camera.rotation;
+          const center = worldToScreenCircular(camera, 0, 0);
+          traceCircularRibbonPath(ctx, center.x, center.y, band, band + 22, start, end);
+          ctx.fill();
+          pushScenePath(() => svgCircularRibbonPath(center.x, center.y, band, band + 22, start, end), undefined, undefined, ribbon.color);
+          const mid = (start + end) / 2;
+          x = center.x + Math.cos(mid) * (band + 11); y = center.y + Math.sin(mid) * (band + 11);
+          rotation = mid + Math.PI / 2;
+          curveRadiusPx = band + 11;
+          available = Math.abs(end - start) * (band + 11) - 8;
+          drawCurved = (color, capture) => drawCircularCurvedText(ctx, ribbon.label, center.x, center.y, band + 11, mid, color, null, null, capture);
+        }
+        if (Math.cos(rotation) < 0) rotation += Math.PI;
+        ctx.font = "12px Arial";
+        const width = drawCurved
+          ? Array.from(ribbon.label).reduce((total, glyph) => total + ctx.measureText(glyph).width, 0)
+          : ctx.measureText(ribbon.label).width;
+        const fontSize = Math.min(12, bandWidth * 0.5, 12 * available / Math.max(1, width));
+        if (fontSize >= 5 && ribbon.label) {
+          ctx.font = `${fontSize}px Arial`;
+          ctx.fillStyle = taxonomyOverlayTextColor(ribbon.color, "ribbons");
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          const straightWidth = ctx.measureText(ribbon.label).width;
+          if (drawCurved && straightWidth <= available
+            && !curvedTextShouldFollowArc(straightWidth, fontSize, curveRadiusPx)
+            && fontSize + 2 * curvedTextSagitta(straightWidth, curveRadiusPx) <= bandWidth - 4) {
+            drawCurved = null;
+          }
+          if (drawCurved) {
+            drawCurved(ctx.fillStyle, (glyph, gx, gy, color, angle) => pushSceneText(glyph, gx, gy, color, fontSize, "Arial", "middle", angle, undefined, "middle"));
+          } else {
+            ctx.translate(x, y); ctx.rotate(rotation);
+            ctx.fillText(ribbon.label, 0, 0);
+            pushSceneText(ribbon.label, x, y, ctx.fillStyle, fontSize, "Arial", "middle", rotation, undefined, "middle");
+          }
+        }
+        ctx.restore();
+      }
+    }
     flushPhyloPicImages();
     ctx.save();
     ctx.globalAlpha = 1;
@@ -15733,6 +15879,11 @@ export default function TreeCanvas({
     }
   }, [
     activeSearchGenusCenterNode,
+    spiralCustomCompression,
+    spiralCustomStridePx,
+    cladeRibbonLayout,
+    cladeRibbonInsidePx,
+    cladeRibbonPaddingPx,
     activeSearchNode,
     activeSearchTaxonomyKey,
     alignTipLabels,
@@ -18216,6 +18367,7 @@ export default function TreeCanvas({
     const exportNode = sharedSubtreeSourceNodeByViewNode?.[node] ?? node;
     const key = `big-tree-viewer:subtree:${crypto.randomUUID()}`;
     const payload = buildSharedSubtreeStoragePayload(exportTree, exportNode, exportTaxonomyMap, taxonomyEnabled, {
+      customCladeRibbons,
       viewMode,
       order,
       zoomAxisMode,
@@ -18338,6 +18490,7 @@ export default function TreeCanvas({
     sharedSubtreeSourceNodeByViewNode,
     sharedSubtreeSourceTaxonomyMap,
     sharedSubtreeSourceTree,
+    customCladeRibbons,
     spiralTurns,
     timeStripeLineWeight,
     timeStripeStyle,
@@ -18875,6 +19028,7 @@ export default function TreeCanvas({
         const exportTaxonomyMap = sharedSubtreeSourceTaxonomyMap ?? taxonomyMap;
         const exportNode = sharedSubtreeSourceNodeByViewNode?.[node] ?? node;
         return buildSharedSubtreeStoragePayload(exportTree, exportNode, exportTaxonomyMap, taxonomyEnabled, {
+          customCladeRibbons,
           viewMode,
           order,
           zoomAxisMode,
@@ -19010,6 +19164,7 @@ export default function TreeCanvas({
     sharedSubtreeSourceNodeByViewNode,
     sharedSubtreeSourceTaxonomyMap,
     sharedSubtreeSourceTree,
+    customCladeRibbons,
     spiralTurns,
     useAutoCircularCenterScaleAngle,
     useAutomaticTaxonomyRankVisibility,
@@ -19235,6 +19390,14 @@ export default function TreeCanvas({
               >
                 Open Subtree In New Tab
               </button>
+              {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
+                <button type="button" className="tree-context-menu-item" disabled={!onAddCladeRibbon}
+                  title="Add an independent ribbon spanning the descendants of this node."
+                  onClick={() => {
+                    onAddCladeRibbon?.(sharedSubtreeSourceNodeByViewNode?.[contextMenu.node] ?? contextMenu.node);
+                    setContextMenu(null);
+                  }}>Add Clade Ribbon</button>
+              ) : null}
               {contextMenuCollapseTarget !== null ? (
                 <button
                   type="button"
@@ -19434,6 +19597,17 @@ export default function TreeCanvas({
               >
                 Open Group Subtree In New Tab
               </button>
+              <button type="button" className="tree-context-menu-item" disabled={!onAddCladeRibbon}
+                title="Add an independent ribbon spanning this group's source-tree MRCA."
+                onClick={() => {
+                  const source = sharedSubtreeSourceTree ?? tree;
+                  if (source) {
+                    const first = sharedSubtreeSourceNodeByViewNode?.[contextMenu.firstNode] ?? contextMenu.firstNode;
+                    const last = sharedSubtreeSourceNodeByViewNode?.[contextMenu.lastNode] ?? contextMenu.lastNode;
+                    onAddCladeRibbon?.(lowestCommonAncestor(source, first, last));
+                  }
+                  setContextMenu(null);
+                }}>Add Clade Ribbon</button>
               {contextMenuCollapseTarget !== null ? (
                 <button
                   type="button"

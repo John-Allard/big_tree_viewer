@@ -1,4 +1,5 @@
 import { normalizeLabelAngle } from "./circularLabelOffsets";
+import { normalizeCustomCladeRibbons, type CustomCladeRibbon } from "./customCladeRibbons";
 import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, taxonomyLabelVisibilityThreshold, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
 import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, ULTRAMETRIC_CLADOGRAM_METHODS, normalizeCladogramLogStrength, type UltrametricCladogramMethod } from "./cladogram";
 import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
@@ -85,6 +86,7 @@ export type SharedSubtreeVisualPayload = {
   errorBarCapSizePx: number;
   figureStyles: FigureStyleSettings;
   taxonomyEnabled: boolean;
+  customCladeRibbons?: CustomCladeRibbon[];
   taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyBranchColoringEnabled: boolean;
   useAutomaticTaxonomyRankVisibility: boolean;
@@ -275,6 +277,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     errorBarCapSizePx: coerceFiniteNumber(source.errorBarCapSizePx, 7),
     figureStyles: parseSharedFigureStyles(source.figureStyles),
     taxonomyEnabled: coerceBoolean(source.taxonomyEnabled, false),
+    customCladeRibbons: normalizeCustomCladeRibbons(source.customCladeRibbons),
     taxonomyOverlayStyle: coerceEnum(source.taxonomyOverlayStyle, ["ribbons", "strands"] as const, "ribbons"),
     taxonomyBranchColoringEnabled: coerceBoolean(source.taxonomyBranchColoringEnabled, true),
     useAutomaticTaxonomyRankVisibility: coerceBoolean(source.useAutomaticTaxonomyRankVisibility, true),

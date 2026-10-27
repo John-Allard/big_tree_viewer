@@ -1,6 +1,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react";
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import { ChevronLeft, ChevronRight, Maximize, Minimize } from "lucide-react";
+import CladeRibbonControls from "./components/CladeRibbonControls";
+import { normalizeCustomCladeRibbons, remapCladeRibbonsForTree, type CustomCladeRibbon } from "./lib/customCladeRibbons";
 import TreeCanvas from "./components/TreeCanvas";
 import TreeComparisonCanvas, { type TreeComparisonCameraState } from "./components/TreeComparisonCanvas";
 import TreeStatisticsView from "./components/TreeStatisticsView";
@@ -345,6 +347,7 @@ type BigTreeViewerSessionSettings = {
   errorBarCapSizePx: number;
   figureStyles: FigureStyleSettings;
   taxonomyEnabled: boolean;
+  customCladeRibbons?: CustomCladeRibbon[];
   taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyRankVisibility: Partial<Record<TaxonomyRank, boolean>>;
   taxonomyRankDisplayModes: Partial<Record<TaxonomyRank, TaxonomyRankDisplayMode>>;
@@ -2055,6 +2058,7 @@ export default function App() {
   const pendingSessionCanvasStateRef = useRef<TreeCanvasSessionState | null | undefined>(undefined);
   const pendingSessionRestoreResolverRef = useRef<(() => void) | null>(null);
   const pendingSessionSnapshotResolverRef = useRef<((state: TreeCanvasSessionState | null) => void) | null>(null);
+  const pendingCustomCladeRibbonsRef = useRef<CustomCladeRibbon[]>([]);
   const pendingMetadataOverlayCompletionRef = useRef<{
     id: number;
     resolve: () => void;
@@ -2213,6 +2217,8 @@ export default function App() {
   const [metadataCollapseColumn, setMetadataCollapseColumn] = useState("");
   const [metadataTaxIdColumn, setMetadataTaxIdColumn] = useState("");
   const [metadataRankColumns, setMetadataRankColumns] = useState<Partial<Record<TaxonomyRank, string>>>({});
+  const [customCladeRibbons, setCustomCladeRibbons] = useState<CustomCladeRibbon[]>([]);
+  const cladeRibbonsDetailsRef = useRef<HTMLDetailsElement>(null);
   const [metadataValueColumn, setMetadataValueColumn] = useState("");
   const [metadataColorMode, setMetadataColorMode] = useState<MetadataColorMode>("categorical");
   const [metadataApplyScope, setMetadataApplyScope] = useState<MetadataApplyScope>("branch");
@@ -2826,6 +2832,7 @@ export default function App() {
   }, []);
 
   const applySharedSubtreeVisualSettings = useCallback((visual: SharedSubtreeVisualPayload): void => {
+    setCustomCladeRibbons(normalizeCustomCladeRibbons(visual.customCladeRibbons));
     setViewMode(visual.viewMode);
     setOrder(visual.order);
     setZoomAxisMode(visual.zoomAxisMode);
@@ -2892,6 +2899,7 @@ export default function App() {
     if (!visual) {
       return;
     }
+    if (visual.customCladeRibbons !== undefined) setCustomCladeRibbons(normalizeCustomCladeRibbons(visual.customCladeRibbons));
     const requestedViewMode = normalizeRequestedViewMode(visual.viewMode);
     if (requestedViewMode) {
       setViewMode(requestedViewMode);
@@ -3231,6 +3239,31 @@ export default function App() {
     }
   }, []);
 
+  const addCladeRibbon = useCallback((node: number): void => {
+    if (!tree || !Number.isInteger(node) || node < 0 || node >= tree.nodeCount || tree.buffers.firstChild[node] < 0) return;
+    if (customCladeRibbons.length >= 200) {
+      setMetadataError("A tree can have up to 200 clade ribbons.");
+      return;
+    }
+    const id = crypto.randomUUID();
+    setCustomCladeRibbons(current => [...current, {
+      id, node, label: tree.names[node]?.trim() || `Clade ${current.length + 1}`,
+      color: ["#2b8cbe", "#d95f0e", "#31a354", "#756bb1", "#de2d26"][current.length % 5],
+      placement: "outside", enabled: true,
+    }]);
+    setMetadataOpen(true);
+    showSidebar();
+    requestAnimationFrame(() => {
+      if (cladeRibbonsDetailsRef.current) {
+        cladeRibbonsDetailsRef.current.open = true;
+        cladeRibbonsDetailsRef.current.scrollIntoView({ block: "nearest" });
+      }
+      const input = document.getElementById(`clade-ribbon-label-${id}`) as HTMLInputElement | null;
+      input?.focus({ preventScroll: true });
+      input?.select();
+    });
+  }, [tree, showSidebar, customCladeRibbons.length]);
+
   const rerootCurrentTree = useCallback((node: number, mode: RerootMode): void => {
     if (!tree) {
       return;
@@ -3240,6 +3273,7 @@ export default function App() {
       return;
     }
     const nextTree = buildTreeModel(rerootedPayload);
+    setCustomCladeRibbons(current => remapCladeRibbonsForTree(tree, nextTree, current));
     const nextTaxonomyMap = taxonomyMap
       ? rebuildSharedSubtreeTaxonomyMap(nextTree, {
         version: taxonomyMap.version,
@@ -4146,6 +4180,8 @@ export default function App() {
     setSelectedSourceCachedTaxonomyMap(null);
     setSelectedSourceMappingCacheChecked(false);
     // New raw trees get their own label defaults; saved views can override them.
+    setCustomCladeRibbons(normalizeCustomCladeRibbons(pendingCustomCladeRibbonsRef.current, nextTree.nodeCount));
+    pendingCustomCladeRibbonsRef.current = [];
     setShowGenusLabels(pendingGenusLabelsOverrideRef.current
       ?? nextTree.leafNodes.some((node) => extractGenusToken(nextTree.names[node] || "") !== null));
     pendingGenusLabelsOverrideRef.current = undefined;
@@ -4232,7 +4268,7 @@ export default function App() {
     workerRef.current = null;
   }, []);
 
-  const parseText = useCallback(async (text: string, label: string, genusLabelsOverride?: boolean): Promise<void> => {
+  const parseText = useCallback(async (text: string, label: string, genusLabelsOverride?: boolean, ribbons?: CustomCladeRibbon[]): Promise<void> => {
     const request = ++treeParseRequestRef.current;
     if (pendingTreeParseRejecterRef.current && workerRef.current) {
       const worker = workerRef.current;
@@ -4261,6 +4297,7 @@ export default function App() {
     }
     const signature = await computeTreeSignature(normalizedText);
     if (request !== treeParseRequestRef.current) throw new Error("Tree parsing was superseded by another load request.");
+    pendingCustomCladeRibbonsRef.current = normalizeCustomCladeRibbons(ribbons);
     pendingTreeSignatureRef.current = signature;
     pendingTreeLabelRef.current = label;
     pendingGenusLabelsOverrideRef.current = genusLabelsOverride;
@@ -4600,7 +4637,7 @@ export default function App() {
       applySharedSubtreeVisualSettings(payload.visual);
     }
     setHideDownloadNewick(payload.controls?.hideDownloadNewick === true);
-    await parseText(payload.newick, "shared subtree", payload.visual?.showGenusLabels);
+    await parseText(payload.newick, "shared subtree", payload.visual?.showGenusLabels, payload.visual?.customCladeRibbons);
     return true;
   }, [applySharedSubtreeVisualSettings, parseText]);
 
@@ -4797,6 +4834,7 @@ export default function App() {
   }, [tree]);
 
   const captureSessionSettings = useCallback((): BigTreeViewerSessionSettings => ({
+    customCladeRibbons,
     viewMode,
     order,
     zoomAxisMode,
@@ -4901,6 +4939,7 @@ export default function App() {
     metadataLabelOffsetYPx,
   }), [
     branchThicknessScale,
+    customCladeRibbons,
     circularCenterScaleAngleDegrees,
     circularRotationDegrees,
     errorBarColor,
@@ -5005,6 +5044,7 @@ export default function App() {
   ]);
 
   const applySessionSettings = useCallback((settings: BigTreeViewerSessionSettings): void => {
+    setCustomCladeRibbons(normalizeCustomCladeRibbons(settings.customCladeRibbons));
     if (settings.viewMode === "rectangular" || settings.viewMode === "circular" || settings.viewMode === "fan" || settings.viewMode === "spiral") {
       setViewMode(settings.viewMode);
     }
@@ -5681,7 +5721,7 @@ export default function App() {
       setTree(null);
       setTreeSignature(null);
       try {
-        await parseText(session.tree.newick, session.tree.label || label, session.settings.showGenusLabels);
+        await parseText(session.tree.newick, session.tree.label || label, session.settings.showGenusLabels, session.settings.customCladeRibbons);
         setSessionStatus(session.taxonomy?.map
           ? `Applying taxonomy mapping and saved view from ${label}...`
           : `Applying saved view from ${label}...`);
@@ -5808,7 +5848,12 @@ export default function App() {
         return;
       }
       if (mode === "settings") {
-        applySessionSettings(session.settings);
+        applySessionSettings({
+          ...session.settings,
+          customCladeRibbons: tree && session.tree?.signature === treeSignature
+            ? session.settings.customCladeRibbons
+            : customCladeRibbons,
+        });
       }
       if (mode === "settings" && tree && session.tree?.signature && session.tree.signature === treeSignature && session.canvas) {
         setSessionRestoreState(session.canvas);
@@ -5827,6 +5872,7 @@ export default function App() {
     }
   }, [
     applySessionSettings,
+    customCladeRibbons,
     loadFullSessionFromObject,
     parseSessionFile,
     readSessionFile,
@@ -6202,7 +6248,7 @@ export default function App() {
         })
       : null;
     try {
-      await parseText(treeText, label, payload.visual?.showGenusLabels);
+      await parseText(treeText, label, payload.visual?.showGenusLabels, payload.visual?.customCladeRibbons);
       if (restoreApplied) {
         await restoreApplied;
       }
@@ -7650,6 +7696,7 @@ export default function App() {
         taxonomyColorRootRank,
         taxonomyColorJitterRank,
         taxonomyMappedCount: viewTaxonomyMap?.mappedCount ?? 0,
+        customCladeRibbons,
         metadataEnabled,
         metadataLegendEnabled,
         metadataLegendPosition,
@@ -7948,6 +7995,7 @@ export default function App() {
     };
   }, [
     activeSearchIndex,
+    customCladeRibbons,
     activeSearchResult,
     clearMetadata,
     downloadTaxonomy,
@@ -9939,6 +9987,8 @@ export default function App() {
         </PanelSection>
 
         <PanelSection title="Metadata" isOpen={metadataOpen} onToggle={() => setMetadataOpen(!metadataOpen)} tourId="metadata">
+          <CladeRibbonControls ribbons={customCladeRibbons} onChange={setCustomCladeRibbons}
+            detailsRef={cladeRibbonsDetailsRef} comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
           <div className="search-controls">
             <div className="button-row">
               <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()} title="Open a CSV or TSV table with one row per tip or node. Include a column containing the exact labels used in the tree; after loading, choose that column under Match tree labels by column.">
@@ -11198,6 +11248,8 @@ export default function App() {
           alignTipLabels={alignTipLabels && (!cladogramActive || ultrametricCladogram)}
           showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}
+          customCladeRibbons={customCladeRibbons}
+          onAddCladeRibbon={addCladeRibbon}
           taxonomyOverlayStyle={taxonomyOverlayStyle}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}
           taxonomyColorJitter={taxonomyColorJitter}

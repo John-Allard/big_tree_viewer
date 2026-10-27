@@ -92,6 +92,139 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             internal node labels and the whole matched subtree should be colored.
           </p>
           <pre><code>{metadataExample}</code></pre>
+          <h3>Chronological date mode</h3>
+          <p>
+            Set <code>metadata.colorMode: &quot;date&quot;</code> to color the selected
+            column in chronological order. Accepted ISO formats are
+            <code> YYYY</code>, <code>YYYY-MM</code>, and <code>YYYY-MM-DD</code>.
+            A partial year uses January 1; a partial month uses its first day.
+            These are approximations, not inferred collection dates. Parsing is
+            deterministic in UTC and validates leap years. Invalid or missing
+            dates receive no metadata color; ambiguous slash-separated dates,
+            timestamps, and impossible dates are not accepted.
+          </p>
+          <p>
+            Date mode uses a linear elapsed-time scale and all existing
+            <code> continuousPalette</code> choices: <code>blueOrange</code>,
+            <code> viridis</code>, <code>redBlue</code>, and <code>tealRose</code>.
+            Set <code>reverseScale: true</code> to reverse both colors and legend.
+            Set <code>continuousMinInput</code> and <code>continuousMaxInput</code>
+            to ISO date strings, or leave them empty for automatic bounds.
+            Out-of-range dates use the nearest endpoint color. Legends show date
+            labels; numeric square-root and log transforms do not apply to dates.
+          </p>
+          <pre><code>{`metadata: {
+  text: "seq_id,date\\nseq_001,2024-02-29\\nseq_002,2024-03\\n",
+  keyColumn: "seq_id",
+  valueColumn: "date",
+  enabled: true,
+  colorMode: "date",
+  continuousPalette: "viridis",
+  reverseScale: false,
+  continuousMinInput: "2024-01-01",
+  continuousMaxInput: "2024-12-31"
+}`}</code></pre>
+          <p>
+            These launch clamp fields are strings, not timestamps. Internally,
+            parsed date bounds are UTC milliseconds since 1970-01-01. For a date
+            heat map, keep <code>visual.metadataTipTableMode: &quot;heatmap&quot;</code>
+            and use a column such as
+            <code>{` { column: "date", label: "Collection date", valueType: "date" }`}</code>
+            in <code>visual.metadataTipTableColumns</code>; the existing
+            <code> metadataTipTablePalette</code> choices also work for dates.
+          </p>
+        </section>
+
+        <section className="api-doc-section">
+          <h2>Shared metadata mappings</h2>
+          <p>
+            One table can include <code>seq_id</code>, <code>display_name</code>,
+            <code> country</code>, <code>date</code>, <code>ncbi_taxid</code>,
+            <code> genus</code>, and <code>family</code>. Set
+            <code> metadata.keyColumn: &quot;seq_id&quot;</code> to match original tree
+            IDs, then choose the columns for each purpose through
+            <code> metadata</code>. These fields work in launch payloads and
+            desktop updates. <strong>Open label mapping file</strong> in
+            tip-label detail settings and <strong>Open taxonomy mapping file</strong>
+            in Taxonomy both replace the same loaded metadata table. Their key
+            column is shared with the Metadata panel, not an independent mapping.
+          </p>
+          <pre><code>{`visual: {
+  showTipLabels: true
+},
+metadata: {
+  text: "seq_id,display_name,country,date,ncbi_taxid,genus,family\\n"
+    + "seq_001,Human sample,UK,2024-02-29,9606,Homo,Hominidae\\n",
+  keyColumn: "seq_id",
+  tipLabelColumn: "display_name",
+  collapseColumn: "country",
+  rankColumns: { genus: "genus", family: "family" }
+}`}</code></pre>
+          <p>
+            <code>metadata.tipLabelColumn</code> sets the same display-only
+            setting as <code>visual.tipLabelMetadataColumn</code>.
+            Original IDs remain the matching keys and exported Newick
+            labels; missing display names fall back to the original labels.
+            An empty string restores original labels.
+          </p>
+          <p>
+            <code>visual.customCladeRibbons</code> adds independent clade annotations
+            without replacing mapped taxonomy. Each entry has <code>id</code>,
+            <code> node</code> (a BTV node index for this exact tree),
+            <code> label</code>, <code>color</code> (hex),
+            <code> placement</code> (<code>inside</code> or <code>outside</code>
+            relative to taxonomy), and <code>enabled</code>. Send an empty array
+            to clear them. They are saved in sessions and exported with the tree;
+            they are hidden during comparison mode.
+          </p>
+          <p>
+            <code>metadata.collapseColumn</code> sets the same grouping setting as
+            <code> visual.metadataCollapseColumn</code>. It collapses maximal internal
+            clades with at least two descendant tips sharing the same nonempty
+            value. Missing values, unmatched tips, or conflicting duplicate keys
+            block collapse of clades containing those tips. Separate occurrences
+            of one value stay separate; internal-node metadata is not inherited.
+            An empty string disables metadata grouping.
+          </p>
+          <p>
+            For NCBI lookup from IDs, set
+            <code> metadata.taxIdColumn: &quot;ncbi_taxid&quot;</code>, select
+            <code> taxonomy.source: &quot;ncbi&quot;</code>, and request standard mapping
+            with <code>taxonomy.runMapping: true</code>. Values must be positive
+            integer NCBI TaxIDs; empty or unmatched rows stay unmapped. This route
+            needs the NCBI database, unlike custom ranks supplied directly by metadata.
+            <code> visual.metadataTaxIdColumn</code> only preselects the UI control;
+            it does not supply CSV IDs to an automatic API mapping request.
+          </p>
+          <pre><code>{`metadata: {
+  text: "seq_id,ncbi_taxid\\nseq_001,9606\\n",
+  keyColumn: "seq_id",
+  taxIdColumn: "ncbi_taxid"
+},
+taxonomy: {
+  source: "ncbi",
+  runMapping: true
+}`}</code></pre>
+          <p>
+            <code>metadata.rankColumns</code> maps existing taxonomy rank
+            slots to column names, for example
+            <code>{` { genus: "genus", family: "family" }`}</code>, and immediately
+            applies custom taxonomy during launch or a desktop update, without
+            a taxonomy database. Custom rank imports and a <code>taxonomy</code>
+            payload are mutually exclusive: do not send both in one request.
+            Optional ranks use existing supported slots, not arbitrary new rank
+            names. The resulting mapping has
+            <code> mappingOrigin: &quot;metadata-ranks&quot;</code>.
+          </p>
+          <p>
+            In contrast, <code>visual.metadataRankColumns</code> only preselects
+            the custom rank controls; it does not apply a mapping automatically.
+            The setting is not named <code>taxonomyRankColumns</code>.
+            In Taxonomy, expand
+            <strong> Custom taxonomy from metadata</strong>, assign the columns,
+            and click <strong>Apply custom taxonomy ribbons</strong> to build
+            the mapping in the UI.
+          </p>
         </section>
 
         <section className="api-doc-section">
@@ -310,6 +443,10 @@ window.addEventListener("message", (event) => {
     radialCenterOpeningRatio?: number,
     order?: "asc" | "desc" | "input",
     showTipLabels?: boolean,
+    tipLabelMetadataColumn?: string, // display-only; empty restores original IDs
+    metadataCollapseColumn?: string, // maximal uniform clades; empty disables grouping
+    metadataTaxIdColumn?: string, // UI selection only; API mapping uses metadata.taxIdColumn
+    metadataRankColumns?: { [rank: string]: string | undefined }, // preselects controls; requires UI Apply
     alignTipLabels?: boolean,
     showGenusLabels?: boolean,
     showInternalNodeLabels?: boolean,
@@ -332,6 +469,10 @@ window.addEventListener("message", (event) => {
     cladogramLogStrength?: number, // 1 to 10; default 1, logarithmic layout only
     showMyaTimeUnit?: boolean,
     customTimeUnit?: string,
+    // internalNode.metadataPlacement: "auto" fits text along the incoming branch, otherwise above its crossbar.
+    // Metadata X offset applies to rectangular views; circular/fan use internalNode.metadataAngularOffsetDegrees.
+    metadataLabelOffsetXPx?: number,
+    metadataLabelOffsetYPx?: number,
     taxonomyEnabled?: boolean,
     taxonomyBranchColoringEnabled?: boolean,
     useAutomaticTaxonomyRankVisibility?: boolean,
@@ -341,9 +482,10 @@ window.addEventListener("message", (event) => {
       // Taxonomy labelVisibilityThreshold: 0.1 to 2, default 1. Lower values allow smaller labels.
       tip?: { sizeScale?: number, showGuideTicks?: boolean, limitWidth?: boolean, maxWidthPx?: number, overflowMode?: "truncate" | "scale" },
       taxonomy?: { sizeScale?: number, bandThicknessScale?: number, taxonomyGap?: number, thickenOutermostRibbon?: boolean, labelVisibilityThreshold?: number },
-      bootstrap?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
-      nodeHeight?: { sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
-      scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean },
+      internalNode?: { angularOffsetDegrees?: number, metadataAngularOffsetDegrees?: number, sizeScale?: number, offsetXPx?: number, offsetYPx?: number, polarOrientation?: "tangential" | "radial", metadataPlacement?: "node" | "stem" | "auto", metadataColorMode?: "branch" | "fixed", metadataColor?: string },
+      bootstrap?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
+      nodeHeight?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
+      scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean, calendarAxis?: boolean, calendarRootYear?: number },
       [labelClass: string]: object | undefined
     },
     metadataMarkersEnabled?: boolean,
@@ -354,7 +496,7 @@ window.addEventListener("message", (event) => {
     metadataTipTableEnabled?: boolean,
     metadataTipTableMode?: "bars" | "heatmap" | "categorical",
     metadataTipTableCellStyle?: "filled" | "circle" | "square" | "check" | "text",
-    metadataTipTableColumns?: Array<{ column: string, label: string }>,
+    metadataTipTableColumns?: Array<{ column: string, label: string, valueType?: "number" | "date" }>,
     metadataTipTablePalette?: "blueOrange" | "viridis" | "redBlue" | "tealRose",
     metadataTipTableBarWidthPx?: number,
     metadataTipTableCellWidthPx?: number,
@@ -378,7 +520,11 @@ window.addEventListener("message", (event) => {
     enabled?: boolean,
     keyColumn?: string,
     valueColumn?: string,
-    colorMode?: "categorical" | "continuous",
+    tipLabelColumn?: string, // same display-only setting as visual.tipLabelMetadataColumn
+    collapseColumn?: string, // same grouping setting as visual.metadataCollapseColumn
+    taxIdColumn?: string, // CSV TaxIDs for taxonomy.runMapping; NCBI only
+    rankColumns?: { [rank: string]: string | undefined }, // applies custom taxonomy immediately; omit taxonomy
+    colorMode?: "categorical" | "continuous" | "date",
     applyScope?: "branch" | "subtree",
     labelsEnabled?: boolean,
     labelColumn?: string,
@@ -393,8 +539,8 @@ window.addEventListener("message", (event) => {
     reverseScale?: boolean,
     continuousPalette?: "blueOrange" | "viridis" | "redBlue" | "tealRose",
     continuousTransform?: "linear" | "sqrt" | "log",
-    continuousMinInput?: string,
-    continuousMaxInput?: string,
+    continuousMinInput?: string, // ISO date in date mode; blank uses data minimum
+    continuousMaxInput?: string, // ISO date in date mode; blank uses data maximum
     categoryColorOverrides?: object,
     markerStyleOverrides?: object,
     markerSizePx?: number,

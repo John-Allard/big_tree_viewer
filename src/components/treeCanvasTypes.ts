@@ -3,6 +3,7 @@ import type { RectTreeIndex } from "../lib/rectTreeIndex";
 import type { UniformGridIndex, IndexedSegment } from "../lib/spatialIndex";
 import type { TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import type { FigureStyleSettings } from "../lib/figureStyles";
+import type { CustomCladeRibbon } from "../lib/customCladeRibbons";
 import type { UltrametricCladogramMethod } from "../lib/cladogram";
 import type { MetadataMarkerStyle, MetadataPieDatum } from "../lib/metadataColors";
 import type { MetadataContinuousPalette } from "../lib/metadataColors";
@@ -83,6 +84,8 @@ export interface TreeCanvasProps {
   alignTipLabels: boolean;
   showGenusLabels: boolean;
   taxonomyEnabled: boolean;
+  customCladeRibbons?: CustomCladeRibbon[];
+  onAddCladeRibbon?: (node: number) => void;
   taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyBranchColoringEnabled: boolean;
   taxonomyColorJitter: number;
