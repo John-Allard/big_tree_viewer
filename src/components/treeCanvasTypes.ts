@@ -314,7 +314,7 @@ export interface CircularScaleTick {
 }
 
 export interface CircularScaleBar {
-  kind: "bottom" | "left";
+  kind: "bottom" | "left" | "right";
   axisPosition: number;
   ticks: CircularScaleTick[];
 }

@@ -42,6 +42,7 @@ export interface LabelStyleSettings {
   showScaleBar?: boolean;
   showScaleBarLabels?: boolean;
   showTimeGuideLabels?: boolean;
+  showPartialRadialScaleBar?: boolean;
   angularOffsetDegrees?: number;
   metadataAngularOffsetDegrees?: number;
   metadataPlacement?: "node" | "stem" | "auto";

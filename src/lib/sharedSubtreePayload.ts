@@ -167,6 +167,7 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
       current.showScaleBar = coerceBoolean(source.showScaleBar, true);
       current.showScaleBarLabels = coerceBoolean(source.showScaleBarLabels, true);
       current.showTimeGuideLabels = coerceBoolean(source.showTimeGuideLabels, false);
+      current.showPartialRadialScaleBar = coerceBoolean(source.showPartialRadialScaleBar, true);
       current.calendarAxis = coerceBoolean(source.calendarAxis, false);
       if (typeof source.calendarRootYear === "number" && Number.isFinite(source.calendarRootYear)
         && source.calendarRootYear >= 0 && source.calendarRootYear < 10000) {

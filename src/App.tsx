@@ -9336,6 +9336,13 @@ export default function App() {
                         />
                       </label>
                       <p className="figure-style-help">Leave blank for automatic tick spacing.</p>
+                      <label className="label-style-inline-toggle" title="Calendar years require a linear rectangular display and an already dated tree with branch lengths in years.">
+                        <input type="checkbox" checked={figureStyles.scale.calendarAxis === true}
+                          disabled={viewMode !== "rectangular" || timeAxisScale !== "linear"}
+                          onChange={event => updateFigureStyle("scale", "calendarAxis", event.target.checked)} />
+                        Use Calendar Year Axis
+                      </label>
+                      {figureStyles.scale.calendarAxis === true ? <>
                       <label title="For a dated tree with branch lengths measured in years. This changes axis labels, not branch lengths or inferred dates.">
                         Root calendar year
                         <input
@@ -9362,13 +9369,8 @@ export default function App() {
                           }}>Anchor calendar axis from CSV dates</button>
                         <p className="figure-style-help">{calendarDateFit.message}</p>
                       </> : null}
-                      <label className="label-style-inline-toggle" title="Calendar years require a linear rectangular display and an already dated tree with branch lengths in years.">
-                        <input type="checkbox" checked={figureStyles.scale.calendarAxis === true}
-                          disabled={viewMode !== "rectangular" || timeAxisScale !== "linear" || !Number.isFinite(figureStyles.scale.calendarRootYear)}
-                          onChange={event => updateFigureStyle("scale", "calendarAxis", event.target.checked)} />
-                        Show calendar-year axis
-                      </label>
                       <p className="figure-style-help">Sampling-date colors work on any tree. A calendar axis requires branch lengths in years; CSV dates do not convert genetic distances into time.</p>
+                      </> : null}
                       <label
                         className="label-style-inline-toggle"
                         title={viewMode === "spiral" ? "Spiral mode always uses a log time axis." : undefined}
@@ -9381,10 +9383,8 @@ export default function App() {
                         />
                         Use log time axis
                       </label>
-                      <label
-                        htmlFor="time-axis-log-base"
-                        className={viewMode !== "spiral" && timeAxisScale !== "log" ? "label-style-disabled-control" : undefined}
-                      >
+                      {viewMode === "spiral" || timeAxisScale === "log" ? <>
+                      <label htmlFor="time-axis-log-base">
                         Log time scale base
                         <input
                           id="time-axis-log-base"
@@ -9393,7 +9393,6 @@ export default function App() {
                           max={MAX_TIME_AXIS_LOG_BASE}
                           step={0.1}
                           value={timeAxisLogBaseDraft}
-                          disabled={viewMode !== "spiral" && timeAxisScale !== "log"}
                           onChange={(event) => setTimeAxisLogBaseDraft(Number(event.target.value))}
                           onPointerUp={commitTimeAxisLogBaseDraft}
                           onMouseUp={commitTimeAxisLogBaseDraft}
@@ -9407,6 +9406,7 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">{timeAxisLogBaseDraft.toFixed(1)}</div>
+                      </> : null}
                       <label className="label-style-inline-toggle" title="Draw lighter intermediate tick marks between major scale-bar ticks.">
                         <input
                           type="checkbox"
@@ -9415,14 +9415,14 @@ export default function App() {
                         />
                         Show fading subdivision ticks
                       </label>
-                      <label className="label-style-inline-toggle" title="Extend the rectangular scale axis to the next clean tick beyond the tree extent.">
+                      {viewMode === "rectangular" ? <label className="label-style-inline-toggle" title="Extend the rectangular scale axis to the next clean tick beyond the tree extent.">
                         <input
                           type="checkbox"
                           checked={extendRectScaleToTick}
                           onChange={(event) => setExtendRectScaleToTick(event.target.checked)}
                         />
                         Extend rectangular scale to next tick
-                      </label>
+                      </label> : null}
                       <label className="label-style-inline-toggle" title="Include the present-day or zero-distance tick on scale bars.">
                         <input
                           type="checkbox"
@@ -9450,6 +9450,7 @@ export default function App() {
                           />
                         </label>
                       ) : null}
+                      {(viewMode === "circular" || viewMode === "fan") && radialAngularSpanDegrees >= 360 ? <>
                       <label className="label-style-inline-toggle" title="Choose the circular center scale angle from the tree orientation automatically.">
                         <input
                           type="checkbox"
@@ -9458,6 +9459,7 @@ export default function App() {
                         />
                         Auto angle from tip ordering
                       </label>
+                      {!useAutoCircularCenterScaleAngle ? <>
                       <label title="Manually rotate the circular center scale when automatic angle selection is off.">
                         Circular center scale angle
                         <input
@@ -9465,7 +9467,6 @@ export default function App() {
                           min={-180}
                           max={180}
                           step={1}
-                          disabled={useAutoCircularCenterScaleAngle}
                           value={effectiveCircularCenterScaleAngleDegrees}
                           onChange={(event) => {
                             setUseAutoCircularCenterScaleAngle(false);
@@ -9474,22 +9475,26 @@ export default function App() {
                         />
                       </label>
                       <div className="figure-style-value">{effectiveCircularCenterScaleAngleDegrees.toFixed(0)} deg</div>
-                      <label className="label-style-inline-toggle" title="Draw a radial scale bar from the center of a circular tree.">
+                      </> : null}
+                      </> : null}
+                      {viewMode === "circular" || viewMode === "fan" ? <label className="label-style-inline-toggle" title="Draw a radial scale bar from the center. For partial circles, place it in the empty sector and rotate it with the tree.">
                         <input
                           type="checkbox"
-                          checked={showCircularCenterRadialScaleBar}
-                          onChange={(event) => setShowCircularCenterRadialScaleBar(event.target.checked)}
+                          checked={radialAngularSpanDegrees < 360 ? figureStyles.scale.showPartialRadialScaleBar !== false : showCircularCenterRadialScaleBar}
+                          onChange={(event) => radialAngularSpanDegrees < 360
+                            ? updateFigureStyle("scale", "showPartialRadialScaleBar", event.target.checked)
+                            : setShowCircularCenterRadialScaleBar(event.target.checked)}
                         />
                         Show circular radial scale bar
-                      </label>
+                      </label> : null}
                       <label className="label-style-inline-toggle" title="Draw temporal guide bands or lines behind the tree.">
                         <input type="checkbox" checked={showTimeStripes} onChange={(event) => setShowTimeStripes(event.target.checked)} />
                         Show time stripes
                       </label>
-                      <label className="label-style-inline-toggle" title="Label the time bands or guide lines independently of the scale bar.">
+                      {viewMode === "rectangular" || figureStyles.scale.showScaleBarLabels === false ? <label className="label-style-inline-toggle" title={viewMode === "rectangular" ? "Show numeric time labels along the top of the time stripes, independently of the bottom scale bar." : "Keep numeric time labels on the radial or spiral time guides when scale-bar labels are turned off."}>
                         <input type="checkbox" checked={figureStyles.scale.showTimeGuideLabels === true} disabled={!showTimeStripes} onChange={(event) => updateFigureStyle("scale", "showTimeGuideLabels", event.target.checked)} />
-                        Show time guide labels
-                      </label>
+                        Show Time Stripe Labels
+                      </label> : null}
                       {showTimeStripes ? (
                         <>
                           <label>

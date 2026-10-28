@@ -192,12 +192,21 @@ export function buildCircularScaleBar(
   height: number,
   boundaries: StripeBoundary[],
   radiusForBoundary: (boundary: StripeBoundary) => number,
+  sector?: { start: number; span: number },
+  viewportLeft = 0,
 ): CircularScaleBar | null {
   const margin = 28;
   const bottomY = height - margin;
-  const leftX = margin;
+  const leftX = viewportLeft + margin;
+  const inSector = (x: number, y: number): boolean => {
+    if (!sector || sector.span >= Math.PI * 2 - 1e-9) return true;
+    const angle = Math.atan2(y - centerY, x - centerX);
+    const relative = ((angle - sector.start) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    return relative <= sector.span + 1e-9;
+  };
   const bottomTicks: CircularScaleTick[] = [];
   const leftTicks: CircularScaleTick[] = [];
+  const rightTicks: CircularScaleTick[] = [];
 
   for (let index = 0; index < boundaries.length; index += 1) {
     const boundary = boundaries[index];
@@ -207,34 +216,85 @@ export function buildCircularScaleBar(
     if (radiusPx > bottomDy) {
       const delta = Math.sqrt(Math.max(0, (radiusPx * radiusPx) - (bottomDy * bottomDy)));
       const candidates = [centerX - delta, centerX + delta].filter(
-        (candidate) => candidate >= margin && candidate <= width - margin,
+        (candidate) => candidate >= leftX && candidate <= width - margin && inSector(candidate, bottomY),
       );
-      const x = chooseClosestToMidpoint(candidates, width * 0.5);
+      const x = chooseClosestToMidpoint(candidates, (viewportLeft + width) * 0.5);
       if (x !== null) {
         bottomTicks.push({ boundary, position: x });
       }
     }
 
-    const leftDx = Math.abs(leftX - centerX);
-    if (radiusPx > leftDx) {
-      const delta = Math.sqrt(Math.max(0, (radiusPx * radiusPx) - (leftDx * leftDx)));
-      const candidates = [centerY - delta, centerY + delta].filter(
-        (candidate) => candidate >= margin && candidate <= height - margin,
-      );
-      const y = chooseClosestToMidpoint(candidates, height * 0.5);
-      if (y !== null) {
-        leftTicks.push({ boundary, position: y });
+    for (const [axisX, ticks] of [[leftX, leftTicks], [width - margin, rightTicks]] as const) {
+      const dx = Math.abs(axisX - centerX);
+      if (radiusPx > dx) {
+        const delta = Math.sqrt(Math.max(0, (radiusPx * radiusPx) - (dx * dx)));
+        const candidates = [centerY - delta, centerY + delta].filter(
+          (candidate) => candidate >= margin && candidate <= height - margin && inSector(axisX, candidate),
+        );
+        const y = chooseClosestToMidpoint(candidates, height * 0.5);
+        if (y !== null) ticks.push({ boundary, position: y });
       }
     }
   }
 
-  if (bottomTicks.length === 0 && leftTicks.length === 0) {
+  // An optional endpoint tick must not change which axis is selected.
+  const bottomScore = bottomTicks.filter((tick) => tick.boundary.value !== 0).length;
+  const leftScore = leftTicks.filter((tick) => tick.boundary.value !== 0).length;
+  const rightScore = rightTicks.filter((tick) => tick.boundary.value !== 0).length;
+  if (bottomScore === 0 && leftScore === 0 && rightScore === 0) {
     return null;
   }
-  if (bottomTicks.length >= leftTicks.length) {
+  if (bottomScore >= leftScore && bottomScore >= rightScore) {
     return { kind: "bottom", axisPosition: bottomY, ticks: bottomTicks };
   }
-  return { kind: "left", axisPosition: leftX, ticks: leftTicks };
+  return leftScore >= rightScore
+    ? { kind: "left", axisPosition: leftX, ticks: leftTicks }
+    : { kind: "right", axisPosition: width - margin, ticks: rightTicks };
+}
+
+export function choosePartialRadialScale(
+  centerX: number, centerY: number, width: number, height: number,
+  viewportLeft: number, innerRadius: number, outerRadius: number,
+  gap: number, rotation: number, radii: number[],
+): { theta: number; offsetPx: number; labelSide: number; visibleFraction: number; intersections: number } {
+  const left = viewportLeft + 16;
+  const right = width - 16;
+  const top = 16;
+  const bottom = height - 16;
+  const point = (radius: number, theta: number, offsetPx = 0) => ({
+    x: centerX + radius * Math.cos(theta + rotation) - offsetPx * Math.sin(theta + rotation),
+    y: centerY + radius * Math.sin(theta + rotation) + offsetPx * Math.cos(theta + rotation),
+  });
+  const visible = (p: { x: number; y: number }) => p.x >= left && p.x <= right && p.y >= top && p.y <= bottom;
+  const boundaryIntersections = Math.max(...[0, gap].map((theta) => radii.filter((r) => visible(point(r, theta))).length));
+  const candidates = gap >= Math.PI - 1e-9
+    ? [{ theta: 0, offsetPx: 14, labelSide: 1 }, { theta: gap, offsetPx: -14, labelSide: -1 }]
+    : [{ theta: gap / 2, offsetPx: 0, labelSide: 1 },
+      { theta: gap * 0.1, offsetPx: 0, labelSide: 1 },
+      { theta: gap * 0.9, offsetPx: 0, labelSide: -1 }];
+  const scored = candidates.map((candidate) => {
+    const start = point(innerRadius, candidate.theta, candidate.offsetPx);
+    const end = point(outerRadius, candidate.theta, candidate.offsetPx);
+    // Clip the radial segment parametrically to measure the fraction actually visible.
+    let low = 0;
+    let high = 1;
+    for (const [origin, delta, min, max] of [
+      [start.x, end.x - start.x, left, right], [start.y, end.y - start.y, top, bottom],
+    ]) {
+      if (Math.abs(delta) < 1e-9) {
+        if (origin < min || origin > max) high = -1;
+      } else {
+        const a = (min - origin) / delta;
+        const b = (max - origin) / delta;
+        low = Math.max(low, Math.min(a, b));
+        high = Math.min(high, Math.max(a, b));
+      }
+    }
+    return { ...candidate, visibleFraction: Math.max(0, high - low), intersections: boundaryIntersections };
+  });
+  const preferred = scored[0];
+  if (preferred.visibleFraction >= 0.5) return preferred;
+  return scored.reduce((best, candidate) => candidate.visibleFraction > best.visibleFraction + 1e-6 ? candidate : best, preferred);
 }
 
 export function displayLabelText(raw: string, fallback: string): string {

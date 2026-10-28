@@ -485,7 +485,7 @@ window.addEventListener("message", (event) => {
       internalNode?: { angularOffsetDegrees?: number, metadataAngularOffsetDegrees?: number, sizeScale?: number, offsetXPx?: number, offsetYPx?: number, polarOrientation?: "tangential" | "radial", metadataPlacement?: "node" | "stem" | "auto", metadataColorMode?: "branch" | "fixed", metadataColor?: string },
       bootstrap?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
       nodeHeight?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
-      scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean, calendarAxis?: boolean, calendarRootYear?: number },
+      scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean, showPartialRadialScaleBar?: boolean, calendarAxis?: boolean, calendarRootYear?: number },
       [labelClass: string]: object | undefined
     },
     metadataMarkersEnabled?: boolean,

@@ -148,8 +148,20 @@ test("CSV dates anchor calendar labels in PNG/SVG workflows and saved sessions",
   const visual = page.locator(".panel-section .section-toggle").filter({ hasText: "Visual Options" });
   if (await visual.getAttribute("aria-expanded") !== "true") await visual.click();
   await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
+  const calendarToggle = page.getByLabel("Use Calendar Year Axis", { exact: true });
+  await expect(calendarToggle).toBeEnabled();
+  await expect(calendarToggle).not.toBeChecked();
+  await expect(page.getByLabel("Root calendar year", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Anchor calendar axis from CSV dates", exact: true })).toHaveCount(0);
+  await calendarToggle.check();
+  const rootYear = page.getByLabel("Root calendar year", { exact: true });
+  await rootYear.fill("1998");
+  await calendarToggle.uncheck();
+  await expect(rootYear).toHaveCount(0);
+  await calendarToggle.check();
+  await expect(rootYear).toHaveValue("1998");
   await page.getByRole("button", { name: "Anchor calendar axis from CSV dates", exact: true }).click();
-  await expect(page.getByLabel("Show calendar-year axis", { exact: true })).toBeChecked();
+  await expect(calendarToggle).toBeChecked();
   const svg = await page.evaluate(() => new Promise<string>((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error("No SVG export")), 15000);
     const listener = (event: MessageEvent) => {
