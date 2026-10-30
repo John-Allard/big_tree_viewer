@@ -42,6 +42,7 @@ export interface LabelStyleSettings {
   showScaleBar?: boolean;
   showScaleBarLabels?: boolean;
   showTimeGuideLabels?: boolean;
+  /** Legacy session field; opening-edge scales now follow the main scale controls. */
   showPartialRadialScaleBar?: boolean;
   angularOffsetDegrees?: number;
   metadataAngularOffsetDegrees?: number;

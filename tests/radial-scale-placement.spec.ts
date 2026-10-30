@@ -111,7 +111,7 @@ test("a cropped fan keeps its opening scale with zero enabled and moves it left 
 });
 
 for (const span of [180, 240]) {
-  test(`${span}-degree radial scale stays in the gap, rotates, and can be disabled`, async ({ page }, testInfo) => {
+  test(`${span}-degree opening scale rotates and is independent of the internal scale toggle`, async ({ page }, testInfo) => {
     await page.goto(`/?btv_api=1&btv_newick=${encodeURIComponent("((A:500,B:500):500,(C:500,D:500):500)Root;")}&btv_view=circular&btv_radial_span=${span}`);
     await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
     const debug = () => page.evaluate(() => {
@@ -125,14 +125,13 @@ for (const span of [180, 240]) {
     await page.getByRole("button", { name: /Visual Options/ }).click();
     await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
     await expect(page.getByLabel("Extend rectangular scale to next tick", { exact: true })).toHaveCount(0);
-    const toggle = page.getByLabel("Show circular radial scale bar", { exact: true });
-    await expect(toggle).toBeChecked();
+    const toggle = page.getByLabel("Show internal circular radial scale bar", { exact: true });
     await page.screenshot({ path: testInfo.outputPath(`radial-${span}.png`) });
     await toggle.uncheck();
-    await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(false);
-    const hiddenSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!);
-    expect(hiddenSvg).not.toContain('stroke="#6b7280"');
-    expect(hiddenSvg).not.toContain('fill="#6b7280"');
+    await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(true);
+    const visibleSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!);
+    expect(visibleSvg).toContain('stroke="#6b7280"');
+    expect(visibleSvg).toContain('fill="#6b7280"');
     await toggle.check();
     await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.setCircularRotationDegreesForTest(90));
     await page.waitForFunction(() => {
@@ -194,4 +193,122 @@ test("270 degrees and larger partial circles use central labels without an edge 
       await page.screenshot({ path: testInfo.outputPath(`labels-only-${span}.png`) });
     }
   }
+});
+
+test("wide partial circles switch to opening and viewport bars when the center is off-screen", async ({ page }, testInfo) => {
+  await page.goto(`/?btv_newick=${encodeURIComponent("((A:500,B:500):500,(C:500,D:500):500)Root;")}&btv_view=circular&btv_radial_span=306`);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+  const debug = () => page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as Record<string, unknown>);
+  for (const span of [270, 306, 359]) {
+    await page.evaluate((span) => window.__BIG_TREE_VIEWER_APP_TEST__!.setRadialAngularSpanDegreesForTest(span), span);
+    await page.evaluate(() => {
+      const rect = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+      const inset = window.__BIG_TREE_VIEWER_APP_TEST__!.getState().viewerLeftOcclusionPx ?? 0;
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__!.setCircularCamera({ scale: 2, translateX: inset - 200, translateY: rect.height * 0.65 });
+    });
+    await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(true);
+    await expect.poll(async () => (await debug()).scaleBarPlacement).toBe("radial");
+    const theta = Number((await debug()).radialScaleTheta);
+    expect(Math.min(Math.abs(theta), Math.abs(theta - (360 - span) * Math.PI / 180))).toBeLessThan(1e-6);
+    await page.screenshot({ path: testInfo.outputPath(`pacman-${span}-offscreen-center.png`) });
+    await page.evaluate(() => {
+      const rect = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__!.setCircularCamera({ scale: 2, translateX: rect.width + 100, translateY: rect.height + 100 });
+    });
+    await expect.poll(async () => (await debug()).scaleBarPlacement).toBe("bottom");
+    await page.screenshot({ path: testInfo.outputPath(`pacman-${span}-bottom-scale.png`) });
+    if (span === 306) {
+      await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.setCircularRotationDegreesForTest(180));
+      await page.waitForFunction(() => {
+        const camera = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera();
+        return camera?.kind === "circular" && Math.abs(camera.rotation - Math.PI) < 1e-6;
+      });
+      await page.evaluate(() => {
+        const rect = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+        window.__BIG_TREE_VIEWER_CANVAS_TEST__!.setCircularCamera({ scale: 2, translateX: rect.width + 200, translateY: rect.height * 0.65 });
+      });
+      await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(true);
+      const rotatedTheta = Number((await debug()).radialScaleTheta);
+      expect(Math.min(Math.abs(rotatedTheta - Math.PI), Math.abs(rotatedTheta - Math.PI * 1.3))).toBeLessThan(1e-6);
+      await page.screenshot({ path: testInfo.outputPath("pacman-306-rotated-edge.png") });
+      await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.setCircularRotationDegreesForTest(0));
+    }
+    await page.getByRole("button", { name: "Fit View", exact: true }).click();
+    await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(false);
+  }
+});
+
+test("internal radial bar toggle does not disable opening or viewport scales", async ({ page }) => {
+  await page.goto(`/?btv_newick=${encodeURIComponent("((A:500,B:500):500,(C:500,D:500):500)Root;")}&btv_view=circular`);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+  await page.getByRole("button", { name: /Visual Options/ }).click();
+  await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
+  const toggle = page.getByLabel("Show internal circular radial scale bar", { exact: true });
+  const debug = () => page.evaluate(() => window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as Record<string, unknown>);
+  await toggle.check();
+  await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(true);
+  await toggle.uncheck();
+  await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(false);
+  for (const span of [180, 240, 306]) {
+    await page.evaluate((span) => window.__BIG_TREE_VIEWER_APP_TEST__!.setRadialAngularSpanDegreesForTest(span), span);
+    if (span === 306) await page.evaluate(() => {
+      const rect = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+      const inset = window.__BIG_TREE_VIEWER_APP_TEST__!.getState().viewerLeftOcclusionPx ?? 0;
+      window.__BIG_TREE_VIEWER_CANVAS_TEST__!.setCircularCamera({ scale: 2, translateX: inset - 200, translateY: rect.height * 0.65 });
+    });
+    await expect(toggle).not.toBeChecked();
+    await expect.poll(async () => (await debug()).showCenterRadialScaleBar).toBe(true);
+  }
+  await page.evaluate(() => {
+    const rect = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__!.setCircularCamera({ scale: 2, translateX: rect.width + 100, translateY: rect.height + 100 });
+  });
+  await expect.poll(async () => (await debug()).scaleBarPlacement).toBe("bottom");
+  const decorations = () => page.evaluate(() => {
+    const svg = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!;
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    return doc.querySelectorAll('line[stroke="#6b7280"]').length;
+  });
+  await expect.poll(decorations).toBeGreaterThan(0);
+  await page.getByRole("heading", { name: "Big Tree Viewer", exact: true }).click();
+  await page.getByLabel("Show scale bars", { exact: true }).uncheck();
+  await expect.poll(decorations).toBe(0);
+});
+
+test("internal radial scale can be enabled alongside automatic scales in every radial configuration", async ({ page }, testInfo) => {
+  await page.goto(`/?btv_newick=${encodeURIComponent("((A:500,B:500):500,(C:500,D:500):500)Root;")}&btv_view=circular`);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+  await page.getByRole("button", { name: /Visual Options/ }).click();
+  await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
+  const toggle = page.getByLabel("Show internal circular radial scale bar", { exact: true });
+  const inspect = () => page.evaluate(() => {
+    const svg = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!;
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    return { axes: doc.querySelectorAll('line[stroke="#6b7280"]').length,
+      internal: (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.circular as Record<string, unknown>).showInternalRadialScaleBar };
+  });
+  for (const span of [360, 180, 240, 306, 359]) {
+    await toggle.uncheck();
+    await page.evaluate((span) => window.__BIG_TREE_VIEWER_APP_TEST__!.setRadialAngularSpanDegreesForTest(span), span);
+    await page.getByRole("button", { name: "Fit View", exact: true }).click();
+    await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
+    const baseline = await inspect();
+    expect(baseline.internal).toBe(false);
+    await toggle.check();
+    await expect.poll(async () => (await inspect()).internal).toBe(true);
+    await expect.poll(async () => (await inspect()).axes).toBeGreaterThan(baseline.axes);
+    await page.screenshot({ path: testInfo.outputPath(`internal-scale-${span}.png`) });
+    await toggle.uncheck();
+    await expect.poll(async () => (await inspect()).axes).toBe(baseline.axes);
+  }
+  // The optional internal scale must also coexist with a cropped viewport axis.
+  await page.evaluate(() => {
+    const rect = document.querySelector("[data-testid=tree-canvas]")!.getBoundingClientRect();
+    window.__BIG_TREE_VIEWER_CANVAS_TEST__!.setCircularCamera({ scale: 2, translateX: rect.width + 100, translateY: rect.height + 100 });
+  });
+  const baseline = await inspect();
+  await toggle.check();
+  await expect.poll(async () => (await inspect()).axes).toBeGreaterThan(baseline.axes);
+  await page.getByLabel("Show scale bar and ticks", { exact: true }).uncheck();
+  await expect.poll(async () => (await inspect()).axes).toBe(0);
 });

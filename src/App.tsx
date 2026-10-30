@@ -9484,15 +9484,13 @@ export default function App() {
                       <div className="figure-style-value">{effectiveCircularCenterScaleAngleDegrees.toFixed(0)} deg</div>
                       </> : null}
                       </> : null}
-                      {viewMode === "circular" || viewMode === "fan" ? <label className="label-style-inline-toggle" title="Draw a radial scale on full circles. Below 270 degrees, draw it along the more visible opening edge. From 270 to 359 degrees, show central time labels without an axis or ticks.">
+                      {viewMode === "circular" || viewMode === "fan" ? <label className="label-style-inline-toggle" title="Draw an internal radial scale bar in any radial configuration. Opening-edge and viewport-edge scale bars appear automatically, independently of this setting.">
                         <input
                           type="checkbox"
-                          checked={radialAngularSpanDegrees < 360 ? figureStyles.scale.showPartialRadialScaleBar !== false : showCircularCenterRadialScaleBar}
-                          onChange={(event) => radialAngularSpanDegrees < 360
-                            ? updateFigureStyle("scale", "showPartialRadialScaleBar", event.target.checked)
-                            : setShowCircularCenterRadialScaleBar(event.target.checked)}
+                          checked={showCircularCenterRadialScaleBar}
+                          onChange={(event) => setShowCircularCenterRadialScaleBar(event.target.checked)}
                         />
-                        Show circular radial scale bar
+                        Show internal circular radial scale bar
                       </label> : null}
                       <label className="label-style-inline-toggle" title="Draw temporal guide bands or lines behind the tree.">
                         <input type="checkbox" checked={showTimeStripes} onChange={(event) => setShowTimeStripes(event.target.checked)} />

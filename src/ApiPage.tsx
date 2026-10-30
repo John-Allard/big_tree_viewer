@@ -410,9 +410,12 @@ window.addEventListener("message", (event) => {
           <p>
             Scale placement is automatic. Partial radial trees use the more
             visible opening edge below 270 degrees, with ties favoring the edge nearest zero degrees.
-            At 270 to 359 degrees, they use central time labels without an axis or ticks;
+            At 270 to 359 degrees with the center visible, they default to central time labels without an axis or ticks;
+            when the center is off-screen, opening-edge or viewport-edge scales are used instead;
             viewport-edge axes use the bottom or left. The master
             <code> showScaleBars</code> switch disables every scale component.
+            <code> showCircularCenterRadialScaleBar</code> controls only the internal
+            internal bar in every radial configuration, not automatic opening-edge or viewport-edge bars.
             Within <code>figureStyles.scale</code>, <code>showTimeGuideLabels</code>
             corresponds to Show Time Stripe Labels in the interface. It adds
             top-of-stripe labels in rectangular views, or retains radial/spiral
@@ -521,7 +524,7 @@ window.addEventListener("message", (event) => {
       internalNode?: { angularOffsetDegrees?: number, metadataAngularOffsetDegrees?: number, sizeScale?: number, offsetXPx?: number, offsetYPx?: number, polarOrientation?: "tangential" | "radial", metadataPlacement?: "node" | "stem" | "auto", metadataColorMode?: "branch" | "fixed", metadataColor?: string },
       bootstrap?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
       nodeHeight?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
-      scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean, showPartialRadialScaleBar?: boolean, calendarAxis?: boolean, calendarRootYear?: number },
+      scale?: { sizeScale?: number, showScaleBar?: boolean, showScaleBarLabels?: boolean, showTimeGuideLabels?: boolean, calendarAxis?: boolean, calendarRootYear?: number },
       [labelClass: string]: object | undefined
     },
     metadataMarkersEnabled?: boolean,

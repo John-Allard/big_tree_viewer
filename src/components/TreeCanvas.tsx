@@ -12351,16 +12351,25 @@ export default function TreeCanvas({
         && partialScalePlacement.visibleFraction > 0
         && partialScalePlacement.intersections > 0
         && partialScalePlacement.intersections >= edgeIntersections);
-      const partialScaleLabelsOnly = isPartialRadial && polarAngleSpan >= (Math.PI * 1.5) - 1e-9;
-      const partialScaleEnabled = figureStyles.scale.showPartialRadialScaleBar !== false;
+      const scaleCenterVisible = centerPoint.x >= (exportCapture ? 0 : visibleViewportLeftInset)
+        && centerPoint.x <= renderSize.width && centerPoint.y >= 0 && centerPoint.y <= renderSize.height;
+      // Wide openings use unobtrusive central labels only while their anchor is visible.
+      // Once cropped past the root, use the same edge/viewport axes as narrower fans.
+      const partialScaleLabelsOnly = isPartialRadial && scaleCenterVisible
+        && polarAngleSpan >= (Math.PI * 1.5) - 1e-9;
       const drawCenterRadialBar = isPartialRadial
-        ? partialScaleEnabled && !partialScaleLabelsOnly
+        ? !partialScaleLabelsOnly
         : showCircularCenterRadialScaleBar;
-      const showCentralTimeLabels = useCentralScale && (drawScaleLabels || drawGuideLabels)
-        && (!isPartialRadial || partialScaleEnabled || drawGuideLabels);
+      const showCentralTimeLabels = useCentralScale && (drawScaleLabels || drawGuideLabels);
       const centerScaleTheta = isPartialRadial && !partialScaleLabelsOnly
         ? partialScalePlacement!.theta
         : (-circularCenterScaleAngleDegrees * Math.PI) / 180;
+      const centralScales = useCentralScale && !(isPartialRadial && partialScaleLabelsOnly && showCircularCenterRadialScaleBar)
+        ? [{ theta: centerScaleTheta, bar: drawCenterRadialBar, opening: isPartialRadial && !partialScaleLabelsOnly }]
+        : [];
+      if (showCircularCenterRadialScaleBar && (isPartialRadial || !useCentralScale)) {
+        centralScales.push({ theta: (-circularCenterScaleAngleDegrees * Math.PI) / 180, bar: true, opening: false });
+      }
       timing.circularCachePrepMs += performance.now() - circularCachePrepStartTime;
 
       if (showTimeStripes) {
@@ -15415,6 +15424,8 @@ export default function TreeCanvas({
       (renderDebug.circular as Record<string, unknown>).showCentralScaleLabels = showCentralTimeLabels;
       (renderDebug.circular as Record<string, unknown>).centerScaleTickCount = displayedCircularCenterScaleBoundaries.length;
       (renderDebug.circular as Record<string, unknown>).showCenterRadialScaleBar = useCentralScale && drawScaleAxis && drawCenterRadialBar;
+      (renderDebug.circular as Record<string, unknown>).showInternalRadialScaleBar = drawScaleAxis
+        && centralScales.some((scale) => scale.bar && !scale.opening);
       (renderDebug.circular as Record<string, unknown>).scaleBarPlacement = useCentralScale ? "radial" : circularScaleBar?.kind;
       (renderDebug.circular as Record<string, unknown>).radialScaleTheta = centerScaleTheta + rotationAngle;
       (renderDebug.circular as Record<string, unknown>).radialScaleVisibleFraction = partialScalePlacement?.visibleFraction;
@@ -15438,14 +15449,20 @@ export default function TreeCanvas({
         let scaleFontSize = scaleLabelFontSize("scale", 11);
         ctx.font = fontSpec("scale", scaleFontSize);
         ctx.textBaseline = "middle";
-        if (useCentralScale) {
-          const centerScaleBarTheta = drawCenterRadialBar && !isPartialRadial
+        for (const centralScale of centralScales) {
+          const drawCenterRadialBar = centralScale.bar;
+          const centerScaleTheta = centralScale.theta;
+          const showCentralTimeLabels = drawScaleLabels || drawGuideLabels;
+          scaleFontSize = scaleLabelFontSize("scale", 11);
+          ctx.font = fontSpec("scale", scaleFontSize);
+          ctx.fillStyle = "#6b7280";
+          const centerScaleBarTheta = drawCenterRadialBar && !centralScale.opening
             ? centerScaleTheta + ((2.5 * Math.PI) / 180)
             : centerScaleTheta;
           const centerScaleBarTangentX = -Math.sin(centerScaleBarTheta + rotationAngle);
           const centerScaleBarTangentY = Math.cos(centerScaleBarTheta + rotationAngle);
           // A semicircle's axis is parallel to its open edge, just below it in tree coordinates.
-          const gapOffsetPx = partialScaleLabelsOnly ? 0 : partialScalePlacement?.offsetPx ?? 0;
+          const gapOffsetPx = centralScale.opening ? partialScalePlacement?.offsetPx ?? 0 : 0;
           const centerScalePoint = (radius: number) => {
             const world = polarToCartesian(radius, centerScaleBarTheta);
             const screen = worldToScreenCircular(camera, world.x, world.y);
@@ -15540,7 +15557,7 @@ export default function TreeCanvas({
           (renderDebug.circular as Record<string, unknown>).centerScaleUnitOmitted = omitCenterScaleUnit;
           (renderDebug.circular as Record<string, unknown>).centerScaleBoundaryGapPx = centerScaleBoundaryGapPx;
           const rotateCenterScaleLabels = Math.abs(centerScaleLabelRotation) > 1e-6;
-          if (partialScalePlacement) centerScaleLabelOffsetPx *= -partialScalePlacement.labelSide;
+          if (centralScale.opening && partialScalePlacement) centerScaleLabelOffsetPx *= -partialScalePlacement.labelSide;
           const centerScaleTextBaseline: CanvasTextBaseline = drawCenterRadialBar ? "middle" : "bottom";
           ctx.textBaseline = centerScaleTextBaseline;
           (renderDebug.circular as Record<string, unknown>).centerScaleLabelBaseline = centerScaleTextBaseline;
@@ -15620,7 +15637,10 @@ export default function TreeCanvas({
             ctx.stroke();
           }
           ctx.globalAlpha = 1;
-        } else if (circularScaleBar) {
+        }
+        scaleFontSize = scaleLabelFontSize("scale", 11);
+        ctx.font = fontSpec("scale", scaleFontSize);
+        if (!useCentralScale && circularScaleBar) {
           ctx.fillStyle = "rgba(251,252,254,0.97)";
           if ((drawScaleAxis || drawScaleLabels) && circularScaleBar.kind === "bottom") {
             ctx.fillRect(0, Math.max(0, circularScaleBar.axisPosition - 12), renderSize.width, renderSize.height);

@@ -56,7 +56,7 @@ for (const view of ["rectangular", "circular", "fan", "spiral"] as const) {
     await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
     await page.getByRole("combobox", { name: "Stripe style", exact: true }).selectOption("dashed");
     if (view === "circular" || view === "fan") {
-      await page.getByLabel("Show circular radial scale bar", { exact: true }).check();
+      await page.getByLabel("Show internal circular radial scale bar", { exact: true }).check();
     }
     await expect.poll(async () => (await readDecorations(page)).axes).toBeGreaterThan(0);
     await expect.poll(async () => (await readDecorations(page)).labels).toBeGreaterThan(0);

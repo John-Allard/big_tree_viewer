@@ -88,14 +88,18 @@ nodes, calculated collapse groups, matched tip-table tips, and enabled clade
 ribbon counts, so agents can check results without inferring success from settings.
 
 Scale components use `settings.figureStyles.scale`: `showScaleBar`,
-`showScaleBarLabels`, `showTimeGuideLabels`, `showPartialRadialScaleBar`, and
+`showScaleBarLabels`, `showTimeGuideLabels`, and
 `calendarAxis`/`calendarRootYear`. `settings.showScaleBars` is the master switch.
 Below 270 degrees, partial radial scale placement follows the more visible opening edge;
-ties prefer the edge nearest zero degrees. At 270 to 359 degrees, only central time
-labels are drawn, without an axis or ticks. Full-circle manual angles do not
+ties prefer the edge nearest zero degrees. At 270 to 359 degrees with the center
+visible, the default is central time labels without an axis or ticks. When the
+center is off-screen, opening-edge or viewport-edge scales are used instead. Full-circle manual angles do not
 override opening-edge placement. The UI's Show Time Stripe Labels retains the saved key
 `showTimeGuideLabels` for compatibility. Log base applies only on a log axis;
 calendar years require a dated tree in years and linear rectangular layout.
+`showCircularCenterRadialScaleBar` enables the internal bar in every radial configuration.
+Opening-edge and viewport-edge bars follow the main scale component controls;
+the legacy `showPartialRadialScaleBar` field no longer disables them.
 
 See the downloadable skill's
 [metadata and scale reference](../public/agentic-ai/bigtreeviewer-agent-skill/references/metadata-and-scales.md)

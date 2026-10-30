@@ -91,14 +91,18 @@ the corresponding metadata palette and overrides, not an independent palette.
   `showTimeGuideLabels` is the UI's **Show Time Stripe Labels**: labels at the top
   of rectangular stripes, or retained radial/spiral labels when scale labels are
   off. In radial/spiral mode it has no extra effect while scale labels are on.
-- `figureStyles.scale.showPartialRadialScaleBar` defaults true for fans/partial
-  circles. Below 270 degrees, placement follows the more visible opening edge;
+- Opening-edge scales appear automatically for fans/partial circles, subject to
+  the main scale component controls. Below 270 degrees, placement follows the more visible opening edge;
   equally visible edges prefer the one nearest zero degrees. No manual placement
-  parameter is needed. At 270 to 359 degrees, the central scale shows time labels
-  only, without an axis or ticks. Viewport-edge scales are bottom or left, never right.
-- Full-circle radial controls are `showCircularCenterRadialScaleBar`,
+  parameter is needed. At 270 to 359 degrees with the center visible, the central
+  scale defaults to time labels only, without an axis or ticks. With the center off-screen,
+  opening-edge or viewport-edge scales are used instead. Viewport-edge scales are
+  bottom or left, never right.
+- Internal radial scale controls (available at every angular span) are `showCircularCenterRadialScaleBar`,
   `useAutoCircularCenterScaleAngle`, and `circularCenterScaleAngleDegrees`.
   The angle applies only when auto is false; it does not position opening-edge scales.
+  The internal bar toggle does not disable opening-edge or viewport-edge bars.
+  The legacy `figureStyles.scale.showPartialRadialScaleBar` field is ignored.
 - `timeAxisScale: "log"` enables `timeAxisLogBase`. Spiral always uses log scaling.
 - `scaleTickIntervalInput: "10"` sets tick spacing; `""` restores auto spacing.
   `showScaleZeroTick` includes the zero tick without affecting placement;
