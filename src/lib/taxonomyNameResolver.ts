@@ -69,7 +69,12 @@ export const TAXONOMY_NAMED_LINEAGE_RANKS = new Set<string>(TAXONOMY_COLLAPSE_RA
 export type TipTaxonomyRequest = {
   node: number;
   name: string;
+  displayName?: string;
 };
+
+export function taxonomyLookupNames(tip: TipTaxonomyRequest): string[] {
+  return tip.displayName && tip.displayName !== tip.name ? [tip.name, tip.displayName] : [tip.name];
+}
 
 export interface TaxonomyMappingOptions {
   enableCollapseFallbacks?: boolean;
@@ -486,6 +491,9 @@ function collectCandidatesForTip(
     return lineage ? [lineage] : [];
   }
   const speciesNameCandidates = candidateSpeciesNames(tip.name);
+  if (tip.displayName && tip.displayName !== tip.name) {
+    speciesNameCandidates.push(...candidateSpeciesNames(tip.displayName));
+  }
   let speciesCandidates: number[] = [];
   for (let candidateIndex = 0; candidateIndex < speciesNameCandidates.length; candidateIndex += 1) {
     const indexedCandidates = taxonomy.speciesIndex.get(speciesNameCandidates[candidateIndex]) ?? [];

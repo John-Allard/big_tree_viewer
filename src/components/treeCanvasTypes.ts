@@ -86,6 +86,8 @@ export interface TreeCanvasProps {
   taxonomyEnabled: boolean;
   customCladeRibbons?: CustomCladeRibbon[];
   onAddCladeRibbon?: (node: number) => void;
+  onUpdateCladeRibbon?: (id: string, patch: Partial<CustomCladeRibbon>) => void;
+  onRemoveCladeRibbon?: (id: string) => void;
   taxonomyOverlayStyle: TaxonomyOverlayStyle;
   taxonomyBranchColoringEnabled: boolean;
   taxonomyColorJitter: number;

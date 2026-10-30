@@ -21,6 +21,12 @@ const metadataOptions = z.object({
   collapseColumn: z.string().optional().describe("Collapse maximal clades whose tips all share one nonempty value. Empty disables metadata collapse."),
   taxIdColumn: z.string().optional().describe("NCBI TaxID column linked by keyColumn; use with taxonomy mapping."),
   rankColumns: z.partialRecord(taxonomyRank, z.string()).optional().describe("Custom taxonomy ribbons from metadata: assign rank names to table columns, without a taxonomy database."),
+  autoRankColumns: z.boolean().optional().describe("Apply custom taxonomy by detecting supported rank headers (e.g. family, subfamily, genus). rankColumns overrides detected assignments. Omit taxonomy; no database needed."),
+  cladeRibbons: z.object({
+    labelColumn: z.string(), mode: z.enum(["nodes", "tips"]),
+    widthPx: z.number().min(4).max(120).optional(),
+    labelSizePx: z.number().min(5).max(48).optional(),
+  }).strict().optional().describe("Generate outside subtree ribbons from named internal nodes (nodes) or maximal homogeneous tip groups (tips), matched by keyColumn. Replaces earlier metadata-generated ribbons, preserves manual ribbons and taxonomy. labelSizePx 12 = 100% of auto-fit size."),
   colorMode: z.enum(["categorical", "continuous", "date"]).optional().describe("Date mode colors ISO YYYY, YYYY-MM, or YYYY-MM-DD values chronologically."), applyScope: z.enum(["branch", "subtree"]).optional(),
   labelsEnabled: z.boolean().optional(), labelColumn: z.string().optional(),
   markersEnabled: z.boolean().optional(), markerColumn: z.string().optional(),
@@ -37,9 +43,9 @@ const metadataOptions = z.object({
 const style = {
   layout: z.enum(["rectangular", "circular", "fan", "spiral"]).optional(),
   canvas: object.optional().describe("Optional saved viewport state, e.g. camera with kind, scaleX, scaleY, translateX, translateY for rectangular zoom."),
-  settings: object.optional().describe("Saved BTV visual setting names; inspect_tree returns effective settings. Supports customCladeRibbons [{id,node,label,color,placement:inside|outside,enabled}] using original zero-based Newick preorder node IDs; [] clears ribbons. metadataTipTableEnabled/Mode/Columns configure tip tables; metadataLegendEnabled/Components control legends. figureStyles.scale controls showScaleBar, showScaleBarLabels, showTimeGuideLabels, showPartialRadialScaleBar, calendarAxis/calendarRootYear. showScaleBars is the master switch; partial-radial placement is automatic. Cladograms: showCladogram=true gives equal edges; ultrametricCladogram=true with method levels|logarithmic|grafen aligns tips; cladogramLogStrength=1..10 (default 1). Unknown top-level keys are rejected."),
+  settings: object.optional().describe("Saved BTV visual setting names; inspect_tree returns effective settings. Supports customCladeRibbons [{id,node,label,color,placement:inside|outside,enabled,widthPx,labelSizePx}] using original zero-based Newick preorder node IDs; [] clears ribbons. metadataTipTableEnabled/Mode/Columns configure tip tables; metadataLegendEnabled/Components/Placement control legends. figureStyles.scale controls showScaleBar, showScaleBarLabels, showTimeGuideLabels, calendarAxis/calendarRootYear. showScaleBars is the master switch; partial-radial placement is automatic. Cladograms: showCladogram=true gives equal edges; ultrametricCladogram=true with method levels|logarithmic|grafen aligns tips; cladogramLogStrength=1..10 (default 1). Unknown top-level keys are rejected."),
   metadataPath: z.string().optional().describe("Absolute local CSV/TSV path."),
-  metadata: metadataOptions.optional().describe("Column names refer to CSV/TSV headers. Use metadataPath or text to load a table; omit both to edit the current table's encodings. Supports date colors, tipLabelColumn, collapseColumn, NCBI taxIdColumn, and custom rankColumns ribbons (omit taxonomy for custom ranks). Coloring enabled is independent of labels, collapse, tables, and ribbons."),
+  metadata: metadataOptions.optional().describe("Column names refer to CSV/TSV headers. Use metadataPath or text to load a table; omit both to edit the current table. Supports date colors, tipLabelColumn, collapseColumn, NCBI taxIdColumn, custom rankColumns/autoRankColumns (omit taxonomy), and independent cladeRibbons. Coloring enabled is independent of labels, collapse, tables, and ribbons."),
   taxonomy: taxonomy.optional(),
 };
 const input = {

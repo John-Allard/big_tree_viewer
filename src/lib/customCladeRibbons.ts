@@ -1,4 +1,5 @@
 import type { TreeModel } from "../types/tree";
+import { buildMetadataCollapseGroups } from "./metadataCollapse";
 
 export interface CustomCladeRibbon {
   id: string;
@@ -7,6 +8,9 @@ export interface CustomCladeRibbon {
   color: string;
   placement: "inside" | "outside";
   enabled: boolean;
+  widthPx?: number;
+  /** Legacy field name: 12 means 100% of the automatically fitted label size. */
+  labelSizePx?: number;
 }
 
 export function normalizeCustomCladeRibbons(value: unknown, nodeCount?: number): CustomCladeRibbon[] {
@@ -22,10 +26,56 @@ export function normalizeCustomCladeRibbons(value: unknown, nodeCount?: number):
     if (typeof label !== "string" || typeof cleanColor !== "string" || !/^#[0-9a-f]{6}$/i.test(cleanColor)) continue;
     const cleanLabel = label.replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 256);
     ids.add(id);
-    result.push({ id, node, label: cleanLabel, color: cleanColor, placement: placement === "inside" ? "inside" : "outside", enabled: typeof enabled === "boolean" ? enabled : true });
+    result.push({ id, node, label: cleanLabel, color: cleanColor, placement: placement === "inside" ? "inside" : "outside", enabled: typeof enabled === "boolean" ? enabled : true,
+      ...(Number.isFinite(item.widthPx) ? { widthPx: Math.max(4, Math.min(120, item.widthPx)) } : {}),
+      ...(Number.isFinite(item.labelSizePx) ? { labelSizePx: Math.max(5, Math.min(48, item.labelSizePx)) } : {}),
+    });
     if (result.length === 200) break;
   }
   return result;
+}
+
+const RIBBON_COLORS = ["#2b8cbe", "#d95f0e", "#31a354", "#756bb1", "#de2d26", "#b58b00"];
+const metadataKey = (text: string) => text.trim().replace(/^['"]+|['"]+$/g, "").replaceAll("_", " ").replace(/\s+/g, " ").toLowerCase();
+
+/** Materialize ribbons once, without keeping a large metadata-derived overlay live. */
+export function buildMetadataCladeRibbons(tree: TreeModel, rows: ReadonlyArray<Readonly<Record<string, string>>>,
+  keyColumn: string, labelColumn: string, mode: "nodes" | "tips"): CustomCladeRibbon[] {
+  if (!keyColumn || !labelColumn) return [];
+  let groups: Array<{ node: number; label: string }>;
+  if (mode === "tips") {
+    groups = buildMetadataCollapseGroups(tree, rows, keyColumn, labelColumn);
+  } else {
+    const labels = new Map<string, string>();
+    for (const row of rows) {
+      const key = metadataKey(row[keyColumn] ?? "");
+      const label = (row[labelColumn] ?? "").trim();
+      if (!key) continue;
+      if (labels.has(key) && labels.get(key) !== label) throw new Error(`Conflicting ribbon labels for metadata key "${key}".`);
+      labels.set(key, label);
+    }
+    const nodes = new Map<string, number>();
+    const ambiguous = new Set<string>();
+    for (let node = 0; node < tree.nodeCount; node++) {
+      if (tree.buffers.firstChild[node] < 0) continue;
+      const key = metadataKey(tree.names[node] ?? "");
+      if (!key) continue;
+      if (nodes.has(key)) ambiguous.add(key);
+      nodes.set(key, node);
+    }
+    groups = [];
+    for (const [key, label] of labels) {
+      if (!label || !nodes.has(key)) continue;
+      if (ambiguous.has(key)) throw new Error(`Internal node name "${key}" is not unique.`);
+      groups.push({ node: nodes.get(key)!, label });
+    }
+  }
+  if (groups.length > 200) throw new Error(`This mapping produces ${groups.length} ribbons; the limit is 200. Choose a coarser grouping.`);
+  const colors = new Map<string, string>();
+  return normalizeCustomCladeRibbons(groups.map(({ node, label }) => {
+    if (!colors.has(label)) colors.set(label, RIBBON_COLORS[colors.size % RIBBON_COLORS.length]);
+    return { id: `metadata-ribbon:${mode}:${node}`, node, label, color: colors.get(label)!, placement: "outside", enabled: true };
+  }), tree.nodeCount);
 }
 
 function preorder(tree: TreeModel, root: number): number[] {

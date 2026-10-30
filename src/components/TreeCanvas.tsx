@@ -4353,6 +4353,8 @@ export default function TreeCanvas({
   taxonomyEnabled,
   customCladeRibbons = EMPTY_CLADE_RIBBONS,
   onAddCladeRibbon,
+  onUpdateCladeRibbon,
+  onRemoveCladeRibbon,
   taxonomyOverlayStyle,
   taxonomyBranchColoringEnabled,
   taxonomyColorJitter,
@@ -4499,6 +4501,7 @@ export default function TreeCanvas({
   const collapsedTriangleHitsRef = useRef<CollapsedTriangleHitbox[]>([]);
   const phylopicHitsRef = useRef<PhyloPicHitbox[]>([]);
   const taxonomyArcHitsRef = useRef<TaxonomyArcHitbox[]>([]);
+  const subtreeRibbonHitsRef = useRef<Array<{ id: string; node: number; label: string; x: number; y: number; path: string | (() => string); hitPath?: Path2D }>>([]);
   const phylopicImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [phylopicImageLoadVersion, setPhyloPicImageLoadVersion] = useState(0);
   const renderDebugRef = useRef<Record<string, unknown> | null>(null);
@@ -4617,10 +4620,11 @@ export default function TreeCanvas({
   const [manualBranchColorAssignments, setManualBranchColorAssignments] = useState<Map<number, string>>(() => new Map());
   const [manualSubtreeColorAssignments, setManualSubtreeColorAssignments] = useState<Map<number, string>>(() => new Map());
   const [taxonomyRootColorAssignments, setTaxonomyRootColorAssignments] = useState<Map<string, string>>(() => new Map());
-  const [contextMenuColorMode, setContextMenuColorMode] = useState<"branch" | "subtree" | "taxonomy-root" | null>(null);
+  const [contextMenuColorMode, setContextMenuColorMode] = useState<"branch" | "subtree" | "taxonomy-root" | "ribbon" | null>(null);
   const [contextMenuRootMenuOpen, setContextMenuRootMenuOpen] = useState(false);
   const [contextMenuCollapseMenuOpen, setContextMenuCollapseMenuOpen] = useState(false);
   const [contextMenuCustomColor, setContextMenuCustomColor] = useState("#2563eb");
+  const [contextMenuRibbonRename, setContextMenuRibbonRename] = useState(false);
   const nativeColorPickerActiveRef = useRef(false);
   const hiddenNodesRef = useRef<Uint8Array | null>(null);
   useLayoutEffect(() => {
@@ -4647,6 +4651,7 @@ export default function TreeCanvas({
       x: number;
       y: number;
       node: number;
+      ribbonId?: string;
       name: string;
       descendantTipCount: number;
       tutorialDemo?: boolean;
@@ -4759,7 +4764,6 @@ export default function TreeCanvas({
         const displayName = tipDisplayLabels?.[hover.node];
         if (displayName != null && displayName !== tree.names[hover.node]) {
           appendLine(`Original name: ${tree.names[hover.node] ?? ""}`);
-          appendLine(`Display name: ${displayName}`);
         }
       }
       if (hover.collapsedTaxonomyRank) {
@@ -4875,8 +4879,10 @@ export default function TreeCanvas({
     ? resolveCladeRibbons(customCladeRibbons, sharedSubtreeSourceTree ?? tree, cache.orderedLeaves[order], sharedSubtreeSourceNodeByViewNode)
     : { ranges: [], inside: 0, outside: 0 },
   [customCladeRibbons, tree, cache, order, sharedSubtreeSourceTree, sharedSubtreeSourceNodeByViewNode]);
-  const cladeRibbonInsidePx = cladeRibbonLayout.inside * 26;
-  const cladeRibbonPaddingPx = (cladeRibbonLayout.inside + cladeRibbonLayout.outside) * 26;
+  const cladeRibbonWidthPx = Math.max(4, ...customCladeRibbons.filter(ribbon => ribbon.enabled).map(ribbon => ribbon.widthPx ?? 22));
+  const cladeRibbonStridePx = cladeRibbonWidthPx + 4;
+  const cladeRibbonInsidePx = cladeRibbonLayout.inside * cladeRibbonStridePx;
+  const cladeRibbonPaddingPx = (cladeRibbonLayout.inside + cladeRibbonLayout.outside) * cladeRibbonStridePx;
   const axisDepth = useCallback((depth: number): number => (
     axisDepthForMode(depth, viewMode)
   ), [axisDepthForMode, viewMode]);
@@ -4986,6 +4992,10 @@ export default function TreeCanvas({
         setContextMenuCustomColor(manualSubtreeColorAssignments.get(contextMenu.node) ?? "#2563eb");
         return;
       }
+      if (contextMenuColorMode === "ribbon") {
+        setContextMenuCustomColor(customCladeRibbons.find(ribbon => ribbon.id === contextMenu.ribbonId)?.color ?? "#2b8cbe");
+        return;
+      }
     }
     if (contextMenu.kind === "taxonomy" && contextMenuColorMode === "taxonomy-root") {
       setContextMenuCustomColor(taxonomyRootColorAssignments.get(contextMenu.name) ?? "#2563eb");
@@ -4996,6 +5006,7 @@ export default function TreeCanvas({
     manualBranchColorAssignments,
     manualSubtreeColorAssignments,
     taxonomyRootColorAssignments,
+    customCladeRibbons,
   ]);
   const taxonomyActiveRanks = useMemo<TaxonomyRank[]>(() => {
     return sortTaxonomyRanksForDisplay(
@@ -5685,7 +5696,7 @@ export default function TreeCanvas({
   const spiralCustomCompression = cladeRibbonPaddingPx
     ? Math.min(1, Math.min(visibleViewportWidth, size.height) * 0.46 * 0.65 / ((cladeRibbonPaddingPx + 8) * (Math.max(1, Math.min(10, spiralTurns)) + 1)))
     : 1;
-  const spiralCustomStridePx = 26 * spiralCustomCompression;
+  const spiralCustomStridePx = cladeRibbonStridePx * spiralCustomCompression;
   const spiralCustomPaddingPx = cladeRibbonPaddingPx ? (cladeRibbonPaddingPx + 8) * spiralCustomCompression : 0;
   const spiralMetricsForScale = useCallback((visibleRankCount: number, scale: number): SpiralMetrics => {
     if (!tree) {
@@ -5816,12 +5827,22 @@ export default function TreeCanvas({
   const displayTipLabelForView = useCallback((node: number): string => (
     displayLabelText(tipDisplayLabels?.[node] ?? tree?.names[node] ?? "", `tip-${node}`)
   ), [tree, tipDisplayLabels]);
+  const subtreeRibbonTitles = useMemo(() => {
+    const titles = new Map<number, string>();
+    for (const ribbon of customCladeRibbons) {
+      if (ribbon.enabled && !titles.has(ribbon.node)) titles.set(ribbon.node, ribbon.label);
+    }
+    return titles;
+  }, [customCladeRibbons]);
   const displayNodeNameForView = useCallback((node: number): string => {
     if (!tree) {
       return `tip-${node}`;
     }
-    return displayNodeName(tree, node);
-  }, [tree]);
+    if (tree.buffers.firstChild[node] < 0) return displayTipLabelForView(node);
+    const name = displayNodeName(tree, node);
+    const sourceNode = sharedSubtreeSourceNodeByViewNode?.[node] ?? node;
+    return name === "Internal node" ? subtreeRibbonTitles.get(sourceNode) ?? name : name;
+  }, [tree, displayTipLabelForView, sharedSubtreeSourceNodeByViewNode, subtreeRibbonTitles]);
   const updateDistanceTooltip = useCallback((measurement: DistanceMeasurement | null): void => {
     const tooltip = distanceTooltipRef.current;
     const nodes = distanceTooltipNodesRef.current;
@@ -6718,6 +6739,9 @@ export default function TreeCanvas({
         return tipBandWidthPx + 64 + Math.max(0, figureStyles.tip.offsetPx) + cladeRibbonPaddingPx;
       }
     }
+    if (!showGenusLabels) {
+      return tipBandWidthPx + (showTipLabels ? 28 + Math.max(0, figureStyles.tip.offsetPx) : 8) + cladeRibbonPaddingPx;
+    }
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + cladeRibbonPaddingPx;
@@ -6749,15 +6773,8 @@ export default function TreeCanvas({
     let renderedTipLabelWidthPx = 0;
     if (showTipLabels && angularSpacingPx > 2.9) {
       const renderedTipFontSize = angularSpacingPx > 4.5 ? tipFontSize : microTipFontSize;
-      let maxRenderedTipCharacters = 0;
-      for (let index = 0; index < tree.leafNodes.length; index += 1) {
-        const node = tree.leafNodes[index];
-        maxRenderedTipCharacters = Math.max(
-          maxRenderedTipCharacters,
-          displayTipLabelForView(node).length,
-        );
-      }
-      renderedTipLabelWidthPx = maxRenderedTipCharacters * renderedTipFontSize * 0.61;
+      const measuredWidth = maxTipLabelCharacters * renderedTipFontSize * 0.61;
+      renderedTipLabelWidthPx = Math.max(Math.min(measuredWidth, tipBandWidthPx), measuredWidth * Math.min(1, 4 / renderedTipFontSize));
     }
     let envelopePx = renderedTipLabelWidthPx > 0
       ? tipAnchorGapPx + renderedTipLabelWidthPx
@@ -6793,7 +6810,7 @@ export default function TreeCanvas({
     }
 
     return envelopePx + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx);
-  }, [cache, collapsedView?.effectiveLeafScale, collapsedView?.layout, displayTipLabelForView, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, order, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyEnabled, tree]);
+  }, [cache, collapsedView?.effectiveLeafScale, collapsedView?.layout, maxTipLabelCharacters, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, order, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyEnabled, tree]);
 
   const finalizeCircularCamera = useCallback((camera: CircularCamera) => {
     if (!tree) {
@@ -6837,11 +6854,7 @@ export default function TreeCanvas({
     if (!tree) {
       return null;
     }
-    const boundedRadialOverlayMarginPx = Math.min(
-      Math.max(0, extraRadiusPx),
-      visibleViewportWidth * (visibleViewportWidth < 600 ? 0.22 : 0.14),
-      size.height * 0.3,
-    );
+    const boundedRadialOverlayMarginPx = Math.max(0, extraRadiusPx);
     let camera: CircularCamera;
     if (mode === "spiral") {
       camera = fitCircularCamera(visibleViewportWidth, size.height, tree, circularRotation);
@@ -6972,6 +6985,7 @@ export default function TreeCanvas({
         + 40
         + Math.max(0, figureStyles.tip.offsetPx);
       return {
+        viewportLeft: visibleViewportLeftInset,
         right: taxonomyWidthPx + 60 + tipTableWidthPx + cladeRibbonPaddingPx,
         top: tipTableTopPx,
       };
@@ -6979,10 +6993,11 @@ export default function TreeCanvas({
     const labelFontSize = Math.max(4.5, Math.min(22, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
     return {
+      viewportLeft: visibleViewportLeftInset,
       right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + tipTableWidthPx + cladeRibbonPaddingPx,
       top: tipTableTopPx,
     };
-  }, [cladeRibbonPaddingPx, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.limitWidth, figureStyles.tip.maxWidthPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, maxTipLabelCharacters, metadataTipTableBarWidthPx, metadataTipTableCellWidthPx, metadataTipTableData, metadataTipTableMode, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, thickenOutermostTaxonomyRibbon]);
+  }, [visibleViewportLeftInset, cladeRibbonPaddingPx, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.limitWidth, figureStyles.tip.maxWidthPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, maxTipLabelCharacters, metadataTipTableBarWidthPx, metadataTipTableCellWidthPx, metadataTipTableData, metadataTipTableMode, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, thickenOutermostTaxonomyRibbon]);
 
   const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
@@ -7030,15 +7045,39 @@ export default function TreeCanvas({
       nextCamera.translateX = visibleViewportLeftInset + 32;
       nextCamera.translateY = Math.max(24, padding.top ?? 0);
       clampRectCamera(nextCamera, tree, size.width, size.height, padding);
+    } else if (mode !== "spiral" && cladeRibbonPaddingPx > 0) {
+      // Font sizes and visible ranks depend on scale. Solve for the largest scale
+      // whose complete annotation envelope fits, rather than oscillating between
+      // a branch-only fit and a fixed-width ribbon allowance.
+      const initial = nextCamera;
+      let low = 0;
+      let high = initial.scale;
+      let best = initial;
+      for (let iteration = 0; iteration < 24; iteration++) {
+        const scale = (low + high) * 0.5;
+        const probe = { ...initial, scale };
+        const extra = Math.max(circularClampExtraRadiusPx(probe), circularFitLabelEnvelopePx(probe) + cladeRibbonPaddingPx + 8);
+        const candidate = fitPolarCamera(mode, extra);
+        if (candidate && scale <= candidate.scale) {
+          const ratio = scale / candidate.scale;
+          candidate.translateX = visibleViewportCenterX + (candidate.translateX - visibleViewportCenterX) * ratio;
+          candidate.translateY = size.height * 0.5 + (candidate.translateY - size.height * 0.5) * ratio;
+          candidate.scale = scale;
+          best = candidate;
+          low = scale;
+        } else high = scale;
+      }
+      nextCamera = best;
+      finalizeCircularCamera(nextCamera);
     } else if (mode === "circular" && !taxonomyEnabled) {
       if (isPartialRadial || polarInnerRadius > 0) {
         for (let iteration = 0; iteration < 3; iteration += 1) {
-          nextCamera = fitPolarCamera(mode, Math.max(circularFitLabelEnvelopePx(nextCamera), cladeRibbonPaddingPx ? circularClampExtraRadiusPx(nextCamera) : 0)) ?? nextCamera;
+          nextCamera = fitPolarCamera(mode, circularFitLabelEnvelopePx(nextCamera)) ?? nextCamera;
         }
       } else {
         const radius = Math.max(polarOuterRadius, tree.branchLengthMinPositive);
         for (let iteration = 0; iteration < 3; iteration += 1) {
-          const labelEnvelopePx = Math.max(circularFitLabelEnvelopePx(nextCamera), cladeRibbonPaddingPx ? circularClampExtraRadiusPx(nextCamera) : 0);
+          const labelEnvelopePx = circularFitLabelEnvelopePx(nextCamera);
           const availableRadiusPx = Math.max(
             circularFitMinTreeRadiusPx(visibleViewportWidth, size.height),
             (Math.min(visibleViewportWidth, size.height) * 0.5) - 8 - labelEnvelopePx,
@@ -7064,26 +7103,26 @@ export default function TreeCanvas({
   }, [spiralCustomPaddingPx, taxonomyGapControl, cladeRibbonPaddingPx, circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, isPartialRadial, polarInnerRadius, polarOuterRadius, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset, visibleViewportWidth]);
 
   const previousFitCameraForModeRef = useRef(fitCameraForMode);
+  const previousRadialGeometryRef = useRef({ outer: polarOuterRadius, span: polarAngleSpan });
 
-  const cameraApproximatelyMatchesFit = useCallback((camera: CameraState, mode: ViewMode): boolean => {
-    const fit = fitCameraForMode(camera.kind === "rect" ? "rectangular" : mode);
+  const cameraApproximatelyMatchesFit = useCallback((camera: CameraState, fit: CameraState | null): boolean => {
     if (!fit || fit.kind !== camera.kind) {
       return false;
     }
     if (camera.kind === "rect" && fit.kind === "rect") {
       return (
-        Math.abs(camera.scaleX - fit.scaleX) <= (fit.scaleX * 0.03)
-        && Math.abs(camera.scaleY - fit.scaleY) <= (fit.scaleY * 0.03)
+        camera.scaleX <= fit.scaleX * 1.03
+        && camera.scaleY <= fit.scaleY * 1.03
       );
     }
     if (camera.kind === "circular" && fit.kind === "circular") {
       return (
-        Math.abs(camera.scale - fit.scale) <= (fit.scale * 0.03)
+        camera.scale <= fit.scale * 1.03
         && Math.abs(camera.rotation - fit.rotation) <= 1e-6
       );
     }
     return false;
-  }, [fitCameraForMode]);
+  }, []);
 
   const fitCamera = useCallback(() => {
     const nextCamera = fitCameraForMode(viewMode);
@@ -7802,7 +7841,7 @@ export default function TreeCanvas({
     )
   ), [size.height, size.width]);
 
-  const convertCameraForViewMode = useCallback((fromCamera: CameraState, previousMode?: ViewMode): CameraState => {
+  const convertCameraForViewMode = useCallback((fromCamera: CameraState, previousMode?: ViewMode, sourceFit?: CameraState | null): CameraState => {
     if (!tree) {
       return fromCamera;
     }
@@ -7822,8 +7861,21 @@ export default function TreeCanvas({
         return fitCameraForMode(viewMode) ?? fromCamera;
       }
     }
-    if (cameraApproximatelyMatchesFit(fromCamera, sourceMode)) {
-      return fitCameraForMode(viewMode) ?? fromCamera;
+    const previousFit = sourceFit ?? fitCameraForMode(sourceMode);
+    if (previousFit && cameraApproximatelyMatchesFit(fromCamera, previousFit)) {
+      const next = fitCameraForMode(viewMode);
+      if (!next) return fromCamera;
+      const zoom = fromCamera.kind === "circular" && previousFit.kind === "circular"
+        ? fromCamera.scale / previousFit.scale
+        : fromCamera.kind === "rect" && previousFit.kind === "rect"
+          ? Math.max(fromCamera.scaleX / previousFit.scaleX, fromCamera.scaleY / previousFit.scaleY) : 1;
+      if (next.kind === "rect") { next.scaleX *= zoom; next.scaleY *= zoom; }
+      else next.scale *= zoom;
+      next.translateX += fromCamera.translateX - previousFit.translateX;
+      next.translateY += fromCamera.translateY - previousFit.translateY;
+      if (next.kind === "rect") clampRectCamera(next, tree, size.width, size.height, rectClampPadding(next));
+      else finalizeCircularCamera(next);
+      return next;
     }
     const centerScreenX = visibleViewportCenterX;
     const centerScreenY = size.height * 0.5;
@@ -8066,7 +8118,7 @@ export default function TreeCanvas({
     }
 
     return fromCamera;
-  }, [axisDepthForMode, cameraApproximatelyMatchesFit, circularClampExtraRadiusPx, circularRotation, finalizeCircularCamera, fitCameraForMode, fitPolarCamera, polarDomainForMode, polarLayoutValueForCurrentModeTheta, polarThetaForCurrentModeLayoutValue, rawDepthFromAxisForMode, size.height, size.width, spiralMetricsForScale, spiralScaleForViewContinuity, spiralTaxonomyEnvelopePx, spiralVisibleTaxonomyRanksForScale, taxonomyActiveRanks.length, taxonomyBlocks, taxonomyEnabled, taxonomyMap, transitionEnvelopeShiftPx, tree, viewMode, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset]);
+  }, [axisDepthForMode, cameraApproximatelyMatchesFit, circularClampExtraRadiusPx, circularRotation, finalizeCircularCamera, fitCameraForMode, fitPolarCamera, polarDomainForMode, polarLayoutValueForCurrentModeTheta, polarThetaForCurrentModeLayoutValue, rawDepthFromAxisForMode, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralScaleForViewContinuity, spiralTaxonomyEnvelopePx, spiralVisibleTaxonomyRanksForScale, taxonomyActiveRanks.length, taxonomyBlocks, taxonomyEnabled, taxonomyMap, transitionEnvelopeShiftPx, tree, viewMode, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset]);
 
   useEffect(() => {
     const element = wrapperRef.current;
@@ -8614,6 +8666,7 @@ export default function TreeCanvas({
       collapsedTriangleHitsRef.current = [];
       phylopicHitsRef.current = [];
       taxonomyArcHitsRef.current = [];
+      subtreeRibbonHitsRef.current = [];
     }
     const renderDebug: Record<string, unknown> = {
       viewMode,
@@ -10199,7 +10252,7 @@ export default function TreeCanvas({
         }
         if (tipLabelsVisible && metadataTipTableData && metadataTipTableData.columns.length > 0) {
           const labelRightX = visibleTipLabels.reduce((right, label) => Math.max(right, label.x + label.renderedWidth), tipSideX);
-          const customRibbonEndX = cladeRibbonPaddingPx ? customRibbonOutsideBase + cladeRibbonLayout.outside * 26 : Number.NEGATIVE_INFINITY;
+          const customRibbonEndX = cladeRibbonPaddingPx ? customRibbonOutsideBase + cladeRibbonLayout.outside * cladeRibbonStridePx : Number.NEGATIVE_INFINITY;
           const tableStartX = Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16, customRibbonEndX + 16);
           const rowHeight = Math.max(3, Math.min(28, effectiveTipSpacingPx * 0.82));
           const firstVisibleY = visibleTipLabels.reduce((top, label) => Math.min(top, label.y), Number.POSITIVE_INFINITY);
@@ -13202,33 +13255,38 @@ export default function TreeCanvas({
       let circularGenusArcs: CircularOverlayArc[] = [];
       let circularGenusBaseFontSize = 0;
       let circularFirstTaxonomyRingInnerRadiusPx: number | null = null;
+      const radialTaxonomyMetrics = taxonomyRingMetricsPx(
+        visibleTaxonomyRanks.length,
+        Math.max(8.5, Math.min(18, 8.5 + angularSpacingPx * 0.45)),
+        taxonomyBandThicknessScale, circularOverlayViewportScale, thickenOutermostTaxonomyRibbon,
+      );
+      const firstRibbonStrokeInsetPx = taxonomyOverlayStyle === "ribbons"
+        ? (radialTaxonomyMetrics.ringWidthsPx[0] ?? 0) * 0.04 : 0;
+      const closedGapInsetCompensationPx = globalTipLabelSpacePx > 0
+        ? 0 : firstRibbonStrokeInsetPx * (1 - Math.min(1, taxonomyGapControl));
+      const naturalTaxonomyGapPx = controlledRibbonGapPx(
+        taxonomyGapControl, taxonomyBaselineGapPx + radialTaxonomyMetrics.ringGapPx, globalTipLabelSpacePx,
+      ) - closedGapInsetCompensationPx;
+      // Use the taxonomy anchor even when no taxonomy is drawn. Include the actual
+      // label anchor, user offset, and the minimum-font floor for unusually long names.
+      const renderedTipLabelExtentPx = tipLabelCueVisible
+        ? Math.hypot(tipBandAnchorRadius * camera.scale + Math.max(0, figureStyles.tip.offsetPx)
+          + Math.max(globalTipLabelSpacePx, maxVisibleTipLabelWidth * Math.min(1, 4 / tipFontSize)), tipFontSize * 0.575)
+          - maxRadius * camera.scale
+        : 0;
+      const firstRadialRibbonRadiusPx = maxRadius * camera.scale + (cladeRibbonPaddingPx
+        ? Math.max(renderedTipLabelExtentPx + 8, naturalTaxonomyGapPx)
+        : naturalTaxonomyGapPx);
+      customRibbonBase = firstRadialRibbonRadiusPx;
+      customRibbonOutsideBase = customRibbonBase + cladeRibbonInsidePx;
       const circularTaxonomyOverlayStartTime = performance.now();
       if (taxonomyEnabled && renderedTaxonomyBlocks) {
         const visibleRanks = visibleTaxonomyRanks;
         const baseFontSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
         circularGenusBaseFontSize = baseFontSize;
-        const taxonomyMetricBaseSize = Math.max(8.5, Math.min(18, 8.5 + (angularSpacingPx * 0.45)));
-        const metrics = taxonomyRingMetricsPx(
-          visibleRanks.length,
-          taxonomyMetricBaseSize,
-          taxonomyBandThicknessScale,
-          circularOverlayViewportScale,
-          thickenOutermostTaxonomyRibbon,
-        );
+        const metrics = radialTaxonomyMetrics;
         const tipBandOuterRadiusPx = (maxRadius * camera.scale) + globalTipLabelSpacePx;
-        const firstRibbonStrokeInsetPx = taxonomyOverlayStyle === "ribbons"
-          ? (metrics.ringWidthsPx[0] ?? 0) * 0.04
-          : 0;
-        const closedGapInsetCompensationPx = globalTipLabelSpacePx > 0
-          ? 0
-          : firstRibbonStrokeInsetPx * (1 - Math.min(1, taxonomyGapControl));
-        const naturalTaxonomyGapPx = controlledRibbonGapPx(
-          taxonomyGapControl,
-          taxonomyBaselineGapPx + metrics.ringGapPx,
-          globalTipLabelSpacePx,
-        ) - closedGapInsetCompensationPx;
-        const firstTaxonomyRingInnerRadiusPx = (maxRadius * camera.scale) + cladeRibbonInsidePx
-          + (cladeRibbonPaddingPx ? Math.max(globalTipLabelSpacePx + 8, naturalTaxonomyGapPx) : naturalTaxonomyGapPx);
+        const firstTaxonomyRingInnerRadiusPx = firstRadialRibbonRadiusPx + cladeRibbonInsidePx;
         circularFirstTaxonomyRingInnerRadiusPx = visibleRanks.length > 0
           ? firstTaxonomyRingInnerRadiusPx
           : null;
@@ -15726,14 +15784,11 @@ export default function TreeCanvas({
       }
     }
     if (cladeRibbonLayout.ranges.length) {
-      if (camera.kind === "circular" && viewMode !== "spiral" && !customRibbonBase) {
-        customRibbonBase = polarOuterRadius * camera.scale + 12 + (showTipLabels ? estimateLabelWidth(12, reservedTipLabelCharacters) : 0);
-        customRibbonOutsideBase = customRibbonBase + cladeRibbonInsidePx;
-      }
       for (const ribbon of cladeRibbonLayout.ranges) {
-        const stride = viewMode === "spiral" ? spiralCustomStridePx : 26;
-        const bandWidth = stride * 22 / 26;
+        const stride = viewMode === "spiral" ? spiralCustomStridePx : cladeRibbonStridePx;
+        const bandWidth = (ribbon.widthPx ?? 22) * (viewMode === "spiral" ? spiralCustomCompression : 1);
         const band = (ribbon.placement === "inside" ? customRibbonBase : customRibbonOutsideBase) + ribbon.lane * stride;
+        let hitPath: string | (() => string) = "";
         let x = 0;
         let y = 0;
         let rotation = 0;
@@ -15746,15 +15801,20 @@ export default function TreeCanvas({
           const top = worldToScreenRect(camera, 0, taxonomyBoundaryValue(ribbon.start)).y + 1;
           const bottom = worldToScreenRect(camera, 0, taxonomyBoundaryValue(ribbon.end)).y - 1;
           if (bottom <= top) { ctx.restore(); continue; }
-          ctx.fillRect(band, top, 22, bottom - top);
-          pushSceneRect(band, top, 22, bottom - top, ribbon.color);
-          x = band + 11; y = (top + bottom) / 2; rotation = -Math.PI / 2; available = bottom - top - 6;
+          ctx.fillRect(band, top, bandWidth, bottom - top);
+          pushSceneRect(band, top, bandWidth, bottom - top, ribbon.color);
+          hitPath = `M ${band} ${top} h ${bandWidth} v ${bottom - top} h ${-bandWidth} Z`;
+          x = band + bandWidth / 2; y = (top + bottom) / 2; rotation = Math.PI / 2; available = bottom - top - 6;
         } else if (viewMode === "spiral") {
           const metrics = spiralMetricsForScale(spiralVisibleTaxonomyRanksForScale(camera.scale).length, camera.scale);
           const start = spiralThetaForTaxonomyBoundary(ribbon.start, metrics);
           const end = spiralThetaForTaxonomyBoundary(ribbon.end, metrics);
           const inner = band / camera.scale;
           drawSpiralRibbonScreenPath(ctx, camera, start, end, inner, inner + bandWidth / camera.scale, metrics);
+          if (!isOverrideRender) {
+            const hitCamera = { ...camera };
+            hitPath = () => svgSpiralRibbonScreenPath(hitCamera, start, end, inner, inner + bandWidth / hitCamera.scale, metrics);
+          }
           pushScenePath(() => svgSpiralRibbonScreenPath(camera, start, end, inner, inner + bandWidth / camera.scale, metrics), undefined, undefined, ribbon.color);
           const intervals = spiralLabelIntervalsByTurn(start, end, metrics);
           const interval = intervals[Math.floor(intervals.length / 2)] ?? { startTheta: start, endTheta: end };
@@ -15782,24 +15842,35 @@ export default function TreeCanvas({
           const start = span.startTheta + camera.rotation;
           const end = span.endTheta + camera.rotation;
           const center = worldToScreenCircular(camera, 0, 0);
-          traceCircularRibbonPath(ctx, center.x, center.y, band, band + 22, start, end);
+          traceCircularRibbonPath(ctx, center.x, center.y, band, band + bandWidth, start, end);
           ctx.fill();
-          pushScenePath(() => svgCircularRibbonPath(center.x, center.y, band, band + 22, start, end), undefined, undefined, ribbon.color);
+          pushScenePath(() => svgCircularRibbonPath(center.x, center.y, band, band + bandWidth, start, end), undefined, undefined, ribbon.color);
+          if (!isOverrideRender) hitPath = svgCircularRibbonPath(center.x, center.y, band, band + bandWidth, start, end);
           const mid = (start + end) / 2;
-          x = center.x + Math.cos(mid) * (band + 11); y = center.y + Math.sin(mid) * (band + 11);
+          x = center.x + Math.cos(mid) * (band + bandWidth / 2); y = center.y + Math.sin(mid) * (band + bandWidth / 2);
           rotation = mid + Math.PI / 2;
-          curveRadiusPx = band + 11;
-          available = Math.abs(end - start) * (band + 11) - 8;
-          drawCurved = (color, capture) => drawCircularCurvedText(ctx, ribbon.label, center.x, center.y, band + 11, mid, color, null, null, capture);
+          curveRadiusPx = band + bandWidth / 2;
+          available = Math.abs(end - start) * (band + bandWidth / 2) - 8;
+          drawCurved = (color, capture) => drawCircularCurvedText(ctx, ribbon.label, center.x, center.y, band + bandWidth / 2, mid, color, null, null, capture);
         }
+        if (!isOverrideRender && hitPath) subtreeRibbonHitsRef.current.push({ id: ribbon.id, node: ribbon.node, label: ribbon.label, x, y, path: hitPath });
         if (Math.cos(rotation) < 0) rotation += Math.PI;
-        ctx.font = "12px Arial";
-        const width = drawCurved
+        const labelScale = (ribbon.labelSizePx ?? 12) / 12;
+        const fontFamily = labelFontFamilies.taxonomy;
+        const normalizedMetrics = measureNormalizedLabelMetrics(ctx, ribbon.label, fontFamily);
+        ctx.font = `1px ${fontFamily}`;
+        const widthAtOnePx = drawCurved
           ? Array.from(ribbon.label).reduce((total, glyph) => total + ctx.measureText(glyph).width, 0)
-          : ctx.measureText(ribbon.label).width;
-        const fontSize = Math.min(12, bandWidth * 0.5, 12 * available / Math.max(1, width));
+          : normalizedMetrics.widthAtOnePx;
+        const fitSize = Math.min(
+          available * 0.88 / Math.max(1e-9, widthAtOnePx),
+          bandWidth * 0.88 / Math.max(1e-9, normalizedMetrics.heightAtOnePx),
+        );
+        // Match taxonomy auto-fitting; the size control scales that result,
+        // but cannot enlarge text beyond the ribbon's available space.
+        const fontSize = Math.min(fitSize, Math.min(30, fitSize * 0.94) * labelScale);
         if (fontSize >= 5 && ribbon.label) {
-          ctx.font = `${fontSize}px Arial`;
+          ctx.font = `${fontSize}px ${fontFamily}`;
           ctx.fillStyle = taxonomyOverlayTextColor(ribbon.color, "ribbons");
           ctx.textAlign = "center"; ctx.textBaseline = "middle";
           const straightWidth = ctx.measureText(ribbon.label).width;
@@ -15809,11 +15880,11 @@ export default function TreeCanvas({
             drawCurved = null;
           }
           if (drawCurved) {
-            drawCurved(ctx.fillStyle, (glyph, gx, gy, color, angle) => pushSceneText(glyph, gx, gy, color, fontSize, "Arial", "middle", angle, undefined, "middle"));
+            drawCurved(ctx.fillStyle, (glyph, gx, gy, color, angle) => pushSceneText(glyph, gx, gy, color, fontSize, fontFamily, "middle", angle, undefined, "middle"));
           } else {
             ctx.translate(x, y); ctx.rotate(rotation);
             ctx.fillText(ribbon.label, 0, 0);
-            pushSceneText(ribbon.label, x, y, ctx.fillStyle, fontSize, "Arial", "middle", rotation, undefined, "middle");
+            pushSceneText(ribbon.label, x, y, ctx.fillStyle, fontSize, fontFamily, "middle", rotation, undefined, "middle");
           }
         }
         ctx.restore();
@@ -15944,6 +16015,7 @@ export default function TreeCanvas({
     spiralCustomCompression,
     spiralCustomStridePx,
     cladeRibbonLayout,
+    cladeRibbonStridePx,
     cladeRibbonInsidePx,
     cladeRibbonPaddingPx,
     activeSearchNode,
@@ -16581,11 +16653,25 @@ export default function TreeCanvas({
     const previousFitRequest = previousFitRequestRef.current;
     previousFitRequestRef.current = fitRequest;
     const currentCamera = cameraRef.current;
+    const previousRadialGeometry = previousRadialGeometryRef.current;
+    previousRadialGeometryRef.current = { outer: polarOuterRadius, span: polarAngleSpan };
     const sizeChanged = previousSize.width !== size.width || previousSize.height !== size.height;
     const treeChanged = previousSourceTree !== sourceTree;
     const displayDepthsChanged = previousTree !== tree && !treeChanged;
     const fitRequested = previousFitRequest !== fitRequest;
     const viewportCenterChanged = previousViewportCenterX !== visibleViewportCenterX;
+    if (currentCamera?.kind === "circular" && !treeChanged && !fitRequested
+      && previousViewMode === viewMode && (viewMode === "circular" || viewMode === "fan")
+      && (previousRadialGeometry.outer !== polarOuterRadius || previousRadialGeometry.span !== polarAngleSpan)) {
+      // Opening the center redistributes depth inside a stable screen-space circle;
+      // changing angular span changes only the occupied sector, not magnification.
+      if (previousRadialGeometry.outer > 0 && polarOuterRadius > 0) {
+        currentCamera.scale *= previousRadialGeometry.outer / polarOuterRadius;
+      }
+      finalizeCircularCamera(currentCamera);
+      draw();
+      return;
+    }
     if (currentCamera && previousTree && displayDepthsChanged && !fitRequested
       && previousViewMode === viewMode && viewMode !== "spiral") {
       // In an overview there is no focused internal branch. Retain framing
@@ -16705,12 +16791,12 @@ export default function TreeCanvas({
       return;
     }
     if (currentCamera && previousViewMode !== viewMode) {
-      cameraRef.current = convertCameraForViewMode(currentCamera, previousViewMode);
+      cameraRef.current = convertCameraForViewMode(currentCamera, previousViewMode, previousFitCameraForMode(previousViewMode));
       draw();
       return;
     }
     draw();
-  }, [axisDepth, cache, collapsedView, convertCameraForViewMode, fitCamera, fitCameraForMode, fitRequest, order, polarLayoutValueForCurrentModeTheta, polarThetaFor, size, sourceTree, tree, viewMode, visibleViewportCenterX]);
+  }, [axisDepth, cache, collapsedView, convertCameraForViewMode, finalizeCircularCamera, fitCamera, fitCameraForMode, fitRequest, order, polarAngleSpan, polarOuterRadius, polarLayoutValueForCurrentModeTheta, polarThetaFor, size, sourceTree, tree, viewMode, visibleViewportCenterX]);
 
   useLayoutEffect(() => {
     if (!tree || handledSessionRestoreRequestRef.current === sessionRestoreRequest) {
@@ -18140,10 +18226,31 @@ export default function TreeCanvas({
       window.getSelection()?.removeAllRanges();
       setContextMenuColorMode(null);
       setContextMenuCollapseMenuOpen(false);
+      setContextMenuRibbonRename(false);
       if (hitsMetadataLegend(localX, localY)) {
         clearHoverState();
         setContextMenu({ kind: "legend", name: "Metadata legend", x: localX + 8, y: localY + 8 });
         return;
+      }
+      const hitContext = canvas.getContext("2d");
+      const ribbonHit = hitContext ? [...subtreeRibbonHitsRef.current].reverse().find(hit => {
+        hit.hitPath ??= new Path2D(typeof hit.path === "function" ? hit.path() : hit.path);
+        hitContext.save(); hitContext.resetTransform();
+        const contains = hitContext.isPointInPath(hit.hitPath, localX, localY);
+        hitContext.restore();
+        return contains;
+      }) : undefined;
+      if (ribbonHit) {
+        const mappedNode = sharedSubtreeSourceNodeByViewNode
+          ? Array.from(sharedSubtreeSourceNodeByViewNode).indexOf(ribbonHit.node) : ribbonHit.node;
+        const node = mappedNode < 0 ? tree.root : mappedNode;
+        if (node >= 0) {
+          clearHoverState();
+          setContextMenu({ kind: "node", node, ribbonId: ribbonHit.id, name: ribbonHit.label,
+            descendantTipCount: tree.buffers.leafCount[node],
+            x: Math.min(size.width - 260, localX + 14), y: Math.min(size.height - 350, localY + 14) });
+          return;
+        }
       }
       const phylopicHitbox = findPhyloPicHitboxAt(localX, localY);
       if (phylopicHitbox) {
@@ -18598,6 +18705,17 @@ export default function TreeCanvas({
     return node !== null && tree.buffers.firstChild[node] >= 0 ? node : null;
   }, [contextMenu, resolveTaxonomySegmentNode, tree]);
 
+  const contextMenuRibbonTarget = useMemo(() => {
+    if (!contextMenu || !tree) return null;
+    if (contextMenu.kind === "node") return sharedSubtreeSourceNodeByViewNode?.[contextMenu.node] ?? contextMenu.node;
+    if (contextMenu.kind !== "taxonomy") return null;
+    const first = sharedSubtreeSourceNodeByViewNode?.[contextMenu.firstNode] ?? contextMenu.firstNode;
+    const last = sharedSubtreeSourceNodeByViewNode?.[contextMenu.lastNode] ?? contextMenu.lastNode;
+    return lowestCommonAncestor(sharedSubtreeSourceTree ?? tree, first, last);
+  }, [contextMenu, tree, sharedSubtreeSourceTree, sharedSubtreeSourceNodeByViewNode]);
+  const contextMenuCanAddRibbon = contextMenuRibbonTarget !== null
+    && !customCladeRibbons.some(ribbon => ribbon.node === contextMenuRibbonTarget);
+
   const handleContextViewSubtreeStatistics = useCallback(() => {
     if (!contextMenu || contextMenuCollapseTarget === null || !onSubtreeStatisticsRequest) {
       return;
@@ -18834,9 +18952,13 @@ export default function TreeCanvas({
     setContextMenu(null);
   }, [clearTaxonomyRootColor, contextMenu, taxonomyOutermostRank]);
 
-  const applyContextColor = useCallback((scope: "branch" | "subtree" | "taxonomy-root", color: string): void => {
+  const applyContextColor = useCallback((scope: "branch" | "subtree" | "taxonomy-root" | "ribbon", color: string): void => {
     const normalized = normalizeColorInput(color);
     if (!normalized) {
+      return;
+    }
+    if (scope === "ribbon") {
+      if (contextMenu?.kind === "node" && contextMenu.ribbonId) onUpdateCladeRibbon?.(contextMenu.ribbonId, { color: normalized });
       return;
     }
     if (scope === "branch") {
@@ -18848,10 +18970,10 @@ export default function TreeCanvas({
       return;
     }
     handleContextSetTaxonomyRootColor(normalized);
-  }, [handleContextSetBranchColor, handleContextSetSubtreeColor, handleContextSetTaxonomyRootColor]);
+  }, [contextMenu, onUpdateCladeRibbon, handleContextSetBranchColor, handleContextSetSubtreeColor, handleContextSetTaxonomyRootColor]);
 
   const renderColorSwatches = (
-    scope: "branch" | "subtree" | "taxonomy-root",
+    scope: "branch" | "subtree" | "taxonomy-root" | "ribbon",
     selectedColor: string | null,
     disabled: boolean,
   ) => (
@@ -19048,6 +19170,7 @@ export default function TreeCanvas({
         node: triangle.node,
         points: triangle.points.map((point) => ({ ...point })),
       })),
+      getSubtreeRibbonHitboxes: () => subtreeRibbonHitsRef.current.map(({ id, node, label, x, y }) => ({ id, node, label, x, y })),
       startCollapsedTriangleDrawCapture: (node: number, neighborNode: number) => {
         window.__BIG_TREE_VIEWER_COLLAPSE_DRAW_CAPTURE__ = { node, neighborNode, samples: [] };
       },
@@ -19436,6 +19559,23 @@ export default function TreeCanvas({
               <div className="tree-context-menu-meta">
                 Descendant tips: {contextMenu.descendantTipCount.toLocaleString()}
               </div>
+              {contextMenu.ribbonId ? <>
+                <button type="button" className="tree-context-menu-item" title="Rename this subtree ribbon."
+                  onClick={() => setContextMenuRibbonRename(true)}>Rename ribbon</button>
+                {contextMenuRibbonRename ? <input type="text" aria-label="Subtree ribbon name" autoFocus maxLength={256}
+                  value={customCladeRibbons.find(ribbon => ribbon.id === contextMenu.ribbonId)?.label ?? ""}
+                  onChange={event => { onUpdateCladeRibbon?.(contextMenu.ribbonId!, { label: event.target.value }); setContextMenu({ ...contextMenu, name: event.target.value }); }}
+                  onKeyDown={event => { if (event.key === "Enter" || event.key === "Escape") setContextMenu(null); }} /> : null}
+                <div className="tree-context-menu-section">
+                  <button type="button" className="tree-context-menu-item" title="Choose a preset or custom color for this ribbon."
+                    onClick={() => setContextMenuColorMode(current => current === "ribbon" ? null : "ribbon")}>Ribbon color</button>
+                  {contextMenuColorMode === "ribbon" ? <div className="tree-context-menu-swatch-panel">
+                    {renderColorSwatches("ribbon", customCladeRibbons.find(ribbon => ribbon.id === contextMenu.ribbonId)?.color ?? null, false)}
+                  </div> : null}
+                </div>
+                <button type="button" className="tree-context-menu-item" title="Remove this ribbon without changing the subtree."
+                  onClick={() => { onRemoveCladeRibbon?.(contextMenu.ribbonId!); setContextMenu(null); }}>Remove ribbon</button>
+              </> : null}
               {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
                 <button
                   type="button"
@@ -19454,14 +19594,6 @@ export default function TreeCanvas({
               >
                 Open Subtree In New Tab
               </button>
-              {tree && tree.buffers.firstChild[contextMenu.node] >= 0 ? (
-                <button type="button" className="tree-context-menu-item" disabled={!onAddCladeRibbon}
-                  title="Add an independent ribbon spanning the descendants of this node."
-                  onClick={() => {
-                    onAddCladeRibbon?.(sharedSubtreeSourceNodeByViewNode?.[contextMenu.node] ?? contextMenu.node);
-                    setContextMenu(null);
-                  }}>Add Clade Ribbon</button>
-              ) : null}
               {contextMenuCollapseTarget !== null ? (
                 <button
                   type="button"
@@ -19566,7 +19698,7 @@ export default function TreeCanvas({
                   title="Assign one color to every branch in the selected subtree."
                   onClick={() => setContextMenuColorMode((current) => current === "subtree" ? null : "subtree")}
                 >
-                  Color Subtree
+                  Color Subtree Branches
                 </button>
                 {contextMenuColorMode === "subtree" ? (
                   <div className="tree-context-menu-swatch-panel">
@@ -19587,6 +19719,14 @@ export default function TreeCanvas({
                   </div>
                 ) : null}
               </div>
+              {tree && tree.buffers.firstChild[contextMenu.node] >= 0 && contextMenuCanAddRibbon ? (
+                <button type="button" className="tree-context-menu-item" disabled={!onAddCladeRibbon}
+                  title="Add a ribbon outside taxonomy spanning the descendants of this node."
+                  onClick={() => {
+                    onAddCladeRibbon?.(contextMenuRibbonTarget!);
+                    setContextMenu(null);
+                  }}>Add subtree ribbon</button>
+              ) : null}
               <button
                 type="button"
                 className="tree-context-menu-item"
@@ -19661,17 +19801,6 @@ export default function TreeCanvas({
               >
                 Open Group Subtree In New Tab
               </button>
-              <button type="button" className="tree-context-menu-item" disabled={!onAddCladeRibbon}
-                title="Add an independent ribbon spanning this group's source-tree MRCA."
-                onClick={() => {
-                  const source = sharedSubtreeSourceTree ?? tree;
-                  if (source) {
-                    const first = sharedSubtreeSourceNodeByViewNode?.[contextMenu.firstNode] ?? contextMenu.firstNode;
-                    const last = sharedSubtreeSourceNodeByViewNode?.[contextMenu.lastNode] ?? contextMenu.lastNode;
-                    onAddCladeRibbon?.(lowestCommonAncestor(source, first, last));
-                  }
-                  setContextMenu(null);
-                }}>Add Clade Ribbon</button>
               {contextMenuCollapseTarget !== null ? (
                 <button
                   type="button"
@@ -19781,6 +19910,12 @@ export default function TreeCanvas({
                   ) : null}
                 </div>
               ) : null}
+              {contextMenuCanAddRibbon ? <button type="button" className="tree-context-menu-item" disabled={!onAddCladeRibbon}
+                title="Add a ribbon outside taxonomy spanning this group's source-tree MRCA."
+                onClick={() => {
+                  onAddCladeRibbon?.(contextMenuRibbonTarget!);
+                  setContextMenu(null);
+                }}>Add subtree ribbon</button> : null}
             </>
           ) : (
             <>

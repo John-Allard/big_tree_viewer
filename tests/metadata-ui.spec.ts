@@ -23,6 +23,81 @@ async function load(page: Page) {
 }
 
 for (const width of [1280, 390]) {
+  test(`custom taxonomy source auto-detects ranks in sidebar settings at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await load(page);
+    await openPanel(page, "Taxonomy");
+    const source = page.getByRole("combobox", { name: "Taxonomy source", exact: true });
+    const dialog = page.getByRole("group", { name: "Custom taxonomy settings", exact: true });
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole("button", { name: "Open taxonomy mapping file", exact: true })).toBeHidden();
+    await expect(page.getByRole("button", { name: "Taxonomy mapping settings", exact: true })).toHaveCount(0);
+    for (const value of ["ncbi", "catalogue-of-life"]) {
+      await source.selectOption(value);
+      await expect(page.getByText("Metadata TaxID mapping", { exact: true })).toHaveCount(0);
+      await expect(page.getByRole("combobox", { name: "Mapping key column", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Open taxonomy mapping file", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("table", { name: "Detected taxonomy rank columns" })).toHaveCount(0);
+    }
+    await source.selectOption("custom");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("Metadata TaxID mapping", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Custom Taxonomy settings", exact: true })).toHaveCount(0);
+    expect(await dialog.evaluate(el => el.matches(":modal"))).toBe(false);
+    expect(await dialog.evaluate(el => Boolean(el.closest("aside")))).toBe(true);
+    expect(await dialog.evaluate(el => getComputedStyle(el).position)).toBe("static");
+    await expect(dialog.getByRole("combobox", { name: "Mapping key column", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("combobox", { name: "Family column", exact: true })).toBeHidden();
+    await expect(dialog.getByRole("table", { name: "Detected taxonomy rank columns" })).toContainText("Familyfamily");
+    const bounds = (await dialog.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+    await dialog.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`custom-taxonomy-sidebar-${width}.png`) });
+    await dialog.getByRole("button", { name: "Apply custom taxonomy ribbons", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.getState().taxonomyMappedCount)).toBe(4);
+    await source.selectOption("ncbi");
+    await expect(dialog).toBeHidden();
+    await source.selectOption("custom");
+    await expect(dialog).toBeVisible();
+    const chooser = page.waitForEvent("filechooser");
+    await dialog.getByRole("button", { name: "Open taxonomy mapping file", exact: true }).click();
+    await (await chooser).setFiles({ name: "custom.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataFileName)).toBe("custom.csv");
+    await expect(dialog).toBeVisible();
+    await source.selectOption("ncbi");
+    await expect(dialog).toBeHidden();
+  });
+
+  test(`metadata matching readout follows its selector without a redundant load message at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await load(page);
+    const selector = page.getByRole("combobox", { name: "Match tree labels by column", exact: true });
+    const status = page.getByRole("status", { name: "Metadata row matching", exact: true });
+    await expect(status).toHaveText("Matched rows: 4");
+    expect(await page.getByRole("combobox", { name: "Collapse by metadata", exact: true }).evaluate(el => {
+      const controls = el.closest(".search-controls")!;
+      const selects = Array.from(controls.querySelectorAll("select"));
+      return selects[selects.length - 1] === el;
+    })).toBe(true);
+    await expect(page.getByText(/Loaded 4 metadata rows from/)).toHaveCount(0);
+    await expect(page.getByText(/4 rows, 10 columns/)).toHaveCount(1);
+    expect(await selector.evaluate(el => el.parentElement?.nextElementSibling?.classList.contains("metadata-match-status"))).toBe(true);
+    const style = await status.evaluate(el => {
+      const css = getComputedStyle(el);
+      return { border: css.borderTopWidth, background: css.backgroundColor };
+    });
+    expect(style).toEqual({ border: "0px", background: "rgba(0, 0, 0, 0)" });
+    expect((await status.boundingBox())!.height).toBeLessThan((await selector.boundingBox())!.height);
+    await status.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`metadata-matching-${width}.png`) });
+    await selector.selectOption("country");
+    await expect(status).toHaveText("Matched rows: 0");
+    await selector.selectOption("name");
+    await expect(status).toHaveText("Matched rows: 4");
+  });
+
   test(`metadata settings are contextual and scroll normally at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await load(page);
@@ -60,10 +135,9 @@ for (const width of [1280, 390]) {
     await page.screenshot({ path: testInfo.outputPath(`date-settings-${width}.png`) });
     await page.getByRole("button", { name: "Close Metadata branch colors settings", exact: true }).click();
     await openPanel(page, "Taxonomy");
-    const custom = page.locator(".metadata-disclosure > summary");
-    await custom.click();
-    expect(await custom.evaluate(el => getComputedStyle(el).listStyleType)).toBe("none");
-    expect((await custom.locator("svg").boundingBox())!.width).toBe(12);
+    await page.getByRole("combobox", { name: "Taxonomy source", exact: true }).selectOption("custom");
+    await expect(page.getByRole("group", { name: "Custom taxonomy settings", exact: true })).toBeVisible();
+    await page.getByText("Edit column assignments", { exact: true }).click();
     await page.getByRole("combobox", { name: "Family column", exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`custom-taxonomy-${width}.png`) });
   });

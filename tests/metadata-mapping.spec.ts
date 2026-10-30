@@ -4,6 +4,8 @@ import {
   buildMetadataTaxIdTips,
   buildMetadataTaxonomyMap,
   buildMetadataTipDisplayLabels,
+  inferMetadataTaxonomyRankColumns,
+  metadataDisplayNameCacheKey,
 } from "../src/lib/metadataMapping";
 import { parseMetadataTable } from "../src/lib/metadataColors";
 import { buildTaxonomyBlocksForOrderedLeaves, taxonomyEntityKey } from "../src/lib/taxonomyBlocks";
@@ -17,6 +19,18 @@ function treeWithTips(names: string[]): Pick<TreeModel, "nodeCount" | "names" | 
     leafNodes: Int32Array.from(names, (_, index) => index + 1),
   };
 }
+
+test("custom taxonomy auto-detects standard and optional rank headers without using unrelated data", () => {
+  expect(inferMetadataTaxonomyRankColumns(["sequence_id", "Family", "genus", "Sub_Genus", "super-family", "country", "display_name", "Species_group", "Domain"]))
+    .toEqual({ family: "Family", genus: "genus", subgenus: "Sub_Genus", superfamily: "super-family", "species group": "Species_group", superkingdom: "Domain" });
+});
+
+test("display-name mapping cache keys isolate tree identity and effective name assignments", async () => {
+  const first = await metadataDisplayNameCacheKey("tree", [null, "Escherichia coli A"]);
+  expect(await metadataDisplayNameCacheKey("tree", [null, "Escherichia coli A"])).toBe(first);
+  expect(await metadataDisplayNameCacheKey("tree", [null, "Bacillus subtilis A"])).not.toBe(first);
+  expect(await metadataDisplayNameCacheKey("other-tree", [null, "Escherichia coli A"])).not.toBe(first);
+});
 
 test("saving custom taxonomy preserves explicitly supplied ranks with a single group", () => {
   const tree = treeWithTips(["A", "B"]);

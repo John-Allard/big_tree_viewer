@@ -769,7 +769,7 @@ test("node and taxonomy context menus expose preserve-width and minimize actions
     "View Subtree Statistics",
     "Collapse Subtree",
     "Color Branch",
-    "Color Subtree",
+    "Color Subtree Branches",
     "Measure Distance",
     "Root",
   ].map((label) => nodeMenuItems.findIndex((item) => item.trim() === label));

@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { gzip, gunzip, strFromU8, strToU8 } from "fflate";
 import { ChevronLeft, ChevronRight, Maximize, Minimize } from "lucide-react";
 import CladeRibbonControls from "./components/CladeRibbonControls";
-import { normalizeCustomCladeRibbons, remapCladeRibbonsForTree, type CustomCladeRibbon } from "./lib/customCladeRibbons";
+import { buildMetadataCladeRibbons, normalizeCustomCladeRibbons, remapCladeRibbonsForTree, type CustomCladeRibbon } from "./lib/customCladeRibbons";
 import TreeCanvas from "./components/TreeCanvas";
 import TreeComparisonCanvas, { type TreeComparisonCameraState } from "./components/TreeComparisonCanvas";
 import TreeStatisticsView from "./components/TreeStatisticsView";
@@ -131,7 +131,7 @@ import type { WorkerTreePayload } from "./types/tree";
 import { parseMetadataDate } from "./lib/metadataDates";
 import { inferCalendarRootYear } from "./lib/calendarAxis";
 import { buildMetadataCollapseGroups } from "./lib/metadataCollapse";
-import { buildMetadataTipDisplayLabels, buildMetadataTaxIdTips, buildMetadataTaxonomyMap } from "./lib/metadataMapping";
+import { buildMetadataTipDisplayLabels, buildMetadataTaxIdTips, buildMetadataTaxonomyMap, inferMetadataTaxonomyRankColumns, metadataDisplayNameCacheKey } from "./lib/metadataMapping";
 import { canParseTreeInline, parseTreePayload } from "./lib/treeParser";
 import type { LayoutOrder, LoadState, TreeModel, ViewMode, ZoomAxisMode } from "./types/tree";
 import type { LabelStyleSettings } from "./lib/figureStyles";
@@ -252,6 +252,8 @@ type BigTreeViewerLaunchPayload = {
     collapseColumn?: string;
     taxIdColumn?: string;
     rankColumns?: Partial<Record<TaxonomyRank, string>>;
+    autoRankColumns?: boolean;
+    cladeRibbons?: { labelColumn: string; mode: "nodes" | "tips"; widthPx?: number; labelSizePx?: number };
     valueColumn?: string;
     colorMode?: MetadataColorMode;
     applyScope?: MetadataApplyScope;
@@ -670,6 +672,9 @@ function buildTaxonomyMappingWarning(tree: TreeModel | null, taxonomyMap: Taxono
     return "";
   }
   if (taxonomyMap.mappingOrigin) {
+    if (taxonomyMap.mappingOrigin === "metadata-display-names") {
+      return `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips were not mapped from their original or metadata display names. Check the matching column and scientific names in the display-name column.`;
+    }
     return `${unmappedCount.toLocaleString()} of ${taxonomyMap.totalTips.toLocaleString()} tips were not mapped from the metadata table. Check matching tip IDs and missing ${taxonomyMap.mappingOrigin === "metadata-taxids" ? "or invalid NCBI TaxIDs" : "rank values"}.`;
   }
   const mappedNodes = new Set(taxonomyMap.tipRanks.map((tip) => tip.node));
@@ -1310,7 +1315,8 @@ type VisualPopoverId =
   | "metadataLabels"
   | "metadataMarkers"
   | "metadataPies"
-  | "metadataTipTable";
+  | "metadataTipTable"
+  | "subtreeRibbons";
 
 function disabledControlTitle(reason?: string): string | undefined {
   return reason ? `Disabled: ${reason}` : undefined;
@@ -2027,6 +2033,8 @@ export default function App() {
   const metadataTableRef = useRef<ParsedMetadataTable | null>(null);
   const taxonomyMappingRevisionRef = useRef(0);
   const metadataTaxIdMappingRef = useRef<{ tree: TreeModel; table: ParsedMetadataTable; key: string; column: string } | null>(null);
+  const taxonomyDisplayNameContextRef = useRef<{ table: ParsedMetadataTable | null; key: string; column: string }>({ table: null, key: "", column: "" });
+  const metadataDisplayNameMappingRef = useRef<{ tree: TreeModel; table: ParsedMetadataTable | null; key: string; column: string } | null>(null);
   const metadataLegendSettingsRef = useRef<HTMLDivElement | null>(null);
   const pendingLegendSettingsScrollRef = useRef(false);
   const didAutoloadRef = useRef(false);
@@ -2217,8 +2225,8 @@ export default function App() {
   const [metadataCollapseColumn, setMetadataCollapseColumn] = useState("");
   const [metadataTaxIdColumn, setMetadataTaxIdColumn] = useState("");
   const [metadataRankColumns, setMetadataRankColumns] = useState<Partial<Record<TaxonomyRank, string>>>({});
+  const [customTaxonomySelected, setCustomTaxonomySelected] = useState(false);
   const [customCladeRibbons, setCustomCladeRibbons] = useState<CustomCladeRibbon[]>([]);
-  const cladeRibbonsDetailsRef = useRef<HTMLDetailsElement>(null);
   const [metadataValueColumn, setMetadataValueColumn] = useState("");
   const [metadataColorMode, setMetadataColorMode] = useState<MetadataColorMode>("categorical");
   const [metadataApplyScope, setMetadataApplyScope] = useState<MetadataApplyScope>("branch");
@@ -2372,11 +2380,6 @@ export default function App() {
       setViewMode("rectangular");
     }
   }, [comparisonEnabled, comparisonTree, viewMode]);
-  useLayoutEffect(() => {
-    if (tree && (viewMode === "circular" || viewMode === "fan")) {
-      setFitRequest((value) => value + 1);
-    }
-  }, [radialAngularSpanDegrees, radialCenterOpeningRatio]);
   useEffect(() => {
     setRadialAngularSpanInput(String(radialAngularSpanDegrees));
   }, [radialAngularSpanDegrees]);
@@ -3251,19 +3254,10 @@ export default function App() {
       id, node, label: tree.names[node]?.trim() || `Clade ${current.length + 1}`,
       color: ["#2b8cbe", "#d95f0e", "#31a354", "#756bb1", "#de2d26"][current.length % 5],
       placement: "outside", enabled: true,
+      widthPx: customCladeRibbons[0]?.widthPx ?? 22,
+      labelSizePx: customCladeRibbons[0]?.labelSizePx ?? 12,
     }]);
-    setMetadataOpen(true);
-    showSidebar();
-    requestAnimationFrame(() => {
-      if (cladeRibbonsDetailsRef.current) {
-        cladeRibbonsDetailsRef.current.open = true;
-        cladeRibbonsDetailsRef.current.scrollIntoView({ block: "nearest" });
-      }
-      const input = document.getElementById(`clade-ribbon-label-${id}`) as HTMLInputElement | null;
-      input?.focus({ preventScroll: true });
-      input?.select();
-    });
-  }, [tree, showSidebar, customCladeRibbons.length]);
+  }, [tree, customCladeRibbons]);
 
   const rerootCurrentTree = useCallback((node: number, mode: RerootMode): void => {
     if (!tree) {
@@ -3611,6 +3605,12 @@ export default function App() {
     setUseAutoCircularCenterScaleAngle(enabled);
   }, [effectiveCircularCenterScaleAngleDegrees]);
   const metadataColumns = metadataTable?.columns ?? [];
+  const customTaxonomyRankColumns = useMemo(() => ({
+    ...inferMetadataTaxonomyRankColumns(metadataTable?.columns ?? []), ...metadataRankColumns,
+  }), [metadataTable, metadataRankColumns]);
+  useEffect(() => {
+    setCustomTaxonomySelected(taxonomyMap?.mappingOrigin === "metadata-ranks");
+  }, [taxonomyMap]);
   const metadataDerivedView = useMemo(() => {
     if (!tree || !metadataTable || !metadataKeyColumn) return { labels: null, groups: [], error: "" };
     try {
@@ -3625,6 +3625,12 @@ export default function App() {
       return { labels: null, groups: [], error: error instanceof Error ? error.message : String(error) };
     }
   }, [tree, metadataTable, metadataKeyColumn, tipLabelMetadataColumn, metadataCollapseColumn]);
+  const taxonomyMappingCacheKey = useMemo(() => !treeSignature ? null : metadataDerivedView.labels && taxonomyIdentifierMode === "scientific-name"
+    ? metadataDisplayNameCacheKey(treeSignature, metadataDerivedView.labels) : Promise.resolve(treeSignature),
+  [treeSignature, metadataDerivedView.labels, taxonomyIdentifierMode]);
+  useLayoutEffect(() => {
+    taxonomyDisplayNameContextRef.current = { table: metadataTable, key: metadataKeyColumn, column: tipLabelMetadataColumn };
+  }, [metadataTable, metadataKeyColumn, tipLabelMetadataColumn]);
   const metadataPieColumns = useMemo(() => {
     if (metadataColumns.length === 0 || !metadataPieStartColumn || !metadataPieEndColumn) {
       return [];
@@ -4473,11 +4479,15 @@ export default function App() {
     try {
       const archive = await ensureTaxonomyArchive(allowDownload, source);
       setTaxonomyStatus(`Mapping tree tips to ${TAXONOMY_SOURCE_CONFIG[source].label}...`);
+      const displayContext = taxonomyDisplayNameContextRef.current;
+      const displayNames = !metadataTips && identifierMode === "scientific-name" && displayContext.table && displayContext.column
+        ? buildMetadataTipDisplayLabels(targetTree, displayContext.table.rows, displayContext.key, displayContext.column) : null;
       const tips = metadataTips ?? Array.from(targetTree.leafNodes)
         .sort((left, right) => targetTree.layouts.input.center[left] - targetTree.layouts.input.center[right])
         .map((node) => ({
           node,
           name: targetTree.names[node] || "",
+          ...(displayNames?.[node] ? { displayName: displayNames[node]! } : {}),
         }));
       const response = await runTaxonomyWorker({
         type: "map-taxonomy",
@@ -4492,9 +4502,14 @@ export default function App() {
         throw new Error(response.message || "Taxonomy mapping did not complete.");
       }
       if (metadataTips) response.payload.mappingOrigin = "metadata-taxids";
+      else if (displayNames) {
+        response.payload.mappingOrigin = "metadata-display-names";
+        metadataDisplayNameMappingRef.current = { tree: targetTree, ...displayContext };
+      }
       if (targetTreeSignature && !lowMemoryMode && !metadataTips) {
         try {
-          await putCachedTaxonomyMapping(targetTreeSignature, response.payload, source);
+          const cacheKey = displayNames ? await metadataDisplayNameCacheKey(targetTreeSignature, displayNames) : targetTreeSignature;
+          await putCachedTaxonomyMapping(cacheKey, response.payload, source);
         } catch (error) {
           appendDiagnostic("taxonomy-mapping-cache-failed", {
             message: error instanceof Error ? error.message : String(error),
@@ -5518,19 +5533,23 @@ export default function App() {
     setTaxonomyMappingWarning("");
     let cancelled = false;
     const mappingRevision = taxonomyMappingRevisionRef.current;
+    const expectedMetadataContext = taxonomyDisplayNameContextRef.current;
     void (async () => {
-      const cached = await getMostRecentCachedTaxonomyMapping(treeSignature);
-      if (cancelled || !cached || mappingRevision !== taxonomyMappingRevisionRef.current) {
+      const cacheKey = await taxonomyMappingCacheKey ?? treeSignature;
+      const cached = await getMostRecentCachedTaxonomyMapping(cacheKey);
+      if (cancelled || !cached || mappingRevision !== taxonomyMappingRevisionRef.current
+        || expectedMetadataContext !== taxonomyDisplayNameContextRef.current) {
         return;
       }
       setTaxonomySource(cached.source);
+      if (cached.payload.mappingOrigin === "metadata-display-names") metadataDisplayNameMappingRef.current = { tree, ...taxonomyDisplayNameContextRef.current };
       setTaxonomyIdentifierMode(taxonomyMapIdentifierMode(cached.payload));
       setTaxonomyMap(cached.payload);
       setTaxonomyEnabled(inheritedTaxonomyEnabled ?? true);
       setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(cached.payload)} mapping for this tree (${cached.payload.mappedCount.toLocaleString()} mapped tips).`);
       setTaxonomyError(null);
       setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, cached.payload));
-      void touchCachedTaxonomyMapping(treeSignature, cached.source, taxonomyMapIdentifierMode(cached.payload)).catch(() => {
+      void touchCachedTaxonomyMapping(cacheKey, cached.source, taxonomyMapIdentifierMode(cached.payload)).catch(() => {
         // A failed recency update does not invalidate a readable cached mapping.
       });
     })();
@@ -5550,13 +5569,14 @@ export default function App() {
     if (
       taxonomyMap
       && !taxonomyMap.mappingOrigin
+      && !metadataDerivedView.labels
       && taxonomyMapSource(taxonomyMap) === taxonomySource
       && taxonomyMapIdentifierMode(taxonomyMap) === taxonomyIdentifierMode
     ) {
       setSelectedSourceMappingCacheChecked(true);
       return;
     }
-    void getCachedTaxonomyMapping(treeSignature, taxonomySource, taxonomyIdentifierMode)
+    void Promise.resolve(taxonomyMappingCacheKey ?? treeSignature).then(key => getCachedTaxonomyMapping(key, taxonomySource, taxonomyIdentifierMode))
       .then((cached) => {
         if (!cancelled) {
           setSelectedSourceCachedTaxonomyMap(cached);
@@ -5571,7 +5591,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [taxonomyIdentifierMode, taxonomyMap, taxonomySource, treeSignature]);
+  }, [taxonomyIdentifierMode, taxonomyMap, taxonomySource, treeSignature, taxonomyMappingCacheKey]);
 
   const clearMetadata = useCallback((): void => {
     metadataTableRef.current = null;
@@ -5677,7 +5697,7 @@ export default function App() {
       setMetadataLabelMinSpacingPx(DEFAULT_METADATA_LABEL_MIN_SPACING_PX);
       setMetadataLabelOffsetXPx(DEFAULT_METADATA_LABEL_OFFSET_X_PX);
       setMetadataLabelOffsetYPx(DEFAULT_METADATA_LABEL_OFFSET_Y_PX);
-      setMetadataStatus(`Loaded ${table.rows.length.toLocaleString()} metadata rows from ${label}.`);
+      setMetadataStatus("");
       setMetadataError(null);
       setMetadataOverlayProcessing(false);
       return null;
@@ -5975,6 +5995,39 @@ export default function App() {
     return map;
   }, []);
 
+  const applyLaunchMetadataMappings = useCallback((targetTree: TreeModel, metadata: BigTreeViewerLaunchPayload["metadata"]): void => {
+    if (!metadata) return;
+    const table = metadataTableRef.current;
+    if (!table) throw new Error("Load a metadata table before applying metadata mappings.");
+    const key = metadata.keyColumn || table.columns[0];
+    if (!table.columns.includes(key)) throw new Error(`Unknown metadata key column: ${key}`);
+    const ranks = metadata.autoRankColumns
+      ? { ...inferMetadataTaxonomyRankColumns(table.columns), ...metadata.rankColumns }
+      : metadata.rankColumns;
+    if (ranks) {
+      if (!Object.values(ranks).some(Boolean)) throw new Error("No taxonomy rank columns were detected or assigned.");
+      setMetadataRankColumns(ranks);
+      installCustomMetadataTaxonomy(targetTree, table, key, ranks);
+    }
+    if (metadata.cladeRibbons) {
+      const { labelColumn, mode } = metadata.cladeRibbons;
+      if (!table.columns.includes(labelColumn)) throw new Error(`Unknown ribbon label column: ${labelColumn}`);
+      if (mode !== "nodes" && mode !== "tips") throw new Error("Ribbon mode must be nodes or tips.");
+      const imported = buildMetadataCladeRibbons(targetTree, table.rows, key, labelColumn, mode);
+      if (!imported.length) throw new Error("No clades matched the selected ribbon columns.");
+      if (customCladeRibbons.filter(ribbon => !ribbon.id.startsWith("metadata-ribbon:")).length + imported.length > 200) {
+        throw new Error("A tree can have up to 200 subtree ribbons.");
+      }
+      setCustomCladeRibbons(previous => normalizeCustomCladeRibbons([
+        ...previous.filter(ribbon => !ribbon.id.startsWith("metadata-ribbon:")),
+        ...imported.map(ribbon => ({ ...ribbon,
+          widthPx: metadata.cladeRibbons?.widthPx ?? 22,
+          labelSizePx: metadata.cladeRibbons?.labelSizePx ?? 12,
+        })),
+      ], targetTree.nodeCount));
+    }
+  }, [customCladeRibbons, installCustomMetadataTaxonomy]);
+
   const applyLaunchMetadata = useCallback(async (metadata: BigTreeViewerLaunchPayload["metadata"] | undefined): Promise<void> => {
     const metadataUrl = typeof metadata?.url === "string" && metadata.url.trim() ? metadata.url.trim() : "";
     if (!metadata) {
@@ -5995,6 +6048,11 @@ export default function App() {
       setMetadataKeyColumn(metadata.keyColumn);
     }
     if (typeof metadata.tipLabelColumn === "string") setTipLabelMetadataColumn(metadata.tipLabelColumn);
+    taxonomyDisplayNameContextRef.current = {
+      table: metadataTableRef.current,
+      key: metadata.keyColumn || ((metadata.text || metadataUrl) ? metadataTableRef.current?.columns[0] ?? "" : taxonomyDisplayNameContextRef.current.key),
+      column: metadata.tipLabelColumn ?? ((metadata.text || metadataUrl) ? "" : taxonomyDisplayNameContextRef.current.column),
+    };
     if (typeof metadata.collapseColumn === "string") setMetadataCollapseColumn(metadata.collapseColumn);
     if (typeof metadata.taxIdColumn === "string") setMetadataTaxIdColumn(metadata.taxIdColumn);
     if (metadata.rankColumns) setMetadataRankColumns(metadata.rankColumns);
@@ -6102,7 +6160,7 @@ export default function App() {
     const launchCompactTaxonomy = payload.taxonomy?.compact;
     const launchCompactTaxonomyProvided = launchCompactTaxonomy !== undefined;
     const launchTaxonomyRunMapping = payload.taxonomy?.runMapping === true;
-    if (payload.metadata?.rankColumns && (launchTaxonomyRunMapping || launchTaxonomyProvided || launchCompactTaxonomyProvided)) {
+    if ((payload.metadata?.rankColumns || payload.metadata?.autoRankColumns) && (launchTaxonomyRunMapping || launchTaxonomyProvided || launchCompactTaxonomyProvided)) {
       throw new Error("Custom metadata rank columns cannot be combined with a database or supplied taxonomy mapping.");
     }
     const metadataIdentifiers = (): { table: ParsedMetadataTable; key: string; column: string } | undefined => {
@@ -6113,12 +6171,9 @@ export default function App() {
       return { table, key: payload.metadata.keyColumn || table.columns[0], column: payload.metadata.taxIdColumn };
     };
     const applyLaunchRankColumns = (): void => {
-      const ranks = payload.metadata?.rankColumns;
-      if (!ranks) return;
       const targetTree = currentTreeRef.current;
-      const table = metadataTableRef.current;
-      if (!targetTree || !table) throw new Error("Custom taxonomy requires a tree and a metadata table.");
-      installCustomMetadataTaxonomy(targetTree, table, payload.metadata?.keyColumn || table.columns[0], ranks);
+      if (!targetTree) return;
+      applyLaunchMetadataMappings(targetTree, payload.metadata);
     };
     if (launchCompactTaxonomyProvided && (launchTaxonomyProvided || launchTaxonomyRunMapping)) {
       throw new Error("taxonomy.compact cannot be combined with taxonomy.map or taxonomy.runMapping.");
@@ -6277,7 +6332,7 @@ export default function App() {
       throw error;
     }
     return { loaded: true, viewMode: effectiveViewMode, label };
-  }, [applyLaunchMetadata, applyLaunchVisualSettings, installCustomMetadataTaxonomy, loadFullSessionFromObject, parseText, runStandardTaxonomyMappingForTree, useLowMemoryTaxonomyMapping, viewMode, waitForMetadataOverlayCompletion]);
+  }, [applyLaunchMetadata, applyLaunchMetadataMappings, applyLaunchVisualSettings, installCustomMetadataTaxonomy, loadFullSessionFromObject, parseText, runStandardTaxonomyMappingForTree, useLowMemoryTaxonomyMapping, viewMode, waitForMetadataOverlayCompletion]);
 
   const readLaunchPayloadFromUrl = useCallback((): {
     payload: BigTreeViewerLaunchPayload | null;
@@ -6827,11 +6882,10 @@ export default function App() {
             applyLaunchVisualSettings(payload.visual);
             await applyLaunchMetadata(payload.metadata);
             const table = metadataTableRef.current;
-            if (payload.metadata?.rankColumns) {
+            if (payload.metadata?.rankColumns || payload.metadata?.autoRankColumns) {
               if (payload.taxonomy?.runMapping) throw new Error("Custom metadata ranks cannot be combined with database mapping.");
-              if (!table) throw new Error("Custom taxonomy requires a metadata table.");
-              installCustomMetadataTaxonomy(tree, table, payload.metadata.keyColumn || table.columns[0], payload.metadata.rankColumns);
             }
+            applyLaunchMetadataMappings(tree, payload.metadata);
             const metadataTaxIdColumn = payload.metadata?.taxIdColumn;
             if (metadataTaxIdColumn && payload.taxonomy?.source === "catalogue-of-life") throw new Error("NCBI TaxID columns require NCBI Taxonomy.");
             if (payload.taxonomy?.runMapping) {
@@ -7240,11 +7294,12 @@ export default function App() {
     }
   }, [activateTaxonomyArchiveFile, appendDiagnostic, taxonomySource]);
 
-  const runTaxonomyMapping = useCallback(async (): Promise<TaxonomyMapPayload | null> => {
+  const runTaxonomyMapping = useCallback(async (sourceOverride?: TaxonomySource): Promise<TaxonomyMapPayload | null> => {
     if (!tree) {
       return null;
     }
-    if (taxonomySource === "ncbi" && metadataTaxIdColumn && metadataTable) {
+    const mappingSource = sourceOverride ?? taxonomySource;
+    if (mappingSource === "ncbi" && metadataTaxIdColumn && metadataTable) {
       try {
         const tips = buildMetadataTaxIdTips(tree, metadataTable.rows, metadataKeyColumn, metadataTaxIdColumn);
         const result = await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, "ncbi", "ncbi-taxid", [...DEFAULT_TAXONOMY_RANKS], tips);
@@ -7255,24 +7310,19 @@ export default function App() {
         return null;
       }
     }
-    return await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, taxonomySource, taxonomyIdentifierMode);
+    return await runStandardTaxonomyMappingForTree(tree, treeSignature, useLowMemoryTaxonomyMapping, true, mappingSource, taxonomyIdentifierMode);
   }, [metadataTaxIdColumn, metadataTable, metadataKeyColumn, runStandardTaxonomyMappingForTree, taxonomyIdentifierMode, taxonomySource, tree, treeSignature, useLowMemoryTaxonomyMapping]);
 
   const applyCustomMetadataTaxonomy = useCallback((): void => {
     if (!tree || !metadataTable) return;
     try {
-      installCustomMetadataTaxonomy(tree, metadataTable, metadataKeyColumn, metadataRankColumns);
+      installCustomMetadataTaxonomy(tree, metadataTable, metadataKeyColumn, customTaxonomyRankColumns);
     } catch (error) {
       setTaxonomyError(error instanceof Error ? error.message : String(error));
     }
-  }, [installCustomMetadataTaxonomy, tree, metadataTable, metadataKeyColumn, metadataRankColumns]);
+  }, [installCustomMetadataTaxonomy, tree, metadataTable, metadataKeyColumn, customTaxonomyRankColumns]);
 
-  const canLoadSelectedCachedTaxonomyMapping = Boolean(
-    tree
-    && !metadataTaxIdColumn
-    && selectedSourceCachedTaxonomyMap
-    && (!taxonomyMap || taxonomyMapSource(taxonomyMap) !== taxonomySource || taxonomyMapIdentifierMode(taxonomyMap) !== taxonomyIdentifierMode),
-  );
+  const hasTaxonomyDisplayNames = Boolean(metadataTable && tipLabelMetadataColumn);
   const selectedSourceTaxonomyLoaded = Boolean(
     tree
     && taxonomyMap
@@ -7280,10 +7330,16 @@ export default function App() {
       ? taxonomyMap.mappingOrigin === "metadata-taxids" && metadataTaxIdMappingRef.current?.tree === tree
         && metadataTaxIdMappingRef.current?.table === metadataTable && metadataTaxIdMappingRef.current?.key === metadataKeyColumn
         && metadataTaxIdMappingRef.current?.column === metadataTaxIdColumn
-      : !taxonomyMap.mappingOrigin)
+      : hasTaxonomyDisplayNames
+        ? taxonomyMap.mappingOrigin === "metadata-display-names" && metadataDisplayNameMappingRef.current?.tree === tree
+          && metadataDisplayNameMappingRef.current?.table === metadataTable && metadataDisplayNameMappingRef.current?.key === metadataKeyColumn
+          && metadataDisplayNameMappingRef.current?.column === tipLabelMetadataColumn
+        : !taxonomyMap.mappingOrigin)
     && taxonomyMapSource(taxonomyMap) === taxonomySource
     && taxonomyMapIdentifierMode(taxonomyMap) === taxonomyIdentifierMode,
   );
+  const canLoadSelectedCachedTaxonomyMapping = Boolean(tree && !metadataTaxIdColumn
+    && selectedSourceCachedTaxonomyMap && !selectedSourceTaxonomyLoaded);
   const taxonomyArchiveIsStale = Boolean(
     taxonomyCached
     && taxonomyArchiveMetadata
@@ -7294,19 +7350,20 @@ export default function App() {
     if (!tree || !treeSignature) {
       return null;
     }
-    if (!metadataTaxIdColumn && selectedSourceCachedTaxonomyMap && (!taxonomyMap || taxonomyMap.mappingOrigin || taxonomyMapSource(taxonomyMap) !== taxonomySource || taxonomyMapIdentifierMode(taxonomyMap) !== taxonomyIdentifierMode)) {
+    if (!metadataTaxIdColumn && selectedSourceCachedTaxonomyMap && !selectedSourceTaxonomyLoaded) {
+      if (selectedSourceCachedTaxonomyMap.mappingOrigin === "metadata-display-names") metadataDisplayNameMappingRef.current = { tree, ...taxonomyDisplayNameContextRef.current };
       setTaxonomyMap(selectedSourceCachedTaxonomyMap);
       setTaxonomyEnabled(true);
       setTaxonomyStatus(`Loaded cached ${taxonomyMapSourceLabel(selectedSourceCachedTaxonomyMap)} mapping for this tree (${selectedSourceCachedTaxonomyMap.mappedCount.toLocaleString()} mapped tips).`);
       setTaxonomyError(null);
       setTaxonomyMappingWarning(buildTaxonomyMappingWarning(tree, selectedSourceCachedTaxonomyMap));
-      void touchCachedTaxonomyMapping(treeSignature, taxonomySource, taxonomyIdentifierMode).catch(() => {
+      void touchCachedTaxonomyMapping(await taxonomyMappingCacheKey ?? treeSignature, taxonomySource, taxonomyIdentifierMode).catch(() => {
         // A failed recency update does not invalidate a readable cached mapping.
       });
       return selectedSourceCachedTaxonomyMap;
     }
     return await runTaxonomyMapping();
-  }, [metadataTaxIdColumn, runTaxonomyMapping, selectedSourceCachedTaxonomyMap, taxonomyIdentifierMode, taxonomyMap, taxonomySource, tree, treeSignature]);
+  }, [metadataTaxIdColumn, runTaxonomyMapping, selectedSourceCachedTaxonomyMap, selectedSourceTaxonomyLoaded, taxonomyIdentifierMode, taxonomySource, tree, treeSignature, taxonomyMappingCacheKey]);
 
   const selectTaxonomySource = useCallback((source: TaxonomySource): void => {
     if (source === taxonomySource) {
@@ -9604,19 +9661,25 @@ export default function App() {
         <PanelSection title="Taxonomy" isOpen={taxonomyOpen} onToggle={() => setTaxonomyOpen(!taxonomyOpen)} tourId="taxonomy">
           <div className="search-controls">
             {taxonomyStatus ? <p className="status-line">{taxonomyStatus}</p> : null}
-            <label title="Choose the taxonomy used to map tree labels. NCBI Taxonomy remains the default.">
+            <label title="Choose a taxonomy database or import custom taxonomy from metadata rank columns.">
               Taxonomy source
               <select
-                value={taxonomySource}
+                value={customTaxonomySelected ? "custom" : taxonomySource}
                 disabled={taxonomyLoading}
-                onChange={(event) => selectTaxonomySource(event.target.value as TaxonomySource)}
+                onChange={(event) => {
+                  const custom = event.target.value === "custom";
+                  setCustomTaxonomySelected(custom);
+                  if (!custom) selectTaxonomySource(event.target.value as TaxonomySource);
+                }}
               >
                 <option value="ncbi">NCBI Taxonomy</option>
                 <option value="catalogue-of-life">Catalogue of Life</option>
+                <option value="custom">Custom Taxonomy</option>
               </select>
             </label>
+            {customTaxonomySelected ? <div className="custom-taxonomy-settings" role="group" aria-label="Custom taxonomy settings">
             <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()}
-              title="Load a shared CSV or TSV metadata table with tree tip IDs and NCBI TaxIDs or custom taxonomic rank columns. This replaces the currently loaded metadata table.">
+              title="Load a shared CSV or TSV table. Custom rank columns are detected from headers such as genus, family, order, or subgenus. This replaces the currently loaded metadata table.">
               Open taxonomy mapping file
             </button>
             {metadataTable ? (
@@ -9627,24 +9690,20 @@ export default function App() {
                     {metadataColumns.map(column => <option key={column} value={column}>{column}</option>)}
                   </select>
                 </label>
-                {taxonomySource === "ncbi" ? (
-                  <label title="Use NCBI Taxonomy IDs from this CSV column instead of the tree labels. Empty or unmatched rows stay unmapped.">
-                    NCBI TaxID column
-                    <select value={metadataTaxIdColumn} onChange={event => setMetadataTaxIdColumn(event.target.value)} disabled={taxonomyLoading}>
-                      <option value="">Use tree labels</option>
-                      {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
-                    </select>
-                  </label>
-                ) : null}
-                <details className="metadata-disclosure">
-                  <summary title="Build taxonomy ribbons directly from group names in the metadata, without a taxonomy database.">
-                    <ChevronRight className="metadata-disclosure-chevron" size={12} aria-hidden="true" />
-                    Custom taxonomy from metadata
-                  </summary>
-                  {TAXONOMY_RANKS.filter(rank => isDefaultTaxonomyRank(rank) || metadataRankColumns[rank] !== undefined).map(rank => (
+                {customTaxonomySelected ? <>
+                  <table className="custom-taxonomy-rank-preview" aria-label="Detected taxonomy rank columns">
+                    <thead><tr><th>Rank</th><th>Column</th></tr></thead>
+                    <tbody>{TAXONOMY_RANKS.filter(rank => customTaxonomyRankColumns[rank] && metadataColumns.includes(customTaxonomyRankColumns[rank]!)).map(rank => (
+                      <tr key={rank}><th scope="row">{taxonomyRankLabel(rank)}</th><td>{customTaxonomyRankColumns[rank]}</td></tr>
+                    ))}</tbody>
+                  </table>
+                  {!Object.values(customTaxonomyRankColumns).some(Boolean) ? <p className="status-line">No taxonomic rank columns detected.</p> : null}
+                  <details className="custom-taxonomy-overrides">
+                  <summary>Edit column assignments</summary>
+                  {TAXONOMY_RANKS.filter(rank => isDefaultTaxonomyRank(rank) || customTaxonomyRankColumns[rank] !== undefined).map(rank => (
                     <label key={rank} title={`Use a metadata column for the ${rank} ribbon.`}>
                       {taxonomyRankLabel(rank)} column
-                      <select value={metadataRankColumns[rank] ?? ""} onChange={event => setMetadataRankColumns(current => ({ ...current, [rank]: event.target.value }))}>
+                      <select value={customTaxonomyRankColumns[rank] ?? ""} onChange={event => setMetadataRankColumns(current => ({ ...current, [rank]: event.target.value }))}>
                         <option value="">Not assigned</option>
                         {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
                       </select>
@@ -9654,15 +9713,29 @@ export default function App() {
                     Additional custom rank
                     <select value="" onChange={event => { if (event.target.value) setMetadataRankColumns(current => ({ ...current, [event.target.value]: "" })); }}>
                       <option value="">Choose a rank</option>
-                      {OPTIONAL_TAXONOMY_RANKS.filter(rank => metadataRankColumns[rank] === undefined).map(rank => <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>)}
+                      {OPTIONAL_TAXONOMY_RANKS.filter(rank => customTaxonomyRankColumns[rank] === undefined).map(rank => <option key={rank} value={rank}>{taxonomyRankLabel(rank)}</option>)}
                     </select>
                   </label>
-                  <button type="button" className="secondary" disabled={!tree || taxonomyLoading || !Object.values(metadataRankColumns).some(Boolean)} onClick={applyCustomMetadataTaxonomy}>
+                  </details>
+                  <button type="button" className="secondary" disabled={!tree || taxonomyLoading || !Object.values(customTaxonomyRankColumns).some(Boolean)} onClick={applyCustomMetadataTaxonomy}>
                     Apply custom taxonomy ribbons
                   </button>
-                </details>
+                  <details className="custom-taxonomy-overrides">
+                    <summary>Metadata TaxID mapping</summary>
+                    <label title="Use NCBI TaxIDs from this metadata column instead of tree labels.">NCBI TaxID column
+                      <select value={metadataTaxIdColumn} onChange={event => setMetadataTaxIdColumn(event.target.value)} disabled={taxonomyLoading}>
+                        <option value="">Choose a column</option>
+                        {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
+                      </select>
+                    </label>
+                    <button type="button" className="secondary" disabled={!tree || taxonomyLoading || !metadataTaxIdColumn}
+                      onClick={() => void runTaxonomyMapping("ncbi")}>Map NCBI TaxIDs</button>
+                  </details>
+                </> : null}
               </>
             ) : null}
+            </div> : null}
+            {!customTaxonomySelected ? <>
             {taxonomySource === "ncbi" && hasDetectedNcbiTaxIds && !metadataTaxIdColumn ? (
               <label className="label-style-inline-toggle" title="Use the NCBI Taxonomy IDs detected in the loaded tree's tip labels instead of interpreting the labels as scientific names.">
                 <input
@@ -9778,6 +9851,7 @@ export default function App() {
                 </button>
               </div>
             ) : null}
+            </> : null}
             {taxonomyMappingWarning ? (
               taxonomyMappingWarningCollapsed ? (
                 <button
@@ -10041,17 +10115,11 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+                <p className="metadata-match-status" role="status" aria-label="Metadata row matching">
+                  Matched rows: <strong>{metadataOverlayProcessing ? "..." : (tree ? metadataTable.rows.length - metadataUnmappedRows.total : 0).toLocaleString()}</strong>
+                </p>
                 {comparisonEnabled && comparisonTree ? <p className="status-line">Metadata displays are unavailable during tree comparison. Your settings are retained.</p> : null}
                 <fieldset className="metadata-display-controls" disabled={Boolean(comparisonEnabled && comparisonTree)} aria-label="Metadata displays">
-                <label title={taxonomyCollapseIsSynthetic ? "Metadata collapse is unavailable while the tree is collapsed to a taxonomy rank." : "Collapse maximal clades only when every descendant tip has the same nonempty metadata value. Missing or conflicting values prevent collapse; separate occurrences remain separate."}>
-                  Collapse by metadata
-                  <select value={metadataCollapseColumn} disabled={taxonomyCollapseIsSynthetic || comparisonEnabled && Boolean(comparisonTree)} onChange={event => setMetadataCollapseColumn(event.target.value)}>
-                    <option value="">Do not collapse</option>
-                    {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
-                  </select>
-                </label>
-                {metadataCollapseColumn ? <p className="status-line">{metadataDerivedView.groups.length.toLocaleString()} uniform clades</p> : null}
-                {metadataDerivedView.error ? <p className="status-error">{metadataDerivedView.error}</p> : null}
                 <div ref={metadataLegendSettingsRef} className="metadata-toggle-row">
                   <label className="metadata-inline-toggle metadata-toggle-main" title="Show a movable metadata key on the tree and in exported figures.">
                     <input type="checkbox" checked={metadataLegendEnabled} onChange={event => setMetadataLegendEnabled(event.target.checked)} />
@@ -10717,10 +10785,12 @@ export default function App() {
                   </SettingsPopoverButton>
                 </div>
                 <CladeRibbonControls ribbons={customCladeRibbons} onChange={setCustomCladeRibbons}
-                  detailsRef={cladeRibbonsDetailsRef} comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
+                  isOpen={activeLabelStylePopover === "subtreeRibbons"}
+                  onToggle={() => setActiveLabelStylePopover(current => current === "subtreeRibbons" ? null : "subtreeRibbons")}
+                  tree={tree} columns={metadataColumns} rows={metadataTable.rows} keyColumn={metadataKeyColumn}
+                  comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
                 </fieldset>
                 <div className="metadata-summary">
-                  <span>Matched rows: {metadataOverlayProcessing ? "..." : (tree ? metadataTable.rows.length - metadataUnmappedRows.total : 0).toLocaleString()}</span>
                   {metadataEnabled && metadataOverlay.matchedNodeCount !== metadataOverlay.matchedRowCount ? (
                     <span>Matched nodes: {metadataOverlay.matchedNodeCount.toLocaleString()}</span>
                   ) : null}
@@ -10789,11 +10859,22 @@ export default function App() {
                     Invalid pie rows: {metadataPieOverlay.invalidValueRowCount.toLocaleString()}
                   </p>
                 ) : null}
+                <label title={taxonomyCollapseIsSynthetic ? "Metadata collapse is unavailable while the tree is collapsed to a taxonomy rank." : "Collapse maximal clades only when every descendant tip has the same nonempty metadata value. Missing or conflicting values prevent collapse; separate occurrences remain separate."}>
+                  Collapse by metadata
+                  <select value={metadataCollapseColumn} disabled={taxonomyCollapseIsSynthetic || comparisonEnabled && Boolean(comparisonTree)} onChange={event => setMetadataCollapseColumn(event.target.value)}>
+                    <option value="">Do not collapse</option>
+                    {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{column}</option>)}
+                  </select>
+                </label>
+                {metadataCollapseColumn ? <p className="status-line">{metadataDerivedView.groups.length.toLocaleString()} uniform clades</p> : null}
+                {metadataDerivedView.error ? <p className="status-error">{metadataDerivedView.error}</p> : null}
               </>
             ) : null}
             {!metadataTable && customCladeRibbons.length > 0 ? (
               <CladeRibbonControls ribbons={customCladeRibbons} onChange={setCustomCladeRibbons}
-                detailsRef={cladeRibbonsDetailsRef} comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
+                isOpen={activeLabelStylePopover === "subtreeRibbons"}
+                onToggle={() => setActiveLabelStylePopover(current => current === "subtreeRibbons" ? null : "subtreeRibbons")}
+                tree={tree} comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
             ) : null}
             {metadataOverlayProcessing ? (
               <>
@@ -10806,10 +10887,9 @@ export default function App() {
                     aria-label="Metadata file read progress"
                   />
                 ) : null}
-                <p className="status-line">Loading metadata overlays...</p>
+                <p className="status-line">{metadataStatus || "Loading metadata overlays..."}</p>
               </>
             ) : null}
-            {metadataStatus ? <p className="status-line">{metadataStatus}</p> : null}
             {metadataError ? <p className="status-error">{metadataError}</p> : null}
           </div>
         </PanelSection>
@@ -11290,6 +11370,8 @@ export default function App() {
           showGenusLabels={showGenusLabels && !taxonomyEnabled && !taxonomyCollapseIsSynthetic}
           taxonomyEnabled={taxonomyEnabled}
           customCladeRibbons={customCladeRibbons}
+          onUpdateCladeRibbon={(id, patch) => setCustomCladeRibbons(current => current.map(ribbon => ribbon.id === id ? { ...ribbon, ...patch } : ribbon))}
+          onRemoveCladeRibbon={id => setCustomCladeRibbons(current => current.filter(ribbon => ribbon.id !== id))}
           onAddCladeRibbon={addCladeRibbon}
           taxonomyOverlayStyle={taxonomyOverlayStyle}
           taxonomyBranchColoringEnabled={taxonomyBranchColoringEnabled}

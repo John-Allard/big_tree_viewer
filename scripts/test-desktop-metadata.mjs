@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ const client = new Client({ name: 'btv-metadata-test', version: '1.0.0' });
 const metadata = {
   text: 'id,display,country,date,family,genus\ns1,Sample One,France,2022-01-01,Alpha,One\ns2,Sample Two,France,2022-02-01,Alpha,One\ns3,Sample Three,Canada,2023-01-01,Beta,Two\ns4,Sample Four,Canada,2023-02-01,Beta,Two\n',
   keyColumn: 'id', tipLabelColumn: 'display', enabled: true, valueColumn: 'date', colorMode: 'date',
-  rankColumns: { family: 'family', genus: 'genus' },
+  autoRankColumns: true,
 };
 const ribbon = { id: 'study', node: 1, label: 'Study clade', color: '#159b83', placement: 'outside', enabled: true };
 async function call(name, args) {
@@ -38,7 +38,10 @@ try {
       showGenusLabels: false, customCladeRibbons: [ribbon], metadataLegendEnabled: true,
       metadataTipTableEnabled: true, metadataTipTableMode: 'heatmap',
       metadataTipTableColumns: [{ column: 'date', label: 'Collection date', valueType: 'date' }],
-      figureStyles: { scale: { calendarAxis: true, calendarRootYear: 2020, showTimeGuideLabels: true } },
+      metadataLegendComponents: { branchColors: true, markers: false, pies: false },
+      metadataLegendPlacement: { x: 0.7, y: 0.15 },
+      figureStyles: { scale: { calendarAxis: true, calendarRootYear: 2020, showTimeGuideLabels: true },
+        internalNode: { metadataPlacement: 'stem', metadataAngularOffsetDegrees: 12 } },
     } });
   const sessionId = opened.sessionId;
   assert.equal(opened.metadata.error, null);
@@ -49,6 +52,10 @@ try {
   assert.equal(opened.taxonomy.mappedTips, 4);
   assert.equal(opened.settings.metadataColorMode, 'date');
   assert.equal(opened.settings.tipLabelMetadataColumn, 'display');
+  assert.equal(opened.settings.figureStyles.internalNode.metadataAngularOffsetDegrees, 12);
+  assert.equal(opened.settings.figureStyles.internalNode.metadataPlacement, 'stem');
+  assert.deepEqual(opened.settings.metadataLegendPlacement, { x: 0.7, y: 0.15 });
+  assert.deepEqual(opened.settings.metadataLegendComponents, { branchColors: true, markers: false, pies: false });
   assert.deepEqual(opened.settings.customCladeRibbons, [ribbon]);
   const svgPath = path.join(dir, 'metadata.svg');
   await call('export_tree', { sessionId, outputPath: svgPath });
@@ -86,6 +93,36 @@ try {
   assert.equal(reset.settings.scaleTickIntervalInput, '0.25');
   const info = await call('inspect_tree', { sessionId });
   assert.equal(info.taxonomy.mappedTips, 4);
+  const taxonomyFile = path.join(dir, 'custom-taxonomy.csv');
+  await writeFile(taxonomyFile, metadata.text);
+  const imported = await call('update_tree', { sessionId, metadataPath: taxonomyFile,
+    settings: { customCladeRibbons: [ribbon] }, metadata: {
+      keyColumn: 'id', autoRankColumns: true,
+      cladeRibbons: { labelColumn: 'country', mode: 'tips', widthPx: 40, labelSizePx: 18 },
+    } });
+  assert.equal(imported.taxonomy.mappedTips, 4);
+  assert.equal(imported.metadata.enabledCladeRibbonCount, 3);
+  assert.ok(imported.settings.customCladeRibbons.some(item => item.id === 'study'));
+  assert.deepEqual(imported.settings.customCladeRibbons.filter(item => item.id.startsWith('metadata-ribbon:')).map(item => [item.label, item.widthPx, item.labelSizePx]),
+    [['France', 40, 18], ['Canada', 40, 18]]);
+  const nodeTable = 'id,ribbon\nPairA,Left group\nPairB,Right group\n';
+  const nodeRibbons = await call('update_tree', { sessionId, metadata: {
+    text: nodeTable, keyColumn: 'id', cladeRibbons: { labelColumn: 'ribbon', mode: 'nodes' },
+  } });
+  assert.equal(nodeRibbons.taxonomy.mappedTips, 4);
+  assert.equal(nodeRibbons.metadata.enabledCladeRibbonCount, 3);
+  assert.deepEqual(nodeRibbons.settings.customCladeRibbons.map(item => item.label), ['Study clade', 'Left group', 'Right group']);
+  const importSession = path.join(dir, 'imported.btvsession');
+  await call('export_tree', { sessionId, outputPath: importSession });
+  const restored = await call('open_tree', { treePath: importSession });
+  assert.deepEqual(restored.settings.customCladeRibbons, nodeRibbons.settings.customCladeRibbons);
+  assert.equal(restored.taxonomy.mappedTips, 4);
+  await call('close_tree', { sessionId: restored.sessionId });
+  const rendered = await call('render_tree', { newick: '((s1:1,s2:1)PairA:1,(s3:1,s4:1)PairB:1)Root;',
+    metadataPath: taxonomyFile, metadata: { keyColumn: 'id', autoRankColumns: true,
+      cladeRibbons: { labelColumn: 'country', mode: 'tips' } }, outputPath: path.join(dir, 'import.svg') });
+  assert.equal(rendered.tree.taxonomy.mappedTips, 4);
+  assert.equal(rendered.tree.metadata.enabledCladeRibbonCount, 2);
   await call('close_tree', { sessionId });
   console.log('Desktop MCP metadata/scales: date colors, display names, custom taxonomy, clade ribbons, tables, collapse, session roundtrip, and reset passed.');
 } finally {

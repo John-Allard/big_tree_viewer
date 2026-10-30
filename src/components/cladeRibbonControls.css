@@ -1,12 +1,2 @@
-.clade-ribbon-controls { margin: 0; min-width: 0; }
-.clade-ribbon-controls > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.88rem; font-weight: 400; list-style: none; }
-.clade-ribbon-controls > summary::-webkit-details-marker { display: none; }
-.clade-ribbon-chevron { flex: 0 0 12px; }
-.clade-ribbon-controls[open] > summary .clade-ribbon-chevron { transform: rotate(90deg); }
-.clade-ribbon-item { padding: 10px 0; border-bottom: 1px solid #e5e7eb; min-width: 0; }
-.clade-ribbon-name-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 30px; align-items: center; gap: 6px; }
-.clade-ribbon-name-row input[type="text"] { width: 100%; min-width: 0; box-sizing: border-box; }
-.clade-ribbon-name-row button { width: 30px; height: 30px; padding: 5px; display: grid; place-items: center; }
-.clade-ribbon-style-row { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 8px; margin: 6px 0 0 26px; align-items: center; }
-.clade-ribbon-style-row input[type="color"] { width: 36px; height: 28px; padding: 2px; }
-.clade-ribbon-style-row select { min-width: 0; width: 100%; }
+.clade-ribbon-controls { min-width: 0; }
+.clade-ribbon-controls .label-style-gear { display: grid; place-items: center; }

@@ -73,6 +73,29 @@ function buildParsedTaxonomy(): ParsedTaxonomyForMapping {
   return { nodes, rankNames, speciesIndex, genusIndex, namedTaxonIndex };
 }
 
+test("metadata display binomials are fallbacks and preserve context and explicit TaxID priority", () => {
+  const taxonomy = buildParsedTaxonomy();
+  const tips = [
+    { node: 0, name: "A", displayName: "Panthera_leo_A" },
+    { node: 1, name: "B", displayName: "'Panthera leo isolate B'" },
+    { node: 2, name: "Malus_domestica_original", displayName: "Panthera leo C" },
+    { node: 3, name: "D", displayName: "not_a_species" },
+  ];
+  const mapped = mapTipsWithContext(tips, taxonomy, TARGET_RANKS, 1);
+  expect(mapped.tipRanks.find(tip => tip.node === 0)?.sourceTaxId).toBe(17);
+  expect(mapped.tipRanks.find(tip => tip.node === 1)?.sourceTaxId).toBe(17);
+  expect(mapped.tipRanks.find(tip => tip.node === 2)?.sourceTaxId).toBe(27);
+  expect(mapped.tipRanks.some(tip => tip.node === 3)).toBe(false);
+  const taxIds = mapTipsWithContext([{ node: 0, name: "taxid=17", displayName: "Malus domestica A" }], taxonomy, TARGET_RANKS, 1, { identifierMode: "ncbi-taxid" });
+  expect(taxIds.tipRanks[0].sourceTaxId).toBe(17);
+  const contextual = mapTipsWithContext([
+    { node: 0, name: "A", displayName: "Panthera leo A" },
+    { node: 1, name: "B", displayName: "Duplicata communis B" },
+    { node: 2, name: "C", displayName: "Panthera leo C" },
+  ], taxonomy, TARGET_RANKS, 1);
+  expect(contextual.tipRanks.find(tip => tip.node === 1)?.sourceTaxId).toBe(15);
+});
+
 test("species-name candidates support leading binomials with trailing identifiers", async () => {
   expect(candidateSpeciesNames("Homo_sapiens_HBB_isoform_2")).toEqual([
     "homo sapiens hbb isoform 2",

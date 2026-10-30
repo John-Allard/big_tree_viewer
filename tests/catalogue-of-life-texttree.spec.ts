@@ -52,7 +52,7 @@ const FIXTURE = `Eukaryota Chatton, 1925 [domain]
             Cephalophula Example, 1900 [genus]
               Cephalophula vegetabilis Example, 1900 [species]`;
 
-function parseFixture(tips: Array<{ node: number; name: string }>) {
+function parseFixture(tips: Array<{ node: number; name: string; displayName?: string }>) {
   const parser = createCatalogueOfLifeTextTreeParser(tips);
   for (const line of FIXTURE.split("\n")) {
     parser.consumeLine(line);
@@ -87,6 +87,16 @@ test("TextTree mapping ignores authorship after an exact scientific-name prefix"
   expect(byNode.get(3)?.ranks.phylum).toBe("Tracheophyta");
   expect(byNode.get(3)?.ranks.kingdom).toBe("Plantae");
   expect(payload.activeRanks).toContain("kingdom");
+});
+
+test("TextTree indexes metadata display-name binomials and synonyms", () => {
+  const payload = parseFixture([
+    { node: 1, name: "A", displayName: "Homo_sapiens_A" },
+    { node: 2, name: "B", displayName: "Homo diurnus B" },
+    { node: 3, name: "C", displayName: "Macaca mulatta specimen C" },
+  ]);
+  expect(payload.mappedCount).toBe(3);
+  expect(payload.tipRanks.map(tip => tip.ranks.genus)).toEqual(["Homo", "Homo", "Macaca"]);
 });
 
 test("TextTree synonyms inherit the accepted taxon's lineage", () => {

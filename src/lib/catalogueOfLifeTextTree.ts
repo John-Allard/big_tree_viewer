@@ -7,6 +7,7 @@ import {
   enrichTaxonomyMapRanks,
   mapTipsWithContext,
   normalizeTaxonomyName,
+  taxonomyLookupNames,
   TAXONOMY_NAMED_LINEAGE_RANKS,
   type ParsedTaxonomyForMapping,
   type TipTaxonomyRequest,
@@ -107,20 +108,20 @@ export function createCatalogueOfLifeTextTreeParser(
   const namedTaxa = new Set<string>();
   let maxSpeciesNameTokens = 2;
 
-  for (const tip of tips) {
-    for (const candidate of candidateSpeciesNames(tip.name)) {
+  for (const tip of tips) for (const name of taxonomyLookupNames(tip)) {
+    for (const candidate of candidateSpeciesNames(name)) {
       speciesNames.add(candidate);
       maxSpeciesNameTokens = Math.max(maxSpeciesNameTokens, candidate.split(" ").length);
     }
-    const epithet = extractSpeciesEpithet(tip.name);
+    const epithet = extractSpeciesEpithet(name);
     if (epithet) {
       speciesEpithets.add(epithet);
     }
-    const genus = extractGenus(tip.name);
+    const genus = extractGenus(name);
     if (genus) {
       genera.add(genus);
     }
-    const namedTaxon = candidateExactTaxonName(tip.name);
+    const namedTaxon = candidateExactTaxonName(name);
     if (namedTaxon) {
       namedTaxa.add(namedTaxon);
     }

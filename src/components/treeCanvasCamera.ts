@@ -2,6 +2,7 @@ import type { TreeModel } from "../types/tree";
 import type { CircularCamera, RectCamera } from "./treeCanvasTypes";
 
 interface RectClampPadding {
+  viewportLeft?: number;
   left?: number;
   right?: number;
   top?: number;
@@ -226,8 +227,13 @@ export function clampRectCamera(
   const bottomPadding = padding.bottom ?? 0;
   const spanX = (tree.maxDepth * camera.scaleX) + leftPadding + rightPadding;
   const spanY = Math.max(1, tree.leafCount - 1) * camera.scaleY + topPadding + bottomPadding;
-  const minTranslateX = visibleMargin - spanX + leftPadding;
-  const maxTranslateX = width - visibleMargin + leftPadding;
+  // Decorative padding cannot be the only thing intersecting the viewport,
+  // particularly when the sidebar covers the left part of the canvas.
+  const minTranslateX = padding.viewportLeft !== undefined
+    ? padding.viewportLeft + visibleMargin - tree.maxDepth * camera.scaleX
+    : visibleMargin - spanX + leftPadding;
+  const maxTranslateX = padding.viewportLeft !== undefined
+    ? width - visibleMargin : width - visibleMargin + leftPadding;
   const minTranslateY = visibleMargin - spanY + topPadding;
   const maxTranslateY = height - visibleMargin + topPadding;
   camera.translateX = Math.min(maxTranslateX, Math.max(minTranslateX, camera.translateX));

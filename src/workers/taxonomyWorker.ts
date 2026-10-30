@@ -10,6 +10,8 @@ import {
   extractGenus,
   mapTipsWithContext,
   normalizeTaxonomyName,
+  taxonomyLookupNames,
+  type TipTaxonomyRequest,
   TAXONOMY_NAMED_LINEAGE_RANKS,
   TAXONOMY_SPECIES_INDEX_NAME_CLASSES,
   TAXONOMY_SPECIES_INDEX_RANKS,
@@ -18,8 +20,8 @@ import { DEFAULT_TAXONOMY_RANKS, type TaxonomyIdentifierMode, type TaxonomyMapPa
 
 type TaxonomyWorkerRequest =
   | { type: "download-taxonomy"; source?: TaxonomySource }
-  | { type: "map-taxonomy"; source?: TaxonomySource; identifierMode?: TaxonomyIdentifierMode; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; lowMemoryMode?: boolean; ranks?: TaxonomyRank[] }
-  | { type: "enrich-taxonomy"; source?: TaxonomySource; archive: Blob | ArrayBuffer; tips: Array<{ node: number; name: string }>; existingMap: TaxonomyMapPayload; lowMemoryMode?: boolean; ranks: TaxonomyRank[] };
+  | { type: "map-taxonomy"; source?: TaxonomySource; identifierMode?: TaxonomyIdentifierMode; archive: Blob | ArrayBuffer; tips: TipTaxonomyRequest[]; lowMemoryMode?: boolean; ranks?: TaxonomyRank[] }
+  | { type: "enrich-taxonomy"; source?: TaxonomySource; archive: Blob | ArrayBuffer; tips: TipTaxonomyRequest[]; existingMap: TaxonomyMapPayload; lowMemoryMode?: boolean; ranks: TaxonomyRank[] };
 
 type TaxonomyWorkerResponse =
   | { type: "taxonomy-progress"; message: string }
@@ -121,23 +123,24 @@ function parseTaxonomyNameLine(
   }
 }
 
-function buildLookupFilters(tips: Array<{ node: number; name: string }>): TaxonomyLookupFilters {
+function buildLookupFilters(tips: TipTaxonomyRequest[]): TaxonomyLookupFilters {
   const speciesNames = new Set<string>();
   const genera = new Set<string>();
   const namedTaxa = new Set<string>();
   for (let index = 0; index < tips.length; index += 1) {
-    const tip = tips[index];
-    const candidates = candidateSpeciesNames(tip.name);
-    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
-      speciesNames.add(candidates[candidateIndex]);
-    }
-    const genus = extractGenus(tip.name);
-    if (genus) {
-      genera.add(genus);
-    }
-    const exactTaxonName = candidateExactTaxonName(tip.name);
-    if (exactTaxonName) {
-      namedTaxa.add(exactTaxonName);
+    for (const name of taxonomyLookupNames(tips[index])) {
+      const candidates = candidateSpeciesNames(name);
+      for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+        speciesNames.add(candidates[candidateIndex]);
+      }
+      const genus = extractGenus(name);
+      if (genus) {
+        genera.add(genus);
+      }
+      const exactTaxonName = candidateExactTaxonName(name);
+      if (exactTaxonName) {
+        namedTaxa.add(exactTaxonName);
+      }
     }
   }
   return { speciesNames, genera, namedTaxa };

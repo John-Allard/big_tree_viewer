@@ -4,6 +4,25 @@ import type { TreeModel } from "../types/tree";
 type MappingTree = Pick<TreeModel, "nodeCount" | "names" | "leafNodes">;
 type MetadataRows = ReadonlyArray<Readonly<Record<string, string>>>;
 
+export async function metadataDisplayNameCacheKey(treeSignature: string, labels: readonly (string | null)[]): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(labels)));
+  const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+  return `${treeSignature}:display-names:${hash}`;
+}
+
+export function inferMetadataTaxonomyRankColumns(columns: readonly string[]): Partial<Record<TaxonomyRank, string>> {
+  const result: Partial<Record<TaxonomyRank, string>> = {};
+  const normalize = (value: string) => value.trim().toLowerCase().replace(/[ _-]+/g, "");
+  const ranks = new Map(TAXONOMY_RANKS.map(rank => [normalize(rank), rank]));
+  for (const column of columns) {
+    const rank = ranks.get(normalize(column));
+    if (rank && !result[rank]) result[rank] = column;
+  }
+  const domain = columns.find(column => normalize(column) === "domain");
+  if (!result.superkingdom && domain) result.superkingdom = domain;
+  return result;
+}
+
 export interface MetadataTaxonomyMapPayload extends TaxonomyMapPayload {
   mappingOrigin: "metadata-ranks";
   metadataRankColumns: Partial<Record<TaxonomyRank, string>>;

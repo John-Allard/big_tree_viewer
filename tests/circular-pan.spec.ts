@@ -335,8 +335,13 @@ test("a slightly panned spiral fit remains a fit view across geometry switches",
       fit: Record<string, unknown>;
     }> = [];
     for (const mode of destinations) {
+      const previousFitAction = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView;
       window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      // The test API is refreshed in a passive effect, after the camera layout effect.
+      while (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView === previousFitAction) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
       window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       const spiralFit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
@@ -386,8 +391,12 @@ test("a slightly panned spiral fit remains a fit view across geometry switches",
 test("a fully visible spiral above the near-fit threshold switches to radial fit", async ({ page }) => {
   await waitForViewer(page);
   const result = await page.evaluate(async () => {
+    const previousFitAction = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView;
     window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    while (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView === previousFitAction) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
     window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const spiralFit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();
@@ -426,8 +435,12 @@ test("an ambiguous partially zoomed spiral switches other geometries to fit view
       fit: Record<string, unknown>;
     }> = [];
     for (const mode of destinations) {
+      const previousFitAction = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView;
       window.__BIG_TREE_VIEWER_APP_TEST__?.setViewMode("spiral");
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      while (window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView === previousFitAction) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
       window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView();
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       const spiralFit = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCamera();

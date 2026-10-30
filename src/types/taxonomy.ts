@@ -79,7 +79,7 @@ export interface TaxonomyTipRanks {
 }
 
 export interface TaxonomyMapPayload {
-  mappingOrigin?: "metadata-ranks" | "metadata-taxids";
+  mappingOrigin?: "metadata-ranks" | "metadata-taxids" | "metadata-display-names";
   metadataRankColumns?: Partial<Record<TaxonomyRank, string>>;
   version?: number;
   source?: TaxonomySource;

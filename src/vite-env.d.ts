@@ -132,6 +132,7 @@ declare global {
       setCircularCamera: (partial: Record<string, unknown>) => void;
       getLeafIndexMap: () => Record<number, number> | null;
       getLabelHitboxes: () => Array<Record<string, unknown>>;
+      getSubtreeRibbonHitboxes: () => Array<{ id: string; node: number; label: string; x: number; y: number }>;
       getCollapsedTriangleHitboxes: () => Array<{
         node: number;
         points: Array<{ x: number; y: number }>;

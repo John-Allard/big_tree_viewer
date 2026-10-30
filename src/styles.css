@@ -2114,19 +2114,34 @@ button.secondary {
   margin: 0;
 }
 
-.metadata-disclosure > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.88rem;
-  cursor: pointer;
-  list-style: none;
+.custom-taxonomy-settings {
+  display: grid;
+  gap: 0.75rem;
 }
 
-.metadata-disclosure > summary::-webkit-details-marker { display: none; }
-.metadata-disclosure-chevron { flex: 0 0 12px; }
-.metadata-disclosure[open] > summary .metadata-disclosure-chevron { transform: rotate(90deg); }
-.metadata-disclosure[open] { display: grid; gap: 0.65rem; }
+.custom-taxonomy-rank-preview {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.custom-taxonomy-rank-preview th,
+.custom-taxonomy-rank-preview td {
+  padding: 0.3rem;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  overflow-wrap: anywhere;
+}
+
+.custom-taxonomy-overrides[open] {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.custom-taxonomy-overrides > summary {
+  font-size: 0.8rem;
+  cursor: pointer;
+}
 
 .metadata-toggle-main {
   flex: 1 1 auto;
@@ -2136,6 +2151,17 @@ button.secondary {
 .search-controls label > input[type="checkbox"] {
   width: auto;
   margin-right: 0.45rem;
+}
+
+.metadata-match-status {
+  margin: 0;
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.metadata-summary:empty {
+  display: none;
 }
 
 .metadata-summary {

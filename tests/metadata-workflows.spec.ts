@@ -71,16 +71,101 @@ test("custom taxonomy, alternate tip names and metadata collapse survive a sessi
   await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getCollapsedNodeModes().length)).toBe(0);
 });
 
-test("NCBI maps metadata TaxIDs instead of arbitrary sequence labels", async ({ page }) => {
+test("web API imports a custom taxonomy file and generates styled subtree ribbons", async ({ page }) => {
+  await page.route("https://example.test/custom.csv", route => route.fulfill({ contentType: "text/csv", body: csv }));
+  await load(page, { text: undefined, url: "https://example.test/custom.csv", autoRankColumns: true,
+    cladeRibbons: { labelColumn: "country", mode: "tips", widthPx: 40, labelSizePx: 18 } });
+  await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount)).toBe(4);
+  await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().customCladeRibbons)).toMatchObject([
+    { label: "France", widthPx: 40, labelSizePx: 18 }, { label: "Canada", widthPx: 40, labelSizePx: 18 },
+  ]);
+  const map = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest());
+  expect(map?.mappingOrigin).toBe("metadata-ranks");
+  expect(map?.activeRanks).toEqual(expect.arrayContaining(["family", "genus"]));
+});
+
+for (const mode of ["api", "ui"] as const) test(`NCBI maps metadata TaxIDs instead of arbitrary sequence labels (${mode})`, async ({ page }) => {
   const nodes = ["1\t|\t1\t|\tno rank\t|", "2\t|\t1\t|\tsuperkingdom\t|", "6\t|\t2\t|\tfamily\t|", "7\t|\t6\t|\tgenus\t|", "8\t|\t7\t|\tspecies\t|", "9\t|\t6\t|\tgenus\t|", "10\t|\t9\t|\tspecies\t|"].join("\n");
   const names = [[1, "root"], [2, "Bacteria"], [6, "Testaceae"], [7, "Alpha"], [8, "Alpha one"], [9, "Beta"], [10, "Beta two"]].map(([id, name]) => `${id}\t|\t${name}\t|\t\t|\tscientific name\t|`).join("\n");
   const archive = Buffer.from(zipSync({ "nodes.dmp": strToU8(nodes), "names.dmp": strToU8(names) }));
   await page.route("https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip", route => route.fulfill({ status: 200, contentType: "application/zip", body: archive }));
-  await load(page, { taxIdColumn: "taxid" }, {}, { runMapping: true, allowDownload: true });
+  await load(page, mode === "api" ? { taxIdColumn: "taxid" } : {}, {}, mode === "api" ? { runMapping: true, allowDownload: true } : undefined);
+  if (mode === "ui") {
+    await openPanel(page, "Taxonomy");
+    const source = page.getByRole("combobox", { name: "Taxonomy source", exact: true });
+    await source.selectOption("catalogue-of-life");
+    await source.selectOption("custom");
+    await page.getByText("Metadata TaxID mapping", { exact: true }).click();
+    await page.getByRole("combobox", { name: "NCBI TaxID column", exact: true }).selectOption("taxid");
+    await page.getByRole("button", { name: "Map NCBI TaxIDs", exact: true }).click();
+  }
   await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount)).toBe(4);
   const result = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getTaxonomyMapForTest());
   expect(result).toMatchObject({ mappingOrigin: "metadata-taxids", identifierMode: "ncbi-taxid" });
   expect(result?.tipRanks.map(tip => tip.sourceTaxId)).toEqual([8, 8, 10, 10]);
+});
+
+for (const mode of ["launch", "manual"] as const) test(`NCBI maps microbial display names, preserves ribbons, and restores its metadata-specific cache (${mode})`, async ({ page }) => {
+  const ribbons = [
+    { id: "metadata-ribbon:tips:1", node: 1, label: "France", color: "#2b8cbe", placement: "outside", enabled: true },
+    { id: "metadata-ribbon:tips:4", node: 4, label: "Canada", color: "#d95f0e", placement: "outside", enabled: true },
+    { id: "manual-root", node: 0, label: "Study group", color: "#965ac7", placement: "outside", enabled: true },
+  ];
+  const nodes = ["1\t|\t1\t|\tno rank\t|", "2\t|\t1\t|\tsuperkingdom\t|", "6\t|\t2\t|\tfamily\t|", "7\t|\t6\t|\tgenus\t|", "8\t|\t7\t|\tspecies\t|", "9\t|\t6\t|\tgenus\t|", "10\t|\t9\t|\tspecies\t|"].join("\n");
+  const names = [[1, "root"], [2, "Bacteria"], [6, "Enterobacteriaceae"], [7, "Escherichia"], [8, "Escherichia coli"], [9, "Salmonella"], [10, "Salmonella enterica"]].map(([id, name]) => `${id}\t|\t${name}\t|\t\t|\tscientific name\t|`).join("\n");
+  const archive = Buffer.from(zipSync({ "nodes.dmp": strToU8(nodes), "names.dmp": strToU8(names) }));
+  await page.route("https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip", route => route.fulfill({ status: 200, contentType: "application/zip", body: archive }));
+  await load(page, { text: "sequence_id,display_name\nsample1,Escherichia coli A\nsample2,Escherichia_coli_B\nsample3,Salmonella enterica C\nsample4,Salmonella_enterica_D\n", tipLabelColumn: mode === "launch" ? "display_name" : "" }, { customCladeRibbons: ribbons }, { runMapping: true, allowDownload: true });
+  await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.getState().customCladeRibbons)).toEqual(ribbons);
+  if (mode === "manual") {
+    await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.getTaxonomyMapForTest()?.mappedCount)).toBe(0);
+    await openPanel(page, "Visual Options");
+    await page.getByRole("button", { name: "Tip labels settings", exact: true }).click();
+    await page.getByRole("combobox", { name: "Tip label source", exact: true }).selectOption("display_name");
+    await page.getByRole("button", { name: "Close Tip labels settings", exact: true }).click();
+    await openPanel(page, "Taxonomy");
+    const run = page.getByRole("button", { name: "Run Taxonomy Mapping", exact: true });
+    await expect(run).toBeEnabled();
+    await run.click();
+  }
+  await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount)).toBe(4);
+  expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.getState().customCladeRibbons)).toEqual(ribbons);
+  for (const view of ["rectangular", "circular"] as const) {
+    await page.evaluate(view => window.__BIG_TREE_VIEWER_APP_TEST__!.setViewMode(view), view);
+    await page.getByRole("button", { name: "Fit View", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getSubtreeRibbonHitboxes().length)).toBe(3);
+    const svg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!);
+    for (const ribbon of ribbons) expect(svg).toContain(ribbon.color);
+  }
+  const map = await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.getTaxonomyMapForTest());
+  expect(map?.mappingOrigin).toBe("metadata-display-names");
+  expect(map?.tipRanks.map(tip => tip.sourceTaxId)).toEqual([8, 8, 10, 10]);
+  expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__!.names)).toContain("sample1");
+  const cached = await page.evaluate(async () => {
+    const modulePath = "/src/lib/taxonomyCache.ts";
+    const cache = await import(modulePath);
+    return cache.getCachedTaxonomyMapping(window.__BIG_TREE_VIEWER_APP_TEST__!.getState().treeSignature);
+  });
+  if (mode === "launch") expect(cached).toBeNull();
+  else expect(cached?.mappedCount).toBe(0);
+  const displayCache = await page.evaluate(async () => {
+    const cacheModule = "/src/lib/taxonomyCache.ts";
+    const metadataModule = "/src/lib/metadataMapping.ts";
+    const cache = await import(cacheModule), metadata = await import(metadataModule);
+    const values: Record<string, string> = { sample1: "Escherichia coli A", sample2: "Escherichia_coli_B", sample3: "Salmonella enterica C", sample4: "Salmonella_enterica_D" };
+    const labels = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__!.names!.map(name => values[name] ?? null);
+    const key = await metadata.metadataDisplayNameCacheKey(window.__BIG_TREE_VIEWER_APP_TEST__!.getState().treeSignature, labels);
+    return cache.getCachedTaxonomyMapping(key);
+  });
+  expect(displayCache?.mappedCount).toBe(4);
+  const payload = { newick, metadata: { text: "sequence_id,display_name\nsample1,Escherichia coli A\nsample2,Escherichia_coli_B\nsample3,Salmonella enterica C\nsample4,Salmonella_enterica_D\n", keyColumn: "sequence_id", tipLabelColumn: "display_name" }, visual: { viewMode: "rectangular", customCladeRibbons: ribbons } };
+  await page.goto(`/?btv_payload=${Buffer.from(JSON.stringify(payload)).toString("base64url")}`);
+  await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount)).toBe(4);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__!.getState().taxonomyMappedCount)).toBe(4);
+  await expect(page.getByText(/0 mapped tips|4 of 4 tips.*not mapped/)).toHaveCount(0);
+  await openPanel(page, "Taxonomy");
+  await expect(page.getByRole("button", { name: "NCBI Taxonomy Loaded", exact: true })).toBeDisabled();
 });
 
 test("mapping buttons load a shared table and label source lives in tip settings", async ({ page }) => {
@@ -95,9 +180,7 @@ test("mapping buttons load a shared table and label source lives in tip settings
   await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().tipLabelMetadataColumn)).toBe("display_name");
   await page.getByRole("button", { name: "Close Tip labels settings", exact: true }).click();
   await openPanel(page, "Taxonomy");
-  await page.locator("summary").filter({ hasText: "Custom taxonomy from metadata" }).click();
-  await page.getByRole("combobox", { name: "Family column", exact: true }).selectOption("family");
-  await page.getByRole("combobox", { name: "Genus column", exact: true }).selectOption("genus");
+  await page.getByRole("combobox", { name: "Taxonomy source", exact: true }).selectOption("custom");
   await page.getByRole("button", { name: "Apply custom taxonomy ribbons", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().taxonomyMappedCount)).toBe(4);
 });
