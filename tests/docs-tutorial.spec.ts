@@ -52,7 +52,7 @@ test("API documentation presents launch parameters without text overflow", async
 
   const table = page.getByRole("table", { name: "Useful URL options" });
   await expect(table.locator("thead th")).toHaveText(["Option", "Values", "Description"]);
-  await expect(table.locator("tbody tr")).toHaveCount(25);
+  await expect(table.locator("tbody tr")).toHaveCount(29);
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
     const overflow = await table.evaluate((element) => {
@@ -222,7 +222,7 @@ test("new-user tutorial prompt can start, advance, and persist dismissal", async
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Right-click or control-click");
   await expect(page.locator('[data-tour="branch-menu-demo"]')).toHaveClass(/tour-highlight/);
   await expect(page.locator('[data-tour="branch-menu-demo"]')).toContainText("Right click to open this menu");
-  await expect(page.locator('[data-tour="branch-menu-demo"]')).toContainText("Color Subtree");
+  await expect(page.locator('[data-tour="branch-menu-demo"]')).toContainText("Color Subtree Branches");
 
   await page.getByRole("button", { name: "Next" }).click();
   await expect(page.getByRole("dialog", { name: "Big Tree Viewer tutorial step" })).toContainText("Display metadata");

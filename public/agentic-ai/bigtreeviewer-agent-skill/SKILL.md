@@ -106,6 +106,9 @@ For chronological metadata, metadata-based collapse, alternate tip names, CSV Ta
 custom taxonomy/clade ribbons, tables, legends, and scale controls, read
 [references/metadata-and-scales.md](references/metadata-and-scales.md). It includes
 the differences between desktop MCP `settings` and browser API `visual`.
+Custom taxonomy uploads use `metadataPath` with `metadata.autoRankColumns: true`
+or explicit `rankColumns`; no browser file picker is needed. Subtree ribbon
+imports use `metadata.cladeRibbons` with a label column and `nodes` or `tips` mode.
 
 Use command-line options for common settings:
 

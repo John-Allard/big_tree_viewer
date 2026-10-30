@@ -31,6 +31,24 @@ current table. Unspecified encoding settings are preserved.
   ribbons immediately, without an archive. Omit `taxonomy`: database mapping
   and custom ranks are mutually exclusive. `visual.metadataRankColumns` alone
   only preselects UI controls; use `metadata.rankColumns` to apply them.
+  Alternatively set `autoRankColumns: true` to detect supported rank headers
+  automatically (case/space/underscore/hyphen insensitive). Explicit
+  `rankColumns` override detected assignments. A table with no recognized or
+  assigned ranks reports an error rather than silently mapping nothing.
+
+Custom taxonomy files use the same `metadataPath` (desktop) or `metadata.text` /
+HTTP(S) `metadata.url` (web) inputs as any other metadata table; no UI upload
+automation is needed. In the UI these import controls appear only under the
+**Custom Taxonomy** source. Agents apply them directly with the fields above;
+do not set `taxonomy.source` to `custom` (it is not a database source).
+
+```json
+{
+  "sessionId": "SESSION_ID",
+  "metadataPath": "/data/custom-taxonomy.csv",
+  "metadata": {"keyColumn":"sequence_id", "autoRankColumns":true}
+}
+```
 
 Example MCP arguments for an already-open tree:
 
@@ -52,6 +70,16 @@ Example MCP arguments for an already-open tree:
 
 ## Independent Clade Ribbons
 
+Generate ribbons without knowing numeric node IDs using
+`metadata.cladeRibbons: {"labelColumn":"country","mode":"tips"}`.
+Use `mode: "nodes"` when `keyColumn` matches unique internal node names;
+`tips` finds maximal homogeneous clades from shared tip values. Optional
+`widthPx` (4-120) and `labelSizePx` (5-48, 12 = 100% auto-fit) set shared styling.
+Imports replace earlier metadata-generated ribbons, preserve manual ribbons,
+and can coexist with database taxonomy or custom taxonomy ranks. They reuse
+the loaded table when no file/text is supplied. Inspect
+`settings.customCladeRibbons` for the generated node IDs, labels, and styles.
+
 These can coexist with mapped taxonomy. Set `settings.customCladeRibbons` (or
 browser `visual.customCladeRibbons`) to an array of:
 
@@ -65,10 +93,27 @@ Root is 0. Use known IDs from a matching BTV session or the original tree; do
 not guess an arbitrary internal ID. `inside` and `outside` are relative to
 taxonomy ribbons. Overlapping clades receive separate lanes. Setting the array
 replaces the ribbon list; `[]` clears it. Limit: 200 ribbons; colors are six-digit
-hex. Labels, placement, and IDs survive session export. Ribbons render in
+hex. Optional `widthPx` (4–120, default 22) and `labelSizePx` (5–48, default 12)
+control styling. Labels automatically fit the band; `labelSizePx / 12` scales
+the fitted size (12 = 100%), not a fixed pixel height. Labels, styles, placement,
+and IDs survive session export. Ribbons render in
 rectangular, radial, and spiral modes, but not comparison mode.
 
+In the UI, **Add subtree ribbon** sits below **Color Subtree Branches**. Right-click a
+ribbon to rename, recolor, remove it, or act on its subtree. New ribbons are
+outside taxonomy. **Subtree ribbons settings** has shared thickness/label size
+and metadata import: match unique internal node names, or use shared tip values
+to find maximal homogeneous clades. Imported ribbons are materialized in
+`customCladeRibbons`, so no background mapping is needed to restore a session.
+
 ## Tables and Legends
+
+Metadata label placement uses `figureStyles.internalNode.metadataPlacement`
+(`node`, `stem`, or `auto`). Rectangular offsets are `metadata.labelOffsetXPx`
+and `metadata.labelOffsetYPx`. In radial/spiral layouts use
+`figureStyles.internalNode.metadataAngularOffsetDegrees` for rotation around
+the center and `metadata.labelOffsetYPx` for radial displacement. Put
+`figureStyles` in MCP `settings` or browser `visual`.
 
 Tip-aligned tables use visual settings, not additional metadata encodings:
 `metadataTipTableEnabled: true`, `metadataTipTableMode: "bars"|"heatmap"|"categorical"`,

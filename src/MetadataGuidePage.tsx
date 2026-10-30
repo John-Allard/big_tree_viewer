@@ -125,7 +125,8 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
           <p>
             You can also select <strong>Open label mapping file</strong> in the
             tip-label detail settings under <strong>Visual Options</strong>, or
-            <strong> Open taxonomy mapping file</strong> under <strong>Taxonomy</strong>.
+            <strong> Open taxonomy mapping file</strong> after selecting
+            <strong> Custom Taxonomy</strong> in the Taxonomy panel.
             These buttons load the same shared metadata table, replacing any
             previously loaded table; they do not create independent mappings.
             The <strong>Mapping key column</strong> in Taxonomy is shared with
@@ -267,10 +268,22 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
             clades; metadata on an internal node is not inherited by its tips.
             Clear the column to disable metadata grouping.
           </p>
+          <h3 className="metadata-guide-subheading">Taxonomy from display names</h3>
+          <p>
+            Scientific-name taxonomy mapping also checks the selected metadata
+            display names when original tip IDs do not identify a species.
+            Leading genus/species names separated by spaces or underscores can
+            be followed by sample identifiers, such as <code>Escherichia coli A</code>.
+            Original names retain priority, and explicit TaxIDs override name matching.
+            These mappings are cached for the tree and its displayed-name values,
+            so reloading the same inputs restores them without reusing results
+            from a different set of names.
+          </p>
           <h3 className="metadata-guide-subheading">NCBI TaxIDs from a column</h3>
           <p>
-            Under <strong>Taxonomy</strong>, choose <strong>NCBI Taxonomy</strong>
-            and set <strong>NCBI TaxID column</strong> to <code>ncbi_taxid</code>.
+            Under <strong>Taxonomy</strong>, choose <strong>Custom Taxonomy</strong>,
+            expand <strong>Metadata TaxID mapping</strong>, set <strong>NCBI TaxID column</strong> to <code>ncbi_taxid</code>,
+            and select <strong>Map NCBI TaxIDs</strong>.
             The IDs in that column,
             rather than display names or sequence IDs, supply the NCBI lookup.
             Use positive integer TaxIDs; empty or unmatched rows remain unmapped.
@@ -284,11 +297,14 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
           </p>
           <h3 className="metadata-guide-subheading">Custom taxonomy from existing columns</h3>
           <p>
-            Expand <strong>Custom taxonomy from metadata</strong> under
-            <strong> Taxonomy</strong>, assign <code>genus</code> and
-            <code> family</code> to their existing rank slots, and select
+            Select <strong>Custom Taxonomy</strong> in <strong>Taxonomy source</strong>.
+            Its settings appear directly below the dropdown. Columns named for
+            any supported rank, such as <code>genus</code>, <code>family</code>,
+            <code>subgenus</code>, or <code>species_group</code>, are detected automatically. Review the
+            Rank/Column preview and select
             <strong> Apply custom taxonomy ribbons</strong>. No taxonomy database
             or TaxID column is required for this route. Use
+            <strong> Edit column assignments</strong> for nonstandard headers and
             <strong> Additional custom rank</strong> for other supported rank
             slots; arbitrary new rank names are not created.
           </p>
@@ -305,18 +321,35 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
             <code> mappingOrigin: &quot;metadata-ranks&quot;</code> and uses the existing
             taxonomy ribbon and rank-visibility controls.
           </p>
-          <h3 className="metadata-guide-subheading">Independent clade ribbons</h3>
+          <h3 className="metadata-guide-subheading">Subtree ribbons</h3>
           <p>
             To mark a gene family, duplication group, or other named clade,
-            right-click its internal branch and choose <strong>Add Clade Ribbon</strong>.
-            The <strong>Clade ribbons</strong> section under <strong>Metadata</strong>
-            lets you edit its label and color, show or hide it, remove it, and
-            place it inside or outside the mapped taxonomy ribbons. These ribbons
+            right-click its internal branch and choose <strong>Add subtree ribbon</strong>,
+            below Color Subtree Branches. Right-click the ribbon to rename, recolor, or
+            remove it, or use the same subtree actions available on its branch.
+            Ribbons are added outside the mapped taxonomy. The
+            <strong> Subtree ribbons settings</strong> under <strong>Metadata</strong>
+            control ribbon thickness and label size without listing every ribbon.
+            These ribbons
             do not need a CSV file or taxonomy database and remain visible when
             taxonomy overlays are turned off. Nested clades use separate bands.
             They are saved in sessions and included in image exports and shared
-            subtrees. Clade ribbons are hidden during tree comparison.
+            subtrees. Subtree ribbons are hidden during tree comparison.
           </p>
+          <p>
+            To create ribbons from a CSV or TSV, choose the column containing tree
+            identifiers under <strong>Match tree labels by column</strong>. Open
+            <strong> Subtree ribbons settings</strong>, choose a ribbon label column,
+            then select <strong>Internal node names</strong> to match named internal
+            nodes, or <strong>Shared tip values</strong> to mark maximal clades whose
+            tips all share a nonempty value. Missing or conflicting tip values prevent
+            a ribbon from spanning that clade; separate occurrences remain separate.
+            <strong> Apply metadata ribbons</strong> replaces previously imported
+            subtree ribbons while retaining manually added ribbons.
+          </p>
+          <pre>{`name,ribbon_label
+Clade_ABCD,Study group A
+Clade_EFGH,Study group B`}</pre>
         </section>
 
         <section className="metadata-guide-section">

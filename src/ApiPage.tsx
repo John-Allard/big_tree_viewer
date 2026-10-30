@@ -146,7 +146,7 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <code> metadata</code>. These fields work in launch payloads and
             desktop updates. <strong>Open label mapping file</strong> in
             tip-label detail settings and <strong>Open taxonomy mapping file</strong>
-            in Taxonomy both replace the same loaded metadata table. Their key
+            under Custom Taxonomy both replace the same loaded metadata table. Their key
             column is shared with the Metadata panel, not an independent mapping.
           </p>
           <pre><code>{`visual: {
@@ -173,7 +173,11 @@ metadata: {
             <code> node</code> (a BTV node index for this exact tree),
             <code> label</code>, <code>color</code> (hex),
             <code> placement</code> (<code>inside</code> or <code>outside</code>
-            relative to taxonomy), and <code>enabled</code>. Send an empty array
+            relative to taxonomy), and <code>enabled</code>.
+            Optional <code>widthPx</code> (4-120, default 22) and
+            <code> labelSizePx</code> (5–48, default 12) control their styling.
+            Labels automatically fit the ribbon; <code>labelSizePx / 12</code> scales
+            that fitted size rather than specifying a fixed pixel height. Send an empty array
             to clear them. They are saved in sessions and exported with the tree;
             they are hidden during comparison mode.
           </p>
@@ -217,12 +221,30 @@ taxonomy: {
             <code> mappingOrigin: &quot;metadata-ranks&quot;</code>.
           </p>
           <p>
+            Set <code>metadata.autoRankColumns: true</code> to detect rank-named
+            headers automatically; explicit <code>rankColumns</code> override
+            detected assignments. Supply a mapping table with
+            <code> metadata.text</code> or an HTTP(S) <code>metadata.url</code>.
+            Desktop MCP tools accept the same options plus a local
+            <code> metadataPath</code>.
+          </p>
+          <p>
+            Generate independent subtree ribbons with
+            <code>{` metadata.cladeRibbons: { labelColumn: "country", mode: "tips" }`}</code>.
+            Use <code>mode: &quot;nodes&quot;</code> for rows matched to unique internal
+            node names. Imports replace earlier metadata-generated ribbons but
+            preserve manual ribbons and mapped taxonomy. Optional
+            <code> widthPx</code> and <code>labelSizePx</code> set thickness and
+            fitted label scaling (12 = 100%).
+          </p>
+          <p>
             In contrast, <code>visual.metadataRankColumns</code> only preselects
             the custom rank controls; it does not apply a mapping automatically.
             The setting is not named <code>taxonomyRankColumns</code>.
-            In Taxonomy, expand
-            <strong> Custom taxonomy from metadata</strong>, assign the columns,
-            and click <strong>Apply custom taxonomy ribbons</strong> to build
+            Select <strong>Custom Taxonomy</strong> in the taxonomy source menu.
+            Rank-named columns are detected automatically; optional overrides
+            are under <strong>Edit column assignments</strong>.
+            Click <strong>Apply custom taxonomy ribbons</strong> to build
             the mapping in the UI.
           </p>
         </section>
@@ -415,7 +437,7 @@ window.addEventListener("message", (event) => {
             viewport-edge axes use the bottom or left. The master
             <code> showScaleBars</code> switch disables every scale component.
             <code> showCircularCenterRadialScaleBar</code> controls only the internal
-            internal bar in every radial configuration, not automatic opening-edge or viewport-edge bars.
+            bar in every radial configuration, not automatic opening-edge or viewport-edge bars.
             Within <code>figureStyles.scale</code>, <code>showTimeGuideLabels</code>
             corresponds to Show Time Stripe Labels in the interface. It adds
             top-of-stripe labels in rectangular views, or retains radial/spiral
@@ -501,12 +523,12 @@ window.addEventListener("message", (event) => {
     showIntermediateScaleTicks?: boolean,
     showScaleZeroTick?: boolean,
     extendRectScaleToTick?: boolean, // rectangular only
-    useAutoCircularCenterScaleAngle?: boolean, // full-circle radial only
-    circularCenterScaleAngleDegrees?: number, // manual full-circle angle, when auto is false
-    showCircularCenterRadialScaleBar?: boolean, // full-circle radial axis; partial circles use figureStyles.scale
+    useAutoCircularCenterScaleAngle?: boolean, // internal radial scale angle
+    circularCenterScaleAngleDegrees?: number, // manual internal angle, when auto is false
+    showCircularCenterRadialScaleBar?: boolean, // internal radial axis, any angular span; independent of automatic edge scales
     customCladeRibbons?: Array<{
       id: string, node: number, label: string, color: string,
-      placement: "inside" | "outside", enabled: boolean
+      placement: "inside" | "outside", enabled: boolean, widthPx?: number, labelSizePx?: number
     }>, // original zero-based Newick preorder node IDs; [] removes all independent ribbons
     // internalNode.metadataPlacement: "auto" fits text along the incoming branch, otherwise above its crossbar.
     // Metadata X offset applies to rectangular views; circular/fan use internalNode.metadataAngularOffsetDegrees.
@@ -564,6 +586,8 @@ window.addEventListener("message", (event) => {
     collapseColumn?: string, // same grouping setting as visual.metadataCollapseColumn
     taxIdColumn?: string, // CSV TaxIDs for taxonomy.runMapping; NCBI only
     rankColumns?: { [rank: string]: string | undefined }, // applies custom taxonomy immediately; omit taxonomy
+    autoRankColumns?: boolean, // detect rank headers; rankColumns overrides them
+    cladeRibbons?: { labelColumn: string, mode: "nodes" | "tips", widthPx?: number, labelSizePx?: number },
     colorMode?: "categorical" | "continuous" | "date",
     applyScope?: "branch" | "subtree",
     labelsEnabled?: boolean,
