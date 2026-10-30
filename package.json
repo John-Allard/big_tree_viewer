@@ -2,7 +2,7 @@
   "name": "big-tree-viewer",
   "productName": "Big Tree Viewer",
   "private": true,
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "Interactive viewer for very large phylogenetic trees",
   "author": {
     "name": "John B Allard",
