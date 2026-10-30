@@ -398,6 +398,29 @@ window.addEventListener("message", (event) => {
         <section className="api-doc-section">
           <h2>Payload shape</h2>
           <p>
+            Metadata supports chronological date colors, alternate tip names,
+            collapse by a shared column value, and NCBI TaxIDs from a spreadsheet.
+            Set <code>metadata.rankColumns</code> to apply custom taxonomy ribbons
+            without a database; do not combine that with database taxonomy mapping.
+            Independent clade ribbons can coexist with taxonomy through
+            <code> visual.customCladeRibbons</code>. Their node numbers refer to
+            the original tree&apos;s zero-based Newick preorder, including internal
+            nodes (root is 0), not current display order or tip indices.
+          </p>
+          <p>
+            Scale placement is automatic. Partial radial trees use the more
+            visible opening edge below 270 degrees, with ties favoring the edge nearest zero degrees.
+            At 270 to 359 degrees, they use central time labels without an axis or ticks;
+            viewport-edge axes use the bottom or left. The master
+            <code> showScaleBars</code> switch disables every scale component.
+            Within <code>figureStyles.scale</code>, <code>showTimeGuideLabels</code>
+            corresponds to Show Time Stripe Labels in the interface. It adds
+            top-of-stripe labels in rectangular views, or retains radial/spiral
+            labels when scale-bar labels are off. Full-circle manual angle settings
+            do not position opening-edge scales. Calendar axes require linear
+            rectangular layout and branch lengths already measured in years.
+          </p>
+          <p>
             The `visual` object accepts the same setting names saved in a
             `.btvsession` file, so automation can control detailed styling such
             as time stripe style, label classes, taxonomy rank visibility,
@@ -469,6 +492,19 @@ window.addEventListener("message", (event) => {
     cladogramLogStrength?: number, // 1 to 10; default 1, logarithmic layout only
     showMyaTimeUnit?: boolean,
     customTimeUnit?: string,
+    timeAxisScale?: "linear" | "log",
+    timeAxisLogBase?: number,
+    scaleTickIntervalInput?: string, // "" chooses ticks automatically; e.g. "10" fixes spacing
+    showIntermediateScaleTicks?: boolean,
+    showScaleZeroTick?: boolean,
+    extendRectScaleToTick?: boolean, // rectangular only
+    useAutoCircularCenterScaleAngle?: boolean, // full-circle radial only
+    circularCenterScaleAngleDegrees?: number, // manual full-circle angle, when auto is false
+    showCircularCenterRadialScaleBar?: boolean, // full-circle radial axis; partial circles use figureStyles.scale
+    customCladeRibbons?: Array<{
+      id: string, node: number, label: string, color: string,
+      placement: "inside" | "outside", enabled: boolean
+    }>, // original zero-based Newick preorder node IDs; [] removes all independent ribbons
     // internalNode.metadataPlacement: "auto" fits text along the incoming branch, otherwise above its crossbar.
     // Metadata X offset applies to rectangular views; circular/fan use internalNode.metadataAngularOffsetDegrees.
     metadataLabelOffsetXPx?: number,
@@ -515,6 +551,7 @@ window.addEventListener("message", (event) => {
   },
   metadata?: {
     text?: string,
+    url?: string, // browser API: HTTP(S) CSV/TSV; desktop MCP uses metadataPath instead
     label?: string,
     firstRowIsHeader?: boolean,
     enabled?: boolean,

@@ -67,6 +67,43 @@ with an explanation; opt into a first download explicitly or open a session with
 a saved map. No tree or metadata upload is required. Mapping downloads still
 require network.
 
+## Metadata, Ribbons, and Scales
+
+The existing `metadata` object accepts `colorMode: "date"`, `tipLabelColumn`,
+`collapseColumn`, `taxIdColumn`, and `rankColumns`. Column names match table
+headers; joins use original Newick IDs. Update encodings without reloading by
+omitting `metadataPath` and `metadata.text`. Collapse preserves topology and
+groups only maximal clades with one shared nonempty value. CSV TaxIDs require
+NCBI mapping; custom `rankColumns` apply directly without a database, so omit
+the `taxonomy` argument for those.
+
+Visual `settings` also support tip-aligned tables (`metadataTipTable*`), legend
+components and placement (`metadataLegend*`), and independent
+`customCladeRibbons`. Independent ribbons use original zero-based Newick preorder
+node IDs (root 0), and can go inside or outside taxonomy ribbons. They are not
+the same as custom rank columns, which replace database taxonomy mapping.
+An empty ribbon array removes the independent ribbons.
+`inspect_tree.metadata` reports table headers/row counts, matched and colored
+nodes, calculated collapse groups, matched tip-table tips, and enabled clade
+ribbon counts, so agents can check results without inferring success from settings.
+
+Scale components use `settings.figureStyles.scale`: `showScaleBar`,
+`showScaleBarLabels`, `showTimeGuideLabels`, `showPartialRadialScaleBar`, and
+`calendarAxis`/`calendarRootYear`. `settings.showScaleBars` is the master switch.
+Below 270 degrees, partial radial scale placement follows the more visible opening edge;
+ties prefer the edge nearest zero degrees. At 270 to 359 degrees, only central time
+labels are drawn, without an axis or ticks. Full-circle manual angles do not
+override opening-edge placement. The UI's Show Time Stripe Labels retains the saved key
+`showTimeGuideLabels` for compatibility. Log base applies only on a log axis;
+calendar years require a dated tree in years and linear rectangular layout.
+
+See the downloadable skill's
+[metadata and scale reference](../public/agentic-ai/bigtreeviewer-agent-skill/references/metadata-and-scales.md)
+for exact fields and examples. The browser API calls MCP's `settings` object
+`visual`; it uses the same rendering implementation. These features require a
+desktop build containing the corresponding updates; website changes alone do
+not update an already-installed app.
+
 Output files are written atomically and existing files are protected unless
 `overwrite: true`. Calls time out at 180 seconds; cancellation/timeouts close the
 affected tree so no background mutation continues after a failed operation.
@@ -107,6 +144,12 @@ background desktop rendering, not a display-server-free rendering engine.
 `xvfb-run -a npm run test:desktop:agent` on Linux CI (omit Xvfb on a desktop).
 Pass a packaged executable to test the packaged runtime. No user browser or
 cursor is used. Pack with `npx electron-builder --dir`.
+
+`xvfb-run -a npm run test:desktop:metadata` exercises chronological colors,
+display names, custom taxonomy, independent ribbons, tip tables, actual
+metadata-collapse SVG output, scales, editable-session roundtrips, and resets
+on a four-tip tree. It also accepts a packaged executable; release workflows
+run it on Linux, macOS, and Windows (without Xvfb on macOS/Windows).
 
 Implementation validation (macOS, Linux, and Windows, September 2026): packaged builds passed
 19 MCP operations, including visible opening, settings/metadata/camera updates,

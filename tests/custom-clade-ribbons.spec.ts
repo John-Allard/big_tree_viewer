@@ -182,6 +182,31 @@ test("fingerprints are treewide and repeated safe clades are exact-checked once"
   expect(reads).toBeLessThan(tree.nodeCount * 8);
 });
 
+test("browser: empty ribbon controls wait for a table and follow other metadata displays", async ({ page }, testInfo) => {
+  await loadRibbonTree(page, []);
+  const metadata = page.locator(".panel-section .section-toggle").filter({ hasText: "Metadata" });
+  if (await metadata.getAttribute("aria-expanded") !== "true") await metadata.click();
+  const summary = page.locator(".clade-ribbon-controls > summary");
+  await expect(summary).toHaveCount(0);
+  await page.evaluate(newick => window.postMessage({ type: "big-tree-viewer:load", payload: {
+    newick, metadata: { text: "name,group\nA,One\nB,One\nC,Two\nD,Two\nE,Two\n", keyColumn: "name" },
+  } }, "*"), demoNewick);
+  await expect(summary).toHaveCount(1);
+  const ordering = await summary.evaluate(el => {
+    const table = Array.from(document.querySelectorAll("label")).find(label => label.textContent?.trim() === "Show tip data table");
+    return Boolean(table && (table.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+  });
+  expect(ordering).toBe(true);
+  await summary.scrollIntoViewIfNeeded();
+  expect(await summary.evaluate(el => getComputedStyle(el).listStyleType)).toBe("none");
+  expect((await summary.locator("svg").boundingBox())!.width).toBe(12);
+  await summary.click();
+  await expect(page.getByText("No clade ribbons.", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("clade-ribbons-with-metadata.png") });
+  await page.getByRole("button", { name: "Clear Metadata", exact: true }).click();
+  await expect(summary).toHaveCount(0);
+});
+
 test("browser: API ribbons load without taxonomy and metadata controls edit them", async ({ page }) => {
   await page.goto("/?btv_api=1");
   await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));

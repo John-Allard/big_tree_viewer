@@ -2105,6 +2105,29 @@ button.secondary {
   min-width: 0;
 }
 
+.metadata-display-controls {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.metadata-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.metadata-disclosure > summary::-webkit-details-marker { display: none; }
+.metadata-disclosure-chevron { flex: 0 0 12px; }
+.metadata-disclosure[open] > summary .metadata-disclosure-chevron { transform: rotate(90deg); }
+.metadata-disclosure[open] { display: grid; gap: 0.65rem; }
+
 .metadata-toggle-main {
   flex: 1 1 auto;
   min-width: 0;
@@ -2268,8 +2291,6 @@ button.secondary {
 .metadata-tip-table-columns {
   display: grid;
   gap: 0.4rem;
-  max-height: 14rem;
-  overflow-y: auto;
 }
 
 .metadata-tip-table-column {
@@ -2282,6 +2303,8 @@ button.secondary {
 .metadata-tip-table-column input {
   min-width: 0;
 }
+
+.metadata-tip-table-bar-column { grid-template-columns: minmax(0, 1fr); }
 
 .metadata-tip-table-column-button {
   width: 2rem;
@@ -2306,6 +2329,8 @@ button.secondary {
 
 .metadata-gradient-labels {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
   justify-content: space-between;
   color: #475569;
   font-size: 0.84rem;

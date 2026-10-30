@@ -102,6 +102,11 @@ Use `--profile-dir` to choose a different dedicated automation profile and `--ti
 
 ## Styling
 
+For chronological metadata, metadata-based collapse, alternate tip names, CSV TaxIDs,
+custom taxonomy/clade ribbons, tables, legends, and scale controls, read
+[references/metadata-and-scales.md](references/metadata-and-scales.md). It includes
+the differences between desktop MCP `settings` and browser API `visual`.
+
 Use command-line options for common settings:
 
 ```bash

@@ -3203,6 +3203,7 @@ export default function App() {
       )).map((column) => ({
         column: column.column,
         label: typeof column.label === "string" ? column.label : column.column,
+        ...(column.valueType === "date" ? { valueType: "date" as const } : column.valueType === "number" ? { valueType: "number" as const } : {}),
       })));
     }
     if (visual.metadataTipTablePalette && METADATA_CONTINUOUS_PALETTES[visual.metadataTipTablePalette]) {
@@ -6866,7 +6867,13 @@ export default function App() {
           complete({ label: loadedTreeLabel, tips: tree?.leafCount ?? 0, nodes: tree?.nodeCount ?? 0,
             layout: viewMode, ultrametric: tree?.isUltrametric, settings: captureSessionSettings(),
             taxonomy: { mappedTips: taxonomyMap?.mappedCount ?? 0, status: taxonomyStatus, warning: taxonomyMappingWarning, error: taxonomyError },
-            metadata: { status: metadataStatus, error: metadataError },
+            metadata: { status: metadataStatus, error: metadataError,
+              rowCount: metadataTable?.rows.length ?? 0, columns: metadataTable?.columns ?? [],
+              matchedNodes: metadataOverlay.matchedNodeCount, coloredNodes: metadataOverlay.coloredNodeCount,
+              collapseGroupCount: metadataDerivedView.groups.length,
+              tipTableMatchedTips: metadataTipTableData?.matchedTipCount ?? 0,
+              enabledCladeRibbonCount: customCladeRibbons.filter(ribbon => ribbon.enabled).length,
+            },
           });
           return;
         }
@@ -9477,7 +9484,7 @@ export default function App() {
                       <div className="figure-style-value">{effectiveCircularCenterScaleAngleDegrees.toFixed(0)} deg</div>
                       </> : null}
                       </> : null}
-                      {viewMode === "circular" || viewMode === "fan" ? <label className="label-style-inline-toggle" title="Draw a radial scale bar from the center. For partial circles, place it in the empty sector and rotate it with the tree.">
+                      {viewMode === "circular" || viewMode === "fan" ? <label className="label-style-inline-toggle" title="Draw a radial scale on full circles. Below 270 degrees, draw it along the more visible opening edge. From 270 to 359 degrees, show central time labels without an axis or ticks.">
                         <input
                           type="checkbox"
                           checked={radialAngularSpanDegrees < 360 ? figureStyles.scale.showPartialRadialScaleBar !== false : showCircularCenterRadialScaleBar}
@@ -9631,8 +9638,11 @@ export default function App() {
                     </select>
                   </label>
                 ) : null}
-                <details>
-                  <summary title="Build taxonomy ribbons directly from group names in the metadata, without a taxonomy database.">Custom taxonomy from metadata</summary>
+                <details className="metadata-disclosure">
+                  <summary title="Build taxonomy ribbons directly from group names in the metadata, without a taxonomy database.">
+                    <ChevronRight className="metadata-disclosure-chevron" size={12} aria-hidden="true" />
+                    Custom taxonomy from metadata
+                  </summary>
                   {TAXONOMY_RANKS.filter(rank => isDefaultTaxonomyRank(rank) || metadataRankColumns[rank] !== undefined).map(rank => (
                     <label key={rank} title={`Use a metadata column for the ${rank} ribbon.`}>
                       {taxonomyRankLabel(rank)} column
@@ -9994,14 +10004,12 @@ export default function App() {
         </PanelSection>
 
         <PanelSection title="Metadata" isOpen={metadataOpen} onToggle={() => setMetadataOpen(!metadataOpen)} tourId="metadata">
-          <CladeRibbonControls ribbons={customCladeRibbons} onChange={setCustomCladeRibbons}
-            detailsRef={cladeRibbonsDetailsRef} comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
           <div className="search-controls">
             <div className="button-row">
               <button type="button" className="secondary" onClick={() => metadataFileInputRef.current?.click()} title="Open a CSV or TSV table with one row per tip or node. Include a column containing the exact labels used in the tree; after loading, choose that column under Match tree labels by column.">
                 Open CSV / TSV
               </button>
-              <button type="button" className="secondary" disabled={!metadataTable} onClick={clearMetadata} title={disabledControlTitle(!metadataTable ? "No metadata table is loaded." : undefined) ?? "Remove the loaded metadata table and all metadata overlays."}>
+              <button type="button" className="secondary" disabled={!metadataTable} onClick={clearMetadata} title={disabledControlTitle(!metadataTable ? "No metadata table is loaded." : undefined) ?? "Remove the loaded table and its metadata displays. Applied taxonomy mappings and independent clade ribbons are kept."}>
                 Clear Metadata
               </button>
             </div>
@@ -10035,7 +10043,9 @@ export default function App() {
                     ))}
                   </select>
                 </label>
-                <label title="Collapse maximal clades only when every descendant tip has the same nonempty metadata value. Missing or conflicting values prevent collapse; separate occurrences remain separate.">
+                {comparisonEnabled && comparisonTree ? <p className="status-line">Metadata displays are unavailable during tree comparison. Your settings are retained.</p> : null}
+                <fieldset className="metadata-display-controls" disabled={Boolean(comparisonEnabled && comparisonTree)} aria-label="Metadata displays">
+                <label title={taxonomyCollapseIsSynthetic ? "Metadata collapse is unavailable while the tree is collapsed to a taxonomy rank." : "Collapse maximal clades only when every descendant tip has the same nonempty metadata value. Missing or conflicting values prevent collapse; separate occurrences remain separate."}>
                   Collapse by metadata
                   <select value={metadataCollapseColumn} disabled={taxonomyCollapseIsSynthetic || comparisonEnabled && Boolean(comparisonTree)} onChange={event => setMetadataCollapseColumn(event.target.value)}>
                     <option value="">Do not collapse</option>
@@ -10052,6 +10062,7 @@ export default function App() {
                   <SettingsPopoverButton title="Metadata legend" isOpen={activeLabelStylePopover === "metadataLegend"}
                     disabled={!metadataLegendEnabled} disabledReason="Turn on the metadata legend first."
                     onToggle={() => setActiveLabelStylePopover(current => current === "metadataLegend" ? null : "metadataLegend")}>
+                    {metadataLegendSections.length === 0 ? <p className="status-line">No active legend entries.</p> : null}
                     {metadataEnabled && metadataColorMode !== "categorical" ? (
                       <>
                         <label title="Set the branch-color gradient and its matching legend together.">
@@ -10140,7 +10151,7 @@ export default function App() {
                     </label>
                     {metadataColorMode !== "categorical" ? (
                       <>
-                        <label title="Choose the gradient used for numeric metadata values.">
+                        <label title="Choose the gradient used for numeric or chronological metadata values.">
                           Palette
                           <select
                             value={metadataContinuousPalette}
@@ -10162,21 +10173,21 @@ export default function App() {
                             <option value="log">Signed log1p</option>
                           </select>
                         </label> : null}
-                        <label title="Optionally set the lower bound of the continuous color scale. Leave blank for the data minimum.">
+                        <label title={metadataColorMode === "date" ? "Earliest date on the color scale. Use YYYY, YYYY-MM, or YYYY-MM-DD; leave blank for the earliest date in the data." : "Optionally set the lower bound of the continuous color scale. Leave blank for the data minimum."}>
                           Clamp minimum
                           <input
                             type={metadataColorMode === "date" ? "text" : "number"}
                             value={metadataContinuousMinInput}
-                            placeholder="auto"
+                            placeholder={metadataColorMode === "date" ? "YYYY-MM-DD (auto)" : "auto"}
                             onChange={(event) => setMetadataContinuousMinInput(event.target.value)}
                           />
                         </label>
-                        <label title="Optionally set the upper bound of the continuous color scale. Leave blank for the data maximum.">
+                        <label title={metadataColorMode === "date" ? "Latest date on the color scale. Use YYYY, YYYY-MM, or YYYY-MM-DD; leave blank for the latest date in the data." : "Optionally set the upper bound of the continuous color scale. Leave blank for the data maximum."}>
                           Clamp maximum
                           <input
                             type={metadataColorMode === "date" ? "text" : "number"}
                             value={metadataContinuousMaxInput}
-                            placeholder="auto"
+                            placeholder={metadataColorMode === "date" ? "YYYY-MM-DD (auto)" : "auto"}
                             onChange={(event) => setMetadataContinuousMaxInput(event.target.value)}
                           />
                         </label>
@@ -10611,7 +10622,22 @@ export default function App() {
                         <span className="figure-style-value">{metadataTipTableCellWidthPx} px</span>
                       </label>
                     )}
-                    <label title="Add a metadata column to the table.">
+                    {metadataTipTableMode === "bars" ? (
+                      <label title="Choose the single column plotted as horizontal bars. Other selected columns are retained for heat maps and categorical tables.">
+                        Bar data column
+                        <select value={metadataTipTableColumns[0]?.column ?? ""} onChange={event => {
+                          const column = event.target.value;
+                          if (!column) return;
+                          setMetadataTipTableColumns(current => [
+                            current.find(item => item.column === column) ?? { column, label: metadataTipTableDisplayLabel(column) },
+                            ...current.filter(item => item.column !== column),
+                          ]);
+                        }}>
+                          <option value="" disabled>Choose a column</option>
+                          {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{metadataTipTableDisplayLabel(column)}</option>)}
+                        </select>
+                      </label>
+                    ) : <label title="Add a metadata column to the table.">
                       Add column
                       <select
                         value=""
@@ -10630,17 +10656,19 @@ export default function App() {
                           <option key={column} value={column}>{metadataTipTableDisplayLabel(column)}</option>
                         ))}
                       </select>
-                    </label>
+                    </label>}
                     <div className="metadata-tip-table-columns" data-testid="metadata-tip-table-columns">
-                      {metadataTipTableColumns.map((item, index) => (
-                        <div className="metadata-tip-table-column" key={item.column}>
+                      {(metadataTipTableMode === "bars" ? metadataTipTableColumns.slice(0, 1) : metadataTipTableColumns).map((item, index) => (
+                        <div className={`metadata-tip-table-column${metadataTipTableMode === "bars" ? " metadata-tip-table-bar-column" : ""}`} key={item.column}>
                           <input
+                            type="text"
                             aria-label={`Display label for ${item.column}`}
                             value={item.label}
                             onChange={(event) => setMetadataTipTableColumns((current) => current.map((candidate) => (
                               candidate.column === item.column ? { ...candidate, label: event.target.value } : candidate
                             )))}
                           />
+                          {metadataTipTableMode !== "bars" ? <>
                           <button
                             type="button"
                             className="metadata-tip-table-column-button"
@@ -10672,6 +10700,7 @@ export default function App() {
                             aria-label={`Remove ${item.column}`}
                             onClick={() => setMetadataTipTableColumns((current) => current.filter((candidate) => candidate.column !== item.column))}
                           >&#215;</button>
+                          </> : null}
                           {metadataTipTableMode !== "categorical" ? (
                             <label style={{ gridColumn: "1 / -1" }} title="Dates accept YYYY, YYYY-MM, or YYYY-MM-DD and use chronological colors in heat maps.">
                               {item.column} data type
@@ -10689,9 +10718,12 @@ export default function App() {
                     ) : null}
                   </SettingsPopoverButton>
                 </div>
+                <CladeRibbonControls ribbons={customCladeRibbons} onChange={setCustomCladeRibbons}
+                  detailsRef={cladeRibbonsDetailsRef} comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
+                </fieldset>
                 <div className="metadata-summary">
-                  <span>Matched rows: {metadataOverlay.matchedRowCount.toLocaleString()}</span>
-                  {metadataOverlay.matchedNodeCount !== metadataOverlay.matchedRowCount ? (
+                  <span>Matched rows: {metadataOverlayProcessing ? "..." : (tree ? metadataTable.rows.length - metadataUnmappedRows.total : 0).toLocaleString()}</span>
+                  {metadataEnabled && metadataOverlay.matchedNodeCount !== metadataOverlay.matchedRowCount ? (
                     <span>Matched nodes: {metadataOverlay.matchedNodeCount.toLocaleString()}</span>
                   ) : null}
                   {metadataEnabled && metadataOverlay.coloredNodeCount !== metadataOverlay.matchedNodeCount ? (
@@ -10760,6 +10792,10 @@ export default function App() {
                   </p>
                 ) : null}
               </>
+            ) : null}
+            {!metadataTable && customCladeRibbons.length > 0 ? (
+              <CladeRibbonControls ribbons={customCladeRibbons} onChange={setCustomCladeRibbons}
+                detailsRef={cladeRibbonsDetailsRef} comparisonActive={Boolean(comparisonEnabled && comparisonTree)} />
             ) : null}
             {metadataOverlayProcessing ? (
               <>

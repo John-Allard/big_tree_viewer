@@ -206,7 +206,6 @@ export function buildCircularScaleBar(
   };
   const bottomTicks: CircularScaleTick[] = [];
   const leftTicks: CircularScaleTick[] = [];
-  const rightTicks: CircularScaleTick[] = [];
 
   for (let index = 0; index < boundaries.length; index += 1) {
     const boundary = boundaries[index];
@@ -224,32 +223,27 @@ export function buildCircularScaleBar(
       }
     }
 
-    for (const [axisX, ticks] of [[leftX, leftTicks], [width - margin, rightTicks]] as const) {
-      const dx = Math.abs(axisX - centerX);
-      if (radiusPx > dx) {
-        const delta = Math.sqrt(Math.max(0, (radiusPx * radiusPx) - (dx * dx)));
-        const candidates = [centerY - delta, centerY + delta].filter(
-          (candidate) => candidate >= margin && candidate <= height - margin && inSector(axisX, candidate),
-        );
-        const y = chooseClosestToMidpoint(candidates, height * 0.5);
-        if (y !== null) ticks.push({ boundary, position: y });
-      }
+    const dx = Math.abs(leftX - centerX);
+    if (radiusPx > dx) {
+      const delta = Math.sqrt(Math.max(0, (radiusPx * radiusPx) - (dx * dx)));
+      const candidates = [centerY - delta, centerY + delta].filter(
+        (candidate) => candidate >= margin && candidate <= height - margin && inSector(leftX, candidate),
+      );
+      const y = chooseClosestToMidpoint(candidates, height * 0.5);
+      if (y !== null) leftTicks.push({ boundary, position: y });
     }
   }
 
   // An optional endpoint tick must not change which axis is selected.
   const bottomScore = bottomTicks.filter((tick) => tick.boundary.value !== 0).length;
   const leftScore = leftTicks.filter((tick) => tick.boundary.value !== 0).length;
-  const rightScore = rightTicks.filter((tick) => tick.boundary.value !== 0).length;
-  if (bottomScore === 0 && leftScore === 0 && rightScore === 0) {
+  if (bottomScore === 0 && leftScore === 0) {
     return null;
   }
-  if (bottomScore >= leftScore && bottomScore >= rightScore) {
+  if (bottomScore >= leftScore) {
     return { kind: "bottom", axisPosition: bottomY, ticks: bottomTicks };
   }
-  return leftScore >= rightScore
-    ? { kind: "left", axisPosition: leftX, ticks: leftTicks }
-    : { kind: "right", axisPosition: width - margin, ticks: rightTicks };
+  return { kind: "left", axisPosition: leftX, ticks: leftTicks };
 }
 
 export function choosePartialRadialScale(
@@ -267,11 +261,10 @@ export function choosePartialRadialScale(
   });
   const visible = (p: { x: number; y: number }) => p.x >= left && p.x <= right && p.y >= top && p.y <= bottom;
   const boundaryIntersections = Math.max(...[0, gap].map((theta) => radii.filter((r) => visible(point(r, theta))).length));
-  const candidates = gap >= Math.PI - 1e-9
-    ? [{ theta: 0, offsetPx: 14, labelSide: 1 }, { theta: gap, offsetPx: -14, labelSide: -1 }]
-    : [{ theta: gap / 2, offsetPx: 0, labelSide: 1 },
-      { theta: gap * 0.1, offsetPx: 0, labelSide: 1 },
-      { theta: gap * 0.9, offsetPx: 0, labelSide: -1 }];
+  const candidates = [
+    { theta: 0, offsetPx: 14, labelSide: 1 },
+    { theta: gap, offsetPx: -14, labelSide: -1 },
+  ];
   const scored = candidates.map((candidate) => {
     const start = point(innerRadius, candidate.theta, candidate.offsetPx);
     const end = point(outerRadius, candidate.theta, candidate.offsetPx);
@@ -292,9 +285,14 @@ export function choosePartialRadialScale(
     }
     return { ...candidate, visibleFraction: Math.max(0, high - low), intersections: boundaryIntersections };
   });
-  const preferred = scored[0];
-  if (preferred.visibleFraction >= 0.5) return preferred;
-  return scored.reduce((best, candidate) => candidate.visibleFraction > best.visibleFraction + 1e-6 ? candidate : best, preferred);
+  const distanceFromZero = (theta: number) => Math.abs(Math.atan2(Math.sin(theta + rotation), Math.cos(theta + rotation)));
+  return scored.reduce((best, candidate) => {
+    const difference = candidate.visibleFraction - best.visibleFraction;
+    if (difference > 1e-6) return candidate;
+    if (Math.abs(difference) <= 1e-6
+      && distanceFromZero(candidate.theta) < distanceFromZero(best.theta) - 1e-6) return candidate;
+    return best;
+  }, scored[0]);
 }
 
 export function displayLabelText(raw: string, fallback: string): string {

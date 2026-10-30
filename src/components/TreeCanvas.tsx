@@ -12348,14 +12348,17 @@ export default function TreeCanvas({
       ) : null;
       const edgeIntersections = circularScaleBar?.ticks.filter((tick) => tick.boundary.value !== 0).length ?? 0;
       const useCentralScale = circularScaleBar === null || Boolean(partialScalePlacement
-        && partialScalePlacement.visibleFraction >= 0.5
+        && partialScalePlacement.visibleFraction > 0
+        && partialScalePlacement.intersections > 0
         && partialScalePlacement.intersections >= edgeIntersections);
+      const partialScaleLabelsOnly = isPartialRadial && polarAngleSpan >= (Math.PI * 1.5) - 1e-9;
+      const partialScaleEnabled = figureStyles.scale.showPartialRadialScaleBar !== false;
       const drawCenterRadialBar = isPartialRadial
-        ? figureStyles.scale.showPartialRadialScaleBar !== false
+        ? partialScaleEnabled && !partialScaleLabelsOnly
         : showCircularCenterRadialScaleBar;
       const showCentralTimeLabels = useCentralScale && (drawScaleLabels || drawGuideLabels)
-        && (!isPartialRadial || drawCenterRadialBar || drawGuideLabels);
-      const centerScaleTheta = isPartialRadial
+        && (!isPartialRadial || partialScaleEnabled || drawGuideLabels);
+      const centerScaleTheta = isPartialRadial && !partialScaleLabelsOnly
         ? partialScalePlacement!.theta
         : (-circularCenterScaleAngleDegrees * Math.PI) / 180;
       timing.circularCachePrepMs += performance.now() - circularCachePrepStartTime;
@@ -15415,6 +15418,8 @@ export default function TreeCanvas({
       (renderDebug.circular as Record<string, unknown>).scaleBarPlacement = useCentralScale ? "radial" : circularScaleBar?.kind;
       (renderDebug.circular as Record<string, unknown>).radialScaleTheta = centerScaleTheta + rotationAngle;
       (renderDebug.circular as Record<string, unknown>).radialScaleVisibleFraction = partialScalePlacement?.visibleFraction;
+      (renderDebug.circular as Record<string, unknown>).openingScaleIntersections = partialScalePlacement?.intersections;
+      (renderDebug.circular as Record<string, unknown>).viewportScaleIntersections = edgeIntersections;
       (renderDebug.circular as Record<string, unknown>).panBranchBitmapReused = Boolean(cachedPanBranches);
       (renderDebug.circular as Record<string, unknown>).renderedColoredStemCount = circularRenderedColoredStemCount;
       (renderDebug.circular as Record<string, unknown>).renderedColoredConnectorCount = circularRenderedColoredConnectorCount;
@@ -15440,7 +15445,7 @@ export default function TreeCanvas({
           const centerScaleBarTangentX = -Math.sin(centerScaleBarTheta + rotationAngle);
           const centerScaleBarTangentY = Math.cos(centerScaleBarTheta + rotationAngle);
           // A semicircle's axis is parallel to its open edge, just below it in tree coordinates.
-          const gapOffsetPx = partialScalePlacement?.offsetPx ?? 0;
+          const gapOffsetPx = partialScaleLabelsOnly ? 0 : partialScalePlacement?.offsetPx ?? 0;
           const centerScalePoint = (radius: number) => {
             const world = polarToCartesian(radius, centerScaleBarTheta);
             const screen = worldToScreenCircular(camera, world.x, world.y);
@@ -15621,10 +15626,8 @@ export default function TreeCanvas({
             ctx.fillRect(0, Math.max(0, circularScaleBar.axisPosition - 12), renderSize.width, renderSize.height);
             pushSceneRect(0, Math.max(0, circularScaleBar.axisPosition - 12), renderSize.width, renderSize.height, "rgba(251,252,254,0.97)");
           } else if (drawScaleAxis || drawScaleLabels) {
-            const backgroundX = circularScaleBar.kind === "right" ? circularScaleBar.axisPosition - 16 : 0;
-            const backgroundWidth = circularScaleBar.kind === "right" ? renderSize.width - backgroundX : circularScaleBar.axisPosition + 16;
-            ctx.fillRect(backgroundX, 0, backgroundWidth, renderSize.height);
-            pushSceneRect(backgroundX, 0, backgroundWidth, renderSize.height, "rgba(251,252,254,0.97)");
+            ctx.fillRect(0, 0, circularScaleBar.axisPosition + 16, renderSize.height);
+            pushSceneRect(0, 0, circularScaleBar.axisPosition + 16, renderSize.height, "rgba(251,252,254,0.97)");
           }
 
           ctx.strokeStyle = "#6b7280";
@@ -15664,7 +15667,6 @@ export default function TreeCanvas({
             }
             ctx.globalAlpha = 1;
           } else {
-            const sideSign = circularScaleBar.kind === "right" ? 1 : -1;
             ctx.moveTo(circularScaleBar.axisPosition, 24);
             ctx.lineTo(circularScaleBar.axisPosition, renderSize.height - 24);
             pushScaleAxisLine(circularScaleBar.axisPosition, 24, circularScaleBar.axisPosition, renderSize.height - 24, "#6b7280", 1);
@@ -15672,8 +15674,8 @@ export default function TreeCanvas({
               const tick = circularScaleBar.ticks[index];
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
               ctx.moveTo(circularScaleBar.axisPosition, tick.position);
-              ctx.lineTo(circularScaleBar.axisPosition + sideSign * (4 + (3 * tick.boundary.alpha)), tick.position);
-              pushScaleAxisLine(circularScaleBar.axisPosition, tick.position, circularScaleBar.axisPosition + sideSign * (4 + (3 * tick.boundary.alpha)), tick.position, "#6b7280", 1, 0.35 + (0.65 * tick.boundary.alpha));
+              ctx.lineTo(circularScaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position);
+              pushScaleAxisLine(circularScaleBar.axisPosition, tick.position, circularScaleBar.axisPosition - (4 + (3 * tick.boundary.alpha)), tick.position, "#6b7280", 1, 0.35 + (0.65 * tick.boundary.alpha));
             }
             ctx.globalAlpha = 1;
             if (drawScaleAxis) ctx.stroke();
@@ -15683,19 +15685,19 @@ export default function TreeCanvas({
               const tick = circularScaleBar.ticks[index];
               ctx.save();
               ctx.globalAlpha = 0.35 + (0.65 * tick.boundary.alpha);
-              ctx.translate(circularScaleBar.axisPosition + sideSign * 8, tick.position);
-              ctx.rotate(sideSign * Math.PI / 2);
+              ctx.translate(circularScaleBar.axisPosition - 8, tick.position);
+              ctx.rotate(-Math.PI / 2);
               ctx.fillText(scaleLabelText(tick.boundary.value), 0, 0);
               ctx.restore();
               pushSceneText(
                 scaleLabelText(tick.boundary.value),
-                circularScaleBar.axisPosition + sideSign * 8,
+                circularScaleBar.axisPosition - 8,
                 tick.position,
                 "#6b7280",
                 scaleFontSize,
                 labelFontFamilies.scale,
                 "middle",
-                sideSign * Math.PI / 2,
+                -Math.PI / 2,
                 labelFontStyles.scale,
               );
             }

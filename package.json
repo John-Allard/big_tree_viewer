@@ -33,7 +33,8 @@
     "test:e2e:ios-taxonomy": "PLAYWRIGHT_INCLUDE_WEBKIT=1 playwright test --project=iphone-safari tests/taxonomy-ios-webkit.spec.ts",
     "test:e2e:perf-local": "playwright test tests/perf-regression.spec.ts",
     "test:e2e:headed": "playwright test --headed",
-    "test:desktop:agent": "node scripts/test-desktop-agent.mjs"
+    "test:desktop:agent": "node scripts/test-desktop-agent.mjs",
+    "test:desktop:metadata": "node scripts/test-desktop-metadata.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

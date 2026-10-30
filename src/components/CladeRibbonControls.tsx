@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { ChevronRight, Trash2 } from "lucide-react";
 import type { RefObject } from "react";
 import type { CustomCladeRibbon } from "../lib/customCladeRibbons";
 import "./cladeRibbonControls.css";
@@ -15,6 +15,7 @@ export default function CladeRibbonControls({ ribbons, onChange, detailsRef, com
   return (
     <details ref={detailsRef} className="clade-ribbon-controls">
       <summary title="Independent ribbons for descendants of an internal node. Use Add Clade Ribbon in the node's context menu.">
+        <ChevronRight className="clade-ribbon-chevron" size={12} aria-hidden="true" />
         Clade ribbons{ribbons.length > 0 ? ` (${ribbons.length})` : ""}
       </summary>
       {comparisonActive ? <p className="status-line">Clade ribbons are hidden during tree comparison.</p> : null}

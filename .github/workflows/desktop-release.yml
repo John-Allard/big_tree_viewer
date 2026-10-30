@@ -40,6 +40,8 @@ jobs:
         run: xvfb-run -a npm run test:desktop:smoke -- release/linux-unpacked/big-tree-viewer
       - name: Test packaged MCP helper and desktop tools
         run: xvfb-run -a npm run test:desktop:agent -- release/linux-unpacked/big-tree-viewer
+      - name: Test packaged metadata, ribbons, and scale automation
+        run: xvfb-run -a npm run test:desktop:metadata -- release/linux-unpacked/big-tree-viewer
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux
@@ -98,6 +100,8 @@ jobs:
           hdiutil verify "release/Big-Tree-Viewer-macOS-universal.dmg"
       - name: Test packaged desktop tools
         run: npm run test:desktop:agent -- "release/mac-universal/Big Tree Viewer.app/Contents/MacOS/Big Tree Viewer"
+      - name: Test packaged metadata, ribbons, and scale automation
+        run: npm run test:desktop:metadata -- "release/mac-universal/Big Tree Viewer.app/Contents/MacOS/Big Tree Viewer"
       - name: Test headless MCP and macOS application lifecycle
         run: npm run test:mcp-lifecycle -- "release/mac-universal/Big Tree Viewer.app"
       - uses: actions/upload-artifact@v4
@@ -160,6 +164,8 @@ jobs:
         run: npm run test:windows-updater-package -- release/win-unpacked
       - name: Test packaged MCP helper and desktop tools
         run: npm run test:desktop:agent -- "release/win-unpacked/Big Tree Viewer.exe"
+      - name: Test packaged metadata, ribbons, and scale automation
+        run: npm run test:desktop:metadata -- "release/win-unpacked/Big Tree Viewer.exe"
       - name: Package signed Windows application
         run: npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
       - name: Sign Windows installer

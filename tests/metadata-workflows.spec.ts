@@ -21,7 +21,12 @@ async function openPanel(page: Page, name: string) {
 }
 
 test("date color scales and legend settings remain synchronized", async ({ page }, testInfo) => {
-  await load(page, { enabled: true, valueColumn: "date", colorMode: "date" }, { metadataLegendEnabled: true });
+  await load(page, { enabled: true, valueColumn: "date", colorMode: "date" }, {
+    metadataLegendEnabled: true, metadataTipTableEnabled: true, metadataTipTableMode: "heatmap",
+    metadataTipTableColumns: [{ column: "date", label: "Collection date", valueType: "date" }],
+  });
+  await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableColumns))
+    .toEqual([{ column: "date", label: "Collection date", valueType: "date" }]);
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataColoredNodeCount === 4);
   await openPanel(page, "Metadata");
   await page.getByRole("button", { name: "Metadata legend settings", exact: true }).click();

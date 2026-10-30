@@ -37,9 +37,9 @@ const metadataOptions = z.object({
 const style = {
   layout: z.enum(["rectangular", "circular", "fan", "spiral"]).optional(),
   canvas: object.optional().describe("Optional saved viewport state, e.g. camera with kind, scaleX, scaleY, translateX, translateY for rectangular zoom."),
-  settings: object.optional().describe("Saved BTV visual setting names; inspect_tree returns current settings. Cladograms: showCladogram=true gives equal edges; add ultrametricCladogram=true and ultrametricCladogramMethod=levels|logarithmic|grafen to align tips. cladogramLogStrength=1..10 (default 1) adjusts logarithmic layout. Cladograms require rectangular/circular/fan layout. Unknown keys are rejected."),
+  settings: object.optional().describe("Saved BTV visual setting names; inspect_tree returns effective settings. Supports customCladeRibbons [{id,node,label,color,placement:inside|outside,enabled}] using original zero-based Newick preorder node IDs; [] clears ribbons. metadataTipTableEnabled/Mode/Columns configure tip tables; metadataLegendEnabled/Components control legends. figureStyles.scale controls showScaleBar, showScaleBarLabels, showTimeGuideLabels, showPartialRadialScaleBar, calendarAxis/calendarRootYear. showScaleBars is the master switch; partial-radial placement is automatic. Cladograms: showCladogram=true gives equal edges; ultrametricCladogram=true with method levels|logarithmic|grafen aligns tips; cladogramLogStrength=1..10 (default 1). Unknown top-level keys are rejected."),
   metadataPath: z.string().optional().describe("Absolute local CSV/TSV path."),
-  metadata: metadataOptions.optional().describe("Metadata column and encoding settings. Use metadataPath for a local CSV/TSV file."),
+  metadata: metadataOptions.optional().describe("Column names refer to CSV/TSV headers. Use metadataPath or text to load a table; omit both to edit the current table's encodings. Supports date colors, tipLabelColumn, collapseColumn, NCBI taxIdColumn, and custom rankColumns ribbons (omit taxonomy for custom ranks). Coloring enabled is independent of labels, collapse, tables, and ribbons."),
   taxonomy: taxonomy.optional(),
 };
 const input = {
@@ -58,7 +58,7 @@ const id = { sessionId: z.string() };
 const toolDefinitions = {
   open_tree: { description: "Open a local Newick/NEXUS tree or BTV session in a visible Big Tree Viewer desktop window with requested settings. Returns a sessionId for later edits. Does not replace the user's existing tree.", shape: input },
   render_tree: { description: "Render a local tree to PNG/SVG or save a configured .btvsession in the background using bundled Electron. No external Chrome, Python, or website. The temporary tree closes after export; use open_tree for interactive work.", shape: { ...input, ...output } },
-  inspect_tree: { description: "Inspect an agent-opened tree: counts, layout, current visual settings, taxonomy coverage, and metadata messages.", shape: id },
+  inspect_tree: { description: "Inspect an agent-opened tree: counts, layout, effective visual settings, taxonomy coverage, metadata columns/row counts, matched and colored nodes, collapse groups, matched table tips, and enabled clade ribbons.", shape: id },
   update_tree: { description: "Change layout, visual settings, metadata, or taxonomy on an existing agent tree without reparsing its topology. The visible desktop window updates.", shape: { ...id, ...style } },
   export_tree: { description: "Export the current agent tree view to PNG/SVG, or save its editable .btvsession with metadata, taxonomy, and camera.", shape: { ...id, ...output } },
   handoff_tree: { description: "Open the configured tree in the independent desktop app so the user can keep working after the agent disconnects. Saves a session in BTV agent storage and returns its path.", shape: id },
