@@ -111,16 +111,23 @@ try {
     metadataTipTableEnabled: true, metadataLegendEnabled: true,
     metadataLegendComponents: { tipTables: true, branchColors: false, markers: false, pies: false },
     metadataTipTableMode: 'bars', metadataTipTableCellWidthPx: 96, metadataTipTableBinaryStyle: 'check-cross',
+    metadataTipTablePlacement: 'inside',
     metadataTipTableColumns: [{ column: 'date', label: 'Collection date' }, { column: 'score', label: 'Score' }, { column: 'country', label: 'Country' }],
   } });
   assert.deepEqual(mixed.metadata.tipTableColumns.map(column => column.kind), ['date', 'number', 'categorical']);
   assert.equal(mixed.settings.metadataTipTableCellWidthPx, 96);
+  assert.equal(mixed.settings.metadataTipTablePlacement, 'inside');
   const mixedSvgPath = path.join(dir, 'mixed.svg');
   await call('export_tree', { sessionId, outputPath: mixedSvgPath });
   const mixedSvg = await readFile(mixedSvgPath, 'utf8');
   assert.match(mixedSvg, /Tip bars: Collection date/);
   assert.match(mixedSvg, /Tip bars: Score/);
   assert.match(mixedSvg, /Tip table: Country/);
+  const mixedSessionPath = path.join(dir, 'mixed.btvsession');
+  await call('export_tree', { sessionId, outputPath: mixedSessionPath });
+  const mixedRestored = await call('open_tree', { treePath: mixedSessionPath });
+  assert.equal(mixedRestored.settings.metadataTipTablePlacement, 'inside');
+  await call('close_tree', { sessionId: mixedRestored.sessionId });
   const nodeTable = 'id,ribbon\nPairA,Left group\nPairB,Right group\n';
   const nodeRibbons = await call('update_tree', { sessionId, metadata: {
     text: nodeTable, keyColumn: 'id', cladeRibbons: { labelColumn: 'ribbon', mode: 'nodes' },
@@ -133,6 +140,7 @@ try {
   const restored = await call('open_tree', { treePath: importSession });
   assert.deepEqual(restored.settings.customCladeRibbons, nodeRibbons.settings.customCladeRibbons);
   assert.equal(restored.taxonomy.mappedTips, 4);
+  assert.equal(restored.settings.metadataTipTablePlacement, nodeRibbons.settings.metadataTipTablePlacement);
   await call('close_tree', { sessionId: restored.sessionId });
   const rendered = await call('render_tree', { newick: '((s1:1,s2:1)PairA:1,(s3:1,s4:1)PairB:1)Root;',
     metadataPath: taxonomyFile, metadata: { keyColumn: 'id', autoRankColumns: true,

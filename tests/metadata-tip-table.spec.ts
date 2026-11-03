@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { gunzipSync, strFromU8 } from "fflate";
 
 async function loadSmallTree(page: Page): Promise<void> {
   await page.goto("/");
@@ -14,15 +16,15 @@ async function loadSmallTree(page: Page): Promise<void> {
 async function loadMetadataTable(page: Page): Promise<void> {
   await page.evaluate(() => {
     const csv = [
-      "name,numeric_a,numeric_b,present,state_code",
-      "A,1,8,yes,AA",
-      "B,2,7,no,AB",
-      "C,3,6,yes,BB",
-      "D,4,5,no,BA",
-      "E,5,4,yes,AA",
-      "F,6,3,no,AB",
-      "G,7,2,yes,BB",
-      "H,8,1,no,BA",
+      "name,numeric_a,numeric_b,present,state_code,family,genus",
+      "A,1,8,yes,AA,Family One,Genus One",
+      "B,2,7,no,AB,Family One,Genus One",
+      "C,3,6,yes,BB,Family One,Genus Two",
+      "D,4,5,no,BA,Family One,Genus Two",
+      "E,5,4,yes,AA,Family Two,Genus Three",
+      "F,6,3,no,AB,Family Two,Genus Three",
+      "G,7,2,yes,BB,Family Two,Genus Four",
+      "H,8,1,no,BA,Family Two,Genus Four",
     ].join("\n");
     const app = window.__BIG_TREE_VIEWER_APP_TEST__;
     app?.importMetadataTextForTest(csv, "tip-table.csv");
@@ -114,6 +116,65 @@ test("tip metadata supports quantitative bars and categorical checks or text", a
   const textSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
   expect(textSvg).toContain("Site 42");
   expect(textSvg).toContain(">AA</text>");
+});
+
+test("table placement reserves space inside taxonomy and survives session reload", async ({ page }, testInfo) => {
+  await loadSmallTree(page);
+  await loadMetadataTable(page);
+  const taxonomySection = page.locator(".panel-section .section-toggle").filter({ hasText: "Taxonomy" }).first();
+  if (await taxonomySection.getAttribute("aria-expanded") !== "true") await taxonomySection.click();
+  await page.getByRole("combobox", { name: "Taxonomy source", exact: true }).selectOption("custom");
+  await page.getByRole("button", { name: "Apply custom taxonomy ribbons", exact: true }).click();
+  await page.waitForFunction(() => Boolean((window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect?.taxonomyBandXs as number[])?.length));
+  const section = page.locator(".panel-section .section-toggle").filter({ hasText: "Metadata" }).first();
+  if (await section.getAttribute("aria-expanded") !== "true") await section.click();
+  await page.getByRole("button", { name: "Tip data table settings", exact: true }).click();
+  const placement = page.getByRole("combobox", { name: "Table placement", exact: true });
+  await expect(placement).toHaveValue("outside");
+  const bounds = () => page.evaluate(() => {
+    const rect = window.__BIG_TREE_VIEWER_RENDER_DEBUG__!.rect!;
+    const table = rect.metadataTipTable as { tableStartX: number; placement: string; columns: Array<{ width: number }> };
+    const xs = rect.taxonomyBandXs as number[];
+    const widths = rect.taxonomyBandWidthsPx as number[];
+    const labels = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getLabelHitboxes().filter(hit => hit.labelKind === "tip");
+    return { placement: table.placement, start: table.tableStartX, end: table.tableStartX + table.columns.reduce((sum, column) => sum + column.width, 0),
+      taxonomyStart: Math.min(...xs), taxonomyEnd: Math.max(...xs.map((x, i) => x + widths[i])),
+      labelsEnd: Math.max(...labels.map(hit => Number(hit.x) + Number(hit.width))) };
+  });
+  expect((await bounds()).start).toBeGreaterThan((await bounds()).taxonomyEnd);
+  await placement.selectOption("inside");
+  await expect.poll(async () => (await bounds()).placement).toBe("inside");
+  let inside = await bounds();
+  expect(inside.start).toBeGreaterThan(inside.labelsEnd);
+  expect(inside.end).toBeLessThan(inside.taxonomyStart);
+  await page.getByRole("button", { name: "Close Tip data table settings", exact: true }).click();
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.fitView());
+  await page.screenshot({ path: testInfo.outputPath("table-inside-taxonomy.png") });
+  const svg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest());
+  expect(svg).toContain("Trait one");
+  expect(svg).toContain("Trait two");
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true });
+    Object.defineProperty(window, "showOpenFilePicker", { value: undefined, configurable: true });
+  });
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Save Session", exact: true }).click();
+  const file = (await (await download).path())!;
+  const session = JSON.parse(strFromU8(gunzipSync(await readFile(file))));
+  expect(session.settings.metadataTipTablePlacement).toBe("inside");
+  await page.getByRole("button", { name: "Tip data table settings", exact: true }).click();
+  await placement.selectOption("outside");
+  await expect.poll(async () => (await bounds()).placement).toBe("outside");
+  expect((await bounds()).start).toBeGreaterThan((await bounds()).taxonomyEnd);
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Load Session", exact: true }).click();
+  await (await chooser).setFiles(file);
+  await page.waitForFunction(() => Boolean((window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect?.taxonomyBandXs as number[])?.length)
+    && !window.__BIG_TREE_VIEWER_APP_TEST__?.getState().loading);
+  await expect.poll(async () => (await bounds()).placement).toBe("inside");
+  inside = await bounds();
+  expect(inside.start).toBeGreaterThan(inside.labelsEnd);
+  expect(inside.end).toBeLessThan(inside.taxonomyStart);
 });
 
 test("tip metadata table is suppressed outside rectangular geometry", async ({ page }) => {

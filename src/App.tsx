@@ -56,6 +56,7 @@ import {
   type MetadataTipTableCellStyle,
   type MetadataTipTableColumn,
   type MetadataTipTableMode,
+  type MetadataTipTablePlacement,
 } from "./lib/metadataTipTable";
 import {
   buildPhyloPicAttributionCaption,
@@ -408,6 +409,7 @@ type BigTreeViewerSessionSettings = {
   metadataTipTablePalette?: MetadataContinuousPalette;
   metadataTipTableBarWidthPx?: number;
   metadataTipTableCellWidthPx?: number;
+  metadataTipTablePlacement?: MetadataTipTablePlacement;
   metadataCategoryColorOverrides: Record<string, string>;
   metadataMarkerStyleOverrides: Record<string, { color?: string; shape?: MetadataMarkerShape }>;
   metadataMarkerSizePx: number;
@@ -2258,6 +2260,7 @@ export default function App() {
   const [metadataTipTablePalette, setMetadataTipTablePalette] = useState<MetadataContinuousPalette>("viridis");
   const [metadataTipTableBarWidthPx, setMetadataTipTableBarWidthPx] = useState(180);
   const [metadataTipTableCellWidthPx, setMetadataTipTableCellWidthPx] = useState(24);
+  const [metadataTipTablePlacement, setMetadataTipTablePlacement] = useState<MetadataTipTablePlacement>("outside");
   const [metadataCategoryColorOverrides, setMetadataCategoryColorOverrides] = useState<Record<string, string>>({});
   const [metadataMarkerStyleOverrides, setMetadataMarkerStyleOverrides] = useState<Record<string, { color?: string; shape?: MetadataMarkerShape }>>({});
   const [metadataMarkerSizePx, setMetadataMarkerSizePx] = useState(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -3230,6 +3233,7 @@ export default function App() {
     if (typeof visual.metadataTipTableCellWidthPx === "number" && Number.isFinite(visual.metadataTipTableCellWidthPx)) {
       setMetadataTipTableCellWidthPx(Math.max(12, Math.min(240, visual.metadataTipTableCellWidthPx)));
     }
+    if (visual.metadataTipTablePlacement === "inside" || visual.metadataTipTablePlacement === "outside") setMetadataTipTablePlacement(visual.metadataTipTablePlacement);
     const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
     if (categoryColorOverrides) {
       setMetadataCategoryColorOverrides(categoryColorOverrides);
@@ -4963,6 +4967,7 @@ export default function App() {
     metadataTipTablePalette,
     metadataTipTableBarWidthPx,
     metadataTipTableCellWidthPx,
+    metadataTipTablePlacement,
     metadataCategoryColorOverrides,
     metadataMarkerStyleOverrides,
     metadataMarkerSizePx,
@@ -5023,6 +5028,7 @@ export default function App() {
     metadataTipTableEnabled,
     metadataTipTableMode,
     metadataTipTablePalette,
+    metadataTipTablePlacement,
     metadataMarkerSizePx,
     metadataMarkerStyleOverrides,
     metadataMarkersEnabled,
@@ -5224,6 +5230,7 @@ export default function App() {
     setMetadataPieColorOverrides(settings.metadataPieColorOverrides ?? {});
     setMetadataPieSizePx(clampMetadataGlyphSizePercent(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX));
     setMetadataTipTableEnabled(settings.metadataTipTableEnabled === true);
+    setMetadataTipTablePlacement(settings.metadataTipTablePlacement === "inside" ? "inside" : "outside");
     setMetadataTipTableBinaryStyle(normalizeMetadataTipTableCellStyle(settings.metadataTipTableBinaryStyle
       ?? (settings.metadataTipTableCellStyle === "check" || settings.metadataTipTableCellStyle === "check-cross" ? settings.metadataTipTableCellStyle : undefined), "filled"));
     setMetadataTipTableTextStyle(normalizeMetadataTipTableCellStyle(settings.metadataTipTableTextStyle, "text"));
@@ -5653,6 +5660,7 @@ export default function App() {
     setMetadataTipTablePalette("viridis");
     setMetadataTipTableBarWidthPx(180);
     setMetadataTipTableCellWidthPx(24);
+    setMetadataTipTablePlacement("outside");
     setMetadataCategoryColorOverrides({});
     setMetadataMarkerStyleOverrides({});
     setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -5715,6 +5723,7 @@ export default function App() {
       setMetadataTipTableColumns(table.columns.slice(1).map(column => ({ column, label: metadataTipTableDisplayLabel(column) })));
       setMetadataTipTablePalette("viridis");
       setMetadataTipTableBarWidthPx(180);
+      setMetadataTipTablePlacement("outside");
       setMetadataTipTableCellWidthPx(Math.max(12, Math.min(24, Math.floor(600 / Math.max(1, table.columns.length - 1)))));
       setMetadataCategoryColorOverrides({});
       setMetadataMarkerStyleOverrides({});
@@ -7833,6 +7842,7 @@ export default function App() {
         metadataTipTablePalette,
         metadataTipTableBarWidthPx,
         metadataTipTableCellWidthPx,
+        metadataTipTablePlacement,
         metadataTipTableMatchedTipCount: metadataTipTableData?.matchedTipCount ?? 0,
         metadataLabelMaxCount,
         metadataLabelMinSpacingPx,
@@ -8144,6 +8154,7 @@ export default function App() {
     metadataTipTableTextStyle,
     metadataTipTableCellWidthPx,
     metadataTipTableColumns,
+    metadataTipTablePlacement,
     metadataTipTableData,
     metadataTipTableEnabled,
     metadataTipTableMode,
@@ -10658,6 +10669,13 @@ export default function App() {
                         <option value="heatmap">Heat map</option>
                       </select>
                     </label>
+                    <label title="Position the data table before or after the taxonomy ribbons, without overlapping tip labels.">
+                      Table placement
+                      <select value={metadataTipTablePlacement} onChange={event => setMetadataTipTablePlacement(event.target.value as MetadataTipTablePlacement)}>
+                        <option value="inside">Inside taxonomy</option>
+                        <option value="outside">Outside taxonomy</option>
+                      </select>
+                    </label>
                     {metadataTipTableMode !== "bars" ? (
                       <label>
                         Palette
@@ -11347,6 +11365,7 @@ export default function App() {
           metadataTipTablePalette={metadataTipTablePalette}
           metadataTipTableBarWidthPx={metadataTipTableBarWidthPx}
           metadataTipTableCellWidthPx={metadataTipTableCellWidthPx}
+          metadataTipTablePlacement={metadataTipTablePlacement}
           metadataPieSizePx={metadataPieSizePx}
           metadataMarkerSizePx={metadataMarkerSizePx}
           metadataLabelMaxCount={metadataLabelMaxCount}

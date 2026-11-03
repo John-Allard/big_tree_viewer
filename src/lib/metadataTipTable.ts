@@ -3,6 +3,7 @@ import { METADATA_CONTINUOUS_PALETTES, type MetadataContinuousPalette } from "./
 import { parseMetadataDate } from "./metadataDates";
 
 export type MetadataTipTableMode = "bars" | "heatmap" | "categorical";
+export type MetadataTipTablePlacement = "inside" | "outside";
 export type MetadataTipTableCellStyle = "filled" | "circle" | "square" | "check" | "check-cross" | "text";
 export type MetadataTipTableValueType = "number" | "date";
 

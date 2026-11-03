@@ -571,6 +571,7 @@ window.addEventListener("message", (event) => {
     metadataTipTablePalette?: "blueOrange" | "viridis" | "redBlue" | "tealRose",
     metadataTipTableBarWidthPx?: number, // legacy saved field; use cell width for mixed tables
     metadataTipTableCellWidthPx?: number, // 12-240; includes each numeric bar plotting area
+    metadataTipTablePlacement?: "inside" | "outside", // relative to taxonomy; default outside
     phylopicEnabled?: boolean,
     phylopicPlacement?: "after-label" | "outside-ribbon",
     phylopicSizeScale?: number

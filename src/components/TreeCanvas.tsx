@@ -4406,6 +4406,7 @@ export default function TreeCanvas({
   metadataTipTablePalette,
   metadataTipTableBarWidthPx,
   metadataTipTableCellWidthPx,
+  metadataTipTablePlacement = "outside",
   metadataMarkerSizePx,
   metadataLabelMaxCount,
   metadataLabelMinSpacingPx,
@@ -9490,7 +9491,10 @@ export default function TreeCanvas({
         }));
       }
       const effectiveTipLabelSpacePx = Math.max(globalTipLabelSpacePx, tipLabelMaxRightPx - tipSideX);
-      customRibbonBase = tipSideX + effectiveTipLabelSpacePx + 8;
+      const insideTableStartX = tipSideX + effectiveTipLabelSpacePx + 16;
+      const insideTablePaddingPx = metadataTipTablePlacement === "inside" && tipLabelsVisible && visibleTipLabels.length > 0 && metadataTipTableData?.columns.length
+        ? metadataTipTableData.columns.length * metadataTipTableCellWidthPx + 32 : 0;
+      customRibbonBase = tipSideX + effectiveTipLabelSpacePx + 8 + insideTablePaddingPx;
       customRibbonOutsideBase = customRibbonBase + cladeRibbonInsidePx;
 
       const genusGapPx = Math.max(12, tipBandFontSize * 1.9);
@@ -9520,6 +9524,7 @@ export default function TreeCanvas({
           effectiveTipLabelSpacePx,
         );
         if (cladeRibbonPaddingPx) bandCursorX = Math.max(bandCursorX, customRibbonBase + cladeRibbonInsidePx);
+        if (insideTablePaddingPx) bandCursorX = Math.max(bandCursorX, insideTableStartX + insideTablePaddingPx - 16 + cladeRibbonInsidePx);
         if (visibleRanks.length > 0) {
           rectangularFirstTaxonomyBandX = bandCursorX;
         }
@@ -9978,7 +9983,7 @@ export default function TreeCanvas({
         for (let index = 0; index < positionalBlocks.length; index += 1) {
           genusOrderByCenter.set(positionalBlocks[index].centerNode, index);
         }
-        const genusBandX = tipSideX + effectiveTipLabelSpacePx + genusGapPx;
+        const genusBandX = tipSideX + effectiveTipLabelSpacePx + genusGapPx + insideTablePaddingPx;
         ctx.fillStyle = GENUS_COLOR;
         ctx.strokeStyle = GENUS_COLOR;
         ctx.lineWidth = 1;
@@ -10259,7 +10264,8 @@ export default function TreeCanvas({
         if (tipLabelsVisible && metadataTipTableData && metadataTipTableData.columns.length > 0) {
           const labelRightX = visibleTipLabels.reduce((right, label) => Math.max(right, label.x + label.renderedWidth), tipSideX);
           const customRibbonEndX = cladeRibbonPaddingPx ? customRibbonOutsideBase + cladeRibbonLayout.outside * cladeRibbonStridePx : Number.NEGATIVE_INFINITY;
-          const tableStartX = Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16, customRibbonEndX + 16);
+          const tableStartX = metadataTipTablePlacement === "inside" ? insideTableStartX
+            : Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16, customRibbonEndX + 16);
           const rowHeight = Math.max(3, Math.min(28, effectiveTipSpacingPx * 0.82));
           const firstVisibleY = visibleTipLabels.reduce((top, label) => Math.min(top, label.y), Number.POSITIVE_INFINITY);
           ctx.font = `11px ${LABEL_FONT}`;
@@ -10271,6 +10277,7 @@ export default function TreeCanvas({
           if (renderDebug.rect && typeof renderDebug.rect === "object") {
             (renderDebug.rect as Record<string, unknown>).metadataTipTable = {
               mode: metadataTipTableMode,
+              placement: metadataTipTablePlacement,
               tableStartX,
               headerY,
               columnCount: metadataTipTableData.columns.length,
@@ -16075,6 +16082,7 @@ export default function TreeCanvas({
     metadataTipTableBinaryStyle,
     metadataTipTableTextStyle,
     metadataTipTableCellWidthPx,
+    metadataTipTablePlacement,
     metadataTipTableData,
     metadataTipTableMode,
     metadataTipTablePalette,

@@ -7,7 +7,7 @@ import type { CustomCladeRibbon } from "../lib/customCladeRibbons";
 import type { UltrametricCladogramMethod } from "../lib/cladogram";
 import type { MetadataMarkerStyle, MetadataPieDatum } from "../lib/metadataColors";
 import type { MetadataContinuousPalette } from "../lib/metadataColors";
-import type { MetadataTipTableCellStyle, MetadataTipTableData, MetadataTipTableMode } from "../lib/metadataTipTable";
+import type { MetadataTipTableCellStyle, MetadataTipTableData, MetadataTipTableMode, MetadataTipTablePlacement } from "../lib/metadataTipTable";
 import type { PhyloPicSilhouette } from "../lib/phylopic";
 import type { TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
 import type { TimeAxisScale } from "../lib/timeAxis";
@@ -139,6 +139,7 @@ export interface TreeCanvasProps {
   metadataTipTablePalette: MetadataContinuousPalette;
   metadataTipTableBarWidthPx: number;
   metadataTipTableCellWidthPx: number;
+  metadataTipTablePlacement?: MetadataTipTablePlacement;
   metadataMarkerSizePx: number;
   metadataLabelMaxCount: number;
   metadataLabelMinSpacingPx: number;

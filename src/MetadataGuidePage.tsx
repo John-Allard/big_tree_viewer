@@ -223,6 +223,8 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
             displays have independent shared controls. Columns initially use
             spreadsheet headers; right-click a displayed table header to rename
             it. The collapsed Columns chooser supports search and bulk selection.
+            Table placement chooses inside or outside the taxonomy ribbons;
+            outside is the default. Tip labels remain inside the table in both cases.
           </p>
           <p>
             Samples collected in different years need not end at the same horizontal

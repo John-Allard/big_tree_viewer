@@ -139,6 +139,9 @@ bar plotting area. `metadataTipTableBarWidthPx` is a retained legacy field, not
 the width control for mixed tables. All selected columns remain visible in bars
 mode. Category keys are capped at 20 named values per column plus Other; raw
 values remain in the metadata table and session.
+Set `metadataTipTablePlacement: "inside"` to put the table between tip names and
+taxonomy ribbons, or `"outside"` (default) to put it beyond taxonomy and subtree
+ribbons. Both placements retain tip-label clearance and are saved in sessions.
 Tables require rectangular layout. They can be used without branch coloring.
 
 Set `metadataLegendEnabled`; choose `metadataLegendComponents` (branchColors,
