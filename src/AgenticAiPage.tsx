@@ -1,6 +1,6 @@
 export default function AgenticAiPage() {
   const skillZipUrl = "https://bigtreeviewer.net/agentic-ai/bigtreeviewer-agent-skill.zip";
-  const skillZipSha256 = "469ae909248454673aea1be4a759459352c9da1b84b88b70c6bd45bdc31bd135";
+  const skillZipSha256 = "274c775112fc65c6ddc0b77a0630436696ba542320df5c12640a9e15f93effed";
 
   return (
     <main className="about-page api-page">

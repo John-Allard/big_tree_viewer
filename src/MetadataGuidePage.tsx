@@ -176,7 +176,7 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
             <div className="metadata-guide-option-row" role="row">
               <strong role="cell">Tip data table</strong>
               <span role="cell">One or more tip-level columns</span>
-              <span role="cell">Horizontal bars, numeric or date heat maps, or categorical cells beside rectangular tip labels.</span>
+              <span role="cell">Mixed numeric/date heat maps or bars, binary markers, and categorical cells beside rectangular tip labels. Column types are detected automatically.</span>
             </div>
           </div>
 
@@ -211,10 +211,18 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
             use the nearest endpoint color. Legend bounds are displayed as dates.
           </p>
           <p>
-            For a tip heat map, set the date column&apos;s value type to dates
-            (<code>valueType: &quot;date&quot;</code> in
-            <code> visual.metadataTipTableColumns</code>). This uses chronological
-            bounds and the existing heat-map palettes without a separate table mode.
+            Tip tables detect dates and calendar years automatically.
+            Numeric/date columns share a heat-map or bar
+            setting, while binary and multi-category cells remain alongside them.
+            Cell width also controls the plotting area of each bar column. Binary
+            states support filled/empty cells, check marks, or check/cross markers;
+            other categories use distinct colors. Keys show up to 20 named
+            categories, grouping remaining values as Other without discarding
+            the original data. Short letter codes, such as amino-acid states,
+            default to text. Numeric/date, binary, categorical, and short-text
+            displays have independent shared controls. Columns initially use
+            spreadsheet headers; right-click a displayed table header to rename
+            it. The collapsed Columns chooser supports search and bulk selection.
           </p>
           <p>
             Samples collected in different years need not end at the same horizontal
@@ -362,7 +370,8 @@ Clade_EFGH,Study group B`}</pre>
                 intended variable. These views use the same example table.
                 Enable Show metadata legend to include a color and symbol key in
                 the view and exported images. Its settings select the position
-                and included components; the legend can also be dragged or
+                and included components, including separate scales for heat-map
+                columns and keys for categorical tip cells. The legend can be dragged or
                 right-clicked to open settings or hide it. Hover over a branch to inspect its
                 mapped metadata values, including inherited subtree colors.
               </p>

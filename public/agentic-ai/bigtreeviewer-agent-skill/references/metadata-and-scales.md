@@ -116,16 +116,39 @@ the center and `metadata.labelOffsetYPx` for radial displacement. Put
 `figureStyles` in MCP `settings` or browser `visual`.
 
 Tip-aligned tables use visual settings, not additional metadata encodings:
-`metadataTipTableEnabled: true`, `metadataTipTableMode: "bars"|"heatmap"|"categorical"`,
-and `metadataTipTableColumns: [{"column":"trait","label":"Trait","valueType":"number"}]`.
-Use `valueType: "date"` for chronological cells. Categorical cells accept
-`metadataTipTableCellStyle: "filled"|"circle"|"square"|"check"|"text"`.
+`metadataTipTableEnabled: true`, `metadataTipTableMode: "bars"|"heatmap"`,
+and `metadataTipTableColumns: [{"column":"trait","label":"Trait"}]`.
+Each column automatically detects numeric, calendar date/year, binary, or
+categorical values from matched rows. Numeric/date columns share the bars/heatmap
+choice; categorical and binary columns coexist in the same table. The legacy
+`"categorical"` mode now aliases automatic heatmap. Optional `valueType: "date"`
+or `"number"` overrides date/numeric inference when necessary.
+Categorical cells use `metadataTipTableCellStyle` (filled/circle/square/text),
+binary states independently use `metadataTipTableBinaryStyle`
+(filled/circle/square/check/check-cross/text), and short letter codes use
+`metadataTipTableTextStyle` (default text, or filled/circle/square).
+Single-letter residue states are not assumed to be Y/N boolean flags without
+an indicator-like column name. Source headers provide default display names;
+rename a visible header by right-clicking it, or supply its column `label`.
+Self-labeling short-text columns do not add redundant legend keys unless a
+color/symbol display is selected for that type.
+Without an explicit column list, loading metadata selects all non-key columns;
+the UI has a collapsed, searchable bulk chooser instead of per-column settings.
+`metadataTipTableCellWidthPx` (12-240) sets each column's width, including each
+bar plotting area. `metadataTipTableBarWidthPx` is a retained legacy field, not
+the width control for mixed tables. All selected columns remain visible in bars
+mode. Category keys are capped at 20 named values per column plus Other; raw
+values remain in the metadata table and session.
 Tables require rectangular layout. They can be used without branch coloring.
 
 Set `metadataLegendEnabled`; choose `metadataLegendComponents` (branchColors,
-markers, pies), `metadataLegendPosition` (top-left/top-right/bottom-left/bottom-right),
+markers, pies, tipTables; omitted components default on), `metadataLegendPosition` (top-left/top-right/bottom-left/bottom-right),
 or normalized `metadataLegendPlacement: {"x":0.8,"y":0.1}`. Legend colors follow
 the corresponding metadata palette and overrides, not an independent palette.
+`tipTables` adds a separate numeric/date scale for each heat-map column, using
+that column's matched-tip range and `metadataTipTablePalette`; categorical
+tables use their cell colors and symbols. Only rectangular layouts show tables
+and their legends. Set `tipTables: false` to exclude these keys.
 
 ## Scale Controls
 

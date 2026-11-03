@@ -129,9 +129,17 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             parsed date bounds are UTC milliseconds since 1970-01-01. For a date
             heat map, keep <code>visual.metadataTipTableMode: &quot;heatmap&quot;</code>
             and use a column such as
-            <code>{` { column: "date", label: "Collection date", valueType: "date" }`}</code>
+            <code>{` { column: "date", label: "Collection date" }`}</code>
             in <code>visual.metadataTipTableColumns</code>; the existing
             <code> metadataTipTablePalette</code> choices also work for dates.
+            Column types are detected automatically from matched rows. ISO dates
+            and calendar-year columns are chronological; binary states and other
+            categories remain discrete alongside numeric heat maps or bars.
+            An optional <code>valueType</code> of <code>number</code> or
+            <code>date</code> overrides numeric/date inference.
+            <code> metadataTipTableCellWidthPx</code> (12-240) sets each column&apos;s
+            width, including its bar plotting area. Category keys are limited to
+            20 named values per column, with additional values grouped as Other.
           </p>
         </section>
 
@@ -553,14 +561,16 @@ window.addEventListener("message", (event) => {
     metadataLegendEnabled?: boolean,
     metadataLegendPosition?: "top-right" | "bottom-right" | "bottom-left" | "top-left",
     metadataLegendPlacement?: { x: number, y: number } | null, // normalized custom position, 0..1
-    metadataLegendComponents?: { branchColors: boolean, markers: boolean, pies: boolean },
+    metadataLegendComponents?: { branchColors?: boolean, markers?: boolean, pies?: boolean, tipTables?: boolean },
     metadataTipTableEnabled?: boolean,
-    metadataTipTableMode?: "bars" | "heatmap" | "categorical",
-    metadataTipTableCellStyle?: "filled" | "circle" | "square" | "check" | "text",
-    metadataTipTableColumns?: Array<{ column: string, label: string, valueType?: "number" | "date" }>,
+    metadataTipTableMode?: "bars" | "heatmap" | "categorical", // numeric display; legacy categorical aliases automatic heatmap
+    metadataTipTableCellStyle?: "filled" | "circle" | "square" | "check" | "check-cross" | "text",
+    metadataTipTableBinaryStyle?: "filled" | "circle" | "square" | "check" | "check-cross" | "text",
+    metadataTipTableTextStyle?: "filled" | "circle" | "square" | "text",
+    metadataTipTableColumns?: Array<{ column: string, label?: string, valueType?: "number" | "date" }>,
     metadataTipTablePalette?: "blueOrange" | "viridis" | "redBlue" | "tealRose",
-    metadataTipTableBarWidthPx?: number,
-    metadataTipTableCellWidthPx?: number,
+    metadataTipTableBarWidthPx?: number, // legacy saved field; use cell width for mixed tables
+    metadataTipTableCellWidthPx?: number, // 12-240; includes each numeric bar plotting area
     phylopicEnabled?: boolean,
     phylopicPlacement?: "after-label" | "outside-ribbon",
     phylopicSizeScale?: number
