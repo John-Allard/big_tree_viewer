@@ -21,7 +21,7 @@ const transport = new StdioClientTransport({ command: executable, args: [helper,
 transport.stderr?.on('data', bytes => process.stderr.write(bytes));
 const client = new Client({ name: 'btv-metadata-test', version: '1.0.0' });
 const metadata = {
-  text: 'id,display,country,date,family,genus\ns1,Sample One,France,2022-01-01,Alpha,One\ns2,Sample Two,France,2022-02-01,Alpha,One\ns3,Sample Three,Canada,2023-01-01,Beta,Two\ns4,Sample Four,Canada,2023-02-01,Beta,Two\n',
+  text: 'id,display,country,date,family,genus,score\ns1,Sample One,France,2022-01-01,Alpha,One,2\ns2,Sample Two,France,2022-02-01,Alpha,One,3\ns3,Sample Three,Canada,2023-01-01,Beta,Two,4\ns4,Sample Four,Canada,2023-02-01,Beta,Two,5\n',
   keyColumn: 'id', tipLabelColumn: 'display', enabled: true, valueColumn: 'date', colorMode: 'date',
   autoRankColumns: true,
 };
@@ -55,7 +55,7 @@ try {
   assert.equal(opened.settings.figureStyles.internalNode.metadataAngularOffsetDegrees, 12);
   assert.equal(opened.settings.figureStyles.internalNode.metadataPlacement, 'stem');
   assert.deepEqual(opened.settings.metadataLegendPlacement, { x: 0.7, y: 0.15 });
-  assert.deepEqual(opened.settings.metadataLegendComponents, { branchColors: true, markers: false, pies: false });
+  assert.deepEqual(opened.settings.metadataLegendComponents, { branchColors: true, markers: false, pies: false, tipTables: true });
   assert.deepEqual(opened.settings.customCladeRibbons, [ribbon]);
   const svgPath = path.join(dir, 'metadata.svg');
   await call('export_tree', { sessionId, outputPath: svgPath });
@@ -95,16 +95,32 @@ try {
   assert.equal(info.taxonomy.mappedTips, 4);
   const taxonomyFile = path.join(dir, 'custom-taxonomy.csv');
   await writeFile(taxonomyFile, metadata.text);
-  const imported = await call('update_tree', { sessionId, metadataPath: taxonomyFile,
-    settings: { customCladeRibbons: [ribbon] }, metadata: {
+  const imported = await call('update_tree', { sessionId, metadataPath: taxonomyFile, layout: 'rectangular',
+    settings: { customCladeRibbons: [ribbon], metadataTipTableEnabled: true,
+      metadataTipTableColumns: [{ column: 'date', label: 'Collection date' }, { column: 'score', label: 'Score' }, { column: 'country', label: 'Country' }] }, metadata: {
       keyColumn: 'id', autoRankColumns: true,
       cladeRibbons: { labelColumn: 'country', mode: 'tips', widthPx: 40, labelSizePx: 18 },
     } });
   assert.equal(imported.taxonomy.mappedTips, 4);
+  assert.equal(imported.metadata.tipTableMatchedTips, 4);
   assert.equal(imported.metadata.enabledCladeRibbonCount, 3);
   assert.ok(imported.settings.customCladeRibbons.some(item => item.id === 'study'));
   assert.deepEqual(imported.settings.customCladeRibbons.filter(item => item.id.startsWith('metadata-ribbon:')).map(item => [item.label, item.widthPx, item.labelSizePx]),
     [['France', 40, 18], ['Canada', 40, 18]]);
+  const mixed = await call('update_tree', { sessionId, layout: 'rectangular', settings: {
+    metadataTipTableEnabled: true, metadataLegendEnabled: true,
+    metadataLegendComponents: { tipTables: true, branchColors: false, markers: false, pies: false },
+    metadataTipTableMode: 'bars', metadataTipTableCellWidthPx: 96, metadataTipTableBinaryStyle: 'check-cross',
+    metadataTipTableColumns: [{ column: 'date', label: 'Collection date' }, { column: 'score', label: 'Score' }, { column: 'country', label: 'Country' }],
+  } });
+  assert.deepEqual(mixed.metadata.tipTableColumns.map(column => column.kind), ['date', 'number', 'categorical']);
+  assert.equal(mixed.settings.metadataTipTableCellWidthPx, 96);
+  const mixedSvgPath = path.join(dir, 'mixed.svg');
+  await call('export_tree', { sessionId, outputPath: mixedSvgPath });
+  const mixedSvg = await readFile(mixedSvgPath, 'utf8');
+  assert.match(mixedSvg, /Tip bars: Collection date/);
+  assert.match(mixedSvg, /Tip bars: Score/);
+  assert.match(mixedSvg, /Tip table: Country/);
   const nodeTable = 'id,ribbon\nPairA,Left group\nPairB,Right group\n';
   const nodeRibbons = await call('update_tree', { sessionId, metadata: {
     text: nodeTable, keyColumn: 'id', cladeRibbons: { labelColumn: 'ribbon', mode: 'nodes' },

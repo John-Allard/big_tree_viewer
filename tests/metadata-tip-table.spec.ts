@@ -94,12 +94,12 @@ test("tip metadata supports quantitative bars and categorical checks or text", a
   await page.evaluate(() => {
     const app = window.__BIG_TREE_VIEWER_APP_TEST__;
     app?.setMetadataTipTableMode("categorical");
-    app?.setMetadataTipTableCellStyle("check");
+    app?.setMetadataTipTableBinaryStyle("check");
     app?.setMetadataTipTableColumns([{ column: "present", label: "Detected" }]);
   });
   await page.waitForFunction(() => (
     (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect?.metadataTipTable as { mode?: string } | undefined)?.mode === "categorical"
-    && window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableCellStyle === "check"
+    && window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableBinaryStyle === "check"
   ));
   const checkSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
   expect(checkSvg).toContain("Detected");
@@ -107,10 +107,10 @@ test("tip metadata supports quantitative bars and categorical checks or text", a
 
   await page.evaluate(() => {
     const app = window.__BIG_TREE_VIEWER_APP_TEST__;
-    app?.setMetadataTipTableCellStyle("text");
+    app?.setMetadataTipTableTextStyle("text");
     app?.setMetadataTipTableColumns([{ column: "state_code", label: "Site 42" }]);
   });
-  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableCellStyle === "text");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableTextStyle === "text");
   const textSvg = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildCurrentSvgForTest() ?? "");
   expect(textSvg).toContain("Site 42");
   expect(textSvg).toContain(">AA</text>");

@@ -10,7 +10,7 @@ import { computeGenusBlocks, computeOrderedLeaves } from "./components/treeCanva
 import type { NodeErrorBarStyle, TaxonomyOverlayStyle, TaxonomyRankDisplayMode, TimeStripeStyle } from "./components/treeCanvasTypes";
 import { extractGenusToken, serializeSubtreeToNewick } from "./components/treeCanvasUtils";
 import { computeTreeStatistics } from "./lib/treeStatistics";
-import { metadataLegendPosition as normalizeMetadataLegendPosition, normalizeMetadataLegendComponents, normalizeMetadataLegendPlacement, type MetadataLegendComponents, type MetadataLegendPlacement, type MetadataLegendPosition, type MetadataLegendSection } from "./lib/metadataLegend";
+import { buildMetadataTipTableLegend, metadataLegendPosition as normalizeMetadataLegendPosition, normalizeMetadataLegendComponents, normalizeMetadataLegendPlacement, type MetadataLegendComponents, type MetadataLegendPlacement, type MetadataLegendPosition, type MetadataLegendSection } from "./lib/metadataLegend";
 import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLADOGRAM_LOG_STRENGTH, MIN_CLADOGRAM_LOG_STRENGTH, MAX_CLADOGRAM_LOG_STRENGTH, normalizeCladogramLogStrength, isUltrametricCladogramMethod, type UltrametricCladogramMethod } from "./lib/cladogram";
 import { computeTreeComparisonStatistics } from "./lib/treeComparisonStatistics";
 import { analyzeTreeComparisonTopology } from "./lib/treeComparisonTopology";
@@ -52,6 +52,7 @@ import {
 import {
   buildMetadataTipTableData,
   metadataTipTableDisplayLabel,
+  normalizeMetadataTipTableCellStyle,
   type MetadataTipTableCellStyle,
   type MetadataTipTableColumn,
   type MetadataTipTableMode,
@@ -373,7 +374,7 @@ type BigTreeViewerSessionSettings = {
   metadataLegendEnabled?: boolean;
   metadataLegendPosition?: MetadataLegendPosition;
   metadataLegendPlacement?: MetadataLegendPlacement | null;
-  metadataLegendComponents?: MetadataLegendComponents;
+  metadataLegendComponents?: Partial<MetadataLegendComponents>;
   metadataFirstRowIsHeader: boolean;
   metadataKeyColumn: string;
   tipLabelMetadataColumn?: string;
@@ -401,6 +402,8 @@ type BigTreeViewerSessionSettings = {
   metadataTipTableEnabled?: boolean;
   metadataTipTableMode?: MetadataTipTableMode;
   metadataTipTableCellStyle?: MetadataTipTableCellStyle;
+  metadataTipTableBinaryStyle?: MetadataTipTableCellStyle;
+  metadataTipTableTextStyle?: MetadataTipTableCellStyle;
   metadataTipTableColumns?: MetadataTipTableColumn[];
   metadataTipTablePalette?: MetadataContinuousPalette;
   metadataTipTableBarWidthPx?: number;
@@ -2248,6 +2251,9 @@ export default function App() {
   const [metadataTipTableEnabled, setMetadataTipTableEnabled] = useState(false);
   const [metadataTipTableMode, setMetadataTipTableMode] = useState<MetadataTipTableMode>("heatmap");
   const [metadataTipTableCellStyle, setMetadataTipTableCellStyle] = useState<MetadataTipTableCellStyle>("filled");
+  const [metadataTipTableBinaryStyle, setMetadataTipTableBinaryStyle] = useState<MetadataTipTableCellStyle>("filled");
+  const [metadataTipTableTextStyle, setMetadataTipTableTextStyle] = useState<MetadataTipTableCellStyle>("text");
+  const [metadataTipTableColumnSearch, setMetadataTipTableColumnSearch] = useState("");
   const [metadataTipTableColumns, setMetadataTipTableColumns] = useState<MetadataTipTableColumn[]>([]);
   const [metadataTipTablePalette, setMetadataTipTablePalette] = useState<MetadataContinuousPalette>("viridis");
   const [metadataTipTableBarWidthPx, setMetadataTipTableBarWidthPx] = useState(180);
@@ -3196,11 +3202,15 @@ export default function App() {
       || visual.metadataTipTableCellStyle === "circle"
       || visual.metadataTipTableCellStyle === "square"
       || visual.metadataTipTableCellStyle === "check"
+      || visual.metadataTipTableCellStyle === "check-cross"
       || visual.metadataTipTableCellStyle === "text"
     ) {
-      setMetadataTipTableCellStyle(visual.metadataTipTableCellStyle);
+      const checks = visual.metadataTipTableCellStyle === "check" || visual.metadataTipTableCellStyle === "check-cross";
+      setMetadataTipTableCellStyle(checks ? "filled" : visual.metadataTipTableCellStyle);
+      if (checks && visual.metadataTipTableBinaryStyle === undefined) setMetadataTipTableBinaryStyle(visual.metadataTipTableCellStyle);
     }
     if (Array.isArray(visual.metadataTipTableColumns)) {
+      // Column labels are display-only; metadata joins always use source headers.
       setMetadataTipTableColumns(visual.metadataTipTableColumns.filter((column) => (
         column && typeof column.column === "string"
       )).map((column) => ({
@@ -3209,6 +3219,8 @@ export default function App() {
         ...(column.valueType === "date" ? { valueType: "date" as const } : column.valueType === "number" ? { valueType: "number" as const } : {}),
       })));
     }
+    if (visual.metadataTipTableBinaryStyle !== undefined) setMetadataTipTableBinaryStyle(normalizeMetadataTipTableCellStyle(visual.metadataTipTableBinaryStyle, "filled"));
+    if (visual.metadataTipTableTextStyle !== undefined) setMetadataTipTableTextStyle(normalizeMetadataTipTableCellStyle(visual.metadataTipTableTextStyle, "text"));
     if (visual.metadataTipTablePalette && METADATA_CONTINUOUS_PALETTES[visual.metadataTipTablePalette]) {
       setMetadataTipTablePalette(visual.metadataTipTablePalette);
     }
@@ -3216,7 +3228,7 @@ export default function App() {
       setMetadataTipTableBarWidthPx(Math.max(80, Math.min(480, visual.metadataTipTableBarWidthPx)));
     }
     if (typeof visual.metadataTipTableCellWidthPx === "number" && Number.isFinite(visual.metadataTipTableCellWidthPx)) {
-      setMetadataTipTableCellWidthPx(Math.max(12, Math.min(64, visual.metadataTipTableCellWidthPx)));
+      setMetadataTipTableCellWidthPx(Math.max(12, Math.min(240, visual.metadataTipTableCellWidthPx)));
     }
     const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
     if (categoryColorOverrides) {
@@ -3649,11 +3661,11 @@ export default function App() {
     [metadataTable, metadataValueColumn],
   );
   const metadataTipTableData = useMemo(() => {
-    if (!tree || !metadataTable || !metadataKeyColumn || metadataTipTableColumns.length === 0) {
+    if (!metadataTipTableEnabled || !tree || !metadataTable || !metadataKeyColumn || metadataTipTableColumns.length === 0) {
       return null;
     }
     return buildMetadataTipTableData(tree, metadataTable.rows, metadataKeyColumn, metadataTipTableColumns);
-  }, [metadataKeyColumn, metadataTable, metadataTipTableColumns, tree]);
+  }, [metadataKeyColumn, metadataTable, metadataTipTableColumns, metadataTipTableEnabled, tree]);
   const metadataContinuousMin = useMemo(() => {
     const trimmed = metadataContinuousMinInput.trim();
     if (!trimmed) {
@@ -3869,8 +3881,11 @@ export default function App() {
     if (metadataLegendComponents.pies && metadataPiesEnabled && metadataPieOverlay.hasAny) {
       sections.push({ kind: "pies", title: "Pie charts", entries: metadataPieOverlay.legend });
     }
+    if (metadataLegendComponents.tipTables !== false && metadataTipTableEnabled && viewMode === "rectangular") {
+      sections.push(...buildMetadataTipTableLegend(metadataTipTableData, metadataTipTableMode, metadataTipTablePalette, metadataTipTableCellStyle, metadataTipTableBinaryStyle, metadataTipTableTextStyle));
+    }
     return sections;
-  }, [metadataLegendEnabled, metadataLegendComponents, metadataOverlaysSuppressed, metadataEnabled, metadataOverlay, metadataValueColumn, metadataMarkersEnabled, metadataMarkerOverlay, metadataMarkerColumn, metadataPiesEnabled, metadataPieOverlay]);
+  }, [metadataLegendEnabled, metadataLegendComponents, metadataOverlaysSuppressed, metadataEnabled, metadataOverlay, metadataValueColumn, metadataMarkersEnabled, metadataMarkerOverlay, metadataMarkerColumn, metadataPiesEnabled, metadataPieOverlay, metadataTipTableEnabled, metadataTipTableData, metadataTipTableMode, metadataTipTablePalette, metadataTipTableCellStyle, metadataTipTableBinaryStyle, metadataTipTableTextStyle, viewMode]);
   const mappedTaxonomyRanks = useMemo<TaxonomyRank[]>(
     () => [...(viewTaxonomyMap?.activeRanks ?? [])].sort(
       (left, right) => TAXONOMY_RANKS.indexOf(left) - TAXONOMY_RANKS.indexOf(right),
@@ -4942,6 +4957,8 @@ export default function App() {
     metadataTipTableEnabled,
     metadataTipTableMode,
     metadataTipTableCellStyle,
+    metadataTipTableBinaryStyle,
+    metadataTipTableTextStyle,
     metadataTipTableColumns,
     metadataTipTablePalette,
     metadataTipTableBarWidthPx,
@@ -5000,6 +5017,8 @@ export default function App() {
     metadataTipTableBarWidthPx,
     metadataTipTableCellStyle,
     metadataTipTableCellWidthPx,
+    metadataTipTableBinaryStyle,
+    metadataTipTableTextStyle,
     metadataTipTableColumns,
     metadataTipTableEnabled,
     metadataTipTableMode,
@@ -5205,11 +5224,13 @@ export default function App() {
     setMetadataPieColorOverrides(settings.metadataPieColorOverrides ?? {});
     setMetadataPieSizePx(clampMetadataGlyphSizePercent(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX));
     setMetadataTipTableEnabled(settings.metadataTipTableEnabled === true);
+    setMetadataTipTableBinaryStyle(normalizeMetadataTipTableCellStyle(settings.metadataTipTableBinaryStyle
+      ?? (settings.metadataTipTableCellStyle === "check" || settings.metadataTipTableCellStyle === "check-cross" ? settings.metadataTipTableCellStyle : undefined), "filled"));
+    setMetadataTipTableTextStyle(normalizeMetadataTipTableCellStyle(settings.metadataTipTableTextStyle, "text"));
     setMetadataTipTableMode(settings.metadataTipTableMode === "bars" || settings.metadataTipTableMode === "categorical" ? settings.metadataTipTableMode : "heatmap");
     setMetadataTipTableCellStyle(
       settings.metadataTipTableCellStyle === "circle"
       || settings.metadataTipTableCellStyle === "square"
-      || settings.metadataTipTableCellStyle === "check"
       || settings.metadataTipTableCellStyle === "text"
         ? settings.metadataTipTableCellStyle
         : "filled",
@@ -5225,7 +5246,7 @@ export default function App() {
       ? settings.metadataTipTablePalette
       : "viridis");
     setMetadataTipTableBarWidthPx(typeof settings.metadataTipTableBarWidthPx === "number" ? Math.max(80, Math.min(480, settings.metadataTipTableBarWidthPx)) : 180);
-    setMetadataTipTableCellWidthPx(typeof settings.metadataTipTableCellWidthPx === "number" ? Math.max(12, Math.min(64, settings.metadataTipTableCellWidthPx)) : 24);
+    setMetadataTipTableCellWidthPx(typeof settings.metadataTipTableCellWidthPx === "number" ? Math.max(12, Math.min(240, settings.metadataTipTableCellWidthPx)) : 24);
     setMetadataCategoryColorOverrides(settings.metadataCategoryColorOverrides);
     setMetadataMarkerStyleOverrides(settings.metadataMarkerStyleOverrides);
     setMetadataMarkerSizePx(clampMetadataGlyphSizePercent(settings.metadataMarkerSizePx));
@@ -5626,6 +5647,8 @@ export default function App() {
     setMetadataTipTableEnabled(false);
     setMetadataTipTableMode("heatmap");
     setMetadataTipTableCellStyle("filled");
+    setMetadataTipTableBinaryStyle("filled");
+    setMetadataTipTableTextStyle("text");
     setMetadataTipTableColumns([]);
     setMetadataTipTablePalette("viridis");
     setMetadataTipTableBarWidthPx(180);
@@ -5686,10 +5709,13 @@ export default function App() {
       setMetadataTipTableEnabled(false);
       setMetadataTipTableMode("heatmap");
       setMetadataTipTableCellStyle("filled");
-      setMetadataTipTableColumns([{ column: defaultValueColumn, label: metadataTipTableDisplayLabel(defaultValueColumn) }]);
+      setMetadataTipTableBinaryStyle("filled");
+      setMetadataTipTableTextStyle("text");
+      setMetadataTipTableColumnSearch("");
+      setMetadataTipTableColumns(table.columns.slice(1).map(column => ({ column, label: metadataTipTableDisplayLabel(column) })));
       setMetadataTipTablePalette("viridis");
       setMetadataTipTableBarWidthPx(180);
-      setMetadataTipTableCellWidthPx(24);
+      setMetadataTipTableCellWidthPx(Math.max(12, Math.min(24, Math.floor(600 / Math.max(1, table.columns.length - 1)))));
       setMetadataCategoryColorOverrides({});
       setMetadataMarkerStyleOverrides({});
       setMetadataMarkerSizePx(DEFAULT_METADATA_MARKER_SIZE_PX);
@@ -6879,8 +6905,8 @@ export default function App() {
           } else {
             if (!tree) throw new Error("No tree is loaded.");
             if (payload.visual?.viewMode === "spiral" && tree.leafCount < 1000) throw new Error("Spiral layout requires at least 1,000 tips.");
-            applyLaunchVisualSettings(payload.visual);
             await applyLaunchMetadata(payload.metadata);
+            applyLaunchVisualSettings(payload.visual);
             const table = metadataTableRef.current;
             if (payload.metadata?.rankColumns || payload.metadata?.autoRankColumns) {
               if (payload.taxonomy?.runMapping) throw new Error("Custom metadata ranks cannot be combined with database mapping.");
@@ -6926,6 +6952,8 @@ export default function App() {
               matchedNodes: metadataOverlay.matchedNodeCount, coloredNodes: metadataOverlay.coloredNodeCount,
               collapseGroupCount: metadataDerivedView.groups.length,
               tipTableMatchedTips: metadataTipTableData?.matchedTipCount ?? 0,
+              tipTableColumns: metadataTipTableData?.columns.map(column => ({ column: column.column,
+                kind: column.kind, min: column.min, max: column.max, hasOtherCategories: column.hasOtherCategories })) ?? [],
               enabledCladeRibbonCount: customCladeRibbons.filter(ribbon => ribbon.enabled).length,
             },
           });
@@ -7799,6 +7827,8 @@ export default function App() {
         metadataTipTableEnabled,
         metadataTipTableMode,
         metadataTipTableCellStyle,
+        metadataTipTableBinaryStyle,
+        metadataTipTableTextStyle,
         metadataTipTableColumns,
         metadataTipTablePalette,
         metadataTipTableBarWidthPx,
@@ -7981,6 +8011,8 @@ export default function App() {
       setMetadataTipTableEnabled,
       setMetadataTipTableMode,
       setMetadataTipTableCellStyle,
+      setMetadataTipTableBinaryStyle,
+      setMetadataTipTableTextStyle,
       setMetadataTipTableColumns,
       setMetadataLabelMaxCount,
       setMetadataLabelMinSpacingPx,
@@ -8108,6 +8140,8 @@ export default function App() {
     metadataPiesEnabled,
     metadataTipTableBarWidthPx,
     metadataTipTableCellStyle,
+    metadataTipTableBinaryStyle,
+    metadataTipTableTextStyle,
     metadataTipTableCellWidthPx,
     metadataTipTableColumns,
     metadataTipTableData,
@@ -10129,20 +10163,6 @@ export default function App() {
                     disabled={!metadataLegendEnabled} disabledReason="Turn on the metadata legend first."
                     onToggle={() => setActiveLabelStylePopover(current => current === "metadataLegend" ? null : "metadataLegend")}>
                     {metadataLegendSections.length === 0 ? <p className="status-line">No active legend entries.</p> : null}
-                    {metadataEnabled && metadataColorMode !== "categorical" ? (
-                      <>
-                        <label title="Set the branch-color gradient and its matching legend together.">
-                          Color scale palette
-                          <select value={metadataContinuousPalette} onChange={event => setMetadataContinuousPalette(event.target.value as MetadataContinuousPalette)}>
-                            {Object.entries(METADATA_CONTINUOUS_PALETTES).map(([key, palette]) => <option key={key} value={key}>{palette.label}</option>)}
-                          </select>
-                        </label>
-                        <label className="metadata-inline-toggle" title="Reverse both the branch colors and the legend gradient.">
-                          <input type="checkbox" checked={metadataReverseScale} onChange={event => setMetadataReverseScale(event.target.checked)} />
-                          Reverse color scale
-                        </label>
-                      </>
-                    ) : null}
                     <label title="Choose a corner, or drag the legend to a custom position.">
                       Legend position
                       <select value={metadataLegendPlacement ? "custom" : metadataLegendPosition} onChange={event => {
@@ -10157,10 +10177,10 @@ export default function App() {
                       </select>
                     </label>
                     {([
-                      ["branchColors", "Branch colors"], ["markers", "Markers"], ["pies", "Pie charts"],
+                      ["branchColors", "Branch colors"], ["markers", "Markers"], ["pies", "Pie charts"], ["tipTables", "Tip tables"],
                     ] as const).map(([key, label]) => (
                       <label key={key} className="metadata-inline-toggle" title={`Include the ${label.toLowerCase()} key when that metadata display is active.`}>
-                        <input type="checkbox" checked={metadataLegendComponents[key]} onChange={event => setMetadataLegendComponents(current => ({ ...current, [key]: event.target.checked }))} />
+                        <input type="checkbox" checked={metadataLegendComponents[key] !== false} onChange={event => setMetadataLegendComponents(current => ({ ...current, [key]: event.target.checked }))} />
                         {label}
                       </label>
                     ))}
@@ -10632,14 +10652,13 @@ export default function App() {
                     onToggle={() => setActiveLabelStylePopover((current) => current === "metadataTipTable" ? null : "metadataTipTable")}
                   >
                     <label>
-                      Display
-                      <select value={metadataTipTableMode} onChange={(event) => setMetadataTipTableMode(event.target.value as MetadataTipTableMode)}>
+                      Numeric display
+                      <select value={metadataTipTableMode === "categorical" ? "heatmap" : metadataTipTableMode} onChange={(event) => setMetadataTipTableMode(event.target.value as MetadataTipTableMode)}>
                         <option value="bars">Horizontal bars</option>
                         <option value="heatmap">Heat map</option>
-                        <option value="categorical">Categorical table</option>
                       </select>
                     </label>
-                    {metadataTipTableMode === "heatmap" ? (
+                    {metadataTipTableMode !== "bars" ? (
                       <label>
                         Palette
                         <select value={metadataTipTablePalette} onChange={(event) => setMetadataTipTablePalette(event.target.value as MetadataContinuousPalette)}>
@@ -10649,136 +10668,44 @@ export default function App() {
                         </select>
                       </label>
                     ) : null}
-                    {metadataTipTableMode === "categorical" ? (
-                      <label>
-                        Cell style
-                        <select value={metadataTipTableCellStyle} onChange={(event) => setMetadataTipTableCellStyle(event.target.value as MetadataTipTableCellStyle)}>
-                          <option value="filled">Filled cell</option>
-                          <option value="circle">Circle</option>
-                          <option value="square">Square</option>
-                          <option value="check">Check mark</option>
-                          <option value="text">Value text</option>
-                        </select>
-                      </label>
-                    ) : null}
-                    {metadataTipTableMode === "bars" ? (
-                      <label title="Width of the quantitative plotting area.">
-                        Bar width
-                        <input
-                          type="range"
-                          min={80}
-                          max={480}
-                          step={10}
-                          value={metadataTipTableBarWidthPx}
-                          onChange={(event) => setMetadataTipTableBarWidthPx(Number(event.target.value))}
-                        />
-                        <span className="figure-style-value">{metadataTipTableBarWidthPx} px</span>
-                      </label>
-                    ) : (
+                    {([
+                      ["Binary display", metadataTipTableBinaryStyle, setMetadataTipTableBinaryStyle, true],
+                      ["Categorical display", metadataTipTableCellStyle, setMetadataTipTableCellStyle, false],
+                      ["Short-text display", metadataTipTableTextStyle, setMetadataTipTableTextStyle, false],
+                    ] as const).map(([label, value, setter, binary]) => <label key={label}>
+                      {label}
+                      <select value={value} onChange={event => setter(event.target.value as MetadataTipTableCellStyle)}>
+                        <option value="filled">{binary ? "Filled / empty" : "Colored cells"}</option>
+                        <option value="circle">Circles</option>
+                        <option value="square">Squares</option>
+                        {binary ? <><option value="check">Check / empty</option><option value="check-cross">Check / cross</option></> : null}
+                        <option value="text">Value text</option>
+                      </select>
+                    </label>)}
                       <label title="Width allocated to each data column.">
                         Cell width
                         <input
                           type="range"
                           min={12}
-                          max={64}
+                          max={240}
                           step={1}
                           value={metadataTipTableCellWidthPx}
                           onChange={(event) => setMetadataTipTableCellWidthPx(Number(event.target.value))}
                         />
                         <span className="figure-style-value">{metadataTipTableCellWidthPx} px</span>
                       </label>
-                    )}
-                    {metadataTipTableMode === "bars" ? (
-                      <label title="Choose the single column plotted as horizontal bars. Other selected columns are retained for heat maps and categorical tables.">
-                        Bar data column
-                        <select value={metadataTipTableColumns[0]?.column ?? ""} onChange={event => {
-                          const column = event.target.value;
-                          if (!column) return;
-                          setMetadataTipTableColumns(current => [
-                            current.find(item => item.column === column) ?? { column, label: metadataTipTableDisplayLabel(column) },
-                            ...current.filter(item => item.column !== column),
-                          ]);
-                        }}>
-                          <option value="" disabled>Choose a column</option>
-                          {metadataColumns.filter(column => column !== metadataKeyColumn).map(column => <option key={column} value={column}>{metadataTipTableDisplayLabel(column)}</option>)}
-                        </select>
-                      </label>
-                    ) : <label title="Add a metadata column to the table.">
-                      Add column
-                      <select
-                        value=""
-                        onChange={(event) => {
-                          const column = event.target.value;
-                          if (!column) {
-                            return;
-                          }
-                          setMetadataTipTableColumns((current) => current.some((item) => item.column === column)
-                            ? current
-                            : [...current, { column, label: metadataTipTableDisplayLabel(column) }]);
-                        }}
-                      >
-                        <option value="">Select column...</option>
-                        {metadataColumns.filter((column) => column !== metadataKeyColumn && !metadataTipTableColumns.some((item) => item.column === column)).map((column) => (
-                          <option key={column} value={column}>{metadataTipTableDisplayLabel(column)}</option>
-                        ))}
-                      </select>
-                    </label>}
-                    <div className="metadata-tip-table-columns" data-testid="metadata-tip-table-columns">
-                      {(metadataTipTableMode === "bars" ? metadataTipTableColumns.slice(0, 1) : metadataTipTableColumns).map((item, index) => (
-                        <div className={`metadata-tip-table-column${metadataTipTableMode === "bars" ? " metadata-tip-table-bar-column" : ""}`} key={item.column}>
-                          <input
-                            type="text"
-                            aria-label={`Display label for ${item.column}`}
-                            value={item.label}
-                            onChange={(event) => setMetadataTipTableColumns((current) => current.map((candidate) => (
-                              candidate.column === item.column ? { ...candidate, label: event.target.value } : candidate
-                            )))}
-                          />
-                          {metadataTipTableMode !== "bars" ? <>
-                          <button
-                            type="button"
-                            className="metadata-tip-table-column-button"
-                            title="Move column left"
-                            aria-label={`Move ${item.column} left`}
-                            disabled={index === 0}
-                            onClick={() => setMetadataTipTableColumns((current) => {
-                              const next = [...current];
-                              [next[index - 1], next[index]] = [next[index], next[index - 1]];
-                              return next;
-                            })}
-                          >&#8592;</button>
-                          <button
-                            type="button"
-                            className="metadata-tip-table-column-button"
-                            title="Move column right"
-                            aria-label={`Move ${item.column} right`}
-                            disabled={index === metadataTipTableColumns.length - 1}
-                            onClick={() => setMetadataTipTableColumns((current) => {
-                              const next = [...current];
-                              [next[index], next[index + 1]] = [next[index + 1], next[index]];
-                              return next;
-                            })}
-                          >&#8594;</button>
-                          <button
-                            type="button"
-                            className="metadata-tip-table-column-button"
-                            title="Remove column"
-                            aria-label={`Remove ${item.column}`}
-                            onClick={() => setMetadataTipTableColumns((current) => current.filter((candidate) => candidate.column !== item.column))}
-                          >&#215;</button>
-                          </> : null}
-                          {metadataTipTableMode !== "categorical" ? (
-                            <label style={{ gridColumn: "1 / -1" }} title="Dates accept YYYY, YYYY-MM, or YYYY-MM-DD and use chronological colors in heat maps.">
-                              {item.column} data type
-                              <select value={item.valueType ?? "number"} onChange={event => setMetadataTipTableColumns(current => current.map(candidate => candidate.column === item.column ? { ...candidate, valueType: event.target.value === "date" ? "date" : "number" } : candidate))}>
-                                <option value="number">Numeric</option>
-                                <option value="date">Chronological dates</option>
-                              </select>
-                            </label>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
+                    <details data-testid="metadata-tip-table-columns">
+                      <summary>Columns ({metadataTipTableColumns.length} selected)</summary>
+                      <div className="button-row">
+                        <button type="button" className="secondary" onClick={() => setMetadataTipTableColumns(metadataColumns.filter(column => column !== metadataKeyColumn).map(column => metadataTipTableColumns.find(item => item.column === column) ?? { column, label: metadataTipTableDisplayLabel(column) }))}>Select all</button>
+                        <button type="button" className="secondary" onClick={() => setMetadataTipTableColumns([])}>Clear selection</button>
+                      </div>
+                      <input type="search" aria-label="Find table columns" placeholder="Find columns" value={metadataTipTableColumnSearch} onChange={event => setMetadataTipTableColumnSearch(event.target.value)} />
+                      {metadataColumns.filter(column => column !== metadataKeyColumn && metadataTipTableDisplayLabel(column).toLowerCase().includes(metadataTipTableDisplayLabel(metadataTipTableColumnSearch).toLowerCase())).map(column => <label className="metadata-inline-toggle" key={column}>
+                        <input type="checkbox" checked={metadataTipTableColumns.some(item => item.column === column)} onChange={event => setMetadataTipTableColumns(current => event.target.checked ? [...current, { column, label: metadataTipTableDisplayLabel(column) }] : current.filter(item => item.column !== column))} />
+                        {metadataTipTableDisplayLabel(column)}
+                      </label>)}
+                    </details>
                     {metadataTipTableData ? (
                       <div className="figure-style-value">{metadataTipTableData.matchedTipCount.toLocaleString()} matched tips</div>
                     ) : null}
@@ -11414,6 +11341,9 @@ export default function App() {
           metadataTipTableData={metadataTipTableEnabled && viewMode === "rectangular" && !metadataOverlaysSuppressed ? metadataTipTableData : null}
           metadataTipTableMode={metadataTipTableMode}
           metadataTipTableCellStyle={metadataTipTableCellStyle}
+          metadataTipTableBinaryStyle={metadataTipTableBinaryStyle}
+          metadataTipTableTextStyle={metadataTipTableTextStyle}
+          onTipTableColumnLabelChange={(column, label) => setMetadataTipTableColumns(current => current.map(item => item.column === column ? { ...item, label } : item))}
           metadataTipTablePalette={metadataTipTablePalette}
           metadataTipTableBarWidthPx={metadataTipTableBarWidthPx}
           metadataTipTableCellWidthPx={metadataTipTableCellWidthPx}

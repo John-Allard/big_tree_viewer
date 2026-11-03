@@ -29,14 +29,15 @@ test("date color scales and legend settings remain synchronized", async ({ page 
     .toEqual([{ column: "date", label: "Collection date", valueType: "date" }]);
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataColoredNodeCount === 4);
   await openPanel(page, "Metadata");
-  await page.getByRole("button", { name: "Metadata legend settings", exact: true }).click();
-  await page.getByRole("combobox", { name: "Color scale palette", exact: true }).selectOption("viridis");
-  await page.getByLabel("Reverse color scale", { exact: true }).check();
+  await page.getByRole("button", { name: "Metadata branch colors settings", exact: true }).click();
+  const colors = page.getByRole("dialog", { name: "Metadata branch colors settings" });
+  await colors.getByRole("combobox", { name: "Palette", exact: true }).selectOption("viridis");
+  await colors.getByLabel("Reverse continuous scale", { exact: true }).check();
   await expect.poll(() => page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataContinuousLegend)).toMatchObject({
     valueType: "date", minLabel: "2024-01-01", maxLabel: "2025-01-01", palette: "viridis", startColor: "#fde725",
   });
   await page.screenshot({ path: testInfo.outputPath("date-metadata-legend.png") });
-  await page.getByRole("button", { name: "Close Metadata legend settings", exact: true }).click();
+  await page.getByRole("button", { name: "Close Metadata branch colors settings", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("date-metadata-mobile.png") });

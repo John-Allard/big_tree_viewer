@@ -83,7 +83,9 @@ declare global {
       setMetadataPieEndColumn: (column: string) => void;
       setMetadataTipTableEnabled: (visible: boolean) => void;
       setMetadataTipTableMode: (mode: "bars" | "heatmap" | "categorical") => void;
-      setMetadataTipTableCellStyle: (style: "filled" | "circle" | "square" | "check" | "text") => void;
+      setMetadataTipTableCellStyle: (style: "filled" | "circle" | "square" | "check" | "check-cross" | "text") => void;
+      setMetadataTipTableBinaryStyle: (style: "filled" | "circle" | "square" | "check" | "check-cross" | "text") => void;
+      setMetadataTipTableTextStyle: (style: "filled" | "circle" | "square" | "text") => void;
       setMetadataTipTableColumns: (columns: Array<{ column: string; label: string }>) => void;
       setMetadataLabelMaxCount: (value: number) => void;
       setMetadataLabelMinSpacingPx: (value: number) => void;

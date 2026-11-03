@@ -184,13 +184,13 @@ test("tip date columns compute UTC bounds, preserve raw text and use every exist
   expect(metadataTipTableNumericValue("1970", "date")).toBe(0);
 });
 
-test("tip date columns with no valid dates keep null bounds; numeric columns do not infer dates", () => {
+test("tip date columns with no valid dates keep null bounds and ISO dates are inferred", () => {
   const data = buildMetadataTipTableData(tree, [{ name: "B", value: "01/02/2024" }], "name", [
     { column: "value", label: "Date", valueType: "date" },
   ]);
   expect(data.columns[0]).toMatchObject({ min: null, max: null });
   const numeric = buildMetadataTipTableData(tree, rows, "name", [{ column: "value", label: "Numeric" }]);
-  expect(numeric.columns[0]).toMatchObject({ min: 2024, max: 2024 });
+  expect(numeric.columns[0]).toMatchObject({ kind: "date", min: parseMetadataDate("2024"), max: parseMetadataDate("2024-03-01") });
   expect(buildMetadataTipTableData(tree, rows, "", []).matchedTipCount).toBe(0);
 });
 

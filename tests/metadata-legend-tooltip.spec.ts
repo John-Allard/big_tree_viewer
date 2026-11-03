@@ -146,13 +146,14 @@ test("metadata legend selection and position survive session reload", async ({ p
   const details = page.getByRole("dialog", { name: "Metadata legend settings" });
   await details.getByLabel("Markers", { exact: true }).uncheck();
   await details.getByLabel("Pie charts", { exact: true }).uncheck();
+  await details.getByLabel("Tip tables", { exact: true }).uncheck();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Save Session", exact: true }).click();
   const savedPath = (await (await download).path())!;
   const session = JSON.parse(strFromU8(gunzipSync(await readFile(savedPath))));
   expect(session.settings.metadataLegendEnabled).toBe(true);
   expect(session.settings.metadataLegendPosition).toBe("bottom-left");
-  expect(session.settings.metadataLegendComponents).toEqual({ branchColors: true, markers: false, pies: false });
+  expect(session.settings.metadataLegendComponents).toEqual({ branchColors: true, markers: false, pies: false, tipTables: false });
   await page.getByLabel("Show metadata legend", { exact: true }).uncheck();
   const chooserPromise = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Load Session", exact: true }).click();
@@ -161,6 +162,7 @@ test("metadata legend selection and position survive session reload", async ({ p
   await page.getByRole("button", { name: "Metadata legend settings", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Legend position", exact: true })).toHaveValue("bottom-left");
   await expect(details.getByLabel("Markers", { exact: true })).not.toBeChecked();
+  await expect(details.getByLabel("Tip tables", { exact: true })).not.toBeChecked();
 });
 
 test("legend components, dragging, and context-menu settings work without panning the tree", async ({ page }) => {

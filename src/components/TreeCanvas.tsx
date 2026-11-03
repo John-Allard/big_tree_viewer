@@ -20,7 +20,7 @@ import { distanceToSegmentSquared, UniformGridIndex, type IndexedSegment } from 
 import { buildTaxonomyBlocksForOrderedLeaves, colorForTaxonomy, taxonomyEntityKey, type TaxonomyColorByRank } from "../lib/taxonomyBlocks";
 import { TAXONOMY_COLOR_PALETTES, type TaxonomyColorPaletteKey } from "../lib/taxonomyPalettes";
 import type { PhyloPicSilhouette } from "../lib/phylopic";
-import { metadataTipTableContinuousColor, metadataTipTableNumericValue, metadataTipTableValueIsOn } from "../lib/metadataTipTable";
+import { metadataTipTableContinuousColor, metadataTipTableNumericValue, metadataTipTableColumnMode, metadataTipTableCellAppearance, metadataTipTableStyleForColumn } from "../lib/metadataTipTable";
 import { tagPngAsSrgb } from "../lib/pngColorProfile";
 import { layoutMetadataLegend } from "../lib/metadataLegend";
 import { calendarBands, calendarBoundaries, calendarStylesForSubtree, formatCalendarYear } from "../lib/calendarAxis";
@@ -4400,6 +4400,9 @@ export default function TreeCanvas({
   metadataTipTableData,
   metadataTipTableMode,
   metadataTipTableCellStyle,
+  metadataTipTableBinaryStyle = "filled",
+  metadataTipTableTextStyle = "text",
+  onTipTableColumnLabelChange,
   metadataTipTablePalette,
   metadataTipTableBarWidthPx,
   metadataTipTableCellWidthPx,
@@ -4568,6 +4571,8 @@ export default function TreeCanvas({
   const longPressTimerRef = useRef<number | null>(null);
   const longPressRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const tipTableHeaderHitsRef = useRef<Array<{ column: string; label: string; x: number; y: number; width: number }>>([]);
+  const [tipTableHeaderDraft, setTipTableHeaderDraft] = useState("");
   const genusLabelHistoryRef = useRef<{
     tree: TreeModel | null;
     viewMode: ViewMode;
@@ -4644,6 +4649,8 @@ export default function TreeCanvas({
     });
   }, [viewMode]);
   const [contextMenu, setContextMenu] = useState<(
+    { kind: "tip-table-header"; x: number; y: number; name: string; column: string; tutorialDemo?: boolean }
+    |
     { kind: "legend"; x: number; y: number; name: string; tutorialDemo?: boolean }
     |
     {
@@ -6957,9 +6964,7 @@ export default function TreeCanvas({
       : naturalTipBandWidthPx;
     const tipBandWidthPx = Math.max(defaultTipBandWidthPx, configuredTipBandWidthPx);
     const tipTableWidthPx = metadataTipTableData && metadataTipTableData.columns.length > 0
-      ? (metadataTipTableMode === "bars"
-        ? metadataTipTableBarWidthPx + 36
-        : (metadataTipTableData.columns.length * metadataTipTableCellWidthPx) + 36)
+      ? (metadataTipTableData.columns.length * metadataTipTableCellWidthPx) + 36
       : 0;
     const tipTableMaxHeaderCharacters = metadataTipTableData?.columns.reduce(
       (maximum, column) => Math.max(maximum, column.label.length),
@@ -8174,6 +8179,7 @@ export default function TreeCanvas({
     const backingWidth = Math.max(1, Math.floor(renderSize.width * dpr));
     const backingHeight = Math.max(1, Math.floor(renderSize.height * dpr));
     const isOverrideRender = renderCanvasOverrideRef.current !== null;
+    if (!isOverrideRender) tipTableHeaderHitsRef.current = [];
     const previousBackingStore = isOverrideRender ? null : canvasBackingStoreRef.current;
     if (isOverrideRender || !previousBackingStore
       || previousBackingStore.width !== backingWidth
@@ -10268,61 +10274,37 @@ export default function TreeCanvas({
               tableStartX,
               headerY,
               columnCount: metadataTipTableData.columns.length,
+              columns: metadataTipTableData.columns.map(column => ({ column: column.column, kind: column.kind,
+                mode: metadataTipTableColumnMode(column, metadataTipTableMode), width: metadataTipTableCellWidthPx })),
+              headers: metadataTipTableData.columns.map((column, index) => {
+                const halfText = ctx.measureText(column.label).width * Math.SQRT1_2 / 2;
+                return { column: column.column, x: tableStartX + (index + 0.5) * metadataTipTableCellWidthPx + halfText, y: headerY - halfText };
+              }),
               visibleMatchedTipCount: visibleTipLabels.reduce((count, label) => (
                 metadataTipTableData.valuesByNode[label.node] ? count + 1 : count
               ), 0),
             };
           }
-          const drawHeader = (text: string, x: number): void => {
+          const drawHeader = (text: string, x: number, column: string): void => {
             ctx.save();
             ctx.translate(x, headerY);
             ctx.rotate(-Math.PI / 4);
             ctx.textAlign = "left";
             ctx.textBaseline = "middle";
             ctx.font = `11px ${LABEL_FONT}`;
+            if (!isOverrideRender) tipTableHeaderHitsRef.current.push({ column, label: text, x, y: headerY, width: ctx.measureText(text).width });
             ctx.fillStyle = "#334155";
             ctx.fillText(text, 0, 0);
             ctx.restore();
             pushSceneText(text, x, headerY, "#334155", 11, LABEL_FONT, "start", -Math.PI / 4);
           };
-          if (metadataTipTableMode === "bars") {
-            const column = metadataTipTableData.columns[0];
-            if (column) {
-              drawHeader(column.label, tableStartX);
-              const min = column.valueType === "date" ? column.min ?? 0 : Math.min(0, column.min ?? 0);
-              const max = column.valueType === "date" ? column.max ?? min : Math.max(0, column.max ?? 0);
-              const span = Math.max(1e-9, max - min);
-              const zeroX = column.valueType === "date" ? tableStartX : tableStartX + (((0 - min) / span) * metadataTipTableBarWidthPx);
-              ctx.strokeStyle = "rgba(100,116,139,0.52)";
-              ctx.lineWidth = 0.8;
-              ctx.beginPath();
-              ctx.moveTo(zeroX, Math.max(headerY + 6, firstVisibleY - (rowHeight * 0.5)));
-              ctx.lineTo(zeroX, Math.min(renderSize.height, visibleTipLabels[visibleTipLabels.length - 1].y + (rowHeight * 0.5)));
-              ctx.stroke();
-              pushSceneLine(zeroX, Math.max(headerY + 6, firstVisibleY - (rowHeight * 0.5)), zeroX, Math.min(renderSize.height, visibleTipLabels[visibleTipLabels.length - 1].y + (rowHeight * 0.5)), "#64748b", 0.8, 0.52);
-              for (let index = 0; index < visibleTipLabels.length; index += 1) {
-                const label = visibleTipLabels[index];
-                const rawValue = metadataTipTableData.valuesByNode[label.node]?.[0] ?? "";
-                const value = metadataTipTableNumericValue(rawValue, column.valueType);
-                if (value === null) {
-                  continue;
-                }
-                const valueX = tableStartX + (((value - min) / span) * metadataTipTableBarWidthPx);
-                const left = Math.min(zeroX, valueX);
-                const width = Math.max(1, Math.abs(valueX - zeroX));
-                const top = label.y - (rowHeight * 0.36);
-                const height = Math.max(2, rowHeight * 0.72);
-                ctx.fillStyle = "rgba(37,99,235,0.78)";
-                ctx.fillRect(left, top, width, height);
-                pushSceneRect(left, top, width, height, "#2563eb", 0.78);
-              }
-            }
-          } else {
+          {
             const cellWidth = metadataTipTableCellWidthPx;
             for (let columnIndex = 0; columnIndex < metadataTipTableData.columns.length; columnIndex += 1) {
               const column = metadataTipTableData.columns[columnIndex];
+              const columnMode = metadataTipTableColumnMode(column, metadataTipTableMode);
               const cellX = tableStartX + (columnIndex * cellWidth);
-              drawHeader(column.label, cellX + (cellWidth * 0.5));
+              drawHeader(column.label, cellX + (cellWidth * 0.5), column.column);
               for (let rowIndex = 0; rowIndex < visibleTipLabels.length; rowIndex += 1) {
                 const label = visibleTipLabels[rowIndex];
                 const value = metadataTipTableData.valuesByNode[label.node]?.[columnIndex] ?? "";
@@ -10335,7 +10317,25 @@ export default function TreeCanvas({
                 if (!value) {
                   continue;
                 }
-                if (metadataTipTableMode === "heatmap") {
+                if (columnMode === "bars") {
+                  const numeric = metadataTipTableNumericValue(value, column.valueType);
+                  if (numeric === null || column.min === null || column.max === null) continue;
+                  const min = column.valueType === "date" ? column.min : Math.min(0, column.min);
+                  const max = column.valueType === "date" ? column.max : Math.max(0, column.max);
+                  const span = max - min;
+                  const plotWidth = Math.max(1, cellWidth - 4);
+                  const zeroX = cellX + 2 + (span > 0 && column.valueType !== "date" ? -min / span * plotWidth : 0);
+                  const valueX = cellX + 2 + (span > 0 ? (numeric - min) / span * plotWidth : column.valueType === "date" ? plotWidth * 0.5 : 0);
+                  const width = Math.abs(valueX - zeroX);
+                  if (width > 0) {
+                    const barHeight = height * 0.8;
+                    ctx.fillStyle = "rgba(37,99,235,0.78)";
+                    ctx.fillRect(Math.min(zeroX, valueX), label.y - barHeight / 2, width, barHeight);
+                    pushSceneRect(Math.min(zeroX, valueX), label.y - barHeight / 2, width, barHeight, "#2563eb", 0.78);
+                  }
+                  continue;
+                }
+                if (columnMode === "heatmap") {
                   const numeric = metadataTipTableNumericValue(value, column.valueType);
                   if (numeric === null || column.min === null || column.max === null) {
                     continue;
@@ -10346,35 +10346,40 @@ export default function TreeCanvas({
                   pushSceneRect(cellX, top, cellWidth, height, color);
                   continue;
                 }
-                if (!metadataTipTableValueIsOn(value) && metadataTipTableCellStyle === "check") {
-                  continue;
-                }
-                const color = column.categoryColors[value] ?? "#475569";
+                const appearance = metadataTipTableCellAppearance(column, value, metadataTipTableStyleForColumn(column, metadataTipTableCellStyle, metadataTipTableBinaryStyle, metadataTipTableTextStyle));
+                if (appearance.empty) continue;
+                const { color, style } = appearance;
                 const centerX = cellX + (cellWidth * 0.5);
                 const size = Math.max(2, Math.min(cellWidth - 4, height - 2));
-                if (metadataTipTableCellStyle === "filled") {
+                if (style === "filled") {
                   ctx.fillStyle = color;
                   ctx.fillRect(cellX, top, cellWidth, height);
                   pushSceneRect(cellX, top, cellWidth, height, color);
-                } else if (metadataTipTableCellStyle === "circle") {
+                } else if (style === "circle") {
                   ctx.fillStyle = color;
                   ctx.beginPath();
                   ctx.arc(centerX, label.y, size * 0.5, 0, Math.PI * 2);
                   ctx.fill();
                   pushScenePath(`M ${(centerX - (size * 0.5)).toFixed(3)} ${label.y.toFixed(3)} a ${(size * 0.5).toFixed(3)} ${(size * 0.5).toFixed(3)} 0 1 0 ${size.toFixed(3)} 0 a ${(size * 0.5).toFixed(3)} ${(size * 0.5).toFixed(3)} 0 1 0 ${(-size).toFixed(3)} 0`, undefined, undefined, color);
-                } else if (metadataTipTableCellStyle === "square") {
+                } else if (style === "square") {
                   ctx.fillStyle = color;
                   ctx.fillRect(centerX - (size * 0.5), label.y - (size * 0.5), size, size);
                   pushSceneRect(centerX - (size * 0.5), label.y - (size * 0.5), size, size, color);
                 } else {
-                  const text = metadataTipTableCellStyle === "check" ? "\u2713" : value;
-                  const fontSize = Math.max(4, Math.min(12, size));
+                  let text = appearance.text;
+                  let fontSize = Math.max(4, Math.min(12, size));
                   ctx.font = `${fontSize}px ${LABEL_FONT}`;
+                  const available = Math.max(1, cellWidth - 4);
+                  if (ctx.measureText(text).width > available) {
+                    fontSize = Math.max(4, fontSize * available / ctx.measureText(text).width);
+                    ctx.font = `${fontSize}px ${LABEL_FONT}`;
+                    while (text.length > 1 && ctx.measureText(text).width > available) text = text.slice(0, -2) + "\u2026";
+                  }
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
-                  ctx.fillStyle = metadataTipTableCellStyle === "check" ? color : "#0f172a";
+                  ctx.fillStyle = color;
                   ctx.fillText(text, centerX, label.y);
-                  pushSceneText(text, centerX, label.y, metadataTipTableCellStyle === "check" ? color : "#0f172a", fontSize, LABEL_FONT, "middle");
+                  pushSceneText(text, centerX, label.y, color, fontSize, LABEL_FONT, "middle");
                 }
               }
             }
@@ -15924,7 +15929,7 @@ export default function TreeCanvas({
           ctx.font = `${primitive.bold ? "700 " : ""}12px Arial`;
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
-          ctx.fillStyle = "#18212c";
+          ctx.fillStyle = primitive.color ?? "#18212c";
           ctx.fillText(primitive.text, x, y);
           pushSceneText(primitive.text, x, y, ctx.fillStyle, 12, "Arial", "start", undefined, primitive.bold ? "700" : "", "middle");
         } else if (primitive.kind === "rect") {
@@ -16067,6 +16072,8 @@ export default function TreeCanvas({
     metadataPieVersion,
     metadataTipTableBarWidthPx,
     metadataTipTableCellStyle,
+    metadataTipTableBinaryStyle,
+    metadataTipTableTextStyle,
     metadataTipTableCellWidthPx,
     metadataTipTableData,
     metadataTipTableMode,
@@ -18382,7 +18389,16 @@ export default function TreeCanvas({
       const rect = canvas.getBoundingClientRect();
       const localX = event.clientX - rect.left;
       const localY = event.clientY - rect.top;
-      showContextMenuAt(localX, localY);
+      const header = hitsMetadataLegend(localX, localY) ? undefined : tipTableHeaderHitsRef.current.find(hit => {
+        const dx = localX - hit.x, dy = localY - hit.y;
+        const along = (dx - dy) * Math.SQRT1_2;
+        const across = (dx + dy) * Math.SQRT1_2;
+        return along >= -4 && along <= hit.width + 4 && Math.abs(across) <= 9;
+      });
+      if (header) {
+        setTipTableHeaderDraft(header.label);
+        setContextMenu({ kind: "tip-table-header", x: localX, y: localY, name: header.label, column: header.column });
+      } else showContextMenuAt(localX, localY);
     };
 
     const handleDoubleClick = (event: MouseEvent): void => {
@@ -19543,7 +19559,14 @@ export default function TreeCanvas({
         >
           {contextMenu.tutorialDemo ? <div className="tree-context-menu-tutorial-cue">Right click to open this menu</div> : null}
           <div className="tree-context-menu-title">{contextMenu.name}</div>
-          {contextMenu.kind === "legend" ? (
+          {contextMenu.kind === "tip-table-header" ? <form onSubmit={event => {
+            event.preventDefault();
+            onTipTableColumnLabelChange?.(contextMenu.column, tipTableHeaderDraft.trim() || contextMenu.column);
+            setContextMenu(null);
+          }}>
+            <label>Display name<input aria-label="Column display name" autoFocus maxLength={256} value={tipTableHeaderDraft} onChange={event => setTipTableHeaderDraft(event.target.value)} /></label>
+            <button type="submit" className="tree-context-menu-item">Rename column</button>
+          </form> : contextMenu.kind === "legend" ? (
             <>
               <button type="button" className="tree-context-menu-item" title="Open the metadata legend controls in the side panel."
                 onClick={() => { setContextMenu(null); onMetadataLegendSettingsRequest?.(); }}>
