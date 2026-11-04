@@ -136,9 +136,11 @@ export interface TreeCanvasProps {
   metadataTipTableBinaryStyle?: MetadataTipTableCellStyle;
   metadataTipTableTextStyle?: MetadataTipTableCellStyle;
   onTipTableColumnLabelChange?: (column: string, label: string) => void;
+  onTipTableSettingsRequest?: () => void;
   metadataTipTablePalette: MetadataContinuousPalette;
   metadataTipTableBarWidthPx: number;
   metadataTipTableCellWidthPx: number;
+  metadataTipTableHeaderFontSizePx?: number;
   metadataTipTablePlacement?: MetadataTipTablePlacement;
   metadataMarkerSizePx: number;
   metadataLabelMaxCount: number;

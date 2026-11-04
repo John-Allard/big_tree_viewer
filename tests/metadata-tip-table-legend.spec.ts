@@ -148,6 +148,8 @@ test("tip-table scales appear in the canvas and export, follow palette edits, an
   await page.getByRole("button", { name: "Close Metadata legend settings", exact: true }).click();
   await page.getByRole("button", { name: "Tip data table settings", exact: true }).click();
   const tableSettings = page.getByRole("dialog", { name: "Tip data table settings" });
+  await tableSettings.getByRole("slider", { name: "Column name size" }).fill("18");
+  await expect.poll(() => page.evaluate(() => (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect?.metadataTipTable as { headerFontSize: number })?.headerFontSize)).toBe(18);
   await tableSettings.getByRole("combobox", { name: "Palette", exact: true }).selectOption("redBlue");
   await expect.poll(svg).toContain(metadataTipTableContinuousColor(10, 10, 90, "redBlue"));
   await tableSettings.getByRole("combobox", { name: "Binary display", exact: true }).selectOption("check");
@@ -174,15 +176,17 @@ test("tip-table scales appear in the canvas and export, follow palette edits, an
   const header = await page.evaluate(() => (window.__BIG_TREE_VIEWER_RENDER_DEBUG__?.rect?.metadataTipTable as { headers: Array<{ column: string; x: number; y: number }> }).headers.find(item => item.column === "score")!);
   const canvas = (await page.getByTestId("tree-canvas").boundingBox())!;
   await page.mouse.click(canvas.x + header.x, canvas.y + header.y, { button: "right" });
+  await expect(page.getByRole("textbox", { name: "Column display name", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Rename Column", exact: true }).click();
   await page.getByRole("textbox", { name: "Column display name", exact: true }).fill("Fitness score");
-  await page.getByRole("button", { name: "Rename column", exact: true }).click();
+  await page.getByRole("button", { name: "Apply column name", exact: true }).click();
   await expect.poll(svg).toContain("Tip bars: Fitness score");
   await page.screenshot({ path: testInfo.outputPath("tip-table-legend.png") });
   await page.evaluate(() => Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true }));
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Save Session", exact: true }).click();
   const session = JSON.parse(strFromU8(gunzipSync(await readFile((await (await download).path())!))));
-  expect(session.settings).toMatchObject({ metadataTipTableMode: "bars", metadataTipTableBinaryStyle: "check-cross", metadataTipTableCellWidthPx: 80 });
+  expect(session.settings).toMatchObject({ metadataTipTableMode: "bars", metadataTipTableBinaryStyle: "check-cross", metadataTipTableCellWidthPx: 80, metadataTipTableHeaderFontSizePx: 18 });
   expect(session.settings.metadataTipTableColumns[0]).toEqual({ column: "score", label: "Fitness score" });
   await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setMetadataTipTableMode("heatmap"));
   await expect.poll(columnModes).toEqual(expect.arrayContaining([{ column: "collection_year", kind: "date", mode: "heatmap", width: 80 }]));

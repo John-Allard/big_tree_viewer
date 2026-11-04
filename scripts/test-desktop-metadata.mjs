@@ -111,7 +111,7 @@ try {
     metadataTipTableEnabled: true, metadataLegendEnabled: true,
     metadataLegendComponents: { tipTables: true, branchColors: false, markers: false, pies: false },
     metadataTipTableMode: 'bars', metadataTipTableCellWidthPx: 96, metadataTipTableBinaryStyle: 'check-cross',
-    metadataTipTablePlacement: 'inside',
+    metadataTipTablePlacement: 'inside', metadataTipTableHeaderFontSizePx: 18,
     metadataTipTableColumns: [{ column: 'date', label: 'Collection date' }, { column: 'score', label: 'Score' }, { column: 'country', label: 'Country' }],
   } });
   assert.deepEqual(mixed.metadata.tipTableColumns.map(column => column.kind), ['date', 'number', 'categorical']);
@@ -127,7 +127,16 @@ try {
   await call('export_tree', { sessionId, outputPath: mixedSessionPath });
   const mixedRestored = await call('open_tree', { treePath: mixedSessionPath });
   assert.equal(mixedRestored.settings.metadataTipTablePlacement, 'inside');
+  assert.equal(mixedRestored.settings.metadataTipTableHeaderFontSizePx, 18);
   await call('close_tree', { sessionId: mixedRestored.sessionId });
+  const radial = await call('update_tree', { sessionId, layout: 'circular', settings: { radialAngularSpanDegrees: 180 } });
+  assert.equal(radial.settings.metadataTipTableHeaderFontSizePx, 18);
+  const radialSvgPath = path.join(dir, 'radial-table.svg');
+  await call('export_tree', { sessionId, outputPath: radialSvgPath });
+  const radialSvg = await readFile(radialSvgPath, 'utf8');
+  assert.match(radialSvg, /Tip bars: Collection date/);
+  assert.match(radialSvg, /Tip table: Country/);
+  assert.ok(!radialSvg.includes('<image'));
   const nodeTable = 'id,ribbon\nPairA,Left group\nPairB,Right group\n';
   const nodeRibbons = await call('update_tree', { sessionId, metadata: {
     text: nodeTable, keyColumn: 'id', cladeRibbons: { labelColumn: 'ribbon', mode: 'nodes' },

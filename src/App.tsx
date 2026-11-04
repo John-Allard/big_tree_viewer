@@ -409,6 +409,7 @@ type BigTreeViewerSessionSettings = {
   metadataTipTablePalette?: MetadataContinuousPalette;
   metadataTipTableBarWidthPx?: number;
   metadataTipTableCellWidthPx?: number;
+  metadataTipTableHeaderFontSizePx?: number;
   metadataTipTablePlacement?: MetadataTipTablePlacement;
   metadataCategoryColorOverrides: Record<string, string>;
   metadataMarkerStyleOverrides: Record<string, { color?: string; shape?: MetadataMarkerShape }>;
@@ -2041,6 +2042,8 @@ export default function App() {
   const taxonomyDisplayNameContextRef = useRef<{ table: ParsedMetadataTable | null; key: string; column: string }>({ table: null, key: "", column: "" });
   const metadataDisplayNameMappingRef = useRef<{ tree: TreeModel; table: ParsedMetadataTable | null; key: string; column: string } | null>(null);
   const metadataLegendSettingsRef = useRef<HTMLDivElement | null>(null);
+  const metadataTipTableSettingsRef = useRef<HTMLDivElement | null>(null);
+  const pendingTipTableSettingsScrollRef = useRef(false);
   const pendingLegendSettingsScrollRef = useRef(false);
   const didAutoloadRef = useRef(false);
   const dragCounterRef = useRef(0);
@@ -2260,6 +2263,7 @@ export default function App() {
   const [metadataTipTablePalette, setMetadataTipTablePalette] = useState<MetadataContinuousPalette>("viridis");
   const [metadataTipTableBarWidthPx, setMetadataTipTableBarWidthPx] = useState(180);
   const [metadataTipTableCellWidthPx, setMetadataTipTableCellWidthPx] = useState(24);
+  const [metadataTipTableHeaderFontSizePx, setMetadataTipTableHeaderFontSizePx] = useState(11);
   const [metadataTipTablePlacement, setMetadataTipTablePlacement] = useState<MetadataTipTablePlacement>("outside");
   const [metadataCategoryColorOverrides, setMetadataCategoryColorOverrides] = useState<Record<string, string>>({});
   const [metadataMarkerStyleOverrides, setMetadataMarkerStyleOverrides] = useState<Record<string, { color?: string; shape?: MetadataMarkerShape }>>({});
@@ -2659,6 +2663,17 @@ export default function App() {
     setActiveLabelStylePopover("metadataLegend");
     showSidebar();
   }, [setMetadataOpen, showSidebar]);
+  const openMetadataTipTableSettings = useCallback(() => {
+    pendingTipTableSettingsScrollRef.current = true;
+    setMetadataOpen(true);
+    setActiveLabelStylePopover("metadataTipTable");
+    showSidebar();
+  }, [setMetadataOpen, showSidebar]);
+  useLayoutEffect(() => {
+    if (!pendingTipTableSettingsScrollRef.current || !metadataOpen || !sidebarVisible || activeLabelStylePopover !== "metadataTipTable") return;
+    pendingTipTableSettingsScrollRef.current = false;
+    metadataTipTableSettingsRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+  }, [metadataOpen, sidebarVisible, activeLabelStylePopover]);
   useLayoutEffect(() => {
     if (!pendingLegendSettingsScrollRef.current || !metadataOpen || !sidebarVisible || activeLabelStylePopover !== "metadataLegend") return;
     pendingLegendSettingsScrollRef.current = false;
@@ -3234,6 +3249,7 @@ export default function App() {
       setMetadataTipTableCellWidthPx(Math.max(12, Math.min(240, visual.metadataTipTableCellWidthPx)));
     }
     if (visual.metadataTipTablePlacement === "inside" || visual.metadataTipTablePlacement === "outside") setMetadataTipTablePlacement(visual.metadataTipTablePlacement);
+    if (typeof visual.metadataTipTableHeaderFontSizePx === "number" && Number.isFinite(visual.metadataTipTableHeaderFontSizePx)) setMetadataTipTableHeaderFontSizePx(Math.max(8, Math.min(32, visual.metadataTipTableHeaderFontSizePx)));
     const categoryColorOverrides = cleanColorRecord(visual.metadataCategoryColorOverrides);
     if (categoryColorOverrides) {
       setMetadataCategoryColorOverrides(categoryColorOverrides);
@@ -3885,7 +3901,7 @@ export default function App() {
     if (metadataLegendComponents.pies && metadataPiesEnabled && metadataPieOverlay.hasAny) {
       sections.push({ kind: "pies", title: "Pie charts", entries: metadataPieOverlay.legend });
     }
-    if (metadataLegendComponents.tipTables !== false && metadataTipTableEnabled && viewMode === "rectangular") {
+    if (metadataLegendComponents.tipTables !== false && metadataTipTableEnabled && viewMode !== "spiral") {
       sections.push(...buildMetadataTipTableLegend(metadataTipTableData, metadataTipTableMode, metadataTipTablePalette, metadataTipTableCellStyle, metadataTipTableBinaryStyle, metadataTipTableTextStyle));
     }
     return sections;
@@ -4967,6 +4983,7 @@ export default function App() {
     metadataTipTablePalette,
     metadataTipTableBarWidthPx,
     metadataTipTableCellWidthPx,
+    metadataTipTableHeaderFontSizePx,
     metadataTipTablePlacement,
     metadataCategoryColorOverrides,
     metadataMarkerStyleOverrides,
@@ -5022,6 +5039,7 @@ export default function App() {
     metadataTipTableBarWidthPx,
     metadataTipTableCellStyle,
     metadataTipTableCellWidthPx,
+    metadataTipTableHeaderFontSizePx,
     metadataTipTableBinaryStyle,
     metadataTipTableTextStyle,
     metadataTipTableColumns,
@@ -5231,6 +5249,7 @@ export default function App() {
     setMetadataPieSizePx(clampMetadataGlyphSizePercent(typeof settings.metadataPieSizePx === "number" && Number.isFinite(settings.metadataPieSizePx) ? settings.metadataPieSizePx : DEFAULT_METADATA_PIE_SIZE_PX));
     setMetadataTipTableEnabled(settings.metadataTipTableEnabled === true);
     setMetadataTipTablePlacement(settings.metadataTipTablePlacement === "inside" ? "inside" : "outside");
+    setMetadataTipTableHeaderFontSizePx(typeof settings.metadataTipTableHeaderFontSizePx === "number" ? Math.max(8, Math.min(32, settings.metadataTipTableHeaderFontSizePx)) : 11);
     setMetadataTipTableBinaryStyle(normalizeMetadataTipTableCellStyle(settings.metadataTipTableBinaryStyle
       ?? (settings.metadataTipTableCellStyle === "check" || settings.metadataTipTableCellStyle === "check-cross" ? settings.metadataTipTableCellStyle : undefined), "filled"));
     setMetadataTipTableTextStyle(normalizeMetadataTipTableCellStyle(settings.metadataTipTableTextStyle, "text"));
@@ -5660,6 +5679,7 @@ export default function App() {
     setMetadataTipTablePalette("viridis");
     setMetadataTipTableBarWidthPx(180);
     setMetadataTipTableCellWidthPx(24);
+    setMetadataTipTableHeaderFontSizePx(11);
     setMetadataTipTablePlacement("outside");
     setMetadataCategoryColorOverrides({});
     setMetadataMarkerStyleOverrides({});
@@ -5724,6 +5744,7 @@ export default function App() {
       setMetadataTipTablePalette("viridis");
       setMetadataTipTableBarWidthPx(180);
       setMetadataTipTablePlacement("outside");
+      setMetadataTipTableHeaderFontSizePx(11);
       setMetadataTipTableCellWidthPx(Math.max(12, Math.min(24, Math.floor(600 / Math.max(1, table.columns.length - 1)))));
       setMetadataCategoryColorOverrides({});
       setMetadataMarkerStyleOverrides({});
@@ -7842,6 +7863,7 @@ export default function App() {
         metadataTipTablePalette,
         metadataTipTableBarWidthPx,
         metadataTipTableCellWidthPx,
+        metadataTipTableHeaderFontSizePx,
         metadataTipTablePlacement,
         metadataTipTableMatchedTipCount: metadataTipTableData?.matchedTipCount ?? 0,
         metadataLabelMaxCount,
@@ -8153,6 +8175,7 @@ export default function App() {
     metadataTipTableBinaryStyle,
     metadataTipTableTextStyle,
     metadataTipTableCellWidthPx,
+    metadataTipTableHeaderFontSizePx,
     metadataTipTableColumns,
     metadataTipTablePlacement,
     metadataTipTableData,
@@ -10638,17 +10661,17 @@ export default function App() {
                     ) : null}
                   </SettingsPopoverButton>
                 </div>
-                <div className="metadata-toggle-row">
+                <div className="metadata-toggle-row" ref={metadataTipTableSettingsRef}>
                   <label
                     className="metadata-inline-toggle metadata-toggle-main"
-                    title={viewMode === "rectangular"
-                      ? "Draw selected metadata columns beside rectangular tip labels."
-                      : disabledControlTitle("Tip data tables are available in rectangular mode only.")}
+                    title={viewMode !== "spiral"
+                      ? "Draw selected metadata columns beside tip labels or as radial data rings."
+                      : disabledControlTitle("Tip data tables are available in rectangular and radial modes.")}
                   >
                     <input
                       type="checkbox"
                       checked={metadataTipTableEnabled}
-                      disabled={viewMode !== "rectangular"}
+                      disabled={viewMode === "spiral"}
                       onChange={(event) => setMetadataTipTableEnabled(event.target.checked)}
                     />
                     Show tip data table
@@ -10656,9 +10679,9 @@ export default function App() {
                   <SettingsPopoverButton
                     title="Tip data table"
                     isOpen={activeLabelStylePopover === "metadataTipTable"}
-                    disabled={!metadataTipTableEnabled || viewMode !== "rectangular"}
-                    disabledReason={viewMode !== "rectangular"
-                      ? "Available in rectangular mode only."
+                    disabled={!metadataTipTableEnabled || viewMode === "spiral"}
+                    disabledReason={viewMode === "spiral"
+                      ? "Available in rectangular and radial modes."
                       : "Enable the tip data table first."}
                     onToggle={() => setActiveLabelStylePopover((current) => current === "metadataTipTable" ? null : "metadataTipTable")}
                   >
@@ -10700,6 +10723,12 @@ export default function App() {
                         <option value="text">Value text</option>
                       </select>
                     </label>)}
+                    <label title="Font size for the data table's column names.">
+                      Column name size
+                      <input type="range" min={8} max={32} step={1} value={metadataTipTableHeaderFontSizePx}
+                        onChange={event => setMetadataTipTableHeaderFontSizePx(Number(event.target.value))} />
+                      <span className="figure-style-value">{metadataTipTableHeaderFontSizePx} px</span>
+                    </label>
                       <label title="Width allocated to each data column.">
                         Cell width
                         <input
@@ -11356,7 +11385,7 @@ export default function App() {
           metadataMarkerVersion={metadataMarkersEnabled ? metadataMarkerOverlay.version : ""}
           metadataPies={metadataPiesEnabled && !metadataOverlaysSuppressed && metadataPieOverlay.hasAny ? metadataPieOverlay.pies : null}
           metadataPieVersion={metadataPiesEnabled ? metadataPieOverlay.version : ""}
-          metadataTipTableData={metadataTipTableEnabled && viewMode === "rectangular" && !metadataOverlaysSuppressed ? metadataTipTableData : null}
+          metadataTipTableData={metadataTipTableEnabled && viewMode !== "spiral" && !metadataOverlaysSuppressed ? metadataTipTableData : null}
           metadataTipTableMode={metadataTipTableMode}
           metadataTipTableCellStyle={metadataTipTableCellStyle}
           metadataTipTableBinaryStyle={metadataTipTableBinaryStyle}
@@ -11365,6 +11394,8 @@ export default function App() {
           metadataTipTablePalette={metadataTipTablePalette}
           metadataTipTableBarWidthPx={metadataTipTableBarWidthPx}
           metadataTipTableCellWidthPx={metadataTipTableCellWidthPx}
+          metadataTipTableHeaderFontSizePx={metadataTipTableHeaderFontSizePx}
+          onTipTableSettingsRequest={openMetadataTipTableSettings}
           metadataTipTablePlacement={metadataTipTablePlacement}
           metadataPieSizePx={metadataPieSizePx}
           metadataMarkerSizePx={metadataMarkerSizePx}

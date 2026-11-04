@@ -4,6 +4,7 @@ import { EMPTY_CLADE_RIBBONS, resolveCladeRibbons } from "../lib/cladeRibbons";
 import { remapCladeRibbonsForSubtree } from "../lib/customCladeRibbons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { Check, X } from "lucide-react";
 import { createCladogramTree, DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, DEFAULT_CLADOGRAM_LOG_STRENGTH } from "../lib/cladogram";
 import {
   fontFamilyCss,
@@ -4403,9 +4404,11 @@ export default function TreeCanvas({
   metadataTipTableBinaryStyle = "filled",
   metadataTipTableTextStyle = "text",
   onTipTableColumnLabelChange,
+  onTipTableSettingsRequest,
   metadataTipTablePalette,
   metadataTipTableBarWidthPx,
   metadataTipTableCellWidthPx,
+  metadataTipTableHeaderFontSizePx = 11,
   metadataTipTablePlacement = "outside",
   metadataMarkerSizePx,
   metadataLabelMaxCount,
@@ -4572,8 +4575,9 @@ export default function TreeCanvas({
   const longPressTimerRef = useRef<number | null>(null);
   const longPressRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const tipTableHeaderHitsRef = useRef<Array<{ column: string; label: string; x: number; y: number; width: number }>>([]);
+  const tipTableHeaderHitsRef = useRef<Array<{ column: string; label: string; x: number; y: number; width: number; rotation: number; height: number }>>([]);
   const [tipTableHeaderDraft, setTipTableHeaderDraft] = useState("");
+  const [tipTableHeaderEditing, setTipTableHeaderEditing] = useState(false);
   const genusLabelHistoryRef = useRef<{
     tree: TreeModel | null;
     viewMode: ViewMode;
@@ -4715,7 +4719,7 @@ export default function TreeCanvas({
       return;
     }
     setContextMenu((current) => current ? { ...current, x: nextX, y: nextY } : current);
-  }, [contextMenu, contextMenuCollapseMenuOpen, contextMenuColorMode, contextMenuRootMenuOpen, size.height, size.width]);
+  }, [contextMenu, contextMenuCollapseMenuOpen, contextMenuColorMode, contextMenuRootMenuOpen, tipTableHeaderEditing, size.height, size.width]);
 
   const isBranchHoverEnabled = useCallback((camera: CameraState): boolean => {
     if (!tree) {
@@ -6694,6 +6698,10 @@ export default function TreeCanvas({
     drawHoverHighlightOverlay();
   }, [drawHoverHighlightOverlay, tree, updateDistanceTooltip]);
 
+  const radialTipTableCellWidthPx = metadataTipTableData?.columns.length
+    ? Math.min(metadataTipTableCellWidthPx, Math.min(visibleViewportWidth, size.height) * 0.12 / metadataTipTableData.columns.length) : 0;
+  const radialTipTablePaddingPx = metadataTipTableData?.columns.length
+    ? metadataTipTableData.columns.length * radialTipTableCellWidthPx + 24 : 0;
   const circularClampExtraRadiusPx = useCallback((camera: CircularCamera) => {
     const maxRadius = Math.max(polarOuterRadius, tree?.branchLengthMinPositive ?? 1);
     const angularSpacingPx = (
@@ -6741,19 +6749,19 @@ export default function TreeCanvas({
           )
           + 26
           + Math.max(0, figureStyles.tip.offsetPx);
-        return taxonomyWidthPx + cladeRibbonPaddingPx;
+        return taxonomyWidthPx + cladeRibbonPaddingPx + radialTipTablePaddingPx;
       }
       if (!showGenusLabels) {
-        return tipBandWidthPx + 64 + Math.max(0, figureStyles.tip.offsetPx) + cladeRibbonPaddingPx;
+        return tipBandWidthPx + 64 + Math.max(0, figureStyles.tip.offsetPx) + cladeRibbonPaddingPx + radialTipTablePaddingPx;
       }
     }
     if (!showGenusLabels) {
-      return tipBandWidthPx + (showTipLabels ? 28 + Math.max(0, figureStyles.tip.offsetPx) : 8) + cladeRibbonPaddingPx;
+      return tipBandWidthPx + (showTipLabels ? 28 + Math.max(0, figureStyles.tip.offsetPx) : 8) + cladeRibbonPaddingPx + radialTipTablePaddingPx;
     }
     const labelFontSize = Math.max(4.5, Math.min(20, Math.max(genusFontSize, tipBandFontSize)));
     const genusLabelWidthPx = estimateLabelWidth(labelFontSize, maxGenusLabelCharacters);
-    return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + cladeRibbonPaddingPx;
-  }, [cladeRibbonPaddingPx, automaticTaxonomyRanks, circularOverlayViewportScale, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, tree, useAutomaticTaxonomyRankVisibility, withSupplementalTaxonomyRanks]);
+    return Math.max(genusLabelWidthPx, tipBandWidthPx) + 120 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + cladeRibbonPaddingPx + radialTipTablePaddingPx;
+  }, [radialTipTablePaddingPx, cladeRibbonPaddingPx, automaticTaxonomyRanks, circularOverlayViewportScale, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, polarAngleSpan, polarLeafDivisor, polarOuterRadius, reservedTipLabelCharacters, scaleLabelFontSize, showGenusLabels, showTipLabels, taxonomyActiveRanks, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, taxonomyRankDisplayModeForRank, thickenOutermostTaxonomyRibbon, tree, useAutomaticTaxonomyRankVisibility, withSupplementalTaxonomyRanks]);
 
   const circularFitLabelEnvelopePx = useCallback((camera: CircularCamera): number => {
     if (!tree || taxonomyEnabled) {
@@ -6972,7 +6980,7 @@ export default function TreeCanvas({
       0,
     ) ?? 0;
     const tipTableTopPx = tipTableWidthPx > 0
-      ? Math.max(76, Math.min(160, (estimateLabelWidth(11, tipTableMaxHeaderCharacters) * Math.SQRT1_2) + 24))
+      ? Math.max(76, (estimateLabelWidth(metadataTipTableHeaderFontSizePx, tipTableMaxHeaderCharacters) * Math.SQRT1_2) + 24)
       : 0;
     if (taxonomyEnabled && taxonomyBlocks) {
       const visibleRanks = rectVisibleTaxonomyRanksForScaleY(camera.scaleY);
@@ -7003,7 +7011,7 @@ export default function TreeCanvas({
       right: Math.max(genusLabelWidthPx, tipBandWidthPx) + 140 + Math.max(0, figureStyles.tip.offsetPx, figureStyles.genus.offsetPx) + tipTableWidthPx + cladeRibbonPaddingPx,
       top: tipTableTopPx,
     };
-  }, [visibleViewportLeftInset, cladeRibbonPaddingPx, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.limitWidth, figureStyles.tip.maxWidthPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, maxTipLabelCharacters, metadataTipTableBarWidthPx, metadataTipTableCellWidthPx, metadataTipTableData, metadataTipTableMode, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, thickenOutermostTaxonomyRibbon]);
+  }, [metadataTipTableHeaderFontSizePx, visibleViewportLeftInset, cladeRibbonPaddingPx, collapsedView?.effectiveLeafScale, figureStyles.genus.offsetPx, figureStyles.tip.limitWidth, figureStyles.tip.maxWidthPx, figureStyles.tip.offsetPx, maxGenusLabelCharacters, maxTipLabelCharacters, metadataTipTableBarWidthPx, metadataTipTableCellWidthPx, metadataTipTableData, metadataTipTableMode, rectVisibleTaxonomyRanksForScaleY, reservedTipLabelCharacters, scaleLabelFontSize, showTipLabels, taxonomyBandThicknessScale, taxonomyBaselineGapPx, taxonomyBlocks, taxonomyEnabled, taxonomyGapControl, thickenOutermostTaxonomyRibbon]);
 
   const fitCameraForMode = useCallback((mode: ViewMode): CameraState | null => {
     if (!tree) {
@@ -7051,7 +7059,7 @@ export default function TreeCanvas({
       nextCamera.translateX = visibleViewportLeftInset + 32;
       nextCamera.translateY = Math.max(24, padding.top ?? 0);
       clampRectCamera(nextCamera, tree, size.width, size.height, padding);
-    } else if (mode !== "spiral" && cladeRibbonPaddingPx > 0) {
+    } else if (mode !== "spiral" && (cladeRibbonPaddingPx > 0 || radialTipTablePaddingPx > 0)) {
       // Font sizes and visible ranks depend on scale. Solve for the largest scale
       // whose complete annotation envelope fits, rather than oscillating between
       // a branch-only fit and a fixed-width ribbon allowance.
@@ -7106,7 +7114,7 @@ export default function TreeCanvas({
       finalizeCircularCamera(nextCamera);
     }
     return nextCamera;
-  }, [spiralCustomPaddingPx, taxonomyGapControl, cladeRibbonPaddingPx, circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, isPartialRadial, polarInnerRadius, polarOuterRadius, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset, visibleViewportWidth]);
+  }, [radialTipTablePaddingPx, spiralCustomPaddingPx, taxonomyGapControl, cladeRibbonPaddingPx, circularClampExtraRadiusPx, circularFitLabelEnvelopePx, circularRotation, effectiveTimeAxisLogBase, effectiveTimeAxisScale, finalizeCircularCamera, fitPolarCamera, isPartialRadial, polarInnerRadius, polarOuterRadius, rectClampPadding, size.height, size.width, spiralMetricsForScale, spiralTurns, taxonomyActiveRanks.length, taxonomyBandThicknessScale, taxonomyBlocks, taxonomyEnabled, timeAxisExtent, tree, visibleSpiralTaxonomyRanks.length, visibleViewportCenterX, visibleViewportLeftInset, visibleViewportWidth]);
 
   const previousFitCameraForModeRef = useRef(fitCameraForMode);
   const previousRadialGeometryRef = useRef({ outer: polarOuterRadius, span: polarAngleSpan });
@@ -10267,19 +10275,16 @@ export default function TreeCanvas({
           const tableStartX = metadataTipTablePlacement === "inside" ? insideTableStartX
             : Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16, customRibbonEndX + 16);
           const rowHeight = Math.max(3, Math.min(28, effectiveTipSpacingPx * 0.82));
-          const firstVisibleY = visibleTipLabels.reduce((top, label) => Math.min(top, label.y), Number.POSITIVE_INFINITY);
-          ctx.font = `11px ${LABEL_FONT}`;
-          const maximumHeaderRise = metadataTipTableData.columns.reduce(
-            (maximum, column) => Math.max(maximum, ctx.measureText(column.label).width * Math.SQRT1_2),
-            0,
-          );
-          const headerY = Math.max(maximumHeaderRise + 8, firstVisibleY - (rowHeight * 0.65) - 7);
+          const firstRowY = worldToScreenRect(camera, 0, layout.center[orderedLeaves[0]]).y;
+          const headerY = firstRowY - (rowHeight * 0.65) - 7;
+          ctx.font = `${metadataTipTableHeaderFontSizePx}px ${LABEL_FONT}`;
           if (renderDebug.rect && typeof renderDebug.rect === "object") {
             (renderDebug.rect as Record<string, unknown>).metadataTipTable = {
               mode: metadataTipTableMode,
               placement: metadataTipTablePlacement,
               tableStartX,
               headerY,
+              headerFontSize: metadataTipTableHeaderFontSizePx,
               columnCount: metadataTipTableData.columns.length,
               columns: metadataTipTableData.columns.map(column => ({ column: column.column, kind: column.kind,
                 mode: metadataTipTableColumnMode(column, metadataTipTableMode), width: metadataTipTableCellWidthPx })),
@@ -10298,12 +10303,12 @@ export default function TreeCanvas({
             ctx.rotate(-Math.PI / 4);
             ctx.textAlign = "left";
             ctx.textBaseline = "middle";
-            ctx.font = `11px ${LABEL_FONT}`;
-            if (!isOverrideRender) tipTableHeaderHitsRef.current.push({ column, label: text, x, y: headerY, width: ctx.measureText(text).width });
+            ctx.font = `${metadataTipTableHeaderFontSizePx}px ${LABEL_FONT}`;
+            if (!isOverrideRender) tipTableHeaderHitsRef.current.push({ column, label: text, x, y: headerY, width: ctx.measureText(text).width, rotation: -Math.PI / 4, height: metadataTipTableHeaderFontSizePx });
             ctx.fillStyle = "#334155";
             ctx.fillText(text, 0, 0);
             ctx.restore();
-            pushSceneText(text, x, headerY, "#334155", 11, LABEL_FONT, "start", -Math.PI / 4);
+            pushSceneText(text, x, headerY, "#334155", metadataTipTableHeaderFontSizePx, LABEL_FONT, "start", -Math.PI / 4);
           };
           {
             const cellWidth = metadataTipTableCellWidthPx;
@@ -10374,7 +10379,8 @@ export default function TreeCanvas({
                   pushSceneRect(centerX - (size * 0.5), label.y - (size * 0.5), size, size, color);
                 } else {
                   let text = appearance.text;
-                  let fontSize = Math.max(4, Math.min(12, size));
+                  const binarySymbol = column.kind === "binary" && appearance.text !== value;
+                  let fontSize = Math.max(4, Math.min(binarySymbol ? 28 : 12, size));
                   ctx.font = `${fontSize}px ${LABEL_FONT}`;
                   const available = Math.max(1, cellWidth - 4);
                   if (ctx.measureText(text).width > available) {
@@ -13184,6 +13190,7 @@ export default function TreeCanvas({
         })()
         : 0;
       const needsVisibleLeafRanges = tipLabelCueVisible
+        || (metadataTipTableData !== null && angularSpacingPx > 1)
         || (taxonomyEnabled && renderedTaxonomyBlocks !== null && visibleCircleFraction < CIRCULAR_TAXONOMY_VISIBLE_FILTER_MAX_VISIBLE_FRACTION);
       const circularTaxonomyVisibilityMarginPx = compactCircularViewport ? 220 : 120;
       const circularTaxonomyScreenSampleMarginPx = compactCircularViewport ? 96 : 48;
@@ -13196,7 +13203,7 @@ export default function TreeCanvas({
         ? (tipBandAnchorRadius * camera.scale) + Math.max(globalTipLabelSpacePx, 28)
         : 0;
       const leafVisibilityRadiusPx = needsVisibleLeafRanges
-        ? Math.max(maxRadius * camera.scale, tipLabelVisibilityOuterRadiusPx, taxonomyVisibilityOuterRadiusPx)
+        ? Math.max(maxRadius * camera.scale, tipLabelVisibilityOuterRadiusPx, taxonomyVisibilityOuterRadiusPx) + radialTipTablePaddingPx
         : 0;
       const visibleAngleSpans = needsVisibleLeafRanges
         ? computeVisibleCircularAngleSpans(
@@ -13286,9 +13293,11 @@ export default function TreeCanvas({
           + Math.max(globalTipLabelSpacePx, maxVisibleTipLabelWidth * Math.min(1, 4 / tipFontSize)), tipFontSize * 0.575)
           - maxRadius * camera.scale
         : 0;
-      const firstRadialRibbonRadiusPx = maxRadius * camera.scale + (cladeRibbonPaddingPx
+      const radialTableInsideStartPx = maxRadius * camera.scale + Math.max(renderedTipLabelExtentPx, globalTipLabelSpacePx) + 12;
+      const radialInsideTablePaddingPx = metadataTipTablePlacement === "inside" ? radialTipTablePaddingPx : 0;
+      const firstRadialRibbonRadiusPx = Math.max(maxRadius * camera.scale + (cladeRibbonPaddingPx
         ? Math.max(renderedTipLabelExtentPx + 8, naturalTaxonomyGapPx)
-        : naturalTaxonomyGapPx);
+        : naturalTaxonomyGapPx), radialInsideTablePaddingPx ? radialTableInsideStartPx : 0) + radialInsideTablePaddingPx;
       customRibbonBase = firstRadialRibbonRadiusPx;
       customRibbonOutsideBase = customRibbonBase + cladeRibbonInsidePx;
       const circularTaxonomyOverlayStartTime = performance.now();
@@ -14355,7 +14364,7 @@ export default function TreeCanvas({
           }
           const angularSpan = renderEndTheta - renderStartTheta;
           const midTheta = renderStartTheta + (angularSpan * 0.5);
-          const lineRadius = tipBandAnchorRadius + ((globalTipLabelSpacePx + lineGapPx) / camera.scale);
+          const lineRadius = tipBandAnchorRadius + ((globalTipLabelSpacePx + lineGapPx + radialInsideTablePaddingPx) / camera.scale);
           const preliminaryArcLengthPx = lineRadius * camera.scale * angularSpan;
           const fontGrowth = 0.018 - (0.007 * tipLabelPressure);
           const maxFontSize = 22 + (2 * tipLabelPressure);
@@ -14516,6 +14525,116 @@ export default function TreeCanvas({
           visibleCenters: [],
           peakZoom: camera.scale,
           peakVisibleCenters: [],
+        };
+      }
+      if (metadataTipTableData?.columns.length && angularSpacingPx > 1 && radialTipTableCellWidthPx > 0) {
+        const columns = metadataTipTableData.columns;
+        const cellWidth = radialTipTableCellWidthPx;
+        const angleStep = polarAngleSpan / polarLeafDivisor;
+        const genusExtent = taxonomyEnabled ? 0 : circularGenusLabels.reduce((extent, label) => Math.max(extent,
+          Math.hypot(label.x - centerPoint.x, label.y - centerPoint.y) + estimateLabelWidth(label.fontSize ?? 12, label.text.length)), 0);
+        const tableStartRadius = metadataTipTablePlacement === "inside" ? radialTableInsideStartPx
+          : Math.max(radialTableInsideStartPx, customRibbonOutsideBase + cladeRibbonLayout.outside * cladeRibbonStridePx + 12, genusExtent + 8);
+        const headerTheta = polarAngleStart + rotationAngle - angleStep * 0.48;
+        const headerRotation = headerTheta - Math.PI / 2;
+        const headerFontSize = Math.min(metadataTipTableHeaderFontSizePx, cellWidth * 0.9);
+        const headers: Array<{ column: string; x: number; y: number }> = [];
+        let visibleMatchedTipCount = 0;
+        for (let columnIndex = 0; columnIndex < columns.length; columnIndex++) {
+          const column = columns[columnIndex];
+          const mode = metadataTipTableColumnMode(column, metadataTipTableMode);
+          const inner = tableStartRadius + columnIndex * cellWidth;
+          const outer = inner + cellWidth;
+          const radius = (inner + outer) / 2;
+          const drawSector = (r1: number, r2: number, theta: number, halfSpan: number, color: string, opacity = 1): void => {
+            const d = svgCircularRibbonPath(centerPoint.x, centerPoint.y, r1, r2, theta - halfSpan, theta + halfSpan);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = opacity;
+            ctx.fill(new Path2D(d));
+            ctx.globalAlpha = 1;
+            pushScenePath(d, undefined, undefined, color, opacity);
+          };
+          for (const range of visibleLeafRanges) for (let leafIndex = range.startIndex; leafIndex < range.endIndex; leafIndex++) {
+            const node = orderedLeaves[leafIndex];
+            if (hiddenNodes[node]) continue;
+            const values = metadataTipTableData.valuesByNode[node];
+            if (!values) continue;
+            if (columnIndex === 0) visibleMatchedTipCount++;
+            const theta = polarThetaFor(layout.center, node) + rotationAngle;
+            const x = centerPoint.x + Math.cos(theta) * radius;
+            const y = centerPoint.y + Math.sin(theta) * radius;
+            const halfSpan = angleStep * 0.43;
+            // Cull cells, not tip-label anchors: data may remain visible after tips leave the viewport.
+            const margin = cellWidth + angleStep * outer;
+            if (x < -margin || x > renderSize.width + margin || y < -margin || y > renderSize.height + margin) continue;
+            const outline = svgCircularRibbonPath(centerPoint.x, centerPoint.y, inner, outer, theta - halfSpan, theta + halfSpan);
+            ctx.strokeStyle = "rgba(148,163,184,0.35)";
+            ctx.lineWidth = 0.55;
+            ctx.stroke(new Path2D(outline));
+            pushScenePath(outline, "#94a3b8", 0.55, "none", 0.35);
+            const value = values[columnIndex] ?? "";
+            if (!value) continue;
+            if (mode !== "categorical") {
+              const numeric = metadataTipTableNumericValue(value, column.valueType);
+              if (numeric === null || column.min === null || column.max === null) continue;
+              if (mode === "heatmap") drawSector(inner, outer, theta, halfSpan,
+                metadataTipTableContinuousColor(numeric, column.min, column.max, metadataTipTablePalette));
+              else {
+                const min = column.valueType === "date" ? column.min : Math.min(0, column.min);
+                const max = column.valueType === "date" ? column.max : Math.max(0, column.max);
+                const span = max - min;
+                const plotWidth = Math.max(1, cellWidth - 4);
+                const zero = inner + 2 + (span > 0 && column.valueType !== "date" ? -min / span * plotWidth : 0);
+                const end = inner + 2 + (span > 0 ? (numeric - min) / span * plotWidth : column.valueType === "date" ? plotWidth / 2 : 0);
+                if (end !== zero) drawSector(Math.min(zero, end), Math.max(zero, end), theta, halfSpan * 0.8, "#2563eb", 0.78);
+              }
+              continue;
+            }
+            const appearance = metadataTipTableCellAppearance(column, value,
+              metadataTipTableStyleForColumn(column, metadataTipTableCellStyle, metadataTipTableBinaryStyle, metadataTipTableTextStyle));
+            if (appearance.empty) continue;
+            if (appearance.style === "filled") drawSector(inner, outer, theta, halfSpan, appearance.color);
+            else {
+              const symbolSize = Math.max(1, Math.min(cellWidth - 4, halfSpan * radius * 1.7));
+              if (appearance.style === "circle") {
+                ctx.fillStyle = appearance.color;
+                ctx.beginPath(); ctx.arc(x, y, symbolSize / 2, 0, Math.PI * 2); ctx.fill();
+                pushScenePath(`M ${x - symbolSize / 2} ${y} a ${symbolSize / 2} ${symbolSize / 2} 0 1 0 ${symbolSize} 0 a ${symbolSize / 2} ${symbolSize / 2} 0 1 0 ${-symbolSize} 0`, undefined, undefined, appearance.color);
+              } else if (appearance.style === "square") {
+                ctx.fillStyle = appearance.color;
+                ctx.fillRect(x - symbolSize / 2, y - symbolSize / 2, symbolSize, symbolSize);
+                pushSceneRect(x - symbolSize / 2, y - symbolSize / 2, symbolSize, symbolSize, appearance.color);
+              } else {
+                const binarySymbol = column.kind === "binary" && appearance.text !== value;
+                let fontSize = Math.min(binarySymbol ? 28 : 12, symbolSize);
+                const rotation = binarySymbol ? 0 : theta + (Math.cos(theta) < 0 ? Math.PI : 0);
+                ctx.font = `${fontSize}px ${LABEL_FONT}`;
+                fontSize *= Math.min(1, Math.max(1, cellWidth - 4) / Math.max(1, ctx.measureText(appearance.text).width));
+                if (fontSize < 3) continue;
+                ctx.save(); ctx.translate(x, y); ctx.rotate(rotation);
+                ctx.font = `${fontSize}px ${LABEL_FONT}`;
+                ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = appearance.color;
+                ctx.fillText(appearance.text, 0, 0); ctx.restore();
+                pushSceneText(appearance.text, x, y, appearance.color, fontSize, LABEL_FONT, "middle", rotation);
+              }
+            }
+          }
+          ctx.font = `${headerFontSize}px ${LABEL_FONT}`;
+          const width = ctx.measureText(column.label).width;
+          if (headerFontSize >= 4 && (isPartialRadial || width < radius * angleStep * 0.85)) {
+            const x = centerPoint.x + Math.cos(headerTheta) * radius;
+            const y = centerPoint.y + Math.sin(headerTheta) * radius;
+            ctx.save(); ctx.translate(x, y); ctx.rotate(headerRotation);
+            ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillStyle = "#334155";
+            ctx.fillText(column.label, 0, 0); ctx.restore();
+            pushSceneText(column.label, x, y, "#334155", headerFontSize, LABEL_FONT, "start", headerRotation);
+            if (!isOverrideRender) tipTableHeaderHitsRef.current.push({ column: column.column, label: column.label, x, y, width, rotation: headerRotation, height: headerFontSize });
+            headers.push({ column: column.column, x: x + Math.cos(headerRotation) * width / 2, y: y + Math.sin(headerRotation) * width / 2 });
+          }
+        }
+        (renderDebug.circular as Record<string, unknown>).metadataTipTable = {
+          placement: metadataTipTablePlacement, tableStartRadius, tableEndRadius: tableStartRadius + columns.length * cellWidth,
+          cellWidth, columnCount: columns.length, visibleMatchedTipCount, headers, headerFontSize,
         };
       }
       if (circularGenusArcs.length > 0) {
@@ -16082,6 +16201,9 @@ export default function TreeCanvas({
     metadataTipTableBinaryStyle,
     metadataTipTableTextStyle,
     metadataTipTableCellWidthPx,
+    metadataTipTableHeaderFontSizePx,
+    radialTipTableCellWidthPx,
+    radialTipTablePaddingPx,
     metadataTipTablePlacement,
     metadataTipTableData,
     metadataTipTableMode,
@@ -18399,12 +18521,13 @@ export default function TreeCanvas({
       const localY = event.clientY - rect.top;
       const header = hitsMetadataLegend(localX, localY) ? undefined : tipTableHeaderHitsRef.current.find(hit => {
         const dx = localX - hit.x, dy = localY - hit.y;
-        const along = (dx - dy) * Math.SQRT1_2;
-        const across = (dx + dy) * Math.SQRT1_2;
-        return along >= -4 && along <= hit.width + 4 && Math.abs(across) <= 9;
+        const along = dx * Math.cos(hit.rotation) + dy * Math.sin(hit.rotation);
+        const across = -dx * Math.sin(hit.rotation) + dy * Math.cos(hit.rotation);
+        return along >= -4 && along <= hit.width + 4 && Math.abs(across) <= Math.max(9, hit.height * 0.6);
       });
       if (header) {
         setTipTableHeaderDraft(header.label);
+        setTipTableHeaderEditing(false);
         setContextMenu({ kind: "tip-table-header", x: localX, y: localY, name: header.label, column: header.column });
       } else showContextMenuAt(localX, localY);
     };
@@ -19567,14 +19690,21 @@ export default function TreeCanvas({
         >
           {contextMenu.tutorialDemo ? <div className="tree-context-menu-tutorial-cue">Right click to open this menu</div> : null}
           <div className="tree-context-menu-title">{contextMenu.name}</div>
-          {contextMenu.kind === "tip-table-header" ? <form onSubmit={event => {
+          {contextMenu.kind === "tip-table-header" ? <>
+            <button type="button" className="tree-context-menu-item" title="Change this column's displayed name without modifying its source data."
+              onClick={() => setTipTableHeaderEditing(true)}>Rename Column</button>
+            {tipTableHeaderEditing ? <form className="tree-context-menu-rename" onSubmit={event => {
             event.preventDefault();
             onTipTableColumnLabelChange?.(contextMenu.column, tipTableHeaderDraft.trim() || contextMenu.column);
             setContextMenu(null);
           }}>
-            <label>Display name<input aria-label="Column display name" autoFocus maxLength={256} value={tipTableHeaderDraft} onChange={event => setTipTableHeaderDraft(event.target.value)} /></label>
-            <button type="submit" className="tree-context-menu-item">Rename column</button>
-          </form> : contextMenu.kind === "legend" ? (
+            <input aria-label="Column display name" autoFocus maxLength={256} value={tipTableHeaderDraft} onChange={event => setTipTableHeaderDraft(event.target.value)} />
+            <button type="submit" className="tree-context-menu-rename-action" title="Apply column name" aria-label="Apply column name"><Check size={16} /></button>
+            <button type="button" className="tree-context-menu-rename-action" title="Cancel rename" aria-label="Cancel rename" onClick={() => setTipTableHeaderEditing(false)}><X size={16} /></button>
+          </form> : null}
+            <button type="button" className="tree-context-menu-item" title="Open the tip data table controls in the side panel."
+              onClick={() => { setContextMenu(null); onTipTableSettingsRequest?.(); }}>Tip data table settings</button>
+          </> : contextMenu.kind === "legend" ? (
             <>
               <button type="button" className="tree-context-menu-item" title="Open the metadata legend controls in the side panel."
                 onClick={() => { setContextMenu(null); onMetadataLegendSettingsRequest?.(); }}>
