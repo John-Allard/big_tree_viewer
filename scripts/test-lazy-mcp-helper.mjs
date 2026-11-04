@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const require = createRequire(import.meta.url);
+const { desktopEnvironmentKeys, saveDesktopEnvironment } = require("../desktop/agent-environment.cjs");
 const execFileAsync = promisify(execFile);
 const root = path.resolve(".");
 const outputDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "btv-lazy-helper-test-"));
@@ -19,11 +20,17 @@ const backendExecutable = process.env.BTV_TEST_APP_EXECUTABLE || electronExecuta
 const helperCommand = packagedApp
   ? path.join(packagedApp, "Contents", "Resources", "bin", "bigtreeviewer-mcp")
   : externalHelper ? backendExecutable : process.execPath;
+// Reproduce an agent that filters out the Linux graphical-session variables.
+const filteredEnvironment = { ...process.env };
+if (process.platform === "linux") {
+  if (externalHelper) await saveDesktopEnvironment(path.join(outputDirectory, "shared"));
+  for (const key of desktopEnvironmentKeys) delete filteredEnvironment[key];
+}
 const transport = new StdioClientTransport({
   command: helperCommand,
   args: packagedApp ? ["--helper-version=3"] : [externalHelper || path.join(root, "desktop", "mcp-helper.cjs")],
   env: {
-    ...process.env,
+    ...filteredEnvironment,
     ...((packagedApp || externalHelper) ? {} : {
       BTV_APP_EXECUTABLE: backendExecutable,
       BTV_APP_MAIN: path.join(root, "desktop", "main.cjs"),
@@ -79,6 +86,15 @@ try {
   const tools = await client.listTools();
   assert.equal(tools.tools.length, 7);
   assertHeadlessOwner(await ownerState(), "Listing MCP tools must not launch Electron.");
+  if (process.platform === "linux" && !externalHelper) {
+    const unavailable = await client.callTool({ name: "open_tree", arguments: {
+      treePath: path.join(root, "tests", "fixtures", "agent-skill-tree.nwk"),
+    } });
+    assert.equal(unavailable.isError, true);
+    assert.match(unavailable.content[0].text, /Open Big Tree Viewer normally once/);
+    assert.equal((await client.listTools()).tools.length, 7, "Missing desktop environment must not disconnect MCP.");
+    await saveDesktopEnvironment(path.join(outputDirectory, "shared"));
+  }
   await verifyOrdinaryMacLaunch();
   if (ordinaryGuiPid) {
     process.kill(ordinaryGuiPid, "SIGTERM");

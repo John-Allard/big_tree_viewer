@@ -1,6 +1,7 @@
 const spawn = require("cross-spawn");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { desktopEnvironmentKeys } = require("./agent-environment.cjs");
 
 function runAgentClientCommand(command, args, options = {}) {
   return new Promise((resolve) => {
@@ -111,18 +112,36 @@ async function windowsCodexCandidates(env) {
 }
 
 function agentRegistrationMatches(status, launch) {
-  if (status.error || !status.stdout.includes(launch.command)) return false;
-  return launch.args.every((argument) => status.stdout.includes(argument));
+  if (status.error) return false;
+  try {
+    const config = JSON.parse(status.stdout);
+    const transport = config.transport;
+    return transport?.type === "stdio" && transport.command === launch.command
+      && JSON.stringify(transport.args || []) === JSON.stringify(launch.args)
+      && Object.entries(launch.env || {}).every(([key, value]) => transport.env?.[key] === value);
+  } catch {
+    if (!status.stdout.includes(launch.command)) return false;
+    return launch.args.every(argument => status.stdout.includes(argument))
+      && Object.entries(launch.env || {}).every(([key, value]) => status.stdout.includes(`${key}=${value}`) || status.stdout.includes(`${key}: ${value}`));
+  }
 }
 
 function environmentArguments(environment) {
   return Object.entries(environment).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
 }
 
+function agentConnectionState(status, launch) {
+  if (status.error) return "unavailable";
+  try {
+    if (JSON.parse(status.stdout).enabled === false) return "disabled";
+  } catch { /* Some clients return a human-readable registration. */ }
+  return agentRegistrationMatches(status, launch) ? "current" : "stale";
+}
+
 function agentClientRegistrationArguments(client, launch) {
   if (client === "codex") {
     return {
-      statusArgs: ["mcp", "get", "bigtreeviewer"],
+      statusArgs: ["mcp", "get", "bigtreeviewer", "--json"],
       removeArgs: ["mcp", "remove", "bigtreeviewer"],
       addArgs: ["mcp", "add", "bigtreeviewer", ...environmentArguments(launch.env), "--", launch.command, ...launch.args],
     };
@@ -176,8 +195,13 @@ function probeMcpLaunch(launch, options = {}) {
     let readBuffer = "";
     let stderr = "";
     let settled = false;
+    const probeEnv = { ...(options.env || process.env) };
+    // Do not let the GUI's inherited DISPLAY hide an agent-launch failure.
+    if (!options.env && process.platform === "linux") {
+      for (const key of desktopEnvironmentKeys) delete probeEnv[key];
+    }
     const child = spawn(launch.command, launch.args, {
-      env: { ...process.env, ...launch.env }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+      env: { ...probeEnv, ...launch.env }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
     });
     const finish = (error) => {
       if (settled) return;
@@ -222,6 +246,7 @@ function probeMcpLaunch(launch, options = {}) {
 module.exports = {
   agentClientEnvironment,
   agentClientRegistrationArguments,
+  agentConnectionState,
   agentRegistrationMatches,
   ensureAgentClientRegistration,
   findAgentClientCommand,

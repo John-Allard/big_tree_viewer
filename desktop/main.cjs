@@ -6,8 +6,9 @@ const os = require("node:os");
 const path = require("node:path");
 const v8 = require("node:v8");
 const { pathToFileURL } = require("node:url");
-const { agentClientEnvironment, agentClientRegistrationArguments, ensureAgentClientRegistration, findAgentClientCommand, genericAgentSetupInstructions, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
+const { agentClientEnvironment, agentClientRegistrationArguments, agentConnectionState, ensureAgentClientRegistration, findAgentClientCommand, genericAgentSetupInstructions, probeMcpLaunch, runAgentClientCommand } = require("./agent-client.cjs");
 const { showUpdateReadyDialog } = require("./update-ready-dialog.cjs");
+const { saveDesktopEnvironment } = require("./agent-environment.cjs");
 
 const TREE_EXTENSIONS = new Set([
   ".btvsession", ".contree", ".dnd", ".mcc", ".mctree", ".newick", ".nex",
@@ -53,10 +54,11 @@ const MAX_RECENT_PATHS = 10;
 async function agentServerLaunch() {
   const executable = process.env.APPIMAGE || process.execPath;
   const sharedCache = path.join(app.getPath("userData"), "agent-cache");
+  await saveDesktopEnvironment(sharedCache);
   if (app.isPackaged && process.platform === "darwin") {
     return {
       command: path.join(process.resourcesPath, "bin", "bigtreeviewer-mcp"),
-      args: ["--helper-version=3"],
+      args: ["--helper-version=4"],
       env: { BTV_SHARED_USER_DATA_DIR: sharedCache },
     };
   }
@@ -67,14 +69,14 @@ async function agentServerLaunch() {
     await fs.mkdir(helperDirectory, { recursive: true });
     // AppImage mounts are ephemeral, so keep its dependency-free launcher external.
     await fs.copyFile(path.join(__dirname, "mcp-appimage-helper.cjs"), helperPath);
+    await fs.copyFile(path.join(__dirname, "agent-environment.cjs"), path.join(helperDirectory, "agent-environment.cjs"));
   }
   return {
     command: executable,
-    args: [helperPath, "--helper-version=3"],
+    args: [helperPath, "--helper-version=4"],
     env: {
       ELECTRON_RUN_AS_NODE: "1",
       BTV_APP_EXECUTABLE: executable,
-      BTV_APP_VERSION: app.getVersion(),
       BTV_SHARED_USER_DATA_DIR: sharedCache,
       ...(app.isPackaged ? {} : { BTV_APP_MAIN: path.join(__dirname, "main.cjs") }),
     },
@@ -244,6 +246,40 @@ async function showAgentConnectionDialog() {
       detail: "The instructions contain the local Big Tree Viewer MCP launch details for this installation. They do not contain tree data or credentials.",
       buttons: ["Done"],
     });
+  }
+}
+
+async function checkExistingAgentConnections() {
+  // Check only an existing opt-in connection; never register an unconnected client.
+  const env = await agentClientEnvironment();
+  const launch = await agentServerLaunch();
+  let probe;
+  for (const [client, name] of [["codex", "Codex"], ["claude", "Claude Code"]]) {
+    const command = await findAgentClientCommand(client, { env });
+    if (!command) continue;
+    const registration = agentClientRegistrationArguments(client, launch);
+    const status = await runAgentClientCommand(command, registration.statusArgs, { env });
+    const state = agentConnectionState(status, launch);
+    if (state === "unavailable" || state === "disabled") continue;
+    probe ??= await probeMcpLaunch(launch);
+    if (probe.error) {
+      await dialog.showMessageBox(activeWindow(), {
+        type: "warning", title: "AI Tools Could Not Start",
+        message: "Big Tree Viewer could not start its local AI tools.",
+        detail: `${probe.error.message}\n${probe.stderr}\nUse Help → Connect an AI Agent to check the connection again.`,
+        buttons: ["OK"],
+      });
+      return;
+    }
+    if (state === "current") continue;
+    const choice = await dialog.showMessageBox(activeWindow(), {
+      type: "question",
+      title: `${name} Connection Needs Updating`,
+      message: `Update Big Tree Viewer's existing ${name} connection?`,
+      detail: "The connection uses older launch settings or a different installation. Big Tree Viewer can check its tools and reconnect it. You may need to restart your agent afterward; no computer restart is required.",
+      buttons: ["Update Connection", "Later"], defaultId: 0, cancelId: 1,
+    });
+    if (choice.response === 0) await connectAgentClient({ name, command, ...registration, launch });
   }
 }
 
@@ -975,6 +1011,10 @@ if (!app.requestSingleInstanceLock()) {
     installApplicationMenu();
     createWindow();
     configureAutoUpdates();
+    // Refresh the desktop session on every normal launch, including after updates.
+    void saveDesktopEnvironment(path.join(app.getPath("userData"), "agent-cache"))
+      .then(() => app.isPackaged ? checkExistingAgentConnections() : undefined)
+      .catch(error => process.stderr.write(`Big Tree Viewer agent connection check: ${error.message}\n`));
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

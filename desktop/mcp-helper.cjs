@@ -11,6 +11,7 @@ const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { ReadBuffer, serializeMessage } = require("@modelcontextprotocol/sdk/shared/stdio.js");
 const { toolDefinitions } = require("./automation-tools.cjs");
+const { renderingEnvironment } = require("./agent-environment.cjs");
 const version = process.env.BTV_APP_VERSION || require("../package.json").version;
 
 const connectionId = crypto.randomUUID();
@@ -134,6 +135,7 @@ async function startBackend() {
   if (backendPromise) return backendPromise;
   backendPromise = (async () => {
     if (await updateIsInProgress()) throw new Error("Big Tree Viewer is installing an update. Try this tool again after the app relaunches.");
+    const env = await renderingEnvironment();
     const endpoint = process.platform === "win32"
       ? `\\\\.\\pipe\\bigtreeviewer-mcp-${connectionId}`
       : path.join(runtimeDirectory, "transport.sock");
@@ -151,7 +153,6 @@ async function startBackend() {
     const executable = process.env.BTV_APP_EXECUTABLE || process.env.APPIMAGE || process.execPath;
     const appMain = process.env.BTV_APP_MAIN;
     const args = [...(appMain ? [appMain] : []), `--mcp-socket=${endpoint}`];
-    const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.BTV_APP_EXECUTABLE;
     delete env.BTV_APP_MAIN;

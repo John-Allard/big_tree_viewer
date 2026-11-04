@@ -35,7 +35,15 @@ jobs:
       - run: npm run test:update-dialog
       - run: npm run test:update-check
       - run: npm run build:desktop:web
+      - name: Test MCP with agent-filtered desktop environment
+        run: xvfb-run -a npm run test:mcp-environment
+      - name: Test headless discovery and recovery without DISPLAY
+        run: xvfb-run -a npm run test:mcp-lifecycle
       - run: npx electron-builder --linux AppImage deb --x64 --publish never
+      - name: Test actual AppImage with agent-filtered desktop environment
+        run: xvfb-run -a npm run test:mcp-environment -- release/Big-Tree-Viewer-Linux-x86_64.AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
       - name: Smoke-test packaged app and file association launch
         run: xvfb-run -a npm run test:desktop:smoke -- release/linux-unpacked/big-tree-viewer
       - name: Test packaged MCP helper and desktop tools

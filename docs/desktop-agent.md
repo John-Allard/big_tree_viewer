@@ -11,6 +11,25 @@ the connection with that client's supported setup command, verifies a real MCP
 handshake and tool listing, and reports success. Users do not copy paths or edit
 configuration files. Restart the selected client after connecting it.
 
+On Linux, agents may filter out `DISPLAY`, `XAUTHORITY`, and other desktop-session
+variables. BTV records only the small allowlist of graphical-session routing
+variables in a private local file on normal app launch; its helpers restore
+missing values before starting the renderer. No secrets or complete shell
+environment are copied. Open BTV normally once after signing into a different
+desktop session. A genuinely headless/remote machine still needs a graphical
+environment (for example Xvfb); this does not create one.
+
+Normal packaged-app launches also check existing Codex and Claude Code
+registrations for older paths, helper arguments, and required environment.
+The check probes MCP initialization and tool discovery with the graphical
+variables filtered out, rather than trusting the GUI's inherited environment.
+Stale connections offer **Update Connection**, which probes the helper before
+replacing the registration. Unconnected clients are not registered automatically,
+and disabled Codex registrations are left alone. BTV cannot force an already
+running agent to reload its tools: restart that agent if requested. Generic
+clients use the same environment recovery, but their registration is not managed
+automatically; use **Copy Setup Instructions** again after moving the app.
+
 The bundled server uses the standard local MCP `stdio` transport and is not tied
 to either client. BTV currently automates registration for Codex and Claude Code.
 Other MCP clients can launch the same server if they support local `stdio`

@@ -2,7 +2,7 @@
   "name": "big-tree-viewer",
   "productName": "Big Tree Viewer",
   "private": true,
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "Interactive viewer for very large phylogenetic trees",
   "author": {
     "name": "John B Allard",
@@ -23,6 +23,7 @@
     "test:desktop:smoke": "node scripts/smoke-test-desktop.mjs",
     "test:agent-connect": "node scripts/test-agent-client-runner.mjs",
     "test:mcp-lifecycle": "node scripts/test-lazy-mcp-helper.mjs",
+    "test:mcp-environment": "node scripts/test-appimage-mcp-environment.mjs",
     "test:update-dialog": "node scripts/test-update-ready-dialog.mjs",
     "test:update-check": "node scripts/test-desktop-update-check.mjs",
     "test:windows-updater-package": "node scripts/verify-windows-updater-config.mjs",

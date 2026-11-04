@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const {
   agentClientEnvironment,
   agentClientRegistrationArguments,
+  agentConnectionState,
   agentRegistrationMatches,
   ensureAgentClientRegistration,
   genericAgentSetupInstructions,
@@ -15,6 +16,7 @@ const {
   runAgentClientCommand,
   windowsCodexCandidates,
 } = require("../desktop/agent-client.cjs");
+const { desktopEnvironmentKeys, saveDesktopEnvironment, renderingEnvironment } = require("../desktop/agent-environment.cjs");
 const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "btv-agent-client-"));
 const commandName = "btv-test-agent";
 const commandPath = path.join(fixtureDir, process.platform === "win32" ? `${commandName}.cmd` : commandName);
@@ -36,8 +38,35 @@ try {
   assert.equal(agentRegistrationMatches({ error: null, stdout: `command: ${launch.command}\nargs: ${launch.args.join(" ")}\n` }, launch), true);
   assert.equal(agentRegistrationMatches({ error: null, stdout: "command: /old/Big Tree Viewer\nargs: --mcp\n" }, launch), false);
   const registrationLaunch = { ...launch, env: { BTV_CACHE: path.join(fixtureDir, "agent cache") } };
+  const structuredStatus = transport => ({ error: null, stdout: JSON.stringify({ enabled: true, transport }), stderr: "" });
+  const transport = { type: "stdio", command: launch.command, args: launch.args, env: registrationLaunch.env };
+  assert.equal(agentRegistrationMatches(structuredStatus(transport), registrationLaunch), true);
+  assert.equal(agentConnectionState(structuredStatus(transport), registrationLaunch), "current");
+  assert.equal(agentConnectionState({ error: new Error("not registered") }, registrationLaunch), "unavailable");
+  assert.equal(agentConnectionState({ error: null, stdout: JSON.stringify({ enabled: false, transport: {} }) }, registrationLaunch), "disabled");
+  assert.equal(agentConnectionState(structuredStatus({ ...transport, env: {} }), registrationLaunch), "stale");
+  assert.equal(agentRegistrationMatches(structuredStatus({ ...transport, env: {} }), registrationLaunch), false, "Environment changes must require reconnection.");
+  assert.equal(agentRegistrationMatches(structuredStatus({ ...transport, command: `${launch.command}-old` }), registrationLaunch), false);
+  assert.equal(agentRegistrationMatches(structuredStatus({ ...transport, args: [...launch.args, "extra"] }), registrationLaunch), false);
+  const shared = path.join(fixtureDir, "shared");
+  await fs.mkdir(shared);
+  await fs.writeFile(path.join(shared, "desktop-environment.json"), JSON.stringify({ DISPLAY: ":123", XAUTHORITY: "/session/auth", SECRET_TOKEN: "not-forwarded" }));
+  const restoredEnv = await renderingEnvironment({ BTV_SHARED_USER_DATA_DIR: shared }, "linux");
+  assert.equal(restoredEnv.DISPLAY, ":123");
+  assert.equal(restoredEnv.XAUTHORITY, "/session/auth");
+  assert.equal(restoredEnv.SECRET_TOKEN, undefined);
+  assert.equal((await renderingEnvironment({ BTV_SHARED_USER_DATA_DIR: shared, DISPLAY: ":456" }, "linux")).DISPLAY, ":456", "An explicit live environment takes precedence.");
+  await assert.rejects(renderingEnvironment({}, "linux"), /Open Big Tree Viewer normally once/);
+  assert.deepEqual(await renderingEnvironment({}, "darwin"), {});
+  assert.deepEqual(await renderingEnvironment({}, "win32"), {});
+  if (process.platform === "linux") {
+    await saveDesktopEnvironment(shared, { DISPLAY: ":789", SECRET_TOKEN: "not-saved" });
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(shared, "desktop-environment.json"), "utf8")), { DISPLAY: ":789" });
+    assert.equal((await fs.stat(path.join(shared, "desktop-environment.json"))).mode & 0o777, 0o600);
+  }
+  assert.ok(desktopEnvironmentKeys.includes("WAYLAND_DISPLAY"));
   assert.deepEqual(agentClientRegistrationArguments("codex", registrationLaunch), {
-    statusArgs: ["mcp", "get", "bigtreeviewer"],
+    statusArgs: ["mcp", "get", "bigtreeviewer", "--json"],
     removeArgs: ["mcp", "remove", "bigtreeviewer"],
     addArgs: ["mcp", "add", "bigtreeviewer", "--env", `BTV_CACHE=${registrationLaunch.env.BTV_CACHE}`, "--", launch.command, ...launch.args],
   });

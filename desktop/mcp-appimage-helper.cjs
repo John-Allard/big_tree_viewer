@@ -6,6 +6,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { renderingEnvironment } = require("./agent-environment.cjs");
 
 const connectionId = crypto.randomUUID();
 let runtimeDirectory;
@@ -60,6 +61,7 @@ async function shutdown(exitCode = 0) {
 }
 
 async function main() {
+  const env = await renderingEnvironment();
   await removeStaleRuntimes();
   runtimeDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `bigtreeviewer-mcp-${process.pid}-`));
   await fs.writeFile(path.join(runtimeDirectory, "owner.json"), JSON.stringify({ pid: process.pid }));
@@ -86,7 +88,6 @@ async function main() {
   const executable = process.env.BTV_APP_EXECUTABLE || process.env.APPIMAGE || process.execPath;
   const appMain = process.env.BTV_APP_MAIN;
   const args = [...(appMain ? [appMain] : []), `--mcp-socket=${endpoint}`];
-  const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.BTV_APP_EXECUTABLE;
   delete env.BTV_APP_MAIN;
