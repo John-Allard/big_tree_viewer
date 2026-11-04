@@ -142,7 +142,12 @@ values remain in the metadata table and session.
 Set `metadataTipTablePlacement: "inside"` to put the table between tip names and
 taxonomy ribbons, or `"outside"` (default) to put it beyond taxonomy and subtree
 ribbons. Both placements retain tip-label clearance and are saved in sessions.
-Tables require rectangular layout. They can be used without branch coloring.
+Tables support rectangular layout and circular/fan radial data rings, but not
+spiral layout. They can be used without branch coloring. Radial column widths
+are constrained to the viewport. `metadataTipTableHeaderFontSizePx` (8-32,
+default 11) controls column names; radial names may be reduced or hidden when
+there is insufficient clearance. Right-click a header for Rename Column and
+the table-settings shortcut.
 
 Set `metadataLegendEnabled`; choose `metadataLegendComponents` (branchColors,
 markers, pies, tipTables; omitted components default on), `metadataLegendPosition` (top-left/top-right/bottom-left/bottom-right),

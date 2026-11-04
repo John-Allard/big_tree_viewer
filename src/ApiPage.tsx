@@ -140,6 +140,10 @@ const url = \`${origin}?btv_newick_b64=\${base64Url(newick)}\`;`}</code></pre>
             <code> metadataTipTableCellWidthPx</code> (12-240) sets each column&apos;s
             width, including its bar plotting area. Category keys are limited to
             20 named values per column, with additional values grouped as Other.
+            Tables also render as concentric data rings in radial and fan views.
+            <code> metadataTipTableHeaderFontSizePx</code> (8-32, default 11)
+            controls column-name size. Radial column widths are constrained to
+            the viewport so wide tables do not consume the whole tree.
           </p>
         </section>
 
@@ -571,6 +575,7 @@ window.addEventListener("message", (event) => {
     metadataTipTablePalette?: "blueOrange" | "viridis" | "redBlue" | "tealRose",
     metadataTipTableBarWidthPx?: number, // legacy saved field; use cell width for mixed tables
     metadataTipTableCellWidthPx?: number, // 12-240; includes each numeric bar plotting area
+    metadataTipTableHeaderFontSizePx?: number, // 8-32; column names, default 11
     metadataTipTablePlacement?: "inside" | "outside", // relative to taxonomy; default outside
     phylopicEnabled?: boolean,
     phylopicPlacement?: "after-label" | "outside-ribbon",

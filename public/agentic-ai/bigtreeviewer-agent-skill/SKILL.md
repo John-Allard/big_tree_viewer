@@ -183,6 +183,8 @@ Example `settings.json`:
 }
 ```
 
+Tip tables also render as concentric data rings in circular and fan views, retaining their columns and legends. Spiral does not support tables. Set `metadataTipTableHeaderFontSizePx` (8-32, default 11) for column-name size. Radial widths are constrained to leave room for the tree; crowded radial headers may be reduced or hidden.
+
 ## Taxonomy Mapping
 
 To map taxonomy for the current loaded tree without reloading it, send:

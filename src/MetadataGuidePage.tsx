@@ -66,7 +66,7 @@ export default function MetadataGuidePage() {
             <div><dt>Continuous</dt><dd>Numeric measurements such as a trait value or expression level.</dd></div>
             <div><dt>Dates</dt><dd>ISO years, months, or days colored in chronological order.</dd></div>
             <div><dt>Pie components</dt><dd>Adjacent numeric columns whose values define each node&apos;s slices.</dd></div>
-            <div><dt>Tip tables</dt><dd>Numeric or categorical columns aligned beside rectangular tip labels.</dd></div>
+            <div><dt>Tip tables</dt><dd>Numeric or categorical columns beside rectangular tip labels, or concentric data rings in radial views.</dd></div>
           </dl>
 
           <h3 className="metadata-guide-subheading">One table, several uses</h3>
@@ -176,7 +176,7 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
             <div className="metadata-guide-option-row" role="row">
               <strong role="cell">Tip data table</strong>
               <span role="cell">One or more tip-level columns</span>
-              <span role="cell">Mixed numeric/date heat maps or bars, binary markers, and categorical cells beside rectangular tip labels. Column types are detected automatically.</span>
+              <span role="cell">Mixed numeric/date heat maps or bars, binary markers, and categorical cells beside rectangular tip labels or in radial data rings. Column types are detected automatically. Right-click a column name to rename it or open table settings, including column-name size.</span>
             </div>
           </div>
 
