@@ -334,7 +334,7 @@ seq_003,Chimpanzee sample,Uganda,2023,9598,Pan,Hominidae`}</code></pre>
           <h3 className="metadata-guide-subheading">Subtree ribbons</h3>
           <p>
             To mark a gene family, duplication group, or other named clade,
-            right-click its internal branch and choose <strong>Add subtree ribbon</strong>,
+            right-click its internal branch and choose <strong>Add Subtree Ribbon</strong>,
             below Color Subtree Branches. Right-click the ribbon to rename, recolor, or
             remove it, or use the same subtree actions available on its branch.
             Ribbons are added outside the mapped taxonomy. The

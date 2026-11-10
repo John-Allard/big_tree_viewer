@@ -241,8 +241,8 @@ test("browser: API ribbons load without taxonomy and metadata controls edit them
   const box = (await page.getByTestId("tree-canvas").boundingBox())!;
   await page.mouse.click(box.x + point.x, box.y + point.y, { button: "right" });
   const items = await page.locator(".tree-context-menu button").allTextContents();
-  expect(items.indexOf("Add subtree ribbon")).toBe(items.findIndex(text => text.trim() === "Color Subtree Branches") + 1);
-  await page.getByRole("button", { name: "Add subtree ribbon", exact: true }).click();
+  expect(items.indexOf("Add Subtree Ribbon")).toBe(items.findIndex(text => text.trim() === "Color Subtree Branches") + 1);
+  await page.getByRole("button", { name: "Add Subtree Ribbon", exact: true }).click();
   await expect.poll(async () => (await read())?.length).toBe(1);
   expect((await read())[0]).toMatchObject({ node: 1, enabled: true, color: "#2b8cbe" });
 });
@@ -263,13 +263,13 @@ test("browser: existing ribbons suppress duplicate actions on ribbons and their 
     await loadRibbonTree(page, [{ ...demoRibbons[3], enabled }]);
     if (enabled) {
       await openRibbonMenu(page, "outer");
-      await expect(page.getByRole("button", { name: "Add subtree ribbon", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Add Subtree Ribbon", exact: true })).toHaveCount(0);
       await page.mouse.click(600, 700);
     }
     await openNode(demoRibbons[3].node);
-    await expect(page.getByRole("button", { name: "Add subtree ribbon", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add Subtree Ribbon", exact: true })).toHaveCount(0);
     await openNode(demoTree.names.indexOf("DE"));
-    await expect(page.getByRole("button", { name: "Add subtree ribbon", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add Subtree Ribbon", exact: true })).toBeVisible();
   }
 });
 

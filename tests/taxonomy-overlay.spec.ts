@@ -1165,6 +1165,7 @@ test("taxonomy label context menu exposes source-specific taxonomy links", async
   await expect(page.getByRole("button", { name: "View Subtree Statistics" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy Name" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open In NCBI Taxonomy" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add Subtree Ribbon", exact: true })).toHaveCount(0);
   const taxonomyMenuItems = await page.locator(".tree-context-menu .tree-context-menu-item").allTextContents();
   const taxonomyMenuOrder = [
     "Zoom To Group MRCA",

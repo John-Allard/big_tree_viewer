@@ -18853,13 +18853,9 @@ export default function TreeCanvas({
   }, [contextMenu, resolveTaxonomySegmentNode, tree]);
 
   const contextMenuRibbonTarget = useMemo(() => {
-    if (!contextMenu || !tree) return null;
-    if (contextMenu.kind === "node") return sharedSubtreeSourceNodeByViewNode?.[contextMenu.node] ?? contextMenu.node;
-    if (contextMenu.kind !== "taxonomy") return null;
-    const first = sharedSubtreeSourceNodeByViewNode?.[contextMenu.firstNode] ?? contextMenu.firstNode;
-    const last = sharedSubtreeSourceNodeByViewNode?.[contextMenu.lastNode] ?? contextMenu.lastNode;
-    return lowestCommonAncestor(sharedSubtreeSourceTree ?? tree, first, last);
-  }, [contextMenu, tree, sharedSubtreeSourceTree, sharedSubtreeSourceNodeByViewNode]);
+    if (!contextMenu || !tree || contextMenu.kind !== "node") return null;
+    return sharedSubtreeSourceNodeByViewNode?.[contextMenu.node] ?? contextMenu.node;
+  }, [contextMenu, tree, sharedSubtreeSourceNodeByViewNode]);
   const contextMenuCanAddRibbon = contextMenuRibbonTarget !== null
     && !customCladeRibbons.some(ribbon => ribbon.node === contextMenuRibbonTarget);
 
@@ -19886,7 +19882,7 @@ export default function TreeCanvas({
                   onClick={() => {
                     onAddCladeRibbon?.(contextMenuRibbonTarget!);
                     setContextMenu(null);
-                  }}>Add subtree ribbon</button>
+                  }}>Add Subtree Ribbon</button>
               ) : null}
               <button
                 type="button"
@@ -20071,12 +20067,6 @@ export default function TreeCanvas({
                   ) : null}
                 </div>
               ) : null}
-              {contextMenuCanAddRibbon ? <button type="button" className="tree-context-menu-item" disabled={!onAddCladeRibbon}
-                title="Add a ribbon outside taxonomy spanning this group's source-tree MRCA."
-                onClick={() => {
-                  onAddCladeRibbon?.(contextMenuRibbonTarget!);
-                  setContextMenu(null);
-                }}>Add subtree ribbon</button> : null}
             </>
           ) : (
             <>
