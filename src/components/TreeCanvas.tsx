@@ -1495,12 +1495,12 @@ function pushMetadataPieScenePaths(
   pushScenePath(metadataMarkerPath("circle", x, y, sizePx), "rgba(255,255,255,0.94)", 1.15, "none", 1);
 }
 
-function scaledMetadataGlyphSizePx(sizePercent: number, adjacentTipSpacingPx: number): number {
+function scaledMetadataGlyphSizePx(sizePercent: number, adjacentTipSpacingPx: number, exporting = false): number {
   const percent = Number.isFinite(sizePercent) ? Math.max(0, Math.min(100, sizePercent)) : 50;
   const renderedSize = Number.isFinite(adjacentTipSpacingPx) && adjacentTipSpacingPx > 0
     ? adjacentTipSpacingPx * (percent / 100)
     : 0;
-  return renderedSize < 5 ? 0 : renderedSize;
+  return !exporting && renderedSize < 5 ? 0 : renderedSize;
 }
 
 function scaledMetadataMarkerSizePx(sizePercent: number, adjacentTipSpacingPx: number): number {
@@ -4486,10 +4486,12 @@ export default function TreeCanvas({
   const hoverTooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverTooltipLabelRef = useRef<HTMLDivElement | null>(null);
   const hoverTooltipBodyRef = useRef<HTMLDivElement | null>(null);
-  const metadataLegendBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const metadataLegendBoundsRef = useRef<ReturnType<typeof layoutMetadataLegend>>(null);
   const legendDragRef = useRef<{ pointerId: number; clientX: number; clientY: number; x: number; y: number; width: number; height: number } | null>(null);
   const legendPlacementPreviewRef = useRef<TreeCanvasProps["metadataLegendPlacement"]>(null);
   const hideLegendForExportProbeRef = useRef(false);
+  const figureExportMetadataRef = useRef(false);
+  const attachedExportLegendRef = useRef<{ layout: NonNullable<ReturnType<typeof layoutMetadataLegend>>; scale: number } | null>(null);
   useEffect(() => { if (!legendDragRef.current) legendPlacementPreviewRef.current = null; }, [metadataLegendPlacement]);
   const metadataLegendLayoutCacheRef = useRef<{
     sections: TreeCanvasProps["metadataLegendSections"];
@@ -8188,6 +8190,7 @@ export default function TreeCanvas({
     const backingWidth = Math.max(1, Math.floor(renderSize.width * dpr));
     const backingHeight = Math.max(1, Math.floor(renderSize.height * dpr));
     const isOverrideRender = renderCanvasOverrideRef.current !== null;
+    const isFigureExport = figureExportMetadataRef.current;
     if (!isOverrideRender) tipTableHeaderHitsRef.current = [];
     const previousBackingStore = isOverrideRender ? null : canvasBackingStoreRef.current;
     if (isOverrideRender || !previousBackingStore
@@ -9388,7 +9391,7 @@ export default function TreeCanvas({
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
       const renderedMetadataMarkerSizePx = scaledMetadataMarkerSizePx(metadataMarkerSizePx, effectiveTipSpacingPx);
-      const renderedMetadataPieSizePx = scaledMetadataGlyphSizePx(metadataPieSizePx, effectiveTipSpacingPx);
+      const renderedMetadataPieSizePx = scaledMetadataGlyphSizePx(metadataPieSizePx, effectiveTipSpacingPx, isFigureExport);
       const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
         ? Math.max(8, (Math.max(
           metadataMarkerNodes.length > 0 ? renderedMetadataMarkerSizePx : 0,
@@ -9500,7 +9503,7 @@ export default function TreeCanvas({
       }
       const effectiveTipLabelSpacePx = Math.max(globalTipLabelSpacePx, tipLabelMaxRightPx - tipSideX);
       const insideTableStartX = tipSideX + effectiveTipLabelSpacePx + 16;
-      const insideTablePaddingPx = metadataTipTablePlacement === "inside" && tipLabelsVisible && visibleTipLabels.length > 0 && metadataTipTableData?.columns.length
+      const insideTablePaddingPx = metadataTipTablePlacement === "inside" && (isFigureExport || tipLabelsVisible && visibleTipLabels.length > 0) && metadataTipTableData?.columns.length
         ? metadataTipTableData.columns.length * metadataTipTableCellWidthPx + 32 : 0;
       customRibbonBase = tipSideX + effectiveTipLabelSpacePx + 8 + insideTablePaddingPx;
       customRibbonOutsideBase = customRibbonBase + cladeRibbonInsidePx;
@@ -10269,136 +10272,141 @@ export default function TreeCanvas({
             pushSceneText(label.text, label.x, label.y, "rgba(15,23,42,0.6)", fittedFontSize, labelFontFamilies.tip, "start", undefined, labelFontStyles.tip);
           }
         }
-        if (tipLabelsVisible && metadataTipTableData && metadataTipTableData.columns.length > 0) {
-          const labelRightX = visibleTipLabels.reduce((right, label) => Math.max(right, label.x + label.renderedWidth), tipSideX);
-          const customRibbonEndX = cladeRibbonPaddingPx ? customRibbonOutsideBase + cladeRibbonLayout.outside * cladeRibbonStridePx : Number.NEGATIVE_INFINITY;
-          const tableStartX = metadataTipTablePlacement === "inside" ? insideTableStartX
-            : Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16, customRibbonEndX + 16);
-          const rowHeight = Math.max(3, Math.min(28, effectiveTipSpacingPx * 0.82));
-          const firstRowY = worldToScreenRect(camera, 0, layout.center[orderedLeaves[0]]).y;
-          const headerY = firstRowY - (rowHeight * 0.65) - 7;
-          ctx.font = `${metadataTipTableHeaderFontSizePx}px ${LABEL_FONT}`;
-          if (renderDebug.rect && typeof renderDebug.rect === "object") {
-            (renderDebug.rect as Record<string, unknown>).metadataTipTable = {
-              mode: metadataTipTableMode,
-              placement: metadataTipTablePlacement,
-              tableStartX,
-              headerY,
-              headerFontSize: metadataTipTableHeaderFontSizePx,
-              columnCount: metadataTipTableData.columns.length,
-              columns: metadataTipTableData.columns.map(column => ({ column: column.column, kind: column.kind,
-                mode: metadataTipTableColumnMode(column, metadataTipTableMode), width: metadataTipTableCellWidthPx })),
-              headers: metadataTipTableData.columns.map((column, index) => {
-                const halfText = ctx.measureText(column.label).width * Math.SQRT1_2 / 2;
-                return { column: column.column, x: tableStartX + (index + 0.5) * metadataTipTableCellWidthPx + halfText, y: headerY - halfText };
-              }),
-              visibleMatchedTipCount: visibleTipLabels.reduce((count, label) => (
-                metadataTipTableData.valuesByNode[label.node] ? count + 1 : count
-              ), 0),
-            };
-          }
-          const drawHeader = (text: string, x: number, column: string): void => {
-            ctx.save();
-            ctx.translate(x, headerY);
-            ctx.rotate(-Math.PI / 4);
-            ctx.textAlign = "left";
-            ctx.textBaseline = "middle";
-            ctx.font = `${metadataTipTableHeaderFontSizePx}px ${LABEL_FONT}`;
-            if (!isOverrideRender) tipTableHeaderHitsRef.current.push({ column, label: text, x, y: headerY, width: ctx.measureText(text).width, rotation: -Math.PI / 4, height: metadataTipTableHeaderFontSizePx });
-            ctx.fillStyle = "#334155";
-            ctx.fillText(text, 0, 0);
-            ctx.restore();
-            pushSceneText(text, x, headerY, "#334155", metadataTipTableHeaderFontSizePx, LABEL_FONT, "start", -Math.PI / 4);
+      }
+      if ((isFigureExport || tipLabelsVisible) && metadataTipTableData && metadataTipTableData.columns.length > 0) {
+        const tableRows = isFigureExport
+          ? Array.from(orderedLeaves.slice(startLeafIndex, endLeafIndex)).filter(node => !hiddenNodes[node])
+            .map(node => ({ node, y: worldToScreenRect(camera, 0, layout.center[node]).y }))
+          : visibleTipLabels;
+        const labelRightX = visibleTipLabels.reduce((right, label) => Math.max(right, label.x + label.renderedWidth), tipSideX);
+        const customRibbonEndX = cladeRibbonPaddingPx ? customRibbonOutsideBase + cladeRibbonLayout.outside * cladeRibbonStridePx : Number.NEGATIVE_INFINITY;
+        const tableStartX = metadataTipTablePlacement === "inside" ? insideTableStartX
+          : Math.max(labelRightX + 16, (rectangularTaxonomyEndX ?? rectangularFirstTaxonomyBandX ?? labelRightX) + 16, customRibbonEndX + 16);
+        const rowHeight = Math.max(isFigureExport ? 0 : 3, Math.min(28, effectiveTipSpacingPx * 0.82));
+        const firstRowY = worldToScreenRect(camera, 0, layout.center[orderedLeaves[0]]).y;
+        const headerY = firstRowY - (rowHeight * 0.65) - 7;
+        ctx.font = `${metadataTipTableHeaderFontSizePx}px ${LABEL_FONT}`;
+        if (renderDebug.rect && typeof renderDebug.rect === "object") {
+          (renderDebug.rect as Record<string, unknown>).metadataTipTable = {
+            mode: metadataTipTableMode,
+            placement: metadataTipTablePlacement,
+            tableStartX,
+            headerY,
+            headerFontSize: metadataTipTableHeaderFontSizePx,
+            columnCount: metadataTipTableData.columns.length,
+            columns: metadataTipTableData.columns.map(column => ({ column: column.column, kind: column.kind,
+              mode: metadataTipTableColumnMode(column, metadataTipTableMode), width: metadataTipTableCellWidthPx })),
+            headers: metadataTipTableData.columns.map((column, index) => {
+              const halfText = ctx.measureText(column.label).width * Math.SQRT1_2 / 2;
+              return { column: column.column, x: tableStartX + (index + 0.5) * metadataTipTableCellWidthPx + halfText, y: headerY - halfText };
+            }),
+            visibleMatchedTipCount: tableRows.reduce((count, label) => (
+              metadataTipTableData.valuesByNode[label.node] ? count + 1 : count
+            ), 0),
           };
-          {
-            const cellWidth = metadataTipTableCellWidthPx;
-            for (let columnIndex = 0; columnIndex < metadataTipTableData.columns.length; columnIndex += 1) {
-              const column = metadataTipTableData.columns[columnIndex];
-              const columnMode = metadataTipTableColumnMode(column, metadataTipTableMode);
-              const cellX = tableStartX + (columnIndex * cellWidth);
-              drawHeader(column.label, cellX + (cellWidth * 0.5), column.column);
-              for (let rowIndex = 0; rowIndex < visibleTipLabels.length; rowIndex += 1) {
-                const label = visibleTipLabels[rowIndex];
-                const value = metadataTipTableData.valuesByNode[label.node]?.[columnIndex] ?? "";
-                const top = label.y - (rowHeight * 0.45);
-                const height = Math.max(2, rowHeight * 0.9);
-                ctx.strokeStyle = "rgba(148,163,184,0.35)";
-                ctx.lineWidth = 0.55;
-                ctx.strokeRect(cellX, top, cellWidth, height);
-                pushScenePath(`M ${cellX.toFixed(3)} ${top.toFixed(3)} h ${cellWidth.toFixed(3)} v ${height.toFixed(3)} h ${(-cellWidth).toFixed(3)} Z`, "#94a3b8", 0.55, "none", 0.35);
-                if (!value) {
+        }
+        const drawHeader = (text: string, x: number, column: string): void => {
+          ctx.save();
+          ctx.translate(x, headerY);
+          ctx.rotate(-Math.PI / 4);
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          ctx.font = `${metadataTipTableHeaderFontSizePx}px ${LABEL_FONT}`;
+          if (!isOverrideRender) tipTableHeaderHitsRef.current.push({ column, label: text, x, y: headerY, width: ctx.measureText(text).width, rotation: -Math.PI / 4, height: metadataTipTableHeaderFontSizePx });
+          ctx.fillStyle = "#334155";
+          ctx.fillText(text, 0, 0);
+          ctx.restore();
+          pushSceneText(text, x, headerY, "#334155", metadataTipTableHeaderFontSizePx, LABEL_FONT, "start", -Math.PI / 4);
+        };
+        {
+          const cellWidth = metadataTipTableCellWidthPx;
+          for (let columnIndex = 0; columnIndex < metadataTipTableData.columns.length; columnIndex += 1) {
+            const column = metadataTipTableData.columns[columnIndex];
+            const columnMode = metadataTipTableColumnMode(column, metadataTipTableMode);
+            const cellX = tableStartX + (columnIndex * cellWidth);
+            drawHeader(column.label, cellX + (cellWidth * 0.5), column.column);
+            for (let rowIndex = 0; rowIndex < tableRows.length; rowIndex += 1) {
+              const label = tableRows[rowIndex];
+              const value = metadataTipTableData.valuesByNode[label.node]?.[columnIndex] ?? "";
+              const top = label.y - (rowHeight * 0.45);
+              const height = Math.max(isFigureExport ? 0 : 2, rowHeight * 0.9);
+              ctx.strokeStyle = "rgba(148,163,184,0.35)";
+              ctx.lineWidth = 0.55;
+              ctx.strokeRect(cellX, top, cellWidth, height);
+              pushScenePath(`M ${cellX.toFixed(3)} ${top.toFixed(3)} h ${cellWidth.toFixed(3)} v ${height.toFixed(3)} h ${(-cellWidth).toFixed(3)} Z`, "#94a3b8", 0.55, "none", 0.35);
+              if (!value) {
+                continue;
+              }
+              if (columnMode === "bars") {
+                const numeric = metadataTipTableNumericValue(value, column.valueType);
+                if (numeric === null || column.min === null || column.max === null) continue;
+                const min = column.valueType === "date" ? column.min : Math.min(0, column.min);
+                const max = column.valueType === "date" ? column.max : Math.max(0, column.max);
+                const span = max - min;
+                const plotWidth = Math.max(1, cellWidth - 4);
+                const zeroX = cellX + 2 + (span > 0 && column.valueType !== "date" ? -min / span * plotWidth : 0);
+                const valueX = cellX + 2 + (span > 0 ? (numeric - min) / span * plotWidth : column.valueType === "date" ? plotWidth * 0.5 : 0);
+                const width = Math.abs(valueX - zeroX);
+                if (width > 0) {
+                  const barHeight = height * 0.8;
+                  ctx.fillStyle = "rgba(37,99,235,0.78)";
+                  ctx.fillRect(Math.min(zeroX, valueX), label.y - barHeight / 2, width, barHeight);
+                  pushSceneRect(Math.min(zeroX, valueX), label.y - barHeight / 2, width, barHeight, "#2563eb", 0.78);
+                }
+                continue;
+              }
+              if (columnMode === "heatmap") {
+                const numeric = metadataTipTableNumericValue(value, column.valueType);
+                if (numeric === null || column.min === null || column.max === null) {
                   continue;
                 }
-                if (columnMode === "bars") {
-                  const numeric = metadataTipTableNumericValue(value, column.valueType);
-                  if (numeric === null || column.min === null || column.max === null) continue;
-                  const min = column.valueType === "date" ? column.min : Math.min(0, column.min);
-                  const max = column.valueType === "date" ? column.max : Math.max(0, column.max);
-                  const span = max - min;
-                  const plotWidth = Math.max(1, cellWidth - 4);
-                  const zeroX = cellX + 2 + (span > 0 && column.valueType !== "date" ? -min / span * plotWidth : 0);
-                  const valueX = cellX + 2 + (span > 0 ? (numeric - min) / span * plotWidth : column.valueType === "date" ? plotWidth * 0.5 : 0);
-                  const width = Math.abs(valueX - zeroX);
-                  if (width > 0) {
-                    const barHeight = height * 0.8;
-                    ctx.fillStyle = "rgba(37,99,235,0.78)";
-                    ctx.fillRect(Math.min(zeroX, valueX), label.y - barHeight / 2, width, barHeight);
-                    pushSceneRect(Math.min(zeroX, valueX), label.y - barHeight / 2, width, barHeight, "#2563eb", 0.78);
-                  }
-                  continue;
-                }
-                if (columnMode === "heatmap") {
-                  const numeric = metadataTipTableNumericValue(value, column.valueType);
-                  if (numeric === null || column.min === null || column.max === null) {
-                    continue;
-                  }
-                  const color = metadataTipTableContinuousColor(numeric, column.min, column.max, metadataTipTablePalette);
-                  ctx.fillStyle = color;
-                  ctx.fillRect(cellX, top, cellWidth, height);
-                  pushSceneRect(cellX, top, cellWidth, height, color);
-                  continue;
-                }
-                const appearance = metadataTipTableCellAppearance(column, value, metadataTipTableStyleForColumn(column, metadataTipTableCellStyle, metadataTipTableBinaryStyle, metadataTipTableTextStyle));
-                if (appearance.empty) continue;
-                const { color, style } = appearance;
-                const centerX = cellX + (cellWidth * 0.5);
-                const size = Math.max(2, Math.min(cellWidth - 4, height - 2));
-                if (style === "filled") {
-                  ctx.fillStyle = color;
-                  ctx.fillRect(cellX, top, cellWidth, height);
-                  pushSceneRect(cellX, top, cellWidth, height, color);
-                } else if (style === "circle") {
-                  ctx.fillStyle = color;
-                  ctx.beginPath();
-                  ctx.arc(centerX, label.y, size * 0.5, 0, Math.PI * 2);
-                  ctx.fill();
-                  pushScenePath(`M ${(centerX - (size * 0.5)).toFixed(3)} ${label.y.toFixed(3)} a ${(size * 0.5).toFixed(3)} ${(size * 0.5).toFixed(3)} 0 1 0 ${size.toFixed(3)} 0 a ${(size * 0.5).toFixed(3)} ${(size * 0.5).toFixed(3)} 0 1 0 ${(-size).toFixed(3)} 0`, undefined, undefined, color);
-                } else if (style === "square") {
-                  ctx.fillStyle = color;
-                  ctx.fillRect(centerX - (size * 0.5), label.y - (size * 0.5), size, size);
-                  pushSceneRect(centerX - (size * 0.5), label.y - (size * 0.5), size, size, color);
-                } else {
-                  let text = appearance.text;
-                  const binarySymbol = column.kind === "binary" && appearance.text !== value;
-                  let fontSize = Math.max(4, Math.min(binarySymbol ? 28 : 12, size));
+                const color = metadataTipTableContinuousColor(numeric, column.min, column.max, metadataTipTablePalette);
+                ctx.fillStyle = color;
+                ctx.fillRect(cellX, top, cellWidth, height);
+                pushSceneRect(cellX, top, cellWidth, height, color);
+                continue;
+              }
+              const appearance = metadataTipTableCellAppearance(column, value, metadataTipTableStyleForColumn(column, metadataTipTableCellStyle, metadataTipTableBinaryStyle, metadataTipTableTextStyle));
+              if (appearance.empty) continue;
+              const { color, style } = appearance;
+              const centerX = cellX + (cellWidth * 0.5);
+              const size = Math.max(2, Math.min(cellWidth - 4, height - 2));
+              if (style === "filled") {
+                ctx.fillStyle = color;
+                ctx.fillRect(cellX, top, cellWidth, height);
+                pushSceneRect(cellX, top, cellWidth, height, color);
+              } else if (style === "circle") {
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(centerX, label.y, size * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                pushScenePath(`M ${(centerX - (size * 0.5)).toFixed(3)} ${label.y.toFixed(3)} a ${(size * 0.5).toFixed(3)} ${(size * 0.5).toFixed(3)} 0 1 0 ${size.toFixed(3)} 0 a ${(size * 0.5).toFixed(3)} ${(size * 0.5).toFixed(3)} 0 1 0 ${(-size).toFixed(3)} 0`, undefined, undefined, color);
+              } else if (style === "square") {
+                ctx.fillStyle = color;
+                ctx.fillRect(centerX - (size * 0.5), label.y - (size * 0.5), size, size);
+                pushSceneRect(centerX - (size * 0.5), label.y - (size * 0.5), size, size, color);
+              } else {
+                let text = appearance.text;
+                const binarySymbol = column.kind === "binary" && appearance.text !== value;
+                let fontSize = Math.max(4, Math.min(binarySymbol ? 28 : 12, size));
+                ctx.font = `${fontSize}px ${LABEL_FONT}`;
+                const available = Math.max(1, cellWidth - 4);
+                if (ctx.measureText(text).width > available) {
+                  fontSize = Math.max(4, fontSize * available / ctx.measureText(text).width);
                   ctx.font = `${fontSize}px ${LABEL_FONT}`;
-                  const available = Math.max(1, cellWidth - 4);
-                  if (ctx.measureText(text).width > available) {
-                    fontSize = Math.max(4, fontSize * available / ctx.measureText(text).width);
-                    ctx.font = `${fontSize}px ${LABEL_FONT}`;
-                    while (text.length > 1 && ctx.measureText(text).width > available) text = text.slice(0, -2) + "\u2026";
-                  }
-                  ctx.textAlign = "center";
-                  ctx.textBaseline = "middle";
-                  ctx.fillStyle = color;
-                  ctx.fillText(text, centerX, label.y);
-                  pushSceneText(text, centerX, label.y, color, fontSize, LABEL_FONT, "middle");
+                  while (text.length > 1 && ctx.measureText(text).width > available) text = text.slice(0, -2) + "\u2026";
                 }
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = color;
+                ctx.fillText(text, centerX, label.y);
+                pushSceneText(text, centerX, label.y, color, fontSize, LABEL_FONT, "middle");
               }
             }
           }
         }
-      } else if (figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && measuredLabels.length <= 9000
+      }
+      if (visibleTipLabels.length === 0 && figureStyles.tip.showGuideTicks !== false && tipLabelCueVisible && measuredLabels.length <= 9000
         && (!taxonomyEnabled || visibleTaxonomyRanks.length === 0 || taxonomyGapControl > 0)) {
         ctx.strokeStyle = "rgba(15,23,42,0.42)";
         ctx.lineWidth = 0.9;
@@ -10645,8 +10653,8 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
-      if (metadataPieNodes.length > 0 && metadataPies && camera.scaleX > 0.95 && renderedMetadataPieSizePx > 0) {
-        const maxVisibleMetadataPies = 1200;
+      if (metadataPieNodes.length > 0 && metadataPies && (isFigureExport || camera.scaleX > 0.95) && renderedMetadataPieSizePx > 0) {
+        const maxVisibleMetadataPies = isFigureExport ? Infinity : 1200;
         const visiblePies: Array<{
           pie: NonNullable<(typeof metadataPies)[number]>;
           x: number;
@@ -10683,7 +10691,7 @@ export default function TreeCanvas({
       }
 
       if (metadataMarkerNodes.length > 0 && metadataMarkers && renderedMetadataMarkerSizePx > 0) {
-        const maxVisibleMetadataMarkers = 1800;
+        const maxVisibleMetadataMarkers = isFigureExport ? Infinity : 1800;
         const visibleMarkers: Array<{
           marker: NonNullable<(typeof metadataMarkers)[number]>;
           x: number;
@@ -10724,7 +10732,7 @@ export default function TreeCanvas({
         }
       }
 
-      if (metadataLabelNodes.length > 0 && metadataLabels && camera.scaleX > 1.05) {
+      if (metadataLabelNodes.length > 0 && metadataLabels && (isFigureExport || camera.scaleX > 1.05)) {
         const fontSize = scaleLabelFontSize("internalNode", Math.max(8, Math.min(12, Math.min(camera.scaleY * 0.25, camera.scaleX * 0.18))));
         const labels: ScreenLabel[] = [];
         ctx.font = `${fontSize}px ${labelFontFamilies.internalNode}`;
@@ -10771,7 +10779,7 @@ export default function TreeCanvas({
               labelY = top - fontSize / 2 - 5 + metadataLabelOffsetYPx;
             }
           }
-          if (!canPlaceLinearLabel(
+          if (!isFigureExport && !canPlaceLinearLabel(
             labels,
             labelX,
             labelY,
@@ -13145,7 +13153,7 @@ export default function TreeCanvas({
       const microBandWidthPx = estimateLabelWidth(Math.max(microTipFontSize, 4.2), reservedTipLabelCharacters);
       const readableBandWidthPx = estimateLabelWidth(Math.max(tipFontSize, 6.5), reservedTipLabelCharacters);
       const renderedMetadataMarkerSizePx = scaledMetadataMarkerSizePx(metadataMarkerSizePx, angularSpacingPx);
-      const renderedMetadataPieSizePx = scaledMetadataGlyphSizePx(metadataPieSizePx, angularSpacingPx);
+      const renderedMetadataPieSizePx = scaledMetadataGlyphSizePx(metadataPieSizePx, angularSpacingPx, isFigureExport);
       const metadataTipDecorationLabelClearancePx = metadataTipDecorationMaxSizePx > 0
         ? Math.max(20, (Math.max(
           metadataMarkerNodes.length > 0 ? renderedMetadataMarkerSizePx : 0,
@@ -13190,7 +13198,7 @@ export default function TreeCanvas({
         })()
         : 0;
       const needsVisibleLeafRanges = tipLabelCueVisible
-        || (metadataTipTableData !== null && angularSpacingPx > 1)
+        || (metadataTipTableData !== null && (isFigureExport || angularSpacingPx > 1))
         || (taxonomyEnabled && renderedTaxonomyBlocks !== null && visibleCircleFraction < CIRCULAR_TAXONOMY_VISIBLE_FILTER_MAX_VISIBLE_FRACTION);
       const circularTaxonomyVisibilityMarginPx = compactCircularViewport ? 220 : 120;
       const circularTaxonomyScreenSampleMarginPx = compactCircularViewport ? 96 : 48;
@@ -14527,7 +14535,7 @@ export default function TreeCanvas({
           peakVisibleCenters: [],
         };
       }
-      if (metadataTipTableData?.columns.length && angularSpacingPx > 1 && radialTipTableCellWidthPx > 0) {
+      if (metadataTipTableData?.columns.length && (isFigureExport || angularSpacingPx > 1) && radialTipTableCellWidthPx > 0) {
         const columns = metadataTipTableData.columns;
         const cellWidth = radialTipTableCellWidthPx;
         const angleStep = polarAngleSpan / polarLeafDivisor;
@@ -14610,7 +14618,7 @@ export default function TreeCanvas({
                 const rotation = binarySymbol ? 0 : theta + (Math.cos(theta) < 0 ? Math.PI : 0);
                 ctx.font = `${fontSize}px ${LABEL_FONT}`;
                 fontSize *= Math.min(1, Math.max(1, cellWidth - 4) / Math.max(1, ctx.measureText(appearance.text).width));
-                if (fontSize < 3) continue;
+                if (fontSize < 3 && !isFigureExport) continue;
                 ctx.save(); ctx.translate(x, y); ctx.rotate(rotation);
                 ctx.font = `${fontSize}px ${LABEL_FONT}`;
                 ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = appearance.color;
@@ -14621,7 +14629,7 @@ export default function TreeCanvas({
           }
           ctx.font = `${headerFontSize}px ${LABEL_FONT}`;
           const width = ctx.measureText(column.label).width;
-          if (headerFontSize >= 4 && (isPartialRadial || width < radius * angleStep * 0.85)) {
+          if (headerFontSize >= 4 && (isFigureExport || isPartialRadial || width < radius * angleStep * 0.85)) {
             const x = centerPoint.x + Math.cos(headerTheta) * radius;
             const y = centerPoint.y + Math.sin(headerTheta) * radius;
             ctx.save(); ctx.translate(x, y); ctx.rotate(headerRotation);
@@ -15298,8 +15306,8 @@ export default function TreeCanvas({
         ctx.globalAlpha = 1;
       }
 
-      if (metadataPieNodes.length > 0 && metadataPies && camera.scale > 4.5 && renderedMetadataPieSizePx > 0) {
-        const maxVisibleMetadataPies = 1000;
+      if (metadataPieNodes.length > 0 && metadataPies && (isFigureExport || camera.scale > 4.5) && renderedMetadataPieSizePx > 0) {
+        const maxVisibleMetadataPies = isFigureExport ? Infinity : 1000;
         const visiblePies: Array<{
           pie: NonNullable<(typeof metadataPies)[number]>;
           x: number;
@@ -15335,7 +15343,7 @@ export default function TreeCanvas({
       }
 
       if (metadataMarkerNodes.length > 0 && metadataMarkers && renderedMetadataMarkerSizePx > 0) {
-        const maxVisibleMetadataMarkers = 1600;
+        const maxVisibleMetadataMarkers = isFigureExport ? Infinity : 1600;
         const visibleMarkers: Array<{
           marker: NonNullable<(typeof metadataMarkers)[number]>;
           x: number;
@@ -15375,7 +15383,7 @@ export default function TreeCanvas({
         }
       }
 
-      if (metadataLabelNodes.length > 0 && metadataLabels && camera.scale > 5.5) {
+      if (metadataLabelNodes.length > 0 && metadataLabels && (isFigureExport || camera.scale > 5.5)) {
         const fontSize = scaleLabelFontSize("internalNode", Math.max(8, Math.min(11.5, camera.scale * 0.038)));
         const labels: ScreenLabel[] = [];
         ctx.font = `${fontSize}px ${labelFontFamilies.internalNode}`;
@@ -15460,12 +15468,12 @@ export default function TreeCanvas({
               placed = true;
               break;
             }
-            if (!placed) continue;
+            if (!placed && !isFigureExport) continue;
           }
           if (labelX < -40 || labelX > renderSize.width + 40 || labelY < -40 || labelY > renderSize.height + 40) {
             continue;
           }
-          if (!canPlaceLinearLabel(
+          if (!isFigureExport && !canPlaceLinearLabel(
             labels,
             labelX,
             labelY,
@@ -16032,46 +16040,48 @@ export default function TreeCanvas({
     const legendPlacement = legendPlacementPreviewRef.current ?? metadataLegendPlacement;
     const legendSignature = `${legendViewport.left}:${legendViewport.width}:${legendViewport.height}:${metadataLegendPosition}:${legendPlacement?.x}:${legendPlacement?.y}`;
     const cachedLegend = metadataLegendLayoutCacheRef.current;
-    const legend = cachedLegend?.sections === metadataLegendSections && cachedLegend.signature === legendSignature
+    const attachedLegend = attachedExportLegendRef.current;
+    const legendScale = attachedLegend?.scale ?? 1;
+    const legend = attachedLegend?.layout ?? (cachedLegend?.sections === metadataLegendSections && cachedLegend.signature === legendSignature
       ? cachedLegend.layout
-      : layoutMetadataLegend(ctx, metadataLegendSections, legendViewport, metadataLegendPosition, legendPlacement);
-    metadataLegendLayoutCacheRef.current = { sections: metadataLegendSections, signature: legendSignature, layout: legend };
+      : layoutMetadataLegend(ctx, metadataLegendSections, legendViewport, metadataLegendPosition, legendPlacement));
+    if (!attachedLegend) metadataLegendLayoutCacheRef.current = { sections: metadataLegendSections, signature: legendSignature, layout: legend };
     if (!isOverrideRender) metadataLegendBoundsRef.current = legend;
     if (legend && !hideLegendForExportProbeRef.current) {
       ctx.fillStyle = "rgba(255,255,255,0.96)";
       ctx.fillRect(legend.x, legend.y, legend.width, legend.height);
       pushSceneRect(legend.x, legend.y, legend.width, legend.height, ctx.fillStyle);
       ctx.strokeStyle = "#cbd0d6";
-      ctx.lineWidth = 1;
+      ctx.lineWidth = legendScale;
       ctx.strokeRect(legend.x, legend.y, legend.width, legend.height);
-      pushSceneLine(legend.x, legend.y, legend.x + legend.width, legend.y, ctx.strokeStyle, 1);
-      pushSceneLine(legend.x, legend.y + legend.height, legend.x + legend.width, legend.y + legend.height, ctx.strokeStyle, 1);
-      pushSceneLine(legend.x, legend.y, legend.x, legend.y + legend.height, ctx.strokeStyle, 1);
-      pushSceneLine(legend.x + legend.width, legend.y, legend.x + legend.width, legend.y + legend.height, ctx.strokeStyle, 1);
+      pushSceneLine(legend.x, legend.y, legend.x + legend.width, legend.y, ctx.strokeStyle, legendScale);
+      pushSceneLine(legend.x, legend.y + legend.height, legend.x + legend.width, legend.y + legend.height, ctx.strokeStyle, legendScale);
+      pushSceneLine(legend.x, legend.y, legend.x, legend.y + legend.height, ctx.strokeStyle, legendScale);
+      pushSceneLine(legend.x + legend.width, legend.y, legend.x + legend.width, legend.y + legend.height, ctx.strokeStyle, legendScale);
       for (const primitive of legend.primitives) {
-        const x = legend.x + primitive.x;
-        const y = legend.y + primitive.y;
+        const x = legend.x + primitive.x * legendScale;
+        const y = legend.y + primitive.y * legendScale;
         if (primitive.kind === "text") {
-          ctx.font = `${primitive.bold ? "700 " : ""}12px Arial`;
+          ctx.font = `${primitive.bold ? "700 " : ""}${12 * legendScale}px Arial`;
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
           ctx.fillStyle = primitive.color ?? "#18212c";
           ctx.fillText(primitive.text, x, y);
-          pushSceneText(primitive.text, x, y, ctx.fillStyle, 12, "Arial", "start", undefined, primitive.bold ? "700" : "", "middle");
+          pushSceneText(primitive.text, x, y, ctx.fillStyle, 12 * legendScale, "Arial", "start", undefined, primitive.bold ? "700" : "", "middle");
         } else if (primitive.kind === "rect") {
           ctx.fillStyle = primitive.color;
-          ctx.fillRect(x, y, primitive.width, primitive.height);
-          pushSceneRect(x, y, primitive.width, primitive.height, primitive.color);
+          ctx.fillRect(x, y, primitive.width * legendScale, primitive.height * legendScale);
+          pushSceneRect(x, y, primitive.width * legendScale, primitive.height * legendScale, primitive.color);
         } else if (primitive.kind === "line") {
           ctx.strokeStyle = primitive.color;
-          ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + primitive.width, y); ctx.stroke();
-          pushSceneLine(x, y, x + primitive.width, y, primitive.color, 3);
+          ctx.lineWidth = 3 * legendScale;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + primitive.width * legendScale, y); ctx.stroke();
+          pushSceneLine(x, y, x + primitive.width * legendScale, y, primitive.color, 3 * legendScale);
         } else {
           ctx.fillStyle = primitive.color;
-          drawMetadataMarker(ctx, primitive.shape, x, y, 12);
+          drawMetadataMarker(ctx, primitive.shape, x, y, 12 * legendScale);
           ctx.fill();
-          pushScenePath(metadataMarkerPath(primitive.shape, x, y, 12), undefined, undefined, primitive.color, 1);
+          pushScenePath(metadataMarkerPath(primitive.shape, x, y, 12 * legendScale), undefined, undefined, primitive.color, 1);
         }
       }
       renderDebug.metadataLegend = { x: legend.x, y: legend.y, width: legend.width, height: legend.height };
@@ -16386,6 +16396,27 @@ export default function TreeCanvas({
     window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
   }, []);
 
+  const attachedLegendForCamera = useCallback((target: CameraState) => {
+    const source = cameraRef.current;
+    const layout = metadataLegendBoundsRef.current;
+    if (!metadataLegendPlacement || !layout || !source || source.kind !== target.kind) return null;
+    // A dragged legend belongs to the tree's coordinate space during export.
+    if (source.kind === "rect" && target.kind === "rect") {
+      const scale = target.scaleX / source.scaleX;
+      return { scale, layout: { ...layout,
+        x: target.translateX + (layout.x - source.translateX) * scale,
+        y: target.translateY + (layout.y - source.translateY) * scale,
+        width: layout.width * scale, height: layout.height * scale } };
+    }
+    if (source.kind === "circular" && target.kind === "circular") {
+      const scale = target.scale / source.scale;
+      const world = screenToWorldCircular(source, layout.x, layout.y);
+      const point = worldToScreenCircular(target, world.x, world.y);
+      return { scale, layout: { ...layout, ...point, width: layout.width * scale, height: layout.height * scale } };
+    }
+    return null;
+  }, [metadataLegendPlacement]);
+
   const renderTreeFigurePass = useCallback((frame: { size: { width: number; height: number }; camera: CameraState }, density: number, vector = false, additionalLabels = false, hideLegend = false) => {
     const canvas = document.createElement("canvas");
     renderCanvasOverrideRef.current = canvas;
@@ -16393,6 +16424,8 @@ export default function TreeCanvas({
     renderCameraOverrideRef.current = { ...frame.camera };
     renderDprOverrideRef.current = density;
     hideLegendForExportProbeRef.current = hideLegend;
+    figureExportMetadataRef.current = true;
+    attachedExportLegendRef.current = attachedLegendForCamera(frame.camera);
     const previousHistory = taxonomyLabelHistoryRef.current;
     taxonomyLabelResolutionScaleRef.current = additionalLabels ? density : 1;
     if (vector) exportCaptureRef.current = { ...frame.size, background: "#fbfcfe", elements: [] };
@@ -16407,10 +16440,12 @@ export default function TreeCanvas({
       exportCaptureRef.current = null;
       taxonomyLabelResolutionScaleRef.current = 1;
       hideLegendForExportProbeRef.current = false;
+      figureExportMetadataRef.current = false;
+      attachedExportLegendRef.current = null;
       taxonomyLabelHistoryRef.current = previousHistory;
       draw();
     }
-  }, [draw]);
+  }, [draw, attachedLegendForCamera]);
 
   const prepareTreeFigure = useCallback(() => {
     const source = cameraRef.current;
@@ -16444,11 +16479,29 @@ export default function TreeCanvas({
     camera.translateX += margin;
     camera.translateY += margin;
     const frame = { camera, size: { width: viewport.width + margin * 2, height: viewport.height + margin * 2 } };
+    const attachedLegend = attachedLegendForCamera(frame.camera)?.layout;
+    if (attachedLegend) {
+      const shiftX = Math.max(0, 12 - attachedLegend.x);
+      const shiftY = Math.max(0, 12 - attachedLegend.y);
+      frame.size.width = Math.ceil(Math.max(frame.size.width, attachedLegend.x + attachedLegend.width + 12) + shiftX);
+      frame.size.height = Math.ceil(Math.max(frame.size.height, attachedLegend.y + attachedLegend.height + 12) + shiftY);
+      frame.camera.translateX += shiftX;
+      frame.camera.translateY += shiftY;
+    }
     const reserveLegend = metadataLegendSections.length > 0 && !metadataLegendPlacement;
     const probe = renderTreeFigurePass(frame, 1, false, false, reserveLegend).canvas;
     const context = probe.getContext("2d");
     if (!context) return null;
     let bounds = imageContentBounds(context.getImageData(0, 0, probe.width, probe.height));
+    const legendBounds = attachedLegendForCamera(frame.camera)?.layout;
+    if (legendBounds) {
+      // Include a tiny legend even if it is subpixel in the low-resolution crop probe.
+      const left = Math.max(0, Math.floor(Math.min(bounds.x, legendBounds.x - 8)));
+      const top = Math.max(0, Math.floor(Math.min(bounds.y, legendBounds.y - 8)));
+      const right = Math.min(frame.size.width, Math.ceil(Math.max(bounds.x + bounds.width, legendBounds.x + legendBounds.width + 8)));
+      const bottom = Math.min(frame.size.height, Math.ceil(Math.max(bounds.y + bounds.height, legendBounds.y + legendBounds.height + 8)));
+      bounds = { x: left, y: top, width: right - left, height: bottom - top };
+    }
     if (reserveLegend) {
       const legend = layoutMetadataLegend(context, metadataLegendSections, { left: 0, ...frame.size }, metadataLegendPosition);
       if (legend) {
@@ -16467,7 +16520,7 @@ export default function TreeCanvas({
       }
     }
     return { ...frame, bounds };
-  }, [fitCameraForMode, getExportViewportSize, viewMode, tree, size.height, visibleViewportLeftInset, collapsedView?.effectiveLeafScale, polarOuterRadius, polarAngleSpan, polarLeafDivisor, metadataMarkerNodes.length, metadataMarkerSizePx, metadataPieNodes.length, metadataPieSizePx, metadataLegendSections, metadataLegendPosition, metadataLegendPlacement, renderTreeFigurePass]);
+  }, [attachedLegendForCamera, fitCameraForMode, getExportViewportSize, viewMode, tree, size.height, visibleViewportLeftInset, collapsedView?.effectiveLeafScale, polarOuterRadius, polarAngleSpan, polarLeafDivisor, metadataMarkerNodes.length, metadataMarkerSizePx, metadataPieNodes.length, metadataPieSizePx, metadataLegendSections, metadataLegendPosition, metadataLegendPlacement, renderTreeFigurePass]);
 
   const buildTreeFigureSvg = useCallback((width: number, dpi: number): string | null => {
     const frame = prepareTreeFigure();

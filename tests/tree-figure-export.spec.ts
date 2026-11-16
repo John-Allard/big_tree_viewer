@@ -1,6 +1,150 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
+for (const mode of ["rectangular", "circular"]) for (const zoom of [0.6, 1.4]) {
+  test(`${mode} dragged legend stays attached to the tree at ${zoom}x zoom`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1200, height: 800 });
+    const payload = {
+      newick: "((A:1,B:1)Group_A:1,(C:1,D:1)Group_B:1)Root;",
+      visual: { viewMode: mode, showScaleBars: false, showTimeStripes: false, showGenusLabels: false,
+        metadataLegendEnabled: true, metadataMarkersEnabled: true, metadataMarkerColumn: "state" },
+      metadata: { text: "name,state\nGroup_A,First\nGroup_B,Second\n", keyColumn: "name", valueColumn: "state", enabled: true },
+    };
+    await page.goto(`/?btv_payload=${Buffer.from(JSON.stringify(payload)).toString("base64url")}`);
+    await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.metadataLegend));
+    const box = (await page.getByTestId("tree-canvas").boundingBox())!;
+    const initial = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getRenderDebug()!.metadataLegend as { x: number; y: number });
+    await page.mouse.move(box.x + initial.x + 40, box.y + initial.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 100, box.y + box.height - 170, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__!.getState().metadataLegendPlacement));
+    await page.evaluate(zoom => {
+      const controls = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      const camera = controls.getCamera()!;
+      if (camera.kind === "rect") controls.setRectCamera({ scaleX: Number(camera.scaleX) * zoom, scaleY: Number(camera.scaleY) * zoom });
+      else controls.setCircularCamera({ scale: Number(camera.scale) * zoom });
+    }, zoom);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const source = await page.evaluate(() => {
+      const controls = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      const names = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__!.names!;
+      return { legend: controls.getRenderDebug()!.metadataLegend as { x: number; y: number; width: number },
+        points: ["Group_A", "Group_B"].map(name => {
+          const segment = controls.getBranchScreenSegmentForTest(names.indexOf(name))!;
+          return { x: segment.x2, y: segment.y2 };
+        }), camera: controls.getCamera() };
+    });
+    await page.getByRole("button", { name: "Export View", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Export view settings" });
+    await dialog.getByRole("combobox", { name: "Format", exact: true }).selectOption("svg");
+    const download = page.waitForEvent("download");
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const file = await download;
+    await file.saveAs(testInfo.outputPath("attached-legend.svg"));
+    const svg = await readFile((await file.path())!, "utf8");
+    const exported = await page.evaluate(markup => {
+      const host = document.createElement("div"); host.style.cssText = "position:absolute;visibility:hidden";
+      host.innerHTML = markup; document.body.append(host);
+      const bounds = (node: SVGGraphicsElement) => { const b = node.getBBox(); return { x: b.x, y: b.y, width: b.width, height: b.height }; };
+      const legend = bounds(host.querySelector<SVGGraphicsElement>('rect[fill^="rgba(255"]')!);
+      const points = [...host.querySelectorAll<SVGGraphicsElement>('path[stroke="rgba(255,255,255,0.92)"]')].map(node => {
+        const b = bounds(node); return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+      });
+      const viewBox = host.querySelector("svg")!.viewBox.baseVal;
+      const contained = legend.x >= viewBox.x && legend.y >= viewBox.y
+        && legend.x + legend.width <= viewBox.x + viewBox.width && legend.y + legend.height <= viewBox.y + viewBox.height;
+      host.remove(); return { legend, points, contained };
+    }, svg);
+    expect(exported.points).toHaveLength(2);
+    const distance = (points: Array<{ x: number; y: number }>) => Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+    const ratio = distance(exported.points) / distance(source.points);
+    expect(exported.legend.width / source.legend.width).toBeCloseTo(ratio, 2);
+    // Node markers round their centers to pixels; allow that rounding after scaling.
+    expect(Math.abs(exported.legend.x - exported.points[0].x - (source.legend.x - source.points[0].x) * ratio)).toBeLessThan(1.5);
+    expect(Math.abs(exported.legend.y - exported.points[0].y - (source.legend.y - source.points[0].y) * ratio)).toBeLessThan(1.5);
+    expect(exported.contained).toBe(true);
+    expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera())).toEqual(source.camera);
+  });
+}
+
+for (const mode of ["rectangular", "circular", "fan"]) {
+  test(`${mode} whole-tree export retains metadata after refitting a zoomed view`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1200, height: 800 });
+    const subtree = (start: number, count: number): string => count === 1 ? `Tip_${start}:1000`
+      : `(${subtree(start, count / 2)},${subtree(start + count / 2, count / 2)})Node_${start}_${count}:1000`;
+    const payload = {
+      newick: `${subtree(0, 128)};`,
+      visual: { viewMode: mode, showScaleBars: false, showTimeStripes: false, showGenusLabels: false,
+        showTipLabels: true, metadataLegendEnabled: true,
+        metadataTipTableEnabled: true, metadataTipTableMode: "heatmap",
+        metadataTipTableColumns: [{ column: "score", label: "Exported scores" }],
+        metadataMarkersEnabled: true, metadataMarkerColumn: "state",
+        metadataPiesEnabled: true, metadataPieStartColumn: "P", metadataPieEndColumn: "Q",
+        metadataPieColorOverrides: { P: "#a10011", Q: "#11a122" },
+        metadataLabelsEnabled: true, metadataLabelColumn: "note",
+      },
+      metadata: { text: "name,state,score,note,P,Q\n" + Array.from({ length: 128 }, (_, i) =>
+        `Tip_${i},${i % 2 ? "First" : "Second"},${i},,3,1`).join("\n") + "\nNode_0_64,First,,EXPORTED_NODE_NOTE,3,1\n",
+        keyColumn: "name", valueColumn: "state", enabled: true, applyScope: "subtree" },
+    };
+    await page.goto(`/?btv_payload=${Buffer.from(JSON.stringify(payload)).toString("base64url")}`);
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().metadataTipTableMatchedTipCount === 128);
+    await page.evaluate(() => {
+      const controls = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      controls.fitView();
+      const camera = controls.getCamera()!;
+      if (camera.kind === "rect") controls.setRectCamera({ scaleX: Number(camera.scaleX) * 100, scaleY: Number(camera.scaleY) * 4 });
+      else controls.setCircularCamera({ scale: Number(camera.scale) * 100 });
+    });
+    const before = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera());
+    await page.getByRole("button", { name: "Export View", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Export view settings" });
+    await dialog.getByLabel("Width px").fill("1200");
+    await dialog.getByRole("combobox", { name: "Format", exact: true }).selectOption("svg");
+    const svgDownload = page.waitForEvent("download");
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const svgFile = await svgDownload;
+    await svgFile.saveAs(testInfo.outputPath("metadata-with-tree.svg"));
+    const svg = await readFile((await svgFile.path())!, "utf8");
+    expect(svg).toContain("Exported scores");
+    expect(svg).toContain("EXPORTED_NODE_NOTE");
+    // These colors belong to the actual pies, not just a legend swatch.
+    const contents = await page.evaluate(markup => {
+      const document = new DOMParser().parseFromString(markup, "image/svg+xml");
+      return { pies: document.querySelectorAll('path[fill="#a10011"]').length,
+        markers: document.querySelectorAll('path[stroke="rgba(255,255,255,0.92)"]').length,
+        heatCells: document.querySelectorAll('rect[fill="#440154"],path[fill="#440154"]').length };
+    }, svg);
+    expect(contents.pies).toBe(129);
+    expect(contents.markers).toBe(129);
+    expect(contents.heatCells).toBeGreaterThan(0);
+    await dialog.getByRole("combobox", { name: "Format", exact: true }).selectOption("png");
+    const pngDownload = page.waitForEvent("download");
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const pngFile = await pngDownload;
+    await pngFile.saveAs(testInfo.outputPath("metadata-with-tree.png"));
+    const png = await readFile((await pngFile.path())!);
+    expect(png.readUInt32BE(16)).toBe(1200);
+    // Compare actual rendered pixels, not just the exported element list.
+    const difference = await page.evaluate(async ({ markup, data }) => {
+      const images = await Promise.all([`data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`,
+        `data:image/png;base64,${data}`].map(async url => {
+        const image = new Image(); image.src = url; await image.decode(); return image;
+      }));
+      const canvas = document.createElement("canvas"); canvas.width = images[1].width; canvas.height = images[1].height;
+      const context = canvas.getContext("2d")!;
+      const pixels = images.map(image => { context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height); return context.getImageData(0, 0, canvas.width, canvas.height).data; });
+      let error = 0;
+      for (let i = 0; i < pixels[0].length; i += 4) for (let channel = 0; channel < 3; channel++) error += Math.abs(pixels[0][i + channel] - pixels[1][i + channel]);
+      return error / (canvas.width * canvas.height * 3);
+    }, { markup: svg, data: png.toString("base64") });
+    expect(difference).toBeLessThan(5);
+    expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera())).toEqual(before);
+  });
+}
+
 for (const mode of ["rectangular", "circular", "fan", "spiral"]) {
   test(`${mode} figure export tightly crops the complete tree independently of pan`, async ({ page }, testInfo) => {
     test.setTimeout(45000);

@@ -449,8 +449,9 @@ Clade_EFGH,Study group B`}</pre>
           <p>
             <strong>Save Session</strong> stores the table, matching column,
             overlay settings, tree, and current view. <strong>Export View</strong>
-            writes the complete tree and enabled legend as a tightly cropped
-            PNG or SVG. Choose the width; height follows the figure proportions.
+            writes the complete tree, enabled metadata displays, and enabled legend as a tightly cropped
+            PNG or SVG. A dragged legend keeps its size and position relative to the tree;
+            the export bounds include both. Choose the width and resolution; height follows the figure proportions.
           </p>
         </section>
       </div>
