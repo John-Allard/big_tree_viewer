@@ -32,8 +32,12 @@ export default function SharePage() {
       return "";
     }
     const params = new URLSearchParams({ btv_session_url: normalizedSessionUrl });
-    return `${window.location.origin}${import.meta.env.BASE_URL}?${params.toString()}`;
+    const isLoopback = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+    const viewerUrl = isLoopback ? "https://bigtreeviewer.net/" : `${window.location.origin}${import.meta.env.BASE_URL}`;
+    return `${viewerUrl}?${params.toString()}`;
   }, [normalizedSessionUrl]);
+  const sessionHost = normalizedSessionUrl ? new URL(normalizedSessionUrl).hostname : null;
+  const isDriveLink = sessionHost === "drive.google.com" || sessionHost === "drive.usercontent.google.com";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -153,10 +157,10 @@ export default function SharePage() {
               <div>
                 <dt>Google Drive</dt>
                 <dd>
-                  Not suitable for direct BTV session links. Google Drive share
-                  and download links do not provide the browser CORS access BTV
-                  needs, and large files can return confirmation pages instead
-                  of the session file.
+                  Not suitable for direct BTV session links. Drive share links
+                  open a preview page, and Drive may block downloads from
+                  another website. Recipients can download the .btvsession
+                  file from Drive and open it with Load Session.
                 </dd>
               </div>
             </dl>
@@ -177,6 +181,9 @@ export default function SharePage() {
                 </label>
                 {sessionUrl && !normalizedSessionUrl ? (
                   <p className="share-error">Enter a full http or https URL.</p>
+                ) : null}
+                {isDriveLink ? (
+                  <p className="share-error">Google Drive links may not open directly in BTV. Use a direct file host for one-click sharing.</p>
                 ) : null}
                 <label className="share-url-field">
                   <span>Share link</span>

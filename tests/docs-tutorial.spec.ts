@@ -120,17 +120,29 @@ test("share sessions page generates a launch link and QR code", async ({ page })
   await expect(page.getByText("Dropbox", { exact: true })).toBeVisible();
   await expect(page.getByText("OSF", { exact: true })).toBeVisible();
   await expect(page.getByText("Google Drive", { exact: true })).toBeVisible();
-  await expect(page.getByText("Not suitable for direct BTV session links")).toBeVisible();
+  await expect(page.getByText(/Not suitable for direct BTV session links/)).toBeVisible();
 
   await page.getByLabel("Static session file URL").fill("https://example.org/tree.btvsession");
-  const expected = "http://127.0.0.1:4173/?btv_session_url=https%3A%2F%2Fexample.org%2Ftree.btvsession";
+  const expected = "https://bigtreeviewer.net/?btv_session_url=https%3A%2F%2Fexample.org%2Ftree.btvsession";
   await expect(page.getByLabel("Share link")).toHaveValue(expected);
   await expect(page.getByLabel("QR code for the Big Tree Viewer session link")).toBeVisible();
 
   await page.getByLabel("Static session file URL").fill("https://www.dropbox.com/scl/fi/token/tree.btvsession?rlkey=abc&dl=0");
   await expect(page.getByLabel("Share link")).toHaveValue(
-    "http://127.0.0.1:4173/?btv_session_url=https%3A%2F%2Fdl.dropboxusercontent.com%2Fscl%2Ffi%2Ftoken%2Ftree.btvsession%3Frlkey%3Dabc%26dl%3D1",
+    "https://bigtreeviewer.net/?btv_session_url=https%3A%2F%2Fdl.dropboxusercontent.com%2Fscl%2Ffi%2Ftoken%2Ftree.btvsession%3Frlkey%3Dabc%26dl%3D1",
   );
+
+  await page.getByLabel("Static session file URL").fill("https://drive.google.com/file/d/file-id/view?usp=sharing");
+  await expect(page.getByText(/Google Drive links may not open directly/)).toBeVisible();
+  await page.getByLabel("Static session file URL").fill("https://example.org/tree.btvsession");
+  await page.evaluate(() => {
+    window.open = (url) => {
+      document.body.dataset.testLink = String(url);
+      return null;
+    };
+  });
+  await page.getByRole("button", { name: "Test in new tab" }).click();
+  await expect(page.locator("body")).toHaveAttribute("data-test-link", expected);
 });
 
 test("about page start tutorial link opens the guided tutorial in the viewer", async ({ page }) => {

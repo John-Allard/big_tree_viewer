@@ -613,6 +613,10 @@ async function fetchRemoteLaunchBytes(url: string, label: string): Promise<Uint8
   if (!response.ok) {
     throw new Error(`Could not fetch ${label} URL (${response.status} ${response.statusText}).`);
   }
+  if (label === "session" && /^text\/html\b/i.test(response.headers.get("content-type") ?? "")) {
+    void response.body?.cancel().catch(() => undefined);
+    throw new Error("The session URL returned a webpage instead of a .btvsession file. Use a public, direct download URL, or download the session and open it with Load Session.");
+  }
   const contentLength = response.headers.get("content-length");
   if (contentLength && Number(contentLength) > MAX_REMOTE_LAUNCH_BYTES) {
     throw new Error(`${label} file is too large for URL launch.`);

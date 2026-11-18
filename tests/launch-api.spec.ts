@@ -326,6 +326,20 @@ test("remote session URL launch fetches and restores a saved session", async ({ 
   expect(state?.loadError).toBeNull();
 });
 
+test("session URL launch explains when a shared URL returns a preview webpage", async ({ page }) => {
+  const drive = "https://drive.google.com/file/d/file-id/view?usp=sharing";
+  const launch = `/?${new URLSearchParams({ btv_session_url: drive })}`;
+  await page.route(drive, async route => {
+    await route.fulfill({
+      contentType: "text/html",
+      headers: { "Access-Control-Allow-Origin": "*" },
+      body: "<!doctype html><title>Drive preview</title>",
+    });
+  });
+  await page.goto(launch);
+  await expect(page.locator(".status-error")).toContainText("The session URL returned a webpage instead of a .btvsession file");
+});
+
 test("remote session URL launch can run standard taxonomy mapping", async ({ page }) => {
   await routeTinyTaxdump(page);
   const session = {
