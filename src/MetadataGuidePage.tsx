@@ -452,6 +452,7 @@ Clade_EFGH,Study group B`}</pre>
             writes the complete tree, enabled metadata displays, and enabled legend as a tightly cropped
             PNG or SVG. A dragged legend keeps its size and position relative to the tree;
             the export bounds include both. Choose the width and resolution; height follows the figure proportions.
+            In circular and spiral exports, taxonomy ribbon labels follow the ribbon curvature automatically.
           </p>
         </section>
       </div>

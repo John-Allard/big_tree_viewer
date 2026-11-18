@@ -5,6 +5,125 @@ import { gunzipSync } from "node:zlib";
 const newick = "((A_a:500,B_b:500):500,(C_c:500,D_d:500):500)Root;";
 const spiralNewick = `(${Array.from({ length: 1000 }, (_, index) => `T${index}:1000`).join(",")})Root;`;
 
+for (const view of ["rectangular", "circular", "fan", "spiral"] as const) {
+  test(`${view} scale label size control enlarges labels without moving the camera`, async ({ page }, testInfo) => {
+    await page.goto(`/?btv_newick=${encodeURIComponent(view === "spiral" ? spiralNewick : newick)}&btv_view=${view}`);
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+    await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.fitView());
+    const sizes = () => page.evaluate(() => {
+      const markup = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!;
+      const doc = new DOMParser().parseFromString(markup, "image/svg+xml");
+      return [...doc.querySelectorAll('text[fill="#6b7280"],text[fill="#475569"]')]
+        .map(text => Number(text.getAttribute("font-size")));
+    });
+    await expect.poll(async () => (await sizes()).length).toBeGreaterThan(0);
+    const before = await sizes();
+    const camera = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera());
+    await page.getByRole("button", { name: /Visual Options/ }).click();
+    await page.getByRole("button", { name: "Scale labels settings", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Scale labels settings", exact: true });
+    await dialog.getByRole("slider", { name: "Size scale", exact: true }).fill("1.8");
+    await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__!.getState().figureStyles.scale.sizeScale === 1.8);
+    const enlarged = await sizes();
+    if (view === "spiral") {
+      expect(enlarged.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(enlarged).size).toBe(1);
+      // Close ticks can cap both slider values at the same readable size.
+      expect(Math.max(...enlarged)).toBeGreaterThanOrEqual(Math.max(...before));
+    } else {
+      expect(Math.max(...enlarged)).toBeCloseTo(Math.max(...before) * 1.8, 2);
+    }
+    expect(await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getCamera())).toEqual(camera);
+    if (view === "spiral") {
+      const { boxes, offsets, alignments, labeledAges, connectorCount } = await page.evaluate(() => {
+        const hits = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!;
+        const host = document.createElement("div"); host.style.cssText = "position:absolute;visibility:hidden";
+        host.innerHTML = hits; document.body.append(host);
+        const labels = [...host.querySelectorAll<SVGGraphicsElement>('text[fill="#475569"]')];
+        const bounds = labels.map(text => {
+          const box = text.getBBox();
+          const rotation = Number(text.getAttribute("transform")?.match(/rotate\(([-\d.]+)/)?.[1] ?? 0) * Math.PI / 180;
+          const x = Number(text.getAttribute("x")), y = Number(text.getAttribute("y"));
+          return { x: box.x - x + x * Math.cos(rotation) + y * Math.sin(rotation),
+            y: box.y - y - x * Math.sin(rotation) + y * Math.cos(rotation), width: box.width, height: box.height };
+        });
+        const tickLines = [...host.querySelectorAll('line[stroke="#64748b"]')]
+          .filter(line => Number(line.getAttribute("stroke-width")) === 1).slice(0, -1);
+        const offsets = labels.map(text => {
+          const candidates = tickLines.map(tick => ({
+            x: Number(text.getAttribute("x")) - (Number(tick.getAttribute("x1")) + Number(tick.getAttribute("x2"))) / 2,
+            y: Number(text.getAttribute("y")) - (Number(tick.getAttribute("y1")) + Number(tick.getAttribute("y2"))) / 2,
+          }));
+          return candidates.sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y))[0];
+        });
+        const alignments = labels.map(text => text.getAttribute("text-anchor"));
+        const connectorCount = [...host.querySelectorAll('line[stroke="#64748b"]')]
+          .filter(line => Number(line.getAttribute("stroke-width")) !== 1).length;
+        host.remove();
+        return { boxes: bounds, offsets, alignments, connectorCount, labeledAges: labels.map(text => parseFloat(text.textContent!)) };
+      });
+      expect(new Set(alignments).size).toBe(1);
+      expect(labeledAges).toContain(1000);
+      expect(labeledAges.some(age => age > 1 && age < 1000)).toBe(true);
+      expect(connectorCount).toBe(0);
+      for (const offset of offsets) {
+        expect(Math.hypot(offset.x, offset.y)).toBeCloseTo(6, 2);
+        expect(offset.x).toBeCloseTo(offsets[0].x, 2);
+        expect(offset.y).toBeCloseTo(offsets[0].y, 2);
+      }
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j];
+        expect(a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height).toBe(false);
+      }
+      await page.screenshot({ path: testInfo.outputPath("spiral-scale-labels-enlarged.png") });
+    }
+    await dialog.getByRole("slider", { name: "Size scale", exact: true }).fill("1");
+    await expect.poll(sizes).toEqual(before);
+    if (view === "spiral") {
+      for (const zoom of [0.8, 2, 4, 8]) {
+        await page.evaluate(scale => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.setCircularCamera({ scale }),
+          Number(camera!.scale) * zoom);
+        const zoomed = await sizes();
+        expect(zoomed.length, `Label count at ${zoom}x fit`).toBeGreaterThanOrEqual(zoom >= 4 ? 3 : 2);
+        expect(new Set(zoomed).size).toBe(1);
+      }
+    }
+  });
+}
+
+test("spiral root age replaces a crowded decade tick without shrinking labels on zoom in", async ({ page }) => {
+  await page.route("**/spiral-scale.nwk", route => route.fulfill({ body: spiralNewick.replaceAll(":1000", ":1530") }));
+  await page.goto("/?btv_newick_url=/spiral-scale.nwk&btv_view=spiral");
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+  const fitScale = await page.evaluate(() => {
+    const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+    canvas.fitView();
+    return Number(canvas.getCamera()!.scale);
+  });
+  let previousSize = 0;
+  for (const zoom of [4, 4.8, 5.76, 6.912, 8.2944]) {
+    const { labels, tickCount } = await page.evaluate(scale => {
+      const canvas = window.__BIG_TREE_VIEWER_CANVAS_TEST__!;
+      canvas.setCircularCamera({ scale });
+      const doc = new DOMParser().parseFromString(canvas.buildCurrentSvgForTest()!, "image/svg+xml");
+      return {
+        labels: [...doc.querySelectorAll('text[fill="#475569"]')].map(text => ({
+          age: parseFloat(text.textContent!), size: Number(text.getAttribute("font-size")),
+        })),
+        tickCount: [...doc.querySelectorAll('line[stroke="#64748b"]')]
+          .filter(line => Number(line.getAttribute("stroke-width")) === 1).length - 1,
+      };
+    }, fitScale * zoom);
+    expect(tickCount).toBe(4);
+    expect(labels.map(label => label.age)).toContain(1530);
+    expect(labels.map(label => label.age)).not.toContain(1000);
+    expect(labels.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(labels.map(label => label.size)).size).toBe(1);
+    expect(labels[0].size).toBeGreaterThanOrEqual(previousSize);
+    previousSize = labels[0].size;
+  }
+});
+
 test("scale settings only show controls for the selected geometry and axis", async ({ page }, testInfo) => {
   await page.goto(`/?btv_newick=${encodeURIComponent(newick)}&btv_view=rectangular`);
   await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);

@@ -1902,6 +1902,76 @@ test("top-level taxonomy color override cascades through descendants when jitter
   expect(recolored.other).not.toBe("#dc2626");
 });
 
+test("taxonomy labels contrast with the final ribbon after a context-menu override and jitter", async ({ page }) => {
+  const newick = `(${Array.from({ length: 16 }, (_, i) => `T${i}:1`).join(",")})Root;`;
+  await page.goto(`/?btv_newick=${encodeURIComponent(newick)}&btv_view=rectangular`);
+  await waitForViewerReady(page);
+  await page.evaluate(() => {
+    const app = window.__BIG_TREE_VIEWER_APP_TEST__!;
+    const leaves = window.__BIG_TREE_VIEWER_APP_TEST_INTERNAL__!.leafNodes;
+    app.setTaxonomyMapForTest({ version: 1, mappedCount: leaves.length, totalTips: leaves.length, activeRanks: ["class", "phylum"],
+      tipRanks: leaves.map((node, i) => ({ node, ranks: { phylum: i < 8 ? "ParentA" : "ParentB",
+        class: ["FirstChild", "SecondChild", "ThirdChild", "FourthChild"][Math.floor(i / 4)] } })) });
+    app.setTaxonomyEnabled(true);
+    app.setOrder("input");
+    app.setTaxonomyRankVisibilityAutoForTest(false);
+    app.setTaxonomyRankDisplayModeForTest("class", "ribbon");
+    app.setTaxonomyRankDisplayModeForTest("phylum", "ribbon");
+    app.setTaxonomyColorJitterRankForTest("class");
+    app.setTaxonomyColorJitterForTest(3);
+    app.requestFit();
+  });
+  const recolor = async (name: string, color: string) => {
+    await page.waitForFunction(label => window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getLabelHitboxes().some(hit => hit.labelKind === "taxonomy" && hit.text === label), name);
+    const point = await page.evaluate(label => {
+      const hit = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.getLabelHitboxes().find(hit => hit.labelKind === "taxonomy" && hit.text === label)!;
+      const box = document.querySelector<HTMLCanvasElement>(".tree-canvas")!.getBoundingClientRect();
+      return { x: box.left + Number(hit.x) + Number(hit.width) / 2, y: box.top + Number(hit.y) + Number(hit.height) / 2 };
+    }, name);
+    await page.mouse.click(point.x, point.y, { button: "right" });
+    await page.getByRole("button", { name: "Color Top-Level Group" }).click();
+    await page.getByLabel("Choose custom taxonomy-root color", { exact: true }).fill(color);
+    await page.keyboard.press("Escape");
+  };
+  await recolor("ParentA", "#ff8000");
+  await recolor("ParentB", "#161823");
+
+  const labels = await page.evaluate(() => {
+    const svg = window.__BIG_TREE_VIEWER_CANVAS_TEST__!.buildCurrentSvgForTest()!;
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    const luminance = (color: string) => {
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = Array.from(ctx.getImageData(0, 0, 1, 1).data).map(value => {
+        const c = value / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return r * 0.2126 + g * 0.7152 + b * 0.0722;
+    };
+    return ["ParentA", "FirstChild", "ParentB"].map(name => {
+      const label = [...doc.querySelectorAll("text")].find(text => text.textContent === name)!;
+      const [x, y] = [Number(label.getAttribute("x")), Number(label.getAttribute("y"))];
+      const ribbon = [...doc.querySelectorAll("rect")].reverse().find(rect => {
+        const left = Number(rect.getAttribute("x")), top = Number(rect.getAttribute("y"));
+        return x > left && x < left + Number(rect.getAttribute("width")) && y > top && y < top + Number(rect.getAttribute("height"));
+      })!;
+      const fill = ribbon.getAttribute("fill")!;
+      const color = label.getAttribute("fill")!;
+      const background = luminance(fill), foreground = luminance(color);
+      return { fill, color, contrast: (Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05),
+        lightTextContrast: (luminance("#f8fafc") + 0.05) / (background + 0.05) };
+    });
+  });
+  expect(labels[0].fill).toBe("#ff8000");
+  const jitteredLightness = /^hsl\([\d.]+deg [\d.]+% ([\d.]+)%\)$/.exec(labels[1].fill);
+  expect(Number(jitteredLightness?.[1])).toBeLessThan(64);
+  expect(labels[1].lightTextContrast).toBeLessThan(4.5);
+  expect(labels[1].color).toBe("#0f172a");
+  expect(labels[2]).toMatchObject({ fill: "#161823", color: "#f8fafc" });
+  for (const label of labels) expect(label.contrast).toBeGreaterThan(4.5);
+});
+
 test("top-level taxonomy color override keeps descendant groups saturated when jitter is enabled", async ({ page }) => {
   await waitForViewer(page);
   const taxonomyPoint = await page.evaluate(async () => {

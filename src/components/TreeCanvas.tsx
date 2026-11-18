@@ -1330,6 +1330,7 @@ function buildSharedSubtreeStoragePayload(
 
 const GENUS_CONNECTOR_COLORS = ["#111111", "#7a7a7a"] as const;
 const CIRCULAR_TAXONOMY_OVERLAY_ALPHA = 1;
+const SPIRAL_TAXONOMY_OVERLAY_ALPHA = 0.82;
 const TAXONOMY_DISPLAY_ORDER: TaxonomyRank[] = [...TAXONOMY_RANKS].reverse();
 const TAXONOMY_LAYER_THRESHOLDS: Partial<Record<TaxonomyRank, number>> = {
   superkingdom: 0,
@@ -2466,16 +2467,34 @@ function resolveTaxonomySegmentClade(
   return coherentRoots[0]?.node ?? null;
 }
 
-function taxonomyTextColor(fill: string): string {
-  const parsed = parseHslColor(fill);
-  if (!parsed) {
-    return "#0f172a";
-  }
-  return parsed.l >= 64 ? "#0f172a" : "#f8fafc";
+function srgbLuminance(red: number, green: number, blue: number): number {
+  const linear = (channel: number): number => channel <= 0.04045
+    ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
 }
 
-function taxonomyOverlayTextColor(fill: string, overlayStyle: "ribbons" | "strands"): string {
-  return overlayStyle === "strands" ? "#0f172a" : taxonomyTextColor(fill);
+const DARK_TAXONOMY_TEXT_LUMINANCE = srgbLuminance(15 / 255, 23 / 255, 42 / 255);
+const LIGHT_TAXONOMY_TEXT_LUMINANCE = srgbLuminance(248 / 255, 250 / 255, 252 / 255);
+
+function taxonomyOverlayTextColor(fill: string, overlayStyle: "ribbons" | "strands", opacity = 1): string {
+  const parsed = overlayStyle === "ribbons" ? parseHslColor(fill) : null;
+  if (!parsed) return "#0f172a";
+  const hue = ((parsed.h % 360) + 360) % 360 / 30;
+  const lightness = parsed.l / 100;
+  const amplitude = (parsed.s / 100) * Math.min(lightness, 1 - lightness);
+  const channel = (offset: number, background: number): number => {
+    const k = (offset + hue) % 12;
+    const rgb = lightness - amplitude * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return rgb * opacity + (background / 255) * (1 - opacity);
+  };
+  // Compare against the ribbon as painted over the canvas, not HSL lightness alone.
+  const luminance = srgbLuminance(channel(0, 251), channel(8, 252), channel(4, 254));
+  const contrast = (text: number) => (Math.max(text, luminance) + 0.05) / (Math.min(text, luminance) + 0.05);
+  if (opacity < 1) {
+    // Small spiral text benefits from the maximum contrast available on its fill.
+    return contrast(0) >= contrast(1) ? "#000000" : "#ffffff";
+  }
+  return contrast(DARK_TAXONOMY_TEXT_LUMINANCE) >= contrast(LIGHT_TAXONOMY_TEXT_LUMINANCE) ? "#0f172a" : "#f8fafc";
 }
 
 function taxonomyRingMetricsPx(
@@ -4491,6 +4510,7 @@ export default function TreeCanvas({
   const legendPlacementPreviewRef = useRef<TreeCanvasProps["metadataLegendPlacement"]>(null);
   const hideLegendForExportProbeRef = useRef(false);
   const figureExportMetadataRef = useRef(false);
+  const forceTaxonomyCurvatureForExportRef = useRef(false);
   const attachedExportLegendRef = useRef<{ layout: NonNullable<ReturnType<typeof layoutMetadataLegend>>; scale: number } | null>(null);
   useEffect(() => { if (!legendDragRef.current) legendPlacementPreviewRef.current = null; }, [metadataLegendPlacement]);
   const metadataLegendLayoutCacheRef = useRef<{
@@ -11394,7 +11414,7 @@ export default function TreeCanvas({
           ctx.rotate(camera.rotation);
           taxonomyRibbonPaths.forEach((path, color) => {
             ctx.fillStyle = color;
-            ctx.globalAlpha = 0.82;
+            ctx.globalAlpha = SPIRAL_TAXONOMY_OVERLAY_ALPHA;
             ctx.fill(path);
           });
           ctx.globalAlpha = 1;
@@ -11602,7 +11622,7 @@ export default function TreeCanvas({
                   undefined,
                   undefined,
                   block.color,
-                  0.82,
+                  SPIRAL_TAXONOMY_OVERLAY_ALPHA,
                 );
               }
             }
@@ -11614,6 +11634,7 @@ export default function TreeCanvas({
           Math.max(4, Math.min(36 * taxonomyLabelFitScale, ribbonThicknessPx * 0.88)),
         );
         ctx.font = fontSpec("taxonomy", labelFontSize);
+        ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         const viewportCenterWorld = screenToWorldCircular(camera, renderSize.width * 0.5, renderSize.height * 0.5);
         const viewportCenterTheta = closestSpiralThetaForPoint(viewportCenterWorld.x, viewportCenterWorld.y, metrics);
@@ -11649,28 +11670,47 @@ export default function TreeCanvas({
                 taxonomyMetrics.pitchPerRadian,
               )) * camera.scale;
               const labelResolutionScale = (rankIsLabelOnlyStrand ? 1 : taxonomyLabelResolutionScaleRef.current) / taxonomyLabelThreshold;
-              const fittedLabelFontSize = Math.max(
-                4 / labelResolutionScale,
-                Math.min(
-                  labelFontSize,
-                  labelResolutionScale > 1 ? ribbonThicknessPx * 0.88 : labelFontSize,
-                  labelSpanPx / Math.max(1, block.label.length * 0.56),
-                ),
-              );
-              if (labelResolutionScale !== 1 && fittedLabelFontSize > Math.min(labelFontSize, ribbonThicknessPx * 0.88)) {
-                continue;
+              if (labelSpanPx < 34 / labelResolutionScale) continue;
+              const midpoint = spiralToScreen(spiralFrameAt(labelTheta, centerOffset, taxonomyMetrics));
+              if ((midpoint.x < -60 || midpoint.x > renderSize.width + 60 || midpoint.y < -60 || midpoint.y > renderSize.height + 60)
+                && (viewportCenterTheta < labelInterval.startTheta || viewportCenterTheta > labelInterval.endTheta)) continue;
+              const endPaddingPx = Math.max(2, Math.min(8, ribbonThicknessPx * 0.18));
+              let fittedLabelFontSize = Math.min(labelFontSize, ribbonThicknessPx);
+              if (fittedLabelFontSize < 4 / labelResolutionScale) continue;
+              const ribbonFontStyle = labelFontStyles.taxonomy || (fittedLabelFontSize < 11 ? "bold" : "");
+              const measureLabelWidth = () => {
+                ctx.font = `${ribbonFontStyle ? `${ribbonFontStyle} ` : ""}${fittedLabelFontSize}px ${labelFontFamilies.taxonomy}`;
+                const whole = ctx.measureText(block.label);
+                const wholeWidth = Math.max(whole.width, 2 * whole.actualBoundingBoxLeft, 2 * whole.actualBoundingBoxRight);
+                const glyphWidth = Array.from(block.label).reduce((sum, glyph) => sum + ctx.measureText(glyph).width, 0);
+                return Math.max(wholeWidth, glyphWidth);
+              };
+              let measuredLabelWidth = measureLabelWidth();
+              const availableWidth = labelSpanPx - 2 * endPaddingPx;
+              if (measuredLabelWidth > availableWidth) {
+                fittedLabelFontSize *= 0.995 * Math.max(0, availableWidth) / measuredLabelWidth;
+                if (fittedLabelFontSize < 4 / labelResolutionScale) continue;
+                measuredLabelWidth = measureLabelWidth();
+                if (measuredLabelWidth > availableWidth) continue;
               }
-              if (labelSpanPx < Math.max(34 / labelResolutionScale, block.label.length * fittedLabelFontSize * 0.56)) {
-                continue;
-              }
+              const clearanceWorld = (measuredLabelWidth * 0.5 + endPaddingPx) / camera.scale;
+              const clampLabelTheta = (theta: number) => {
+                const radius = taxonomyMetrics.innerRadius + centerOffset;
+                const delta = theta - taxonomyMetrics.startTheta;
+                const start = labelInterval.startTheta - taxonomyMetrics.startTheta;
+                const end = labelInterval.endTheta - taxonomyMetrics.startTheta;
+                if (spiralArcLengthBetween(start, delta, radius, taxonomyMetrics.pitchPerRadian) < clearanceWorld) {
+                  return spiralThetaForArcOffset(labelInterval.startTheta, clearanceWorld, centerOffset, taxonomyMetrics);
+                }
+                if (spiralArcLengthBetween(delta, end, radius, taxonomyMetrics.pitchPerRadian) < clearanceWorld) {
+                  return spiralThetaForArcOffset(labelInterval.endTheta, -clearanceWorld, centerOffset, taxonomyMetrics);
+                }
+                return theta;
+              };
+              labelTheta = clampLabelTheta(labelTheta);
               let labelFrame = spiralFrameAt(labelTheta, centerOffset, taxonomyMetrics);
               let labelWorld = { x: labelFrame.x, y: labelFrame.y, radius: labelFrame.radius };
               let labelScreen = spiralToScreen(labelWorld);
-              ctx.font = fontSpec("taxonomy", fittedLabelFontSize);
-              const measuredLabelWidth = ctx.measureText(block.label).width;
-              if (labelResolutionScale > 1 && measuredLabelWidth > labelSpanPx * 0.94) {
-                continue;
-              }
               let tangentAngle = spiralTangentAngle(labelTheta, centerOffset, taxonomyMetrics) + camera.rotation;
               let rotation = normalizeRotation(tangentAngle * 180 / Math.PI) * Math.PI / 180;
               if (
@@ -11687,7 +11727,7 @@ export default function TreeCanvas({
                 && viewportCenterTheta >= labelInterval.startTheta
                 && viewportCenterTheta <= labelInterval.endTheta
               ) {
-                labelTheta = Math.max(labelInterval.startTheta, Math.min(labelInterval.endTheta, viewportCenterTheta));
+                labelTheta = clampLabelTheta(viewportCenterTheta);
                 labelFrame = spiralFrameAt(labelTheta, centerOffset, taxonomyMetrics);
                 labelWorld = { x: labelFrame.x, y: labelFrame.y, radius: labelFrame.radius };
                 labelScreen = spiralToScreen(labelWorld);
@@ -11702,7 +11742,8 @@ export default function TreeCanvas({
               ctx.save();
               ctx.textAlign = "center";
               ctx.textBaseline = "middle";
-              const taxonomyLabelColor = rankIsLabelOnlyStrand ? "#111827" : taxonomyOverlayTextColor(block.color, taxonomyOverlayStyle);
+              const taxonomyLabelColor = rankIsLabelOnlyStrand ? "#111827"
+                : taxonomyOverlayTextColor(block.color, taxonomyOverlayStyle, SPIRAL_TAXONOMY_OVERLAY_ALPHA);
               ctx.fillStyle = taxonomyLabelColor;
               const localRadiusPx = Math.max(1, labelWorld.radius * camera.scale);
               if (taxonomyOverlayStyle === "strands" || rankIsLabelOnlyStrand) {
@@ -11747,25 +11788,18 @@ export default function TreeCanvas({
                   1,
                 );
               }
-              if (curvedTextNeeded(measuredLabelWidth, fittedLabelFontSize, localRadiusPx)) {
-                drawSpiralCurvedText(ctx, camera, taxonomyMetrics, block.label, labelTheta, centerOffset, taxonomyLabelColor);
+              if (forceTaxonomyCurvatureForExportRef.current || curvedTextNeeded(measuredLabelWidth, fittedLabelFontSize, localRadiusPx)) {
+                drawSpiralCurvedText(ctx, camera, taxonomyMetrics, block.label, labelTheta, centerOffset, taxonomyLabelColor,
+                  (glyph, x, y, color, glyphRotation) => pushSceneText(glyph, x, y, color, fittedLabelFontSize,
+                    labelFontFamilies.taxonomy, "middle", glyphRotation, ribbonFontStyle));
               } else {
                 ctx.translate(labelScreen.x, labelScreen.y);
                 ctx.rotate(rotation);
                 ctx.fillText(block.label, 0, 0);
+                pushSceneText(block.label, labelScreen.x, labelScreen.y, taxonomyLabelColor, fittedLabelFontSize,
+                  labelFontFamilies.taxonomy, "middle", rotation, ribbonFontStyle);
               }
               ctx.restore();
-              pushSceneText(
-                block.label,
-                labelScreen.x,
-                labelScreen.y,
-                taxonomyLabelColor,
-                fittedLabelFontSize,
-                labelFontFamilies.taxonomy,
-                "middle",
-                rotation,
-                labelFontStyles.taxonomy,
-              );
               drawPhyloPicForTaxonomyLabel({
                 x: labelScreen.x,
                 y: labelScreen.y,
@@ -12024,15 +12058,7 @@ export default function TreeCanvas({
       }
 
       if (drawScaleAxis || drawScaleLabels || drawGuideLabels) {
-        let scaleFontSize = Math.max(
-          1.5,
-          Math.min(
-            (Math.max(11.5, Math.min(15, 10 + (camera.scale * 0.02))) * figureStyles.scale.sizeScale),
-            metrics.pitch * camera.scale * 0.28,
-          ),
-        );
-        const spiralScaleLabelsReadable = scaleFontSize >= 6;
-        ctx.font = fontSpec("scale", scaleFontSize);
+        const requestedFontSize = Math.max(11.5, Math.min(15, 10 + camera.scale * 0.02)) * figureStyles.scale.sizeScale;
         ctx.fillStyle = "#475569";
         ctx.strokeStyle = "#64748b";
         ctx.lineWidth = 1;
@@ -12040,15 +12066,28 @@ export default function TreeCanvas({
         const axisFrame = spiralFrameAt(axisTheta, metrics.bandWidth * 0.5, metrics);
         const sideWorldX = -axisFrame.tangentX;
         const sideWorldY = -axisFrame.tangentY;
-        const axisOffsetWorld = 0.18;
-        const labelOffsetWorld = 0.14;
-        const tickHalfWorld = Math.max(0.018, 4 / Math.max(camera.scale, 1e-6));
-        const labelVector = worldToScreenCircular(camera, sideWorldX, sideWorldY);
-        const labelOrigin = worldToScreenCircular(camera, 0, 0);
-        const labelAlign: CanvasTextAlign = (labelVector.x - labelOrigin.x) < 0 ? "right" : "left";
-        const visibleSpiralScaleAges = spiralScaleLabelsReadable
-          ? timeBoundaryValues.filter((age) => showScaleZeroTick || age > 0)
-          : [];
+        const axisOffsetWorld = 6 / camera.scale;
+        const tickHalfWorld = 3 / camera.scale;
+        const sideX = sideWorldX * camera.rotationCos - sideWorldY * camera.rotationSin;
+        const sideY = sideWorldX * camera.rotationSin + sideWorldY * camera.rotationCos;
+        const labelRotation = normalizeRotation(Math.atan2(sideY, sideX) * 180 / Math.PI) * Math.PI / 180;
+        const textCos = Math.cos(labelRotation);
+        const textSin = Math.sin(labelRotation);
+        const labelsFaceOut = sideX * textCos + sideY * textSin >= 0;
+        const labelCoordinates = ({ x, y }: { x: number; y: number }) => ({
+          x: x * textCos + y * textSin,
+          y: -x * textSin + y * textCos,
+        });
+        const visibleSpiralScaleAges = timeBoundaryValues.filter((age) => showScaleZeroTick || age > 0);
+        const rootAge = visibleSpiralScaleAges.at(-1);
+        const precedingAge = visibleSpiralScaleAges.at(-2);
+        const earlierAge = visibleSpiralScaleAges.at(-3) ?? 0;
+        if (rootAge !== undefined && precedingAge !== undefined && precedingAge > 0) {
+          const precedingOffset = spiralOffsetForAge(precedingAge, metrics);
+          const rootGap = precedingOffset - spiralOffsetForAge(rootAge, metrics);
+          const priorGap = spiralOffsetForAge(earlierAge, metrics) - precedingOffset;
+          if (rootGap < priorGap * 0.45) visibleSpiralScaleAges.splice(-2, 1);
+        }
         const labelBoxesOverlap = (
           left: { left: number; right: number; top: number; bottom: number },
           right: { left: number; right: number; top: number; bottom: number },
@@ -12058,107 +12097,129 @@ export default function TreeCanvas({
           && left.top < right.bottom
           && right.top < left.bottom
         );
-        const buildSpiralScaleCandidates = (fontSize: number) => {
-          ctx.font = fontSpec("scale", fontSize);
-          return visibleSpiralScaleAges.map((age) => {
-            const point = spiralPointAt(axisTheta, age, metrics);
-            const frame = spiralFrameAt(axisTheta, spiralOffsetForAge(age, metrics), metrics);
-            const tickStart = spiralToScreen({
-              x: point.x + (sideWorldX * axisOffsetWorld) - (frame.tangentX * tickHalfWorld),
-              y: point.y + (sideWorldY * axisOffsetWorld) - (frame.tangentY * tickHalfWorld),
-            });
-            const tickEnd = spiralToScreen({
-              x: point.x + (sideWorldX * axisOffsetWorld) + (frame.tangentX * tickHalfWorld),
-              y: point.y + (sideWorldY * axisOffsetWorld) + (frame.tangentY * tickHalfWorld),
-            });
-            const label = spiralToScreen({
-              x: point.x + (sideWorldX * (axisOffsetWorld + labelOffsetWorld)),
-              y: point.y + (sideWorldY * (axisOffsetWorld + labelOffsetWorld)),
-            });
-            const text = scaleLabelText(age);
-            const textWidth = ctx.measureText(text).width;
-            const labelLeft = labelAlign === "right" ? label.x - textWidth : label.x;
-            return {
-              age,
-              text,
-              tickStart,
-              tickEnd,
-              x: label.x,
-              y: label.y,
-              bounds: {
-                left: labelLeft - 4,
-                right: labelLeft + textWidth + 4,
-                top: label.y - (fontSize * 0.65),
-                bottom: label.y + (fontSize * 0.65),
-              },
-            };
-          });
+        const tickCandidates = visibleSpiralScaleAges.map((age) => {
+          const point = spiralPointAt(axisTheta, age, metrics);
+          const frame = spiralFrameAt(axisTheta, spiralOffsetForAge(age, metrics), metrics);
+          const anchorWorld = { x: point.x + sideWorldX * axisOffsetWorld, y: point.y + sideWorldY * axisOffsetWorld };
+          const tickStart = spiralToScreen({ x: anchorWorld.x - frame.tangentX * tickHalfWorld, y: anchorWorld.y - frame.tangentY * tickHalfWorld });
+          const tickEnd = spiralToScreen({ x: anchorWorld.x + frame.tangentX * tickHalfWorld, y: anchorWorld.y + frame.tangentY * tickHalfWorld });
+          return { age, tickStart, tickEnd, anchor: spiralToScreen(anchorWorld) };
+        });
+        const tickPriority = (age: number) => age === metrics.timeExtent ? 0 : age > 1 ? 1 : age === 0 ? 2 : 3;
+        const spiralTicks: typeof tickCandidates = [];
+        for (const tick of tickCandidates.sort((a, b) => tickPriority(a.age) - tickPriority(b.age) || a.age - b.age)) {
+          if (spiralTicks.every(other => Math.hypot(tick.anchor.x - other.anchor.x, tick.anchor.y - other.anchor.y) >= 8)) {
+            spiralTicks.push(tick);
+          }
+        }
+        type LabelBounds = Parameters<typeof labelBoxesOverlap>[0];
+        type SpiralScaleLabel = {
+          age: number; text: string; fontSize: number; x: number; y: number; bounds: LabelBounds;
         };
-        let spiralScaleCandidates = buildSpiralScaleCandidates(scaleFontSize);
-        const allSpiralLabelsFit = (candidates: typeof spiralScaleCandidates): boolean => (
-          candidates.every((candidate, index) => (
-            candidates.slice(index + 1).every((other) => !labelBoxesOverlap(candidate.bounds, other.bounds))
-          ))
-        );
-        if (!allSpiralLabelsFit(spiralScaleCandidates) && scaleFontSize > 6) {
-          let low = 6;
-          let high = scaleFontSize;
-          for (let step = 0; step < 8; step += 1) {
-            const candidateSize = (low + high) * 0.5;
-            if (allSpiralLabelsFit(buildSpiralScaleCandidates(candidateSize))) {
-              low = candidateSize;
-            } else {
-              high = candidateSize;
+        let selectedSpiralScaleLabels: SpiralScaleLabel[] = [];
+        if ((drawScaleLabels || drawGuideLabels) && requestedFontSize >= 6) {
+          // Treat the full band as occupied even when individual branches are sparse.
+          const tipOuterOffset = metrics.bandWidth + (spiralTipLabelsVisible
+            ? (spiralTipLabelGapPx + spiralTipLabelBandWidthPx) / camera.scale : 0);
+          const ribbonOuterOffset = visibleTaxonomyRanks.length || cladeRibbonPaddingPx
+            ? (customRibbonOutsideBase + cladeRibbonLayout.outside * spiralCustomStridePx) / camera.scale : 0;
+          const outerOffset = Math.max(tipOuterOffset, ribbonOuterOffset);
+          const sampleCount = Math.ceil(metrics.totalTheta * 16);
+          const outline = Array.from({ length: 2 * (sampleCount + 1) }, (_, index) => {
+            const outer = index <= sampleCount;
+            const step = outer ? index : 2 * sampleCount + 1 - index;
+            return labelCoordinates(spiralToScreen(spiralNormalOffsetPoint(axisTheta + metrics.totalTheta * step / sampleCount,
+              outer ? outerOffset : 0, taxonomyMetrics)));
+          });
+          const overlapsSpiral = (box: LabelBounds) =>
+            pointInPolygon((box.left + box.right) / 2, (box.top + box.bottom) / 2, outline)
+            || outline.some((point, index) => {
+              const next = outline[(index + 1) % outline.length];
+              return lineIntersectsRect(point.x, point.y, next.x, next.y, box.left, box.top, box.right, box.bottom);
+            });
+          const fontSizes = [requestedFontSize, ...[24, 21, 18, 16, 14, 12, 11.5, 10, 9, 8, 7, 6]
+            .filter(fontSize => fontSize < requestedFontSize)];
+          const prioritizedTicks = spiralTicks;
+          const placeLabels = (fontSize: number, shorten: boolean): SpiralScaleLabel[] => {
+            const placed: SpiralScaleLabel[] = [];
+            ctx.font = fontSpec("scale", fontSize);
+            for (const tick of prioritizedTicks) {
+              const text = shorten ? formatAgeNumber(tick.age) : scaleLabelText(tick.age);
+              const width = ctx.measureText(text).width;
+              const x = tick.anchor.x + sideX * 6;
+              const y = tick.anchor.y + sideY * 6;
+              const local = labelCoordinates({ x, y });
+              const left = local.x - (labelsFaceOut ? 0 : width);
+              const halfHeight = fontSize * 0.5 + 1.5;
+              const bounds = { left: left - 1.5, right: left + width + 1.5,
+                top: local.y - halfHeight, bottom: local.y + halfHeight };
+              if (placed.some(label => labelBoxesOverlap(bounds, label.bounds)) || overlapsSpiral(bounds)) continue;
+              placed.push({ age: tick.age, text, fontSize, x, y, bounds });
             }
+            return placed;
+          };
+          // Test the text in its shared rotated coordinate system. Labels sit
+          // just past the ends of the ticks, with no per-label displacement.
+          const unitOptions = tree.isUltrametric && (showMyaTimeUnit || customTimeUnit.trim()) ? [false, true] : [false];
+          const primaryCount = prioritizedTicks.filter(tick => tick.age !== 1 || metrics.timeExtent < 100).length;
+          const minimumUsefulCount = Math.min(2, primaryCount);
+          let bestPrimaryCount = -1;
+          for (const fontSize of fontSizes) {
+            for (const shorten of unitOptions) {
+              const labels = placeLabels(fontSize, shorten);
+              const count = labels.filter(label => metrics.timeExtent < 100 || label.age !== 1).length;
+              if (count > bestPrimaryCount || (fontSize === selectedSpiralScaleLabels[0]?.fontSize
+                && count === bestPrimaryCount && labels.length > selectedSpiralScaleLabels.length)) {
+                selectedSpiralScaleLabels = labels;
+                bestPrimaryCount = count;
+              }
+            }
+            // Keep a readable scale rather than shrinking all the text to fit
+            // one more closely spaced tick (often the one just before the root).
+            if (bestPrimaryCount >= minimumUsefulCount) break;
           }
-          scaleFontSize = low;
-          spiralScaleCandidates = buildSpiralScaleCandidates(scaleFontSize);
         }
-        const selectedSpiralScaleLabels: typeof spiralScaleCandidates = [];
-        for (let index = spiralScaleCandidates.length - 1; index >= 0; index -= 1) {
-          const candidate = spiralScaleCandidates[index];
-          if (selectedSpiralScaleLabels.some((placed) => labelBoxesOverlap(candidate.bounds, placed.bounds))) {
-            continue;
-          }
-          selectedSpiralScaleLabels.push(candidate);
-        }
-        selectedSpiralScaleLabels.sort((left, right) => left.age - right.age);
         ctx.beginPath();
-        for (let index = 0; index < selectedSpiralScaleLabels.length; index += 1) {
-          const tick = selectedSpiralScaleLabels[index];
+        for (const tick of spiralTicks) {
           ctx.moveTo(tick.tickStart.x, tick.tickStart.y);
           ctx.lineTo(tick.tickEnd.x, tick.tickEnd.y);
           pushScaleAxisLine(tick.tickStart.x, tick.tickStart.y, tick.tickEnd.x, tick.tickEnd.y, "#64748b", 1);
         }
         const axisStart = spiralToScreen(spiralPointAt(axisTheta, 0, metrics));
         const axisEnd = spiralToScreen(spiralPointAt(axisTheta, metrics.timeExtent, metrics));
-        const axisStartX = axisStart.x + ((labelVector.x - labelOrigin.x) * axisOffsetWorld);
-        const axisStartY = axisStart.y + ((labelVector.y - labelOrigin.y) * axisOffsetWorld);
-        const axisEndX = axisEnd.x + ((labelVector.x - labelOrigin.x) * axisOffsetWorld);
-        const axisEndY = axisEnd.y + ((labelVector.y - labelOrigin.y) * axisOffsetWorld);
+        const axisStartX = axisStart.x + sideX * 6;
+        const axisStartY = axisStart.y + sideY * 6;
+        const axisEndX = axisEnd.x + sideX * 6;
+        const axisEndY = axisEnd.y + sideY * 6;
         ctx.moveTo(axisStartX, axisStartY);
         ctx.lineTo(axisEndX, axisEndY);
         pushScaleAxisLine(axisStartX, axisStartY, axisEndX, axisEndY, "#64748b", 1);
         if (drawScaleAxis) ctx.stroke();
-        ctx.textAlign = labelAlign;
         ctx.textBaseline = "middle";
         for (let index = 0; (drawScaleLabels || drawGuideLabels) && index < selectedSpiralScaleLabels.length; index += 1) {
           const label = selectedSpiralScaleLabels[index];
+          ctx.save();
+          ctx.translate(label.x, label.y);
+          ctx.rotate(labelRotation);
+          ctx.font = fontSpec("scale", label.fontSize);
+          ctx.textAlign = labelsFaceOut ? "left" : "right";
           ctx.lineWidth = 3;
           ctx.strokeStyle = "rgba(251,252,254,0.9)";
-          ctx.strokeText(label.text, label.x, label.y);
+          ctx.strokeText(label.text, 0, 0);
           ctx.fillStyle = "#475569";
-          ctx.fillText(label.text, label.x, label.y);
+          ctx.fillText(label.text, 0, 0);
+          ctx.restore();
           pushSceneText(
             label.text,
             label.x,
             label.y,
             "#475569",
-            scaleFontSize,
+            label.fontSize,
             labelFontFamilies.scale,
-            labelAlign === "right" ? "end" : "start",
-            undefined,
+            labelsFaceOut ? "start" : "end",
+            labelRotation,
             labelFontStyles.scale,
+            "middle",
           );
         }
       }
@@ -15088,11 +15149,11 @@ export default function TreeCanvas({
         const useCurvedText = Boolean(
           label.rank
           && label.clipArc
-          && curvedTextShouldFollowArc(
+          && (forceTaxonomyCurvatureForExportRef.current || curvedTextShouldFollowArc(
             labelMetrics.width,
             label.fontSize ?? circularGenusBaseFontSize,
             curvedRadiusPx,
-          )
+          ))
         );
         if (label.rank && useCurvedText) {
           curvedTaxonomyLabelCount += 1;
@@ -16372,6 +16433,7 @@ export default function TreeCanvas({
     renderCanvasOverrideRef.current = document.createElement("canvas");
     renderSizeOverrideRef.current = renderSize;
     renderCameraOverrideRef.current = { ...sourceCamera };
+    forceTaxonomyCurvatureForExportRef.current = true;
     try {
       draw();
       return exportCaptureRef.current ? buildSvgString({ ...exportCaptureRef.current, viewport }) : null;
@@ -16380,6 +16442,7 @@ export default function TreeCanvas({
       renderCanvasOverrideRef.current = null;
       renderSizeOverrideRef.current = null;
       renderCameraOverrideRef.current = null;
+      forceTaxonomyCurvatureForExportRef.current = false;
       draw();
     }
   }, [cache, draw, getExportViewportSize, size, tree, visibleViewportLeftInset]);
@@ -16425,6 +16488,7 @@ export default function TreeCanvas({
     renderDprOverrideRef.current = density;
     hideLegendForExportProbeRef.current = hideLegend;
     figureExportMetadataRef.current = true;
+    forceTaxonomyCurvatureForExportRef.current = true;
     attachedExportLegendRef.current = attachedLegendForCamera(frame.camera);
     const previousHistory = taxonomyLabelHistoryRef.current;
     taxonomyLabelResolutionScaleRef.current = additionalLabels ? density : 1;
@@ -16441,6 +16505,7 @@ export default function TreeCanvas({
       taxonomyLabelResolutionScaleRef.current = 1;
       hideLegendForExportProbeRef.current = false;
       figureExportMetadataRef.current = false;
+      forceTaxonomyCurvatureForExportRef.current = false;
       attachedExportLegendRef.current = null;
       taxonomyLabelHistoryRef.current = previousHistory;
       draw();
@@ -16600,6 +16665,7 @@ export default function TreeCanvas({
     renderCameraOverrideRef.current = preserveScreenLayout ? { ...sourceCamera } : cameraForRenderSize(sourceCamera, renderSize);
     const previousTaxonomyLabelHistory = taxonomyLabelHistoryRef.current;
     taxonomyLabelResolutionScaleRef.current = options.additionalTaxonomyLabels ? exportScale : 1;
+    forceTaxonomyCurvatureForExportRef.current = true;
     try {
       draw();
     } finally {
@@ -16608,6 +16674,7 @@ export default function TreeCanvas({
       renderDprOverrideRef.current = null;
       renderCameraOverrideRef.current = null;
       taxonomyLabelResolutionScaleRef.current = 1;
+      forceTaxonomyCurvatureForExportRef.current = false;
       taxonomyLabelHistoryRef.current = previousTaxonomyLabelHistory;
       draw();
     }
