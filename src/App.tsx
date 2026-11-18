@@ -555,6 +555,10 @@ function fileLooksLikeSession(file: File): boolean {
   return /\.(btvsession|json)$/i.test(file.name) || file.type === "application/json";
 }
 
+function restoreRotationDegrees(value: number): number {
+  return Number.isFinite(value) && Math.abs(value) >= 1e-9 ? value : 0;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -2867,7 +2871,7 @@ export default function App() {
     setViewMode(visual.viewMode);
     setOrder(visual.order);
     setZoomAxisMode(visual.zoomAxisMode);
-    setCircularRotationDegrees(visual.circularRotationDegrees);
+    setCircularRotationDegrees(restoreRotationDegrees(visual.circularRotationDegrees));
     setRadialAngularSpanDegrees(visual.radialAngularSpanDegrees ?? (visual.viewMode === "fan" ? 180 : DEFAULT_RADIAL_ANGULAR_SPAN_DEGREES));
     setRadialCenterOpeningRatio(visual.radialCenterOpeningRatio ?? DEFAULT_RADIAL_CENTER_OPENING_RATIO);
     setSpiralTurns(visual.spiralTurns);
@@ -5120,7 +5124,7 @@ export default function App() {
     if (settings.zoomAxisMode === "both" || settings.zoomAxisMode === "x" || settings.zoomAxisMode === "y") {
       setZoomAxisMode(settings.zoomAxisMode);
     }
-    setCircularRotationDegrees(settings.circularRotationDegrees);
+    setCircularRotationDegrees(restoreRotationDegrees(settings.circularRotationDegrees));
     setRadialAngularSpanDegrees(
       typeof settings.radialAngularSpanDegrees === "number" && Number.isFinite(settings.radialAngularSpanDegrees)
         ? Math.max(MIN_RADIAL_ANGULAR_SPAN_DEGREES, Math.min(MAX_RADIAL_ANGULAR_SPAN_DEGREES, settings.radialAngularSpanDegrees))
@@ -11329,7 +11333,7 @@ export default function App() {
           order={order}
           viewMode={viewMode}
           zoomAxisMode={viewMode !== "rectangular" ? "both" : zoomAxisMode}
-          circularRotation={(circularRotationDegrees * Math.PI) / 180}
+          circularRotationDegrees={circularRotationDegrees}
           radialAngularSpanDegrees={radialAngularSpanDegrees}
           radialCenterOpeningRatio={radialCenterOpeningRatio}
           spiralTurns={spiralTurns}

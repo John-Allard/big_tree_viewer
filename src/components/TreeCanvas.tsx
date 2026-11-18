@@ -4348,7 +4348,7 @@ export default function TreeCanvas({
   order,
   viewMode,
   zoomAxisMode,
-  circularRotation,
+  circularRotationDegrees,
   radialAngularSpanDegrees,
   radialCenterOpeningRatio,
   spiralTurns,
@@ -4477,6 +4477,7 @@ export default function TreeCanvas({
   onSessionRestoreComplete,
   onAutomationExportComplete,
 }: TreeCanvasProps) {
+  const circularRotation = circularRotationDegrees * Math.PI / 180;
   const sourceTree = treeRef.current;
   const cladogramActive = showCladogram && viewMode !== "spiral";
   const tree = useMemo(() => sourceTree && cladogramActive
@@ -18809,7 +18810,7 @@ export default function TreeCanvas({
       viewMode,
       order,
       zoomAxisMode,
-      circularRotationDegrees: circularRotation,
+      circularRotationDegrees,
       radialAngularSpanDegrees: configuredRadialSpanDegrees,
       radialCenterOpeningRatio: effectiveRadialCenterOpeningRatio,
       spiralTurns,
@@ -18879,7 +18880,7 @@ export default function TreeCanvas({
   }, [
     branchThicknessScale,
     circularCenterScaleAngleDegrees,
-    circularRotation,
+    circularRotationDegrees,
     errorBarColor,
     errorBarCapSizePx,
     errorBarOpacity,
@@ -19484,7 +19485,7 @@ export default function TreeCanvas({
           viewMode,
           order,
           zoomAxisMode,
-          circularRotationDegrees: circularRotation,
+          circularRotationDegrees,
           radialAngularSpanDegrees: configuredRadialSpanDegrees,
           radialCenterOpeningRatio: effectiveRadialCenterOpeningRatio,
           spiralTurns,
@@ -19556,7 +19557,7 @@ export default function TreeCanvas({
     order,
     branchThicknessScale,
     circularCenterScaleAngleDegrees,
-    circularRotation,
+    circularRotationDegrees,
     errorBarColor,
     errorBarCapSizePx,
     errorBarOpacity,

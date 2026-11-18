@@ -169,6 +169,46 @@ test("session file saves and reloads tree data, metadata, settings, and canvas s
   expect(restored.taxonomyRootColors).toEqual([["A-phy", "#00aa44"]]);
 });
 
+test("radial sessions restore rotation noise as zero and preserve intentional fractional degrees", async ({ page }) => {
+  const newick = "((A:1,B:1)Clade:1,C:2)Root;";
+  await page.goto(`/?${new URLSearchParams({ btv_newick: newick, btv_view: "radial" })}`);
+  await page.waitForFunction(() => window.__BIG_TREE_VIEWER_APP_TEST__?.getState().treeLoaded);
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true });
+    Object.defineProperty(window, "showOpenFilePicker", { value: undefined, configurable: true });
+  });
+
+  const rotation = page.getByRole("spinbutton", { name: "Rotation degrees", exact: true });
+  const save = async () => {
+    const downloading = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Save Session", exact: true }).click();
+    const path = (await (await downloading).path())!;
+    return JSON.parse(strFromU8(gunzipSync(await readFile(path))));
+  };
+  const session = await save();
+  expect(session.settings.circularRotationDegrees).toBe(0);
+
+  const restore = async (degrees: number, filename: string) => {
+    session.settings.circularRotationDegrees = degrees;
+    const choosing = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "Load Session", exact: true }).click();
+    await (await choosing).setFiles({
+      name: filename, mimeType: "application/json", buffer: Buffer.from(JSON.stringify(session)),
+    });
+    await expect(page.getByText(`Loaded session from ${filename}.`)).toBeVisible();
+  };
+  await restore(-3.5e-14, "rotation-noise.btvsession");
+  await expect(rotation).toHaveValue("0");
+  await expect(page.getByTitle("Reset rotation to zero degrees.")).toBeDisabled();
+  expect((await save()).settings.circularRotationDegrees).toBe(0);
+
+  await restore(-12.345, "fractional-rotation.btvsession");
+  await expect(rotation).toHaveValue("-12.345");
+  expect((await save()).settings.circularRotationDegrees).toBe(-12.345);
+  const subtree = await page.evaluate(() => window.__BIG_TREE_VIEWER_CANVAS_TEST__?.buildSharedSubtreePayloadForTest(1));
+  expect(subtree?.visual.circularRotationDegrees).toBe(-12.345);
+});
+
 test("session save opens native picker before async session preparation", async ({ page }) => {
   await waitForViewer(page);
   await page.evaluate(() => {

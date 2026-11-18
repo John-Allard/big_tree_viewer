@@ -61,7 +61,7 @@ export interface TreeCanvasProps {
   order: LayoutOrder;
   viewMode: ViewMode;
   zoomAxisMode: ZoomAxisMode;
-  circularRotation: number;
+  circularRotationDegrees: number;
   radialAngularSpanDegrees: number;
   radialCenterOpeningRatio: number;
   spiralTurns: number;
