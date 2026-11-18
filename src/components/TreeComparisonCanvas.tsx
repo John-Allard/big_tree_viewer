@@ -556,7 +556,7 @@ export default function TreeComparisonCanvas(props: TreeComparisonCanvasProps) {
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, size.width, size.height);
 
-    const ribbonWidth = Math.max(4, 9 * (figureStyles.taxonomy.bandThicknessScale ?? 1));
+    const ribbonWidth = Math.max(4, 9 * (figureStyles.taxonomy.comparisonBandThicknessScale ?? 1));
     const ribbonGap = Math.max(0.5, Math.min(2, ribbonWidth * 0.08));
     const rankWidths = activeRanks.map((_, index) => (
       figureStyles.taxonomy.thickenOutermostRibbon !== false && index === activeRanks.length - 1

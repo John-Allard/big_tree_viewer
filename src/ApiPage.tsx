@@ -554,7 +554,11 @@ window.addEventListener("message", (event) => {
     figureStyles?: {
       // Taxonomy labelVisibilityThreshold: 0.1 to 2, default 1. Lower values allow smaller labels.
       tip?: { sizeScale?: number, showGuideTicks?: boolean, limitWidth?: boolean, maxWidthPx?: number, overflowMode?: "truncate" | "scale" },
-      taxonomy?: { sizeScale?: number, bandThicknessScale?: number, taxonomyGap?: number, thickenOutermostRibbon?: boolean, labelVisibilityThreshold?: number },
+      taxonomy?: {
+        sizeScale?: number, taxonomyGap?: number, thickenOutermostRibbon?: boolean, labelVisibilityThreshold?: number,
+        bandThicknessScale?: number, // shared by rectangular and radial
+        spiralBandThicknessScale?: number, comparisonBandThicknessScale?: number,
+      },
       internalNode?: { angularOffsetDegrees?: number, metadataAngularOffsetDegrees?: number, sizeScale?: number, offsetXPx?: number, offsetYPx?: number, polarOrientation?: "tangential" | "radial", metadataPlacement?: "node" | "stem" | "auto", metadataColorMode?: "branch" | "fixed", metadataColor?: string },
       bootstrap?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },
       nodeHeight?: { angularOffsetDegrees?: number, sizeScale?: number, decimalPlaces?: number, polarOrientation?: "tangential" | "radial" },

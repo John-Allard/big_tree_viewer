@@ -1,3 +1,5 @@
+import type { ViewMode } from "../types/tree";
+
 export type FontFamilyKey =
   | "arial"
   | "helvetica"
@@ -29,6 +31,8 @@ export interface LabelStyleSettings {
   bold?: boolean;
   italic?: boolean;
   bandThicknessScale?: number;
+  spiralBandThicknessScale?: number;
+  comparisonBandThicknessScale?: number;
   thickenOutermostRibbon?: boolean;
   labelVisibilityThreshold?: number;
   taxonomyGap?: number;
@@ -112,7 +116,7 @@ export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
     showGuideTicks: true,
   },
   genus: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
-  taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, thickenOutermostRibbon: true, labelVisibilityThreshold: 1, taxonomyGap: 1, taxonomyGapPx: 0 },
+  taxonomy: { fontFamily: "arial", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, spiralBandThicknessScale: 1, comparisonBandThicknessScale: 1, thickenOutermostRibbon: true, labelVisibilityThreshold: 1, taxonomyGap: 1, taxonomyGapPx: 0 },
   internalNode: { fontFamily: "georgia", sizeScale: 0.95, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0 },
   bootstrap: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },
   nodeHeight: { fontFamily: "courierNew", sizeScale: 1, offsetPx: 0, offsetXPx: 0, offsetYPx: 0, bold: false, italic: false, bandThicknessScale: 1, taxonomyGapPx: 0, decimalPlaces: -1, polarOrientation: "tangential" },
@@ -122,6 +126,23 @@ export const DEFAULT_FIGURE_STYLES: FigureStyleSettings = {
 export function fontFamilyCss(fontFamily: FontFamilyKey): string {
   return FONT_FAMILY_OPTIONS.find((option) => option.key === fontFamily)?.css
     ?? FONT_FAMILY_OPTIONS[0].css;
+}
+
+export function taxonomyBandThicknessField(viewMode: ViewMode, comparison = false) {
+  return comparison ? "comparisonBandThicknessScale"
+    : viewMode === "spiral" ? "spiralBandThicknessScale" : "bandThicknessScale";
+}
+
+export function migrateLegacyTaxonomyBandThickness(
+  source: Partial<LabelStyleSettings>,
+  field: ReturnType<typeof taxonomyBandThicknessField>,
+): Partial<LabelStyleSettings> {
+  if (field === "bandThicknessScale" || !Number.isFinite(source.bandThicknessScale)
+    || source.spiralBandThicknessScale !== undefined || source.comparisonBandThicknessScale !== undefined) {
+    return source;
+  }
+  const { bandThicknessScale, ...rest } = source;
+  return { ...rest, [field]: bandThicknessScale };
 }
 
 export function fontFamilyLabel(fontFamily: FontFamilyKey): string {

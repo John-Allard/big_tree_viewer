@@ -19,6 +19,8 @@ import {
   cloneDefaultFigureStyles,
   FONT_FAMILY_OPTIONS,
   LABEL_STYLE_CLASS_LABELS,
+  migrateLegacyTaxonomyBandThickness,
+  taxonomyBandThicknessField,
   TAXONOMY_LABEL_SIZE_SCALE_MAX,
   TAXONOMY_LABEL_SIZE_SCALE_MIN,
   type FigureStyleSettings,
@@ -1432,6 +1434,7 @@ function LabelStyleSection({
   disabled,
   disabledReason,
   tipWidthControlsDisabledReason,
+  bandThicknessField = "bandThicknessScale",
   extraControls,
   onToggle,
   onUpdate,
@@ -1443,6 +1446,7 @@ function LabelStyleSection({
   disabled: boolean;
   disabledReason?: string;
   tipWidthControlsDisabledReason?: string;
+  bandThicknessField?: ReturnType<typeof taxonomyBandThicknessField>;
   extraControls?: ReactNode;
   onToggle: () => void;
   onUpdate: (
@@ -1586,11 +1590,11 @@ function LabelStyleSection({
                   min={0.05}
                   max={viewMode === "spiral" ? 5 : 2}
                   step={0.05}
-                  value={settings.bandThicknessScale ?? 1}
-                  onChange={(event) => onUpdate(labelClass, "bandThicknessScale", Number(event.target.value))}
+                  value={settings[bandThicknessField] ?? 1}
+                  onChange={(event) => onUpdate(labelClass, bandThicknessField, Number(event.target.value))}
                 />
               </label>
-              <div className="figure-style-value">x{(settings.bandThicknessScale ?? 1).toFixed(2)}</div>
+              <div className="figure-style-value">x{(settings[bandThicknessField] ?? 1).toFixed(2)}</div>
               {viewMode !== "spiral" ? (
                 <label className="label-style-inline-toggle">
                   <input
@@ -3048,7 +3052,10 @@ export default function App() {
         for (const labelClass of Object.keys(current) as Array<keyof FigureStyleSettings>) {
           const source = visual.figureStyles?.[labelClass];
           if (source && typeof source === "object") {
-            next[labelClass] = { ...current[labelClass], ...source };
+            const overrides = labelClass === "taxonomy"
+              ? migrateLegacyTaxonomyBandThickness(source, taxonomyBandThicknessField(visual.viewMode === "spiral" ? "spiral" : "rectangular"))
+              : source;
+            next[labelClass] = { ...current[labelClass], ...overrides };
             if (labelClass === "taxonomy") {
               const sourceGap = source.taxonomyGap;
               const legacyExtraGapPx = source.taxonomyGapPx;
@@ -5102,7 +5109,7 @@ export default function App() {
     zoomAxisMode,
   ]);
 
-  const applySessionSettings = useCallback((settings: BigTreeViewerSessionSettings): void => {
+  const applySessionSettings = useCallback((settings: BigTreeViewerSessionSettings, comparison = false): void => {
     setCustomCladeRibbons(normalizeCustomCladeRibbons(settings.customCladeRibbons));
     if (settings.viewMode === "rectangular" || settings.viewMode === "circular" || settings.viewMode === "fan" || settings.viewMode === "spiral") {
       setViewMode(settings.viewMode);
@@ -5164,7 +5171,10 @@ export default function App() {
         for (const labelClass of Object.keys(next) as Array<keyof FigureStyleSettings>) {
           const source = settings.figureStyles[labelClass];
           if (source && typeof source === "object") {
-            next[labelClass] = { ...next[labelClass], ...source };
+            const overrides = labelClass === "taxonomy"
+              ? migrateLegacyTaxonomyBandThickness(source, taxonomyBandThicknessField(settings.viewMode, comparison))
+              : source;
+            next[labelClass] = { ...next[labelClass], ...overrides };
             if (labelClass === "taxonomy") {
               const sourceGap = source.taxonomyGap;
               const legacyExtraGapPx = source.taxonomyGapPx;
@@ -5781,7 +5791,7 @@ export default function App() {
     } else {
       clearMetadata();
     }
-    applySessionSettings(session.settings);
+    applySessionSettings(session.settings, Boolean(session.comparison?.enabled && session.comparison.newick));
     setHideDownloadNewick(session.controls?.hideDownloadNewick === true);
     if (session.tree?.newick) {
       setSessionStatus(`Parsing tree from ${label}...`);
@@ -5930,7 +5940,7 @@ export default function App() {
           customCladeRibbons: tree && session.tree?.signature === treeSignature
             ? session.settings.customCladeRibbons
             : customCladeRibbons,
-        });
+        }, Boolean(session.comparison?.enabled && session.comparison.newick));
       }
       if (mode === "settings" && tree && session.tree?.signature && session.tree.signature === treeSignature && session.canvas) {
         setSessionRestoreState(session.canvas);
@@ -9025,6 +9035,7 @@ export default function App() {
                 <LabelStyleSection
                   labelClass="taxonomy"
                   settings={figureStyles.taxonomy}
+                  bandThicknessField={taxonomyBandThicknessField(viewMode, Boolean(comparisonEnabled && comparisonTree))}
                   viewMode={viewMode}
                   isOpen={activeLabelStylePopover === "taxonomy"}
                   disabled={!taxonomyEnabled}

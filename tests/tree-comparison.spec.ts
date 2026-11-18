@@ -1,8 +1,105 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type FileChooser } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { gunzipSync, strFromU8 } from "fflate";
+import { gunzipSync, gzipSync, strFromU8, strToU8 } from "fflate";
+
+test("taxonomy ribbon thickness is independent in spiral and comparison views and survives a session", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.__BIG_TREE_VIEWER_APP_TEST__));
+  await page.evaluate(() => {
+    Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true });
+    Object.defineProperty(window, "showOpenFilePicker", { value: undefined, configurable: true });
+  });
+  const newick = `(${Array.from({ length: 1000 }, (_, i) => `Genus_species${i}:1`).join(",")});`;
+  await page.getByRole("button", { name: "Paste Newick" }).first().click();
+  await page.getByPlaceholder("Paste a Newick or NEXUS tree string here").fill(newick);
+  await page.getByRole("button", { name: "Load Pasted Tree" }).click();
+  await page.waitForFunction(() => {
+    const state = window.__BIG_TREE_VIEWER_APP_TEST__?.getState();
+    return state?.treeLoaded && !state.loading;
+  });
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setMockTaxonomy());
+  await page.getByRole("button", { name: /Visual Options$/ }).click();
+  const settings = page.getByRole("button", { name: "Taxonomy overlays settings", exact: true });
+  const thickness = page.getByRole("slider", { name: "Band thickness" });
+  const openThickness = async () => {
+    if (await settings.getAttribute("aria-expanded") !== "true") await settings.click();
+  };
+  const closeThickness = () => page.getByRole("button", { name: "Close Taxonomy overlays settings" }).click();
+  const selectView = async (name: "Rectangular" | "Radial" | "Spiral") => {
+    await page.getByRole("button", { name, exact: true }).click();
+    await openThickness();
+  };
+  await selectView("Rectangular");
+  await expect(thickness).toHaveValue("1");
+  await thickness.fill("1.4");
+  await selectView("Radial");
+  await expect(thickness).toHaveValue("1.4");
+  await selectView("Spiral");
+  await expect(thickness).toHaveValue("1");
+  await thickness.fill("3.5");
+  await selectView("Rectangular");
+  await expect(thickness).toHaveValue("1.4");
+  await closeThickness();
+
+  const comparisonButton = page.getByRole("button", { name: /Tree Comparison$/ });
+  await comparisonButton.click();
+  const panel = page.locator(".panel-section").filter({ has: comparisonButton });
+  await panel.locator('input[type="file"]').setInputFiles({
+    name: "compare.nwk", mimeType: "text/plain", buffer: Buffer.from(newick),
+  });
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+  await openThickness();
+  await expect(thickness).toHaveValue("1");
+  await thickness.fill("1.8");
+  await closeThickness();
+
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Save Session", exact: true }).click();
+  const file = (await (await download).path())!;
+  const session = JSON.parse(strFromU8(gunzipSync(await readFile(file))));
+  expect(session.settings.figureStyles.taxonomy).toMatchObject({
+    bandThicknessScale: 1.4, spiralBandThicknessScale: 3.5, comparisonBandThicknessScale: 1.8,
+  });
+  await openThickness();
+  await thickness.fill("0.8");
+  await closeThickness();
+  const restore = async (input: Parameters<FileChooser["setFiles"]>[0]) => {
+    const choose = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "Load Session", exact: true }).click();
+    await (await choose).setFiles(input);
+  };
+  await restore(file);
+  await expect(page.getByText(/^Loaded session from /)).toBeVisible();
+  await expect(page.getByLabel("Tree comparison view")).toBeVisible();
+  await openThickness();
+  await expect(thickness).toHaveValue("1.8");
+  await closeThickness();
+  await panel.getByRole("button", { name: "Turn Off Comparison" }).click();
+  await openThickness();
+  await expect(thickness).toHaveValue("1.4");
+  await selectView("Spiral");
+  await expect(thickness).toHaveValue("3.5");
+  await closeThickness();
+
+  delete session.comparison;
+  delete session.canvas;
+  session.settings.viewMode = "spiral";
+  const legacyTaxonomy = session.settings.figureStyles.taxonomy;
+  delete legacyTaxonomy.spiralBandThicknessScale;
+  delete legacyTaxonomy.comparisonBandThicknessScale;
+  legacyTaxonomy.bandThicknessScale = 2.75;
+  await restore({
+    name: "legacy-spiral.btvsession", mimeType: "application/octet-stream",
+    buffer: Buffer.from(gzipSync(strToU8(JSON.stringify(session)))),
+  });
+  await expect(page.getByText("Loaded session from legacy-spiral.btvsession.")).toBeVisible();
+  await openThickness();
+  await expect(thickness).toHaveValue("2.75");
+  await selectView("Radial");
+  await expect(thickness).toHaveValue("1");
+});
 
 test("loads, displays, and disables a comparison tree", async ({ page }) => {
   await page.goto("/");
@@ -536,7 +633,7 @@ test("bundled example comparison fixture matches every example-tree tip", async 
   await expect(taxonomyTooltip).toBeVisible();
   await expect(taxonomyTooltip).toContainText("Rank:");
   await expect(taxonomyTooltip).toContainText("Descendant tips:");
-  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", 2));
+  await page.evaluate(() => window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "comparisonBandThicknessScale", 2));
   await page.waitForFunction(({ initialFontSize, initialWidth }) => {
     const state = window.__BIG_TREE_VIEWER_COMPARISON_TEST__?.getState();
     return Number(state?.ribbonsWidth ?? 0) > Number(initialWidth)

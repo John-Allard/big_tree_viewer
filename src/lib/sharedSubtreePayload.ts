@@ -1,6 +1,6 @@
 import { normalizeLabelAngle } from "./circularLabelOffsets";
 import { normalizeCustomCladeRibbons, type CustomCladeRibbon } from "./customCladeRibbons";
-import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, taxonomyLabelVisibilityThreshold, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
+import { cloneDefaultFigureStyles, FONT_FAMILY_OPTIONS, migrateLegacyTaxonomyBandThickness, taxonomyBandThicknessField, taxonomyLabelVisibilityThreshold, type FigureStyleSettings, type FontFamilyKey, type LabelStyleClass } from "./figureStyles";
 import { DEFAULT_ULTRAMETRIC_CLADOGRAM_METHOD, ULTRAMETRIC_CLADOGRAM_METHODS, normalizeCladogramLogStrength, type UltrametricCladogramMethod } from "./cladogram";
 import { DEFAULT_TAXONOMY_COLOR_PALETTE, isTaxonomyColorPaletteKey, type TaxonomyColorPaletteKey } from "./taxonomyPalettes";
 import { DEFAULT_TIME_AXIS_LOG_BASE, MAX_TIME_AXIS_LOG_BASE, MIN_TIME_AXIS_LOG_BASE, type TimeAxisScale } from "./timeAxis";
@@ -129,7 +129,7 @@ function coerceTimeAxisLogBase(value: unknown): number {
   return Math.max(MIN_TIME_AXIS_LOG_BASE, Math.min(MAX_TIME_AXIS_LOG_BASE, numeric));
 }
 
-function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
+function parseSharedFigureStyles(raw: unknown, viewMode: unknown): FigureStyleSettings {
   const defaults = cloneDefaultFigureStyles();
   if (!raw || typeof raw !== "object") {
     return defaults;
@@ -150,8 +150,11 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
     current.offsetPx = coerceFiniteNumber(source.offsetPx, current.offsetPx);
     current.offsetXPx = coerceFiniteNumber(source.offsetXPx, current.offsetXPx);
     current.offsetYPx = coerceFiniteNumber(source.offsetYPx, current.offsetYPx);
-    current.bandThicknessScale = coerceFiniteNumber(source.bandThicknessScale, current.bandThicknessScale ?? 1);
     if (labelClass === "taxonomy") {
+      const widths = migrateLegacyTaxonomyBandThickness(source, taxonomyBandThicknessField(viewMode === "spiral" ? "spiral" : "rectangular"));
+      current.bandThicknessScale = coerceFiniteNumber(widths.bandThicknessScale, 1);
+      current.spiralBandThicknessScale = coerceFiniteNumber(widths.spiralBandThicknessScale, 1);
+      current.comparisonBandThicknessScale = coerceFiniteNumber(widths.comparisonBandThicknessScale, 1);
       current.labelVisibilityThreshold = taxonomyLabelVisibilityThreshold(source);
       const sourceTaxonomyGap = typeof source.taxonomyGap === "number" && Number.isFinite(source.taxonomyGap)
         ? source.taxonomyGap
@@ -159,6 +162,7 @@ function parseSharedFigureStyles(raw: unknown): FigureStyleSettings {
       current.taxonomyGap = sourceTaxonomyGap;
       current.taxonomyGapPx = 0;
     } else {
+      current.bandThicknessScale = coerceFiniteNumber(source.bandThicknessScale, current.bandThicknessScale ?? 1);
       current.taxonomyGapPx = coerceFiniteNumber(source.taxonomyGapPx, current.taxonomyGapPx ?? 0);
     }
     current.bold = coerceBoolean(source.bold, Boolean(current.bold));
@@ -276,7 +280,7 @@ function parseSharedSubtreeVisualPayload(raw: unknown): SharedSubtreeVisualPaylo
     errorBarShowNodeDot: coerceBoolean(source.errorBarShowNodeDot, false),
     errorBarThicknessPx: coerceFiniteNumber(source.errorBarThicknessPx, hasErrorBarStyle ? 5 : 1.2),
     errorBarCapSizePx: coerceFiniteNumber(source.errorBarCapSizePx, 7),
-    figureStyles: parseSharedFigureStyles(source.figureStyles),
+    figureStyles: parseSharedFigureStyles(source.figureStyles, source.viewMode),
     taxonomyEnabled: coerceBoolean(source.taxonomyEnabled, false),
     customCladeRibbons: normalizeCustomCladeRibbons(source.customCladeRibbons),
     taxonomyOverlayStyle: coerceEnum(source.taxonomyOverlayStyle, ["ribbons", "strands"] as const, "ribbons"),

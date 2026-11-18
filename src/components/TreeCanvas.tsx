@@ -5711,7 +5711,9 @@ export default function TreeCanvas({
   );
   const taxonomyBandThicknessScale = Math.max(
     0.05,
-    Math.min(viewMode === "spiral" ? 5 : 2, figureStyles.taxonomy.bandThicknessScale ?? 1),
+    Math.min(viewMode === "spiral" ? 5 : 2, (viewMode === "spiral"
+      ? figureStyles.taxonomy.spiralBandThicknessScale
+      : figureStyles.taxonomy.bandThicknessScale) ?? 1),
   );
   const taxonomyLabelFitScale = Math.max(1, taxonomyBandThicknessScale);
   const taxonomyLabelThreshold = taxonomyLabelVisibilityThreshold(figureStyles.taxonomy);

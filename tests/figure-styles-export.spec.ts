@@ -232,7 +232,7 @@ test("ribbon gap controls spiral overview spacing before tip labels appear", asy
   expect(extraGap.interTurnGapPx - defaultGap.interTurnGapPx).toBeCloseTo(20, 1);
 
   const measureThickness = async (value: number) => page.evaluate(async (nextValue) => {
-    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "bandThicknessScale", nextValue);
+    window.__BIG_TREE_VIEWER_APP_TEST__?.setFigureStyleForTest("taxonomy", "spiralBandThicknessScale", nextValue);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const debug = window.__BIG_TREE_VIEWER_CANVAS_TEST__?.getRenderDebug()?.spiral as {
       taxonomyNaturalRibbonWidthPx?: number;
